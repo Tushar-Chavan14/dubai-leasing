@@ -1,0 +1,2 @@
+DROP INDEX "applications_telegram_viewing_uq";--> statement-breakpoint
+CREATE UNIQUE INDEX "applications_viewing_uq" ON "applications" USING btree ("unit_id","viewing_at") WHERE "applications"."state" = 'VIEWING';

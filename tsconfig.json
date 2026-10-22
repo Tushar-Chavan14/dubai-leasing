@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.base.json",
+  "include": [
+    "packages/*/src/**/*",
+    "packages/*/test/**/*",
+    "packages/*/*.ts",
+    "apps/engine/src/**/*",
+    "apps/engine/test/**/*",
+    "apps/telegram-bot/src/**/*",
+    "apps/telegram-bot/test/**/*",
+    "apps/ejari-mock/src/**/*",
+    "apps/ejari-mock/test/**/*",
+    "scripts/**/*"
+  ]
+}

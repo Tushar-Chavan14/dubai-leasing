@@ -1,0 +1,30 @@
+{
+  "name": "leasing-agents",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --filter './apps/*' dev",
+    "test": "bun test",
+    "typecheck": "tsc -p tsconfig.json && tsc -p apps/web/tsconfig.json",
+    "lint": "oxlint && oxfmt --check && bun scripts/check-domain-rules.ts",
+    "lint:fix": "oxlint --fix && oxfmt",
+    "format": "oxfmt",
+    "db:generate": "bun run --filter @leasing/db generate",
+    "db:migrate": "bun run --filter @leasing/db migrate",
+    "db:studio": "bun run --filter @leasing/db studio",
+    "demo:seed": "bun run --filter @leasing/engine seed",
+    "demo:reset": "bun run --filter @leasing/engine reset",
+    "demo:rewind": "bun run --filter @leasing/engine rewind",
+    "eval": "bun scripts/eval.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.3",
+    "oxfmt": "0.73.0",
+    "oxlint": "1.88.0",
+    "typescript": "^5"
+  }
+}

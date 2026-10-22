@@ -1,0 +1,7 @@
+# oxfmt reads this file (and .gitignore) for paths to skip.
+docs/
+.claude/
+packages/db/migrations/
+apps/web/AGENTS.md
+bun.lock
+*.md

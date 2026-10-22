@@ -1,0 +1,13 @@
+{
+  "name": "@leasing/rulebook",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@leasing/core": "workspace:*",
+    "zod": "^4.6.7"
+  }
+}

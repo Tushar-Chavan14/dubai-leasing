@@ -1,0 +1,16 @@
+{
+  "name": "@leasing/telegram-bot",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --env-file=../../.env src/main.ts"
+  },
+  "dependencies": {
+    "@grammyjs/runner": "2.0.3",
+    "@leasing/adapters": "workspace:*",
+    "@leasing/core": "workspace:*",
+    "grammy": "1.46.0",
+    "zod": "^4.6.7"
+  }
+}

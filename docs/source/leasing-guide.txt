@@ -1,0 +1,192 @@
+Part 1: Plain-English guide
+What this document is
+We will use AI helpers to run most of the Dubai leasing process, with people approving every step that has legal or money impact. This part explains, in plain English, how leasing works in Dubai and how our AI design fits into it.
+It is written for anyone on the team, including people with no real estate or technical background. Abu Dhabi follows a similar process with different rules; it will get its own version later.
+Words you will see
+Word
+What it means in simple terms
+Landlord
+The owner of the property. We usually act for the landlord as the developer or property manager.
+Tenant
+The person or company renting the property.
+Lease / tenancy contract
+The rental agreement between landlord and tenant. In Dubai it uses a standard government format.
+DLD
+Dubai Land Department, the government body for property in Dubai.
+RERA
+The part of DLD that regulates renting.
+Ejari
+Dubai's official system for registering every lease. A lease that is not registered in Ejari is not recognised by the government.
+Smart Rental Index
+DLD's official tool that shows the normal rent for similar homes. It decides how much rent can go up at renewal.
+DEWA
+Dubai's electricity and water company. The tenant cannot get power and water without a registered lease.
+Notice
+A formal written message to the tenant, for example "your rent will increase" or "please vacate". The law sets how early it must be sent.
+PDC
+Post-dated cheques. Tenants in Dubai often pay rent with several cheques dated through the year.
+Security deposit
+Money the tenant pays at the start, returned at the end minus any damage.
+RDC
+Rental Disputes Centre, where landlord-tenant disagreements go.
+Agent (AI agent)
+A piece of AI software that does one job, such as reading an ID card or drafting a contract.
+
+The leasing journey, step by step
+Every lease goes through the same 11 steps, from an empty unit to the tenant moving out. Think of it like a hotel stay that lasts a year: get the room ready, take the booking, check in, look after the guest, and check out.
+Get the unit ready. Make sure the property is registered with DLD and approved for rent. Decide the asking rent.
+Find a tenant. Answer enquiries from interested people and book viewings.
+Check the applicant. Collect their Emirates ID or passport and visa (or trade license for a company) and check the details are correct.
+Agree the offer. Agree the rent, number of cheques, deposit and move-in date. Take a reservation payment.
+Prepare and sign the contract. Fill in the standard Dubai contract, plus an addendum for any special terms. Both sides sign.
+Register the lease in Ejari. This makes the lease official. Without it, the tenant cannot connect electricity and water.
+Move the tenant in. Activate DEWA, hand over keys and access cards, and record the condition of the unit with photos.
+Look after the tenancy. Collect rent, follow up late payments and bounced cheques, and handle complaints and maintenance.
+Renew the lease. Before the lease ends, decide whether to renew and whether rent can go up. Send any notice on time.
+Move the tenant out. Inspect the unit, compare it with move-in photos, return the deposit minus any damage, and cancel the Ejari registration.
+Handle disputes, if any. If the landlord and tenant disagree, prepare the case for the Rental Disputes Centre.
+After step 10, the unit goes back to step 1 for the next tenant.
+The rules we must never break
+Dubai law sets fixed deadlines and limits. Missing one costs money or makes a notice invalid, so our system treats these as hard rules, not suggestions.
+Rule
+What it means
+What happens if we get it wrong
+Every lease must be registered in Ejari
+No registration, no official lease
+Tenant can't get DEWA; lease can't be enforced
+Details must match exactly
+Names and numbers in the contract must match the ID and property records
+Ejari rejects the registration
+Rent can only go up at renewal
+During the lease, rent is fixed
+Any mid-lease increase is invalid
+Rent increase is capped by the Smart Rental Index
+No increase if rent is within 10% of the area average; maximum 20% if rent is more than 40% below it
+Increase above the cap can be challenged
+90-day notice for a rent increase
+The tenant must be told in writing at least 90 days before the lease ends
+No increase allowed for that year, even if the index permits it
+12-month notice to take the property back
+Only allowed for sale, own use, major works or demolition, and must be sent by notary or registered mail
+Notice is invalid; the tenant can stay
+Own-use lock
+If the landlord takes the home back for own use, it can't be rented to someone else for 2 years (3 for commercial)
+Tenant can claim compensation
+Late rent
+The landlord can start eviction if rent is unpaid 30 days after a formal reminder
+Acting earlier is invalid
+Cancel Ejari when the tenant leaves
+The old registration must be closed promptly
+The next tenant's registration can be blocked
+
+Rules change: DLD replaced the old rent calculator with the Smart Rental Index in January 2025. That is why our design keeps these rules in one place that can be updated, rather than inside the AI.
+Sources: DLD 90-day notice, rent increase law, 12-month eviction notice, own-use lock, Ejari process
+How we make it agentic
+"Agentic" means AI helpers do the work of each step on their own, instead of a person doing it by hand. Our design has four parts that work like a well-run office.
+The Manager keeps a file for every lease. It knows which step each lease is on, what comes next and every deadline. It wakes up the right helper at the right time, even if that is 12 months away.
+The Rulebook holds Dubai's laws and our company limits: notice periods, rent caps, allowed discounts. It gives the same answer every time.
+The AI helpers each do one job well, such as reading an ID card or drafting a contract. They never decide legal values themselves; they ask the Rulebook.
+People approve every step that creates a legal or money commitment. The Manager pauses and waits for their approval.
+[Insert diagram here: "The Manager runs each lease, helpers do the work, people approve" from the Claude doc.]
+The Manager is in charge, not an AI. Leasing has fixed legal deadlines, so the order of steps must be predictable and every decision must be traceable if a dispute reaches the Rental Disputes Centre.
+The AI helpers we will build
+We will build 10 AI helpers, each doing one job. Three of them are the agents the team is already building (Payment Reminder, Complaint Triage, Refund & Cancellation); they just need to plug into this flow.
+Helper
+Its job
+When it starts
+When it must ask a person
+Pricing
+Suggests the asking rent using the Smart Rental Index
+A unit becomes ready to rent
+The price is outside the company's allowed range
+Leasing Assistant
+Answers enquiries on WhatsApp/email in Arabic and English, books viewings
+Someone sends an enquiry
+Commercial enquiries, VIPs, complaints
+KYC & Documents
+Reads the ID, visa or trade license and checks details
+The applicant applies
+A detail is unclear or a document has expired
+Offer
+Proposes terms (cheques, deposit, rent-free days) within allowed limits
+The applicant passes checks
+Any term outside the limits
+Contract
+Fills the standard contract and checks it matches the ID and offer
+The offer is accepted
+Always: a person approves every contract
+Registration
+Prepares the Ejari registration and fixes simple data errors
+The contract is signed
+Ejari rejects it twice
+Collections (Payment Reminder)
+Sends rent reminders, tracks cheques, drafts formal reminders
+Rent is due or a cheque bounces
+Before sending a formal reminder (it starts the legal 30-day clock)
+Complaint Triage
+Sorts complaints by type and urgency, sends maintenance
+A tenant raises an issue
+Safety issues or legal threats
+Renewal & Notice
+Works out the legal rent at renewal and drafts the notice
+Automatically, months before the lease ends
+Always: a person approves every notice
+Exit & Deposit (Refund)
+Compares move-out and move-in photos, calculates deductions and refund, cancels Ejari
+The tenant gives notice or the lease ends
+Refunds above a set amount, or if the tenant disputes
+
+Every helper gets the same kind of input and must give its answer in a fixed format. This is what allows each team member to build their helper separately without breaking the others.
+Three examples
+Example 1: a new tenant
+Aisha messages on WhatsApp asking about a 1-bedroom flat.
+The Leasing Assistant answers her questions and books a viewing for Saturday.
+After the viewing, she uploads her Emirates ID. The KYC helper reads it and confirms the details.
+The Offer helper proposes 4 cheques and a 5% deposit, within company limits. Aisha accepts and pays the reservation.
+The Contract helper fills the standard contract using her verified details. A leasing officer reviews and approves it. Aisha signs.
+The Registration helper prepares the Ejari application. The officer submits it and Ejari is issued.
+The Manager marks the lease as active and sets reminders for every future date: rent due dates, the renewal window and the lease end.
+Example 2: renewing a lease
+The lease ends on 31 December. The Manager works backwards from that date:
+13 months before: asks the landlord whether they plan to sell or use the property themselves. If yes, a person handles the 12-month legal notice.
+5 months before: the Renewal helper checks the Smart Rental Index and works out the maximum legal increase.
+4 months before: the draft notice goes to a manager to approve.
+100 days before: the notice is sent and proof of delivery is saved.
+90 days before: this is the legal deadline. If nobody approved in time, the system offers renewal at the same rent, so the lease is never left in limbo.
+We send at 100 days, not 90, to leave 10 days of safety margin.
+Example 3: when something goes wrong
+Ejari rejects the registration. The Registration helper reads the reason, compares the details against the verified ID and fixes simple typing errors once. If it fails again, a person takes over. It never changes a contract term on its own.
+A cheque bounces. Collections sends friendly reminders. The formal reminder needs a person's approval because it starts the legal 30-day clock.
+A helper gives a messy answer. The system rejects it, asks the helper to try again, and if it still fails, sends the task to a person. Nothing moves forward on a bad answer.
+What people decide, what we build first, and how we measure it
+People always decide these
+The AI prepares; a person approves. These actions create a legal or money commitment that can't be undone by trying again:
+Approving the final contract
+Submitting to Ejari (until we connect directly to the Ejari system)
+Sending formal late-payment reminders
+Sending any rent increase or "please vacate" notice
+Refunds above a set amount
+Any rent outside what the rulebook allows
+Build order
+The Manager, the Rulebook and the lease record. Everything else depends on these, so a technical person builds them first.
+Renewal & Notice helper. It brings the most measurable value: missing the 90-day notice loses a full year of rent increase.
+KYC, Contract and Registration helpers. These stop Ejari rejections caused by mismatched details.
+Connect the three helpers already being built (Payment Reminder, Complaint Triage, Refund).
+Leasing Assistant and Pricing. Lowest risk; many existing tools already do part of this.
+Today, people will upload data using sheets. Later, we connect directly to DLD's Ejari system, which allows issuing, renewing and cancelling leases from our software. That connection requires working through a registered property management company (DLD API requirements).
+How we know it works
+What we measure
+Why it matters
+Days from enquiry to registered lease
+Faster leasing means less empty time
+Ejari rejection rate
+Shows whether the data checks work
+Notices sent by 100 days before expiry
+Protects rent increases
+Days rent is overdue
+Shows collections health
+Days to return the deposit
+Tenant satisfaction and fewer disputes
+
+
+

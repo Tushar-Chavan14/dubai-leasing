@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.next/
+next-env.d.ts
+*.tsbuildinfo
+.env
+.env.local
+data/
+coverage/
+.DS_Store
+graphify-out/
+.claude/
