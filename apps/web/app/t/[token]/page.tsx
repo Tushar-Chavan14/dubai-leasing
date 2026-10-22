@@ -8,7 +8,18 @@ import { ApplicationStatus } from "./application-status";
 import { AcknowledgeForm, ReplyForm } from "./forms";
 
 interface PortalView {
-  purpose: "tenancy" | "notice_ack";
+  purpose: "tenancy" | "notice_ack" | "move_in_ack";
+  tenancy: {
+    canReportIssue: boolean;
+    openPayments: { id: string; seq: number; amountFils: number; dueOn: string; status: string }[];
+    reports: {
+      ref: string | null;
+      status: string;
+      category: string | null;
+      createdAt: string;
+      ticketStatus: string | null;
+    }[];
+  };
   tenantFirstName: string;
   lease: { state: string; startOn: string; endOn: string; annualRentFils: number; ref: string };
   unit: { label: string; community: string } | null;
@@ -45,6 +56,56 @@ export default async function TenancyPage({ params }: { params: Promise<{ token:
         </p>
       </div>
 
+      {v.purpose === "move_in_ack" && redirectTo(`/t/${token}/move-in`)}
+
+      {v.tenancy.openPayments.length > 0 && (
+        <section className="panel panel-pad stack">
+          <h2 className="section-title" style={{ margin: 0 }}>
+            Payments that need your attention
+          </h2>
+          <ul className="list">
+            {v.tenancy.openPayments.map((p) => (
+              <li key={p.id} className="list-row">
+                <span>
+                  Payment {p.seq}: {formatAed(p.amountFils)}, due {longDate(p.dueOn)}
+                  {p.status === "bounced" ? " (cheque returned)" : ""}
+                </span>
+                {v.purpose === "tenancy" && (
+                  <a className="btn small" href={`/t/${token}/payment/${p.id}`}>
+                    Reply
+                  </a>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {v.tenancy.canReportIssue && v.purpose === "tenancy" && (
+        <section className="panel panel-pad stack">
+          <h2 className="section-title" style={{ margin: 0 }}>
+            Something wrong at home?
+          </h2>
+          <a className="btn primary" style={{ width: "fit-content" }} href={`/t/${token}/report`}>
+            Report an issue
+          </a>
+          {v.tenancy.reports.length > 0 && (
+            <ul className="list">
+              {v.tenancy.reports.map((r) => (
+                <li key={r.ref ?? r.createdAt} className="list-row">
+                  <span>
+                    <span className="ref">{r.ref}</span> {r.category ?? "being read"}
+                  </span>
+                  <span className="muted">
+                    {r.ticketStatus ? `repair ${r.ticketStatus.replace("_", " ")}` : r.status}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+
       {v.notice ? (
         <section className="panel panel-pad stack">
           <h2 className="section-title" style={{ margin: 0 }}>
@@ -66,11 +127,11 @@ export default async function TenancyPage({ params }: { params: Promise<{ token:
             Read the full notice (PDF)
           </a>
         </section>
-      ) : (
+      ) : v.tenancy.openPayments.length === 0 && !v.tenancy.canReportIssue ? (
         <section className="panel panel-pad">
           <p className="muted">There&apos;s nothing for you to do right now. We&apos;ll email you when there is.</p>
         </section>
-      )}
+      ) : null}
 
       {v.notice && (
         <section className="panel panel-pad stack">
@@ -116,6 +177,10 @@ export default async function TenancyPage({ params }: { params: Promise<{ token:
       )}
     </div>
   );
+}
+
+function redirectTo(path: string): never {
+  redirect(path);
 }
 
 function ExpiredLink() {

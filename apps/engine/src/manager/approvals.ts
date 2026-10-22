@@ -15,7 +15,9 @@ import type { EngineContext } from "../context.ts";
 import { conflict, forbidden, notFound, unprocessable } from "../errors.ts";
 import { type AnyEvent, advance } from "./advance.ts";
 import { appendEvent } from "./events.ts";
-import { checkDecision, effectiveProposal, RenewalNoticeProposal } from "./gate-rules.ts";
+import { checkDecision, effectiveProposal, FormalReminderProposal, RenewalNoticeProposal } from "./gate-rules.ts";
+import { onFormalReminderApproved } from "./collections.ts";
+import { onSafetyComplaintDecided } from "./complaints.ts";
 import { onContractDecided } from "./contracts.ts";
 import { enqueueNoticeSend } from "./outbound.ts";
 import { onEjariRejectedDecided, onEjariSubmissionDecided } from "./registration.ts";
@@ -106,6 +108,10 @@ export async function decideApproval(
       throw forbidden("you entered the SRI value behind this notice; another manager must approve it");
     }
 
+    // Closing a safety complaint needs a written reason (it may close the tenant's only report).
+    if (decision.decision === "reject" && a.gate === "safety_complaint" && !decision.note?.trim()) {
+      throw unprocessable("give the reason for closing this safety complaint", [], "reason_required");
+    }
     if (decision.decision !== "reject") {
       const problems = checkDecision(a.gate, a.proposal, decision, ctx.clock.today());
       if (problems.length) throw unprocessable("decision breaks a rule or limit", problems, "rule_violation");
@@ -146,6 +152,11 @@ export async function decideApproval(
       const p = RenewalNoticeProposal.parse(effectiveProposal(updated));
       if (ctx.clock.today() >= p.sendOn) await enqueueNoticeSend(ctx, tx, p.leaseId, a.id);
     }
+    // Formal late-payment reminder: approving queues the email; its accepted send starts the clock (D27).
+    if (status !== "rejected" && a.gate === "formal_reminder") {
+      await onFormalReminderApproved(ctx, tx, a.id, FormalReminderProposal.parse(effectiveProposal(updated)));
+    }
+    if (a.gate === "safety_complaint") await onSafetyComplaintDecided(ctx, tx, updated, status, user.id);
     if (status !== "rejected" && a.gate === "price_out_of_range") {
       await applyApprovedPrice(ctx, tx, updated, user.id);
     }

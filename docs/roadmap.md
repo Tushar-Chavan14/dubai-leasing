@@ -80,11 +80,12 @@ Ejari rejection → field 29/32 at confidence ≥ 0.6, 0 wrongly tied to a name 
 - [x] Enquiries start with the contact: email required, phone optional (for follow-up)
 - [x] Copilot as a second entry point for applications (D25): `find_available_units`,
   `propose_application` with the Confirm card; the proposal + Confirm step that copilot v2 reuses
-- [ ] Collections: schedule, reminders, bounced cheque, formal reminder gate, 30-day clock
-- [ ] Portal forms: report an issue, payment reply, move-in acknowledgement
-- [ ] Complaint Triage graph (architecture §6) + maintenance tickets
-- [ ] Move-in checklist with photo upload
-- [ ] Staff copilot v2: `draft_email`, `draft_approval_note` (draft tools); `create_task`, `propose_approval` (propose tools) with the Confirm step; role tests for every tool
+- [x] Collections: schedule, reminders, bounced cheque, formal reminder gate, 30-day clock (D27)
+- [x] Portal forms: report an issue, payment reply, move-in acknowledgement
+- [x] Complaint Triage graph (architecture §6) + maintenance tickets (D28); evals: 34 cases EN/AR
+- [x] Move-in checklist with photo upload
+- [x] Staff copilot v2: `draft_email`, `draft_approval_note` (draft tools); `create_task`, `propose_approval` (propose tools) with the Confirm step; role tests for every tool (D26); 23 new eval cases
+- [x] Task actions: Done, Add task, the landlord's answer and the 12-month notice form; Email the tenant; approval notes
 
 **Exit:** full enquiry → active lease flow works from Telegram plus the web app.
 

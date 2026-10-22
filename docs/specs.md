@@ -117,21 +117,22 @@ Each step lists the helper, what it does, the human gate and acceptance criteria
 - Checklist: Ejari number, DEWA activation (manual tick), keys and access cards handed over, condition photos per room uploaded.
 - No AI. Manager moves the lease to `ACTIVE` when the checklist is complete and schedules all future jobs.
 - AC: on `ACTIVE`, jobs exist for each rent due date and every renewal milestone.
+- The tenant gets the move-in report with a link to confirm it or add their own photos within 7 days (policy); disagreeing creates a task for an officer.
 
 ### Step 8 — Active tenancy (Lease: `ACTIVE`)
 
 **Collections (Payment Reminder)**
-- Rent schedule from the cheque plan. Friendly reminders before due dates by email.
+- Rent schedule from the cheque plan. Friendly reminders before due dates by email. Finance confirms every payment (paid or bounced); nothing is marked paid automatically, except instalments of an imported lease that were already due, which are flagged for finance to check (D27).
 - Bounced cheque event (demo console or officer) → friendly reminder sequence.
 - Formal reminder: drafted, **gate**, then sent; its send date starts the 30-day clock from the rulebook.
 - Reminder emails carry reply buttons (paid / will pay by date / dispute / need time) plus an optional comment; the decision model classifies free-text comments.
-- AC: no formal reminder is sent without approval; the eviction-eligible date equals send date + rulebook days.
+- AC: no formal reminder is sent without approval; the eviction-eligible date equals send date (Dubai date of SMTP acceptance) + rulebook days; when it passes, a manager decides, nothing is automatic.
 
 **Complaint Triage**
 - Complaints come from the "Report an issue" form in the tenant portal (§5a) or are logged by an officer.
 - Decision model: category, urgency (0–3), safety risk, legal threat.
-- Safety risk or legal threat → immediate escalation. Otherwise a maintenance ticket and a drafted acknowledgement.
-- AC: every fixture with a safety keyword escalates; urgency within ±1 of label on ≥ 85% of fixtures.
+- Safety risk or legal threat → immediate escalation. Otherwise a maintenance ticket (due by policy hours per urgency) and an acknowledgement written by the chat model from the category and urgency only, checked for times, amounts and promises, with a fixed template as fallback (D28).
+- AC: every fixture with a safety keyword escalates; urgency within ±1 of label on ≥ 85% of fixtures; no acknowledgement with a time, amount or promise reaches a tenant.
 
 ### Step 9 — Renewal (Lease: `RENEWAL`)
 

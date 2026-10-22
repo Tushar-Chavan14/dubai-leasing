@@ -4,7 +4,7 @@ import { documents, leases, type Tx, withTx } from "@leasing/db";
 import { and, eq } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
 import { unprocessable } from "../errors.ts";
-import { appendEvent } from "./events.ts";
+import { appendEvent, leaseRulesVersion } from "./events.ts";
 
 /**
  * Photos during the tenancy (phase 3): staff condition photos at move-in, and from the tenant
@@ -63,6 +63,7 @@ export async function addTenancyPhoto(ctx: EngineContext, input: TenancyFileInpu
       type: "PHOTO_UPLOADED",
       actor: input.uploadedBy,
       payload: { documentId: id, kind: input.kind, room: input.room ?? null, sha256: stored.sha256 },
+      rulesVersion: await leaseRulesVersion(tx, input.leaseId),
     });
     return { id, kind: input.kind, room: input.room ?? null, bytes: stored.bytes };
   });

@@ -22,12 +22,17 @@ import {
   getOwnProposal,
   proposalView,
   proposeApplication,
+  proposeOther,
   threadProposals,
 } from "../manager/copilot-proposals.ts";
+import { createDraft, draftView, threadDrafts } from "../manager/staff-messages.ts";
 import type { AuthEnv } from "./auth.ts";
 
 /** The chat route passes the thread to the in-process client so a proposal lands in it. */
 export const COPILOT_THREAD_HEADER = "x-copilot-thread";
+/** Tools whose output names a proposal (shown as a Confirm card) or a draft (shown as a draft card). */
+const PROPOSE_TOOLS = new Set(["propose_application", "create_task", "propose_approval"]);
+const DRAFT_TOOLS = new Set(["draft_email", "draft_approval_note"]);
 
 const ChatRequest = z.object({
   threadId: z.uuid().optional(),
@@ -44,7 +49,9 @@ export type ChatStreamEvent =
   /** Keeps the connection open while the model is thinking; clients ignore it. */
   | { type: "ping" }
   /** The copilot proposed an action; the user confirms or cancels it in the chat (D25). */
-  | { type: "proposal"; proposal: ReturnType<typeof proposalView> };
+  | { type: "proposal"; proposal: ReturnType<typeof proposalView> }
+  /** The copilot drafted text; the user opens it in the normal form (D26). */
+  | { type: "draft"; draft: ReturnType<typeof draftView> };
 
 /**
  * Staff copilot chat (architecture §8b). The copilot runs as the signed-in user: its tools call
@@ -139,13 +146,24 @@ export function registerCopilotRoutes(api: Hono<AuthEnv>, ctx: EngineContext, ap
       let stored = Promise.resolve();
       const storeTool = (t: ToolRecord) => {
         const at = new Date(startedAt + 1 + seq++);
-        if (t.ok && t.name === "propose_application") {
+        if (t.ok && PROPOSE_TOOLS.has(t.name)) {
           const id = (t.output as { proposalId?: unknown } | null)?.proposalId;
           if (typeof id === "string") {
             // Its own chain: a failed lookup must never skip storing the tool call below.
             void getOwnProposal(ctx, user, id)
               .then((proposal) => proposal && send({ type: "proposal", proposal }))
               .catch((e: unknown) => console.error(`copilot proposal event: ${maskPiiText(String(e))}`));
+          }
+        }
+        if (t.ok && DRAFT_TOOLS.has(t.name)) {
+          const id = (t.output as { draftId?: unknown } | null)?.draftId;
+          if (typeof id === "string") {
+            void threadDrafts(ctx, threadId!)
+              .then((ds) => {
+                const draft = ds.find((d) => d.id === id);
+                if (draft) send({ type: "draft", draft });
+              })
+              .catch((e: unknown) => console.error(`copilot draft event: ${maskPiiText(String(e))}`));
           }
         }
         stored = stored.then(async () => {
@@ -242,7 +260,12 @@ export function registerCopilotRoutes(api: Hono<AuthEnv>, ctx: EngineContext, ap
       .from(copilotMessages)
       .where(eq(copilotMessages.threadId, t.id))
       .orderBy(asc(copilotMessages.at));
-    return c.json({ ...t, messages, proposals: await threadProposals(ctx, t.id) });
+    return c.json({
+      ...t,
+      messages,
+      proposals: await threadProposals(ctx, t.id),
+      drafts: await threadDrafts(ctx, t.id),
+    });
   });
 
   // --- proposals (decision D25) ---
@@ -250,7 +273,21 @@ export function registerCopilotRoutes(api: Hono<AuthEnv>, ctx: EngineContext, ap
   api.post("/copilot/proposals", async (c) => {
     const threadId = z.uuid().safeParse(c.req.header(COPILOT_THREAD_HEADER));
     if (!threadId.success) throw new DomainError("proposals are made from a copilot conversation", 400, "no_thread");
-    return c.json(await proposeApplication(ctx, c.get("user"), threadId.data, await c.req.json()), 201);
+    const body = (await c.req.json()) as { kind?: string };
+    // No kind: an application (D25). Tasks and approval requests name theirs (D26).
+    if (body.kind === "create_task" || body.kind === "request_approval")
+      return c.json(await proposeOther(ctx, c.get("user"), threadId.data, body), 201);
+    const { kind: _k, ...rest } = body as Record<string, unknown>;
+    return c.json(
+      await proposeApplication(ctx, c.get("user"), threadId.data, body.kind === "create_application" ? rest : body),
+      201,
+    );
+  });
+  /** Saves a copilot draft in the caller's thread. Sends nothing. */
+  api.post("/copilot/drafts", async (c) => {
+    const threadId = z.uuid().safeParse(c.req.header(COPILOT_THREAD_HEADER));
+    if (!threadId.success) throw new DomainError("drafts are made from a copilot conversation", 400, "no_thread");
+    return c.json(await createDraft(ctx, c.get("user"), threadId.data, await c.req.json()), 201);
   });
   /** The user's Confirm click (staff UI only; not reachable from the copilot's client). */
   api.post("/copilot/proposals/:id/confirm", async (c) =>

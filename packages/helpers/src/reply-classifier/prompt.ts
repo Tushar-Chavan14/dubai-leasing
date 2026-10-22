@@ -40,3 +40,40 @@ export const OFFER_CRITERIA: Record<OfferIntent, string> = {
   other: "Something else that needs a person",
   none: "None of the above, or the comment is empty or unclear",
 };
+
+/** Payment reply comment (step 8): the tenant pressed Paid, Will pay, Dispute or Need time. */
+export const PAYMENT_INTENTS = [
+  "paid",
+  "will_pay",
+  "dispute",
+  "needs_time",
+  "hardship",
+  "complaint",
+  "other",
+  "none",
+] as const;
+export type PaymentIntent = (typeof PAYMENT_INTENTS)[number];
+
+export const PAYMENT_CRITERIA: Record<PaymentIntent, string> = {
+  paid: "Says the rent was already paid or transferred",
+  will_pay: "Promises to pay, possibly by a date",
+  dispute: "Disputes the amount, the charge or that it is owed",
+  needs_time: "Asks for more time or an instalment plan",
+  hardship: "Describes financial hardship, job loss, illness or an emergency",
+  complaint: "Raises a problem with the property or the landlord",
+  other: "Something else that needs a person",
+  none: "None of the above, or the comment is empty or unclear",
+};
+
+/** Move-in report comment (step 7): the tenant pressed Agree or Disagree. */
+export const MOVE_IN_INTENTS = ["agrees", "damage_found", "missing_item", "complaint", "other", "none"] as const;
+export type MoveInIntent = (typeof MOVE_IN_INTENTS)[number];
+
+export const MOVE_IN_CRITERIA: Record<MoveInIntent, string> = {
+  agrees: "Confirms the report as it is",
+  damage_found: "Points out damage, dirt or defects not in the report",
+  missing_item: "Says something is missing (keys, cards, appliances, furniture)",
+  complaint: "Raises a problem with the property or the landlord",
+  other: "Something else that needs a person",
+  none: "None of the above, or the comment is empty or unclear",
+};

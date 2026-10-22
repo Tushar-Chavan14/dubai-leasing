@@ -1,6 +1,12 @@
 import type { StaffRole } from "@leasing/core";
 import type { CopilotTool } from "../types.ts";
 import { computeRenewalCap } from "./compute-renewal-cap.ts";
+import { createTaskTool } from "./create-task.ts";
+import { draftApprovalNote } from "./draft-approval-note.ts";
+import { draftEmail } from "./draft-email.ts";
+import { listPayments } from "./list-payments.ts";
+import { listTickets } from "./list-tickets.ts";
+import { proposeApproval } from "./propose-approval.ts";
 import { explainRule } from "./explain-rule.ts";
 import { findAvailableUnits } from "./find-available-units.ts";
 import { getHelperRun } from "./get-helper-run.ts";
@@ -28,7 +34,13 @@ export const copilotTools: readonly CopilotTool[] = [
   explainRule,
   computeRenewalCap,
   findAvailableUnits,
+  listPayments,
+  listTickets,
   proposeApplication,
+  createTaskTool,
+  proposeApproval,
+  draftEmail,
+  draftApprovalNote,
 ] as readonly CopilotTool[];
 
 /** Tools a role may see. The engine checks the role again on every call. */

@@ -31,11 +31,13 @@ const ALLOWED = [
   /^\/api\/rules$/,
   /^\/api\/rules\/[A-Za-z0-9.%-]+(\?leaseEndOn=\d{4}-\d{2}-\d{2})?$/,
   new RegExp(`^/api/helper-runs/${ID}$`),
+  new RegExp(`^/api/leases/${ID}/payments$`),
+  new RegExp(`^/api/leases/${ID}/complaints$`),
   /^\/api\/available-units(\?(bedrooms=[0-4]|community=[^&]*|maxRentFils=\d{1,12}|code=[A-Za-z0-9-]{2,40})(&(bedrooms=[0-4]|community=[^&]*|maxRentFils=\d{1,12}|code=[A-Za-z0-9-]{2,40}))*)?$/,
 ];
 
 /** The only write the copilot can make: store a proposal. Confirm and cancel are never reachable. */
-const PROPOSE_ALLOWED = [/^\/api\/copilot\/proposals$/];
+const PROPOSE_ALLOWED = [/^\/api\/copilot\/proposals$/, /^\/api\/copilot\/drafts$/];
 
 function checkProposePath(path: string): string {
   if (!PROPOSE_ALLOWED.some((r) => r.test(path))) throw new EngineError(400, "invalid engine path");

@@ -119,14 +119,15 @@ const PROCESS = [
 ].join("\n");
 
 /** Every listed unit as one line each (no prices), plus how it works; the source for general questions. */
+const yesWord = (b: boolean | null, word: string) => (b === null ? null : b ? word : `not ${word}`);
+
 export function listingsSheet(listings: readonly UnitFacts[]): string {
-  const yes = (b: boolean | null, word: string) => (b === null ? null : b ? word : `not ${word}`);
   const lines = listings.map((u) =>
     [
       `- ${u.code}: ${u.bedrooms === 0 ? "studio" : `${u.bedrooms ?? "?"} bedroom`}`,
       `${u.building}, ${u.community}`,
       u.areaSqft ? `${u.areaSqft} sq ft` : null,
-      yes(u.furnished, "furnished"),
+      yesWord(u.furnished, "furnished"),
       u.parkingSpaces !== null ? `${u.parkingSpaces} parking` : null,
     ]
       .filter(Boolean)

@@ -17,7 +17,15 @@ import {
 } from "../../../../lib/format";
 import { CONTRACT_CLAUSES, type ContractClauseId } from "@leasing/core";
 import type { Me } from "../../../../lib/types";
+import { ApprovalNoteForm } from "../../../../components/work-forms";
 import { DecisionForm } from "./decision-form";
+
+interface NoteRow {
+  id: string;
+  author: string;
+  body: string;
+  createdAt: string;
+}
 
 export const metadata: Metadata = { title: "Approval" };
 
@@ -69,6 +77,17 @@ const FIELD_ORDER: Record<string, string[]> = {
   ],
   price_out_of_range: ["askingRentFils", "rangeMinFils", "rangeMaxFils", "unitCode", "bedrooms", "policyVersion"],
   vacate_notice: ["ground", "servedOn", "deliveryMethod", "leaseEndOn", "propertyKind", "rulesVersion", "note"],
+  formal_reminder: [
+    "seq",
+    "of",
+    "amountFils",
+    "dueOn",
+    "paymentStatus",
+    "friendlyReminders",
+    "lateRentDays",
+    "rulesVersion",
+  ],
+  safety_complaint: ["category", "urgency", "atRisk", "safety", "legalThreat"],
   kyc_review: [
     "fullNameEn",
     "nationality",
@@ -198,14 +217,32 @@ function ContractProposal({ p, leaseId, sources }: { p: Record<string, unknown>;
   );
 }
 
-export default async function ApprovalPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function ApprovalPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ draft?: string }>;
+}) {
   const { id } = await params;
-  const [a, me, health] = await Promise.all([
+  const { draft: draftId } = await searchParams;
+  const [a, me, health, notes, draftRow] = await Promise.all([
     get<ApprovalDetail>(`/api/approvals/${id}`),
     get<Me>("/api/me"),
     publicGet<{ today: string }>("/health"),
+    get<NoteRow[]>(`/api/approvals/${id}/notes`),
+    draftId
+      ? get<{ id: string; kind: string; approvalId: string | null; body: string; status: string }>(
+          `/api/copilot/drafts/${encodeURIComponent(draftId)}`,
+        )
+      : Promise.resolve(null),
   ]);
   if (!a) notFound();
+  // The user's own copilot draft for this approval prefills the note form.
+  const draft =
+    draftRow && draftRow.kind === "approval_note" && draftRow.approvalId === a.id && draftRow.status === "draft"
+      ? draftRow
+      : null;
   const today = health?.today ?? "";
   const ownProposal = !!me && (a.proposedBy === `user:${me.id}` || a.proposedBy === `copilot:${me.id}`);
   const canDecide = a.status === "pending" && canDecideApproval(a, me);
@@ -427,6 +464,26 @@ export default async function ApprovalPage({ params }: { params: Promise<{ id: s
                 <dd>{a.decisionNote ?? "—"}</dd>
               </dl>
             )}
+          </section>
+
+          <section className="panel panel-pad" id="notes" aria-labelledby="notes-h">
+            <h2 id="notes-h" className="section-title">
+              Notes for the approver
+            </h2>
+            {(notes ?? []).length > 0 && (
+              <ul className="feed" style={{ marginBottom: 12 }}>
+                {(notes ?? []).map((n) => (
+                  <li key={n.id}>
+                    <span className="dot" />
+                    <span className="what" style={{ whiteSpace: "pre-wrap" }}>
+                      <b>{actorLabel(n.author)}</b> <span>{n.body}</span>
+                    </span>
+                    <time dateTime={n.createdAt}>{dateTime(n.createdAt)}</time>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <ApprovalNoteForm key={draft?.id ?? "new"} approvalId={a.id} draft={draft} />
           </section>
 
           {a.entity && (

@@ -1,8 +1,17 @@
 "use client";
 
+import Link from "next/link";
 import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { IconCheck, IconSpark, IconWarning } from "../../lib/icons";
-import { type ChatMessage, type PageRef, type ProposalView, type ToolStep, useCopilotChat } from "./use-chat";
+import { roleLabel, shortDate } from "../../lib/format";
+import {
+  type ChatMessage,
+  type DraftView,
+  type PageRef,
+  type ProposalView,
+  type ToolStep,
+  useCopilotChat,
+} from "./use-chat";
 
 const TOOL_LABEL: Record<string, string> = {
   search_entities: "Searched units and leases",
@@ -16,6 +25,12 @@ const TOOL_LABEL: Record<string, string> = {
   compute_renewal_cap: "Worked out the rent cap (rulebook)",
   find_available_units: "Checked available units and viewing slots",
   propose_application: "Prepared an application for you to confirm",
+  list_payments: "Checked rent payments",
+  list_tickets: "Checked maintenance tickets",
+  create_task: "Prepared a task for you to confirm",
+  propose_approval: "Prepared an approval request for you to confirm",
+  draft_email: "Drafted an email for you to review",
+  draft_approval_note: "Drafted a note for you to review",
 };
 
 const STARTERS: Record<PageRef["kind"] | "none", string[]> = {
@@ -106,7 +121,99 @@ function Steps({ tools }: { tools: ToolStep[] }) {
 }
 
 /** Engine codes that mark a proposal failed (the booking can't happen as proposed). */
-const FAILED_CODES = new Set(["viewing_slot_taken", "unit_not_bookable", "viewing_in_past", "already_applied"]);
+const FAILED_CODES = new Set([
+  "viewing_slot_taken",
+  "unit_not_bookable",
+  "viewing_in_past",
+  "already_applied",
+  "past_date",
+  "not_overdue",
+  "already_sent",
+  "vacate_invalid",
+  "not_running",
+]);
+
+const PROPOSAL_TITLE: Record<ProposalView["kind"], string> = {
+  create_application: "New application",
+  create_task: "New task",
+  request_approval: "Approval request",
+};
+
+const CONFIRM_NOTE: Record<ProposalView["kind"], string> = {
+  create_application: "Confirming creates the application and emails the viewing invitation.",
+  create_task: "Confirming adds the task to the lease.",
+  request_approval: "Confirming sends it to the approver's inbox. Nothing reaches the tenant until it is approved.",
+};
+
+const GROUND: Record<string, string> = {
+  sale: "Sale",
+  own_use: "Landlord's own use",
+  major_works: "Major works",
+  demolition: "Demolition",
+};
+
+/** What the proposal would do, per kind. */
+function ProposalFacts({ p }: { p: ProposalView }) {
+  if (p.kind === "create_application") {
+    const s = p.summary;
+    return (
+      <dl>
+        <dt>Unit</dt>
+        <dd>
+          {s.unitCode}, {s.unit} · {s.askingRent} a year
+        </dd>
+        <dt>Applicant</dt>
+        <dd>
+          {s.applicant} · {s.email}
+        </dd>
+        <dt>Viewing</dt>
+        <dd>{s.viewingLabel} (Dubai)</dd>
+      </dl>
+    );
+  }
+  if (p.kind === "create_task") {
+    const s = p.summary;
+    return (
+      <dl>
+        <dt>Lease</dt>
+        <dd className="ref">{s.leaseRef}</dd>
+        <dt>Task</dt>
+        <dd>{s.title}</dd>
+        <dt>For</dt>
+        <dd>
+          {roleLabel(s.assigneeRole)}
+          {s.dueOn ? `, by ${shortDate(s.dueOn)}` : ""}
+        </dd>
+      </dl>
+    );
+  }
+  const s = p.summary;
+  return s.gate === "formal_reminder" ? (
+    <dl>
+      <dt>Gate</dt>
+      <dd>Formal late-payment reminder</dd>
+      <dt>Lease</dt>
+      <dd className="ref">{s.leaseRef}</dd>
+      <dt>Payment</dt>
+      <dd>
+        Instalment {s.instalment}, {s.amount}, due {shortDate(s.dueOn)} ({s.status})
+      </dd>
+    </dl>
+  ) : (
+    <dl>
+      <dt>Gate</dt>
+      <dd>12-month repossession notice</dd>
+      <dt>Lease</dt>
+      <dd className="ref">{s.leaseRef}</dd>
+      <dt>Ground</dt>
+      <dd>{GROUND[s.ground] ?? s.ground}</dd>
+      <dt>Served</dt>
+      <dd>
+        {shortDate(s.servedOn)} by {s.deliveryMethod.replace("_", " ")}
+      </dd>
+    </dl>
+  );
+}
 
 const PROPOSAL_STATUS: Record<ProposalView["status"], string> = {
   pending: "Waiting for your confirmation",
@@ -117,8 +224,8 @@ const PROPOSAL_STATUS: Record<ProposalView["status"], string> = {
 };
 
 /**
- * A proposed application (decision D25). Nothing exists until the user clicks Confirm here;
- * the engine then creates it as the New application form would and emails the invitation.
+ * A proposed action (decisions D25, D26). Nothing exists until the user clicks Confirm here; the
+ * engine then does it as the normal form would, as this user.
  */
 function ProposalCard({ p, onChange }: { p: ProposalView; onChange: (v: ProposalView) => void }) {
   const [busy, setBusy] = useState(false);
@@ -142,11 +249,10 @@ function ProposalCard({ p, onChange }: { p: ProposalView; onChange: (v: Proposal
       setBusy(false);
     }
   };
-  const s = p.summary;
   return (
     <div className="cp-proposal" data-status={p.status}>
       <div className="cp-proposal-head">
-        <strong>New application</strong>
+        <strong>{PROPOSAL_TITLE[p.kind]}</strong>
         <span
           className="status"
           data-tone={p.status === "confirmed" ? "good" : p.status === "pending" ? "warn" : "quiet"}
@@ -154,21 +260,10 @@ function ProposalCard({ p, onChange }: { p: ProposalView; onChange: (v: Proposal
           {PROPOSAL_STATUS[p.status]}
         </span>
       </div>
-      <dl>
-        <dt>Unit</dt>
-        <dd>
-          {s.unitCode}, {s.unit} · {s.askingRent} a year
-        </dd>
-        <dt>Applicant</dt>
-        <dd>
-          {s.applicant} · {s.email}
-        </dd>
-        <dt>Viewing</dt>
-        <dd>{s.viewingLabel} (Dubai)</dd>
-      </dl>
+      <ProposalFacts p={p} />
       {p.status === "pending" && (
         <>
-          <p className="cp-proposal-note">Confirming creates the application and emails the viewing invitation.</p>
+          <p className="cp-proposal-note">{CONFIRM_NOTE[p.kind]}</p>
           <div className="cp-proposal-actions">
             <button type="button" className="btn primary small" disabled={busy} onClick={() => void act("confirm")}>
               Confirm
@@ -188,8 +283,55 @@ function ProposalCard({ p, onChange }: { p: ProposalView; onChange: (v: Proposal
           ; the invitation is on its way.
         </p>
       )}
+      {p.status === "confirmed" && p.result?.taskId && (
+        <p className="cp-proposal-note">
+          <IconCheck size={13} /> Task added.{" "}
+          <Link className="link" href="/tasks?for=all">
+            Open tasks
+          </Link>
+        </p>
+      )}
+      {p.status === "confirmed" && p.result?.approvalId && (
+        <p className="cp-proposal-note">
+          <IconCheck size={13} /> Sent for approval.{" "}
+          <Link className="link" href={`/inbox/${p.result.approvalId}`}>
+            Open in the inbox
+          </Link>
+        </p>
+      )}
       {p.status === "failed" && p.result?.error && <p className="cp-error">{p.result.error}</p>}
       {error && p.status !== "failed" && <p className="cp-error">{error}</p>}
+    </div>
+  );
+}
+
+/** A draft the copilot wrote (D26). It opens in the normal form, where the user edits and sends it. */
+function DraftCard({ d }: { d: DraftView }) {
+  const href =
+    d.kind === "email" ? `/leases/${d.leaseId}?draft=${d.id}#email` : `/inbox/${d.approvalId}?draft=${d.id}#notes`;
+  return (
+    <div className="cp-proposal" data-status={d.status}>
+      <div className="cp-proposal-head">
+        <strong>
+          {d.kind === "email" ? `Draft email${d.leaseRef ? ` · ${d.leaseRef}` : ""}` : "Draft approval note"}
+        </strong>
+        <span className="status" data-tone={d.status === "used" ? "good" : "quiet"}>
+          {d.status === "used" ? "Used" : "Not sent"}
+        </span>
+      </div>
+      {d.subject && (
+        <p className="cp-draft-subject">
+          <b>{d.subject}</b>
+        </p>
+      )}
+      <p className="cp-draft-body">{d.body}</p>
+      {d.status === "draft" && (
+        <div className="cp-proposal-actions">
+          <Link className="btn small" href={href}>
+            {d.kind === "email" ? "Open in the email form" : "Open in the approval"}
+          </Link>
+        </div>
+      )}
     </div>
   );
 }
@@ -212,6 +354,9 @@ function Message({ m, onProposal }: { m: ChatMessage; onProposal: (v: ProposalVi
       )}
       {m.proposals?.map((p) => (
         <ProposalCard key={p.id} p={p} onChange={onProposal} />
+      ))}
+      {m.drafts?.map((d) => (
+        <DraftCard key={d.id} d={d} />
       ))}
       {m.status === "done" && m.unverified.length > 0 && (
         <p className="cp-unverified-note">
@@ -313,8 +458,8 @@ export function CopilotChat({
         )}
       </form>
       <p className="cp-foot">
-        Reads, and prepares applications you confirm. Approvals, notices and other changes happen in the app, by a
-        person.
+        Reads, drafts text for you to send, and prepares applications, tasks and approval requests you confirm.
+        Approvals, sending and other changes happen in the app, by a person.
         {chat.messages.length > 0 && !chat.busy && (
           <button type="button" className="cp-link" onClick={chat.reset}>
             New conversation

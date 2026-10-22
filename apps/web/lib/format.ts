@@ -247,6 +247,16 @@ export function actorLabel(actor: string): string {
 }
 
 export const STATE_LABELS: Record<string, string> = {
+  scheduled: "Due",
+  paid: "Paid",
+  overdue: "Overdue",
+  bounced: "Bounced",
+  triaging: "Being read",
+  review: "Needs triage",
+  escalated: "Escalated",
+  ticketed: "Ticket open",
+  in_progress: "In progress",
+  closed: "Closed",
   bot: "With the bot",
   handoff: "Needs an officer",
   PREP: "In preparation",

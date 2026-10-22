@@ -5,7 +5,9 @@ import {
   copilotMessages,
   copilotProposals,
   copilotThreads,
+  leases,
   parties,
+  payments,
   type Tx,
   units,
   withTx,
@@ -16,11 +18,13 @@ import type { EngineContext } from "../context.ts";
 import { conflict, DomainError, forbidden, notFound, unprocessable } from "../errors.ts";
 import { createApplication } from "./applications.ts";
 import { listedUnit, takenViewings } from "./availability.ts";
-import { appendEvent, getCompanyPolicy } from "./events.ts";
+import { FORMAL_PROPOSER_ROLES, proposeFormalReminder } from "./collections.ts";
+import { appendEvent, getCompanyPolicy, leaseRulesVersion } from "./events.ts";
+import { createStaffTaskTx, NewTask, proposeVacateNoticeTx, TASK_CREATOR_ROLES } from "./task-actions.ts";
 
 /**
- * Copilot proposals (decision D25). The copilot's `propose_application` tool stores a proposal
- * here and nothing else. Only the user's Confirm click in the chat (`confirmProposal`, called by
+ * Copilot proposals (decisions D25, D26). The copilot's propose tools (`propose_application`,
+ * `create_task`, `propose_approval`) store a proposal here and nothing else. Only the user's Confirm click in the chat (`confirmProposal`, called by
  * the staff UI with the user's own session) creates the application, through `createApplication`
  * with every check run again, as `copilot:<userId>`. Single-use, owner-only, expires.
  * Audit: this table is the record of proposals (created, cancelled, failed, expired); the tool
@@ -189,57 +193,30 @@ export async function confirmProposal(ctx: EngineContext, user: StaffUser, propo
   try {
     return await withTx(ctx.database, async (tx) => {
       const p = await lockOwn(tx, user, proposalId);
-      requireLeasing(user);
       const now = ctx.clock.now();
       assertPending(p, now.getTime());
-      const input = ProposeApplication.parse({
-        unitCode: p.payload.unitCode,
-        nameEn: p.payload.nameEn,
-        email: p.payload.email,
-        kind: p.payload.kind,
-        viewingAt: p.payload.viewingAt,
-      });
-      const actor = `copilot:${user.id}` as const;
-      let created: { id: string; ref: string };
+      let done: { result: Record<string, unknown>; entity: { kind: "application" | "lease"; id: string } };
       try {
-        // The unit row first, so two confirms for the same person and unit are served in turn.
-        await tx.db
-          .select({ id: units.id })
-          .from(units)
-          .where(eq(units.id, String(p.payload.unitId)))
-          .for("update");
-        const policy = await getCompanyPolicy(tx, ctx.clock.today());
-        if (!(await listedUnit(tx, String(p.payload.unitId), policy)))
-          throw unprocessable(`unit ${input.unitCode} can no longer be booked`, [], "unit_not_bookable");
-        await checkNoOpenApplication(tx, String(p.payload.unitId), input.email);
-        created = await createApplication(
-          ctx,
-          {
-            unitId: String(p.payload.unitId),
-            nameEn: input.nameEn,
-            email: input.email,
-            kind: input.kind,
-            viewingAt: new Date(input.viewingAt),
-            source: "copilot",
-          },
-          actor,
-          tx,
-        );
+        done =
+          p.kind === "create_task"
+            ? await confirmTask(ctx, tx, p, user)
+            : p.kind === "request_approval"
+              ? await confirmApprovalRequest(ctx, tx, p, user)
+              : await confirmApplication(ctx, tx, p, user);
       } catch (e) {
-        if (e instanceof DomainError) throw new CreateFailed(e);
+        if (e instanceof DomainError && e.status !== 403) throw new CreateFailed(e);
         throw e;
       }
       await appendEvent(tx, ctx, {
-        entity: { kind: "application", id: created.id },
+        entity: done.entity,
         type: "COPILOT_PROPOSAL_CONFIRMED",
         actor: `user:${user.id}`,
-        payload: { proposalId: p.id, threadId: p.threadId },
-        rulesVersion: ctx.rulesVersion,
+        payload: { proposalId: p.id, threadId: p.threadId, kind: p.kind },
+        rulesVersion: done.entity.kind === "lease" ? await leaseRulesVersion(tx, done.entity.id) : ctx.rulesVersion,
       });
-      const result = { applicationId: created.id, ref: created.ref };
       const [row] = await tx.db
         .update(copilotProposals)
-        .set({ status: "confirmed", result, decidedAt: now })
+        .set({ status: "confirmed", result: done.result, decidedAt: now })
         .where(eq(copilotProposals.id, p.id))
         .returning();
       return proposalView(row!, now.getTime());
@@ -255,6 +232,166 @@ export async function confirmProposal(ctx: EngineContext, user: StaffUser, propo
     });
     throw e.reason;
   }
+}
+
+/** A new application with its viewing, exactly as the New application form does. */
+async function confirmApplication(ctx: EngineContext, tx: Tx, p: ProposalRow, user: StaffUser) {
+  requireLeasing(user);
+  const input = ProposeApplication.parse({
+    unitCode: p.payload.unitCode,
+    nameEn: p.payload.nameEn,
+    email: p.payload.email,
+    kind: p.payload.kind,
+    viewingAt: p.payload.viewingAt,
+  });
+  // The unit row first, so two confirms for the same person and unit are served in turn.
+  await tx.db
+    .select({ id: units.id })
+    .from(units)
+    .where(eq(units.id, String(p.payload.unitId)))
+    .for("update");
+  const policy = await getCompanyPolicy(tx, ctx.clock.today());
+  if (!(await listedUnit(tx, String(p.payload.unitId), policy)))
+    throw unprocessable(`unit ${input.unitCode} can no longer be booked`, [], "unit_not_bookable");
+  await checkNoOpenApplication(tx, String(p.payload.unitId), input.email);
+  const created = await createApplication(
+    ctx,
+    {
+      unitId: String(p.payload.unitId),
+      nameEn: input.nameEn,
+      email: input.email,
+      kind: input.kind,
+      viewingAt: new Date(input.viewingAt),
+      source: "copilot",
+    },
+    `copilot:${user.id}`,
+    tx,
+  );
+  return {
+    result: { applicationId: created.id, ref: created.ref },
+    entity: { kind: "application" as const, id: created.id },
+  };
+}
+
+/** A task on a lease, as the staff "Add task" form creates it (D26). */
+async function confirmTask(ctx: EngineContext, tx: Tx, p: ProposalRow, user: StaffUser) {
+  if (!TASK_CREATOR_ROLES.includes(user.role)) throw forbidden(`${user.role} can't create tasks`);
+  const input = NewTask.parse(p.payload);
+  const r = await createStaffTaskTx(ctx, tx, `copilot:${user.id}`, input);
+  return { result: { taskId: r.taskId }, entity: { kind: "lease" as const, id: input.leaseId } };
+}
+
+/**
+ * A pending approval through the same route the UI uses (D26): a formal late-payment reminder or
+ * a served 12-month notice. It lands in the inbox; this user can never approve it.
+ */
+async function confirmApprovalRequest(ctx: EngineContext, tx: Tx, p: ProposalRow, user: StaffUser) {
+  const input = ApprovalRequestInput.parse(p.payload);
+  const actor = `copilot:${user.id}` as const;
+  if (input.gate === "formal_reminder") {
+    if (!FORMAL_PROPOSER_ROLES.includes(user.role)) throw forbidden(`${user.role} can't propose a formal reminder`);
+    const [pay] = await tx.db.select().from(payments).where(eq(payments.id, input.paymentId)).for("update");
+    const [lease] = await tx.db.select().from(leases).where(eq(leases.id, input.leaseId));
+    if (!pay || !lease || pay.leaseId !== lease.id) throw notFound("payment");
+    const approvalId = await proposeFormalReminder(ctx, tx, lease, pay, actor);
+    return { result: { approvalId }, entity: { kind: "lease" as const, id: lease.id } };
+  }
+  if (!TASK_CREATOR_ROLES.includes(user.role)) throw forbidden(`${user.role} can't record a repossession notice`);
+  const r = await proposeVacateNoticeTx(ctx, tx, actor, input.leaseId, input);
+  return { result: { approvalId: r.id }, entity: { kind: "lease" as const, id: input.leaseId } };
+}
+
+// ---------------------------------------------------------------- task and approval proposals (D26)
+
+export const ApprovalRequestInput = z.discriminatedUnion("gate", [
+  z.object({ gate: z.literal("formal_reminder"), leaseId: z.uuid(), paymentId: z.uuid() }),
+  z.object({
+    gate: z.literal("vacate_notice"),
+    leaseId: z.uuid(),
+    ground: z.enum(["sale", "own_use", "major_works", "demolition"]),
+    servedOn: z.iso.date(),
+    deliveryMethod: z.enum(["notary", "registered_mail"]),
+    note: z.string().trim().max(2000).optional(),
+  }),
+]);
+
+/**
+ * Stores a task or approval proposal (D26). Validated now as far as it can be without writing;
+ * every check runs again on Confirm, through the same code the staff UI calls.
+ */
+export async function proposeOther(ctx: EngineContext, user: StaffUser, threadId: string, raw: unknown) {
+  const body = z
+    .object({ kind: z.enum(["create_task", "request_approval"]) })
+    .loose()
+    .parse(raw);
+  return withTx(ctx.database, async (tx) => {
+    const [thread] = await tx.db
+      .select({ id: copilotThreads.id })
+      .from(copilotThreads)
+      .where(and(eq(copilotThreads.id, threadId), eq(copilotThreads.userId, user.id)));
+    if (!thread) throw notFound("conversation");
+    let payload: Record<string, unknown>;
+    let summary: Record<string, unknown>;
+    if (body.kind === "create_task") {
+      if (!TASK_CREATOR_ROLES.includes(user.role)) throw forbidden(`${user.role} can't create tasks`);
+      const t = NewTask.parse(body);
+      const [lease] = await tx.db.select({ ref: leases.ref }).from(leases).where(eq(leases.id, t.leaseId));
+      if (!lease) throw notFound("lease");
+      if (t.dueOn && t.dueOn < ctx.clock.today()) throw unprocessable("the due date is in the past", [], "past_date");
+      payload = t;
+      summary = { leaseRef: lease.ref, title: t.title, assigneeRole: t.assigneeRole, dueOn: t.dueOn ?? null };
+    } else {
+      const a = ApprovalRequestInput.parse(body);
+      const [lease] = await tx.db.select().from(leases).where(eq(leases.id, a.leaseId));
+      if (!lease) throw notFound("lease");
+      if (a.gate === "formal_reminder") {
+        if (!FORMAL_PROPOSER_ROLES.includes(user.role)) throw forbidden(`${user.role} can't propose a formal reminder`);
+        const [pay] = await tx.db.select().from(payments).where(eq(payments.id, a.paymentId));
+        if (!pay || pay.leaseId !== lease.id) throw notFound("payment");
+        if (pay.status !== "overdue" && pay.status !== "bounced")
+          throw conflict(
+            `instalment ${pay.seq} is ${pay.status}: a formal reminder is only for an overdue or bounced payment`,
+            "not_overdue",
+          );
+        if (pay.formalReminderSentOn)
+          throw conflict("a formal reminder was already sent for this payment", "already_sent");
+        summary = {
+          gate: "formal_reminder",
+          leaseRef: lease.ref,
+          instalment: pay.seq,
+          amount: formatAed(pay.amountFils),
+          dueOn: pay.dueOn,
+          status: pay.status,
+        };
+      } else {
+        if (!TASK_CREATOR_ROLES.includes(user.role)) throw forbidden(`${user.role} can't record a repossession notice`);
+        summary = {
+          gate: "vacate_notice",
+          leaseRef: lease.ref,
+          ground: a.ground,
+          servedOn: a.servedOn,
+          deliveryMethod: a.deliveryMethod,
+          leaseEndOn: lease.endOn,
+        };
+      }
+      payload = a;
+    }
+    const now = ctx.clock.now();
+    const [row] = await tx.db
+      .insert(copilotProposals)
+      .values({
+        id: newId(),
+        threadId,
+        userId: user.id,
+        kind: body.kind,
+        payload,
+        summary,
+        expiresAt: new Date(now.getTime() + PROPOSAL_TTL_MS),
+        createdAt: now,
+      })
+      .returning();
+    return proposalView(row!, now.getTime());
+  });
 }
 
 export async function cancelProposal(ctx: EngineContext, user: StaffUser, proposalId: string) {

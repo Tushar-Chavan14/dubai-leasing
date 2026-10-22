@@ -268,5 +268,57 @@ application's own email path sends the viewing invitation.
   `/api/copilot/proposals` (with the thread id); confirm, cancel and every other write route are
   refused before a request is made. Phone numbers are masked before the model sees them, so the
   copilot doesn't take them; staff add them in the application.
-- `create_task` and `propose_approval` (copilot v2) will reuse the same proposal and Confirm
-  step.
+- `create_task` and `propose_approval` (copilot v2) reuse the same proposal and Confirm step
+  (D26).
+
+## D26 — Copilot v2: tasks and approval requests on Confirm; drafts the user sends
+Extends D25 and AGENTS.md rule 11. Phase 3.
+- **Two more proposal kinds.** `create_task` (leasing roles, as `POST /api/tasks`) and
+  `propose_approval` (`formal_reminder` for a payment: leasing roles and finance, as the
+  Payments panel; `vacate_notice` for a lease: leasing roles) store a `copilot_proposals` row with
+  `kind` `create_task` or `request_approval`. Proposing creates nothing. Confirm (owner, once,
+  30 minutes) runs the same engine function as the UI (`createStaffTaskTx`, `requestApproval`
+  after the gate's own checks) as the user, with `copilot:<userId>` as creator or proposer and a
+  `COPILOT_PROPOSAL_CONFIRMED` event. A confirmed approval request is only a pending approval:
+  approving stays in the inbox, and the person who proposed it can't approve it.
+- **Drafts are never sent.** `draft_email` (leasing roles, finance) and `draft_approval_note`
+  (any staff) save a `copilot_drafts` row in the user's thread. The chat card opens the normal
+  form, prefilled; the person edits and clicks Send (mail adapter, evidence, template
+  `staff_message`) or Post. A draft is used once, by its owner. The 12-month notice is never an
+  email draft.
+- **Client limits.** `EngineClient.propose` may POST only `/api/copilot/proposals` and
+  `/api/copilot/drafts`. Payments and complaints are readable (`list_payments`,
+  `list_tickets`); photos and proofs are not.
+- **Why:** staff asked the copilot to do the follow-up work it already explains. Each action
+  still needs a person's click on a card that shows exactly what will happen.
+
+## D27 — Collections: finance confirms every payment; only a sent formal reminder starts the clock
+Phase 3, product owner's choice.
+- The instalment schedule is pure code (`paymentSchedule`); nothing is marked paid by the system
+  or a model. Finance (or a leasing manager) records paid or bounced. Imported running leases
+  assume earlier instalments paid, flagged, with a finance check task; finance can still record
+  one of them as bounced, which reopens it (audited).
+- Reminders are fixed templates (no model wording). After `friendlyRemindersBeforeFormal`
+  friendly reminders, a `formal_reminder` approval (leasing manager, always) is drafted; the
+  proposal's late-rent days must equal the lease's rulebook.
+- The eviction-eligible date is the SMTP-accepted send date (Dubai) plus
+  `lateRentDaysAfterFormalReminder` from the rulebook pinned on the lease. When it passes, a
+  manager gets a task. The system never starts RDC action. CONFIRM WITH LEGAL that an emailed
+  formal reminder counts as notice; a reminder served by notary or courier is recorded by a
+  person outside the system for now.
+- Payment replies from the portal never change amounts or dates; "paid" goes to finance to
+  verify.
+
+## D28 — Complaint acknowledgement: Qwen writes it, code checks it, a template backs it
+Phase 3, product owner's choice.
+- Complaint Triage classifies with tev1 and routes in code (escalate, review, ticket). The
+  acknowledgement is written by the chat model from the category and urgency band only; the
+  tenant's text never reaches it, so it can't be steered by the complaint.
+- `checkAck` drops any text with a number, time word, money word, promise or commitment
+  ("will fix", "we'll", "shortly", "free", "refund", "rent reduction", URLs and emails; Arabic
+  equivalents). Then, or when the model or the helper fails, the fixed EN/AR template is sent.
+  The tenant always gets an acknowledgement from the portal; it is sent automatically because
+  it promises nothing.
+- Safety and legal-threat reports go to an officer at once (`safety_complaint` approval + task);
+  approving opens an emergency ticket.
+

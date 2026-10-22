@@ -4,7 +4,7 @@ import { and, asc, eq } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
 import { conflict, notFound, unprocessable } from "../errors.ts";
 import { advance } from "./advance.ts";
-import { appendEvent } from "./events.ts";
+import { appendEvent, leaseRulesVersion } from "./events.ts";
 import { addTenancyPhoto } from "./tenancy-files.ts";
 
 /**
@@ -34,7 +34,8 @@ export function roomsFor(unit: { bedrooms: number | null; bathrooms: number | nu
   const beds = unit.bedrooms ?? 1;
   const baths = Math.max(1, unit.bathrooms ?? 1);
   const living = beds === 0 ? ["Main room"] : ["Living room"];
-  const bedrooms = beds === 0 ? [] : Array.from({ length: beds }, (_, i) => (beds === 1 ? "Bedroom" : `Bedroom ${i + 1}`));
+  const bedrooms =
+    beds === 0 ? [] : Array.from({ length: beds }, (_, i) => (beds === 1 ? "Bedroom" : `Bedroom ${i + 1}`));
   const bathrooms = Array.from({ length: baths }, (_, i) => (baths === 1 ? "Bathroom" : `Bathroom ${i + 1}`));
   return [...living, "Kitchen", ...bedrooms, ...bathrooms];
 }
@@ -71,7 +72,13 @@ export async function moveInStatus(ctx: EngineContext, tx: Tx, leaseId: string) 
   if (!lease) throw notFound("lease");
   const inspection = await ensureMoveInInspection(ctx, tx, leaseId);
   const photos = await tx.db
-    .select({ id: documents.id, room: documents.room, kind: documents.kind, uploadedBy: documents.uploadedBy, createdAt: documents.createdAt })
+    .select({
+      id: documents.id,
+      room: documents.room,
+      kind: documents.kind,
+      uploadedBy: documents.uploadedBy,
+      createdAt: documents.createdAt,
+    })
     .from(documents)
     .where(and(eq(documents.leaseId, leaseId), eq(documents.inspectionId, inspection.id)))
     .orderBy(asc(documents.createdAt));
@@ -80,7 +87,11 @@ export async function moveInStatus(ctx: EngineContext, tx: Tx, leaseId: string) 
   );
   const missing = [
     ...(lease.ejariNo ? [] : ["Ejari number missing"]),
-    ...items.filter((i) => !i.done).map((i) => (i.kind === "room" ? `no condition photo of the ${i.label.toLowerCase()}` : `${i.label}: not ticked`)),
+    ...items
+      .filter((i) => !i.done)
+      .map((i) =>
+        i.kind === "room" ? `no condition photo of the ${i.label.toLowerCase()}` : `${i.label}: not ticked`,
+      ),
   ];
   return { inspectionId: inspection.id, status: inspection.status, items, photos, missing, ejariNo: lease.ejariNo };
 }
@@ -93,7 +104,13 @@ async function lockMoveIn(tx: Tx, leaseId: string) {
 }
 
 /** Staff tick (or untick) a checklist item. */
-export async function tickMoveInItem(ctx: EngineContext, leaseId: string, itemId: string, done: boolean, user: StaffUser) {
+export async function tickMoveInItem(
+  ctx: EngineContext,
+  leaseId: string,
+  itemId: string,
+  done: boolean,
+  user: StaffUser,
+) {
   return withTx(ctx.database, async (tx) => {
     await lockMoveIn(tx, leaseId);
     const inspection = await ensureMoveInInspection(ctx, tx, leaseId);
@@ -113,13 +130,20 @@ export async function tickMoveInItem(ctx: EngineContext, leaseId: string, itemId
       type: done ? "MOVE_IN_ITEM_TICKED" : "MOVE_IN_ITEM_UNTICKED",
       actor: `user:${user.id}`,
       payload: { item: itemId, label: item.label },
+      rulesVersion: await leaseRulesVersion(tx, leaseId),
     });
     return moveInStatus(ctx, tx, leaseId);
   });
 }
 
 /** Staff add a condition photo of one room (the room must be on the checklist). */
-export async function addConditionPhoto(ctx: EngineContext, leaseId: string, room: string, bytes: Uint8Array, user: StaffUser) {
+export async function addConditionPhoto(
+  ctx: EngineContext,
+  leaseId: string,
+  room: string,
+  bytes: Uint8Array,
+  user: StaffUser,
+) {
   const inspectionId = await withTx(ctx.database, async (tx) => {
     await lockMoveIn(tx, leaseId);
     const inspection = await ensureMoveInInspection(ctx, tx, leaseId);
@@ -127,7 +151,11 @@ export async function addConditionPhoto(ctx: EngineContext, leaseId: string, roo
       throw unprocessable(`"${room}" is not a room on this checklist`, [], "invalid_room");
     return inspection.id;
   });
-  return addTenancyPhoto(ctx, { leaseId, kind: "condition_photo", uploadedBy: `user:${user.id}`, room, inspectionId }, bytes);
+  return addTenancyPhoto(
+    ctx,
+    { leaseId, kind: "condition_photo", uploadedBy: `user:${user.id}`, room, inspectionId },
+    bytes,
+  );
 }
 
 /** Removes a staff condition photo while the lease is still moving in (the file stays, content-addressed). */
@@ -145,6 +173,7 @@ export async function removeConditionPhoto(ctx: EngineContext, leaseId: string, 
       type: "PHOTO_REMOVED",
       actor: `user:${user.id}`,
       payload: { documentId: doc.id, room: doc.room },
+      rulesVersion: await leaseRulesVersion(tx, leaseId),
     });
     return { ok: true };
   });

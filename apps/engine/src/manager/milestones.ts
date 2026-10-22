@@ -1,4 +1,13 @@
-import { addDays, addYears, type CalendarDate, formatAed, maskPiiText, newId, startOfDubaiDay } from "@leasing/core";
+import {
+  type Actor,
+  addDays,
+  addYears,
+  type CalendarDate,
+  formatAed,
+  maskPiiText,
+  newId,
+  startOfDubaiDay,
+} from "@leasing/core";
 import { approvals, deadlines, leases, outboundMessages, type Tx, tasks, units, withTx } from "@leasing/db";
 import {
   getRulebook,
@@ -16,6 +25,7 @@ import { requestApproval } from "./approvals.ts";
 import { appendEvent, getCompanyPolicy } from "./events.ts";
 import { runAndRecord } from "./helpers.ts";
 import { approvedUnsentNotice, enqueueNoticeSend, noticeSentForTerm } from "./outbound.ts";
+import { handlePaymentMilestone, isPaymentMilestone } from "./collections.ts";
 import { lookupSri } from "./sri.ts";
 import type { RenewalNoticeProposal } from "./gate-rules.ts";
 
@@ -110,6 +120,42 @@ export async function scheduleLeaseMilestones(ctx: EngineContext, tx: Tx, lease:
   }
 }
 
+/**
+ * Adds one pending deadline on a lease (idempotent on lease + milestone key) and, outside demo
+ * mode, its pg-boss job at 00:00 Asia/Dubai on the due date. Used by collections (phase 3).
+ */
+export async function addLeaseDeadline(
+  ctx: EngineContext,
+  tx: Tx,
+  d: { leaseId: string; milestone: string; dueOn: CalendarDate; rulesVersion: string; note: string },
+): Promise<boolean> {
+  const [row] = await tx.db
+    .insert(deadlines)
+    .values({
+      id: newId(),
+      entityKind: "lease",
+      entityId: d.leaseId,
+      milestone: d.milestone,
+      dueOn: d.dueOn,
+      status: "pending",
+      note: d.note,
+      rulesVersion: d.rulesVersion,
+    })
+    .onConflictDoNothing({ target: [deadlines.entityId, deadlines.milestone] })
+    .returning();
+  if (!row) return false;
+  if (!ctx.demoMode) {
+    const jobId = await ctx.scheduler.send(tx, {
+      name: DEADLINE_JOB,
+      data: { deadlineId: row.id },
+      singletonKey: `${d.leaseId}:${d.milestone}`,
+      startAfter: startOfDubaiDay(d.dueOn),
+    });
+    if (jobId) await tx.db.update(deadlines).set({ jobId }).where(eq(deadlines.id, row.id));
+  }
+  return true;
+}
+
 export type FireResult = { fired: true; milestone: string; skipped?: string } | { fired: false; reason: string };
 
 /**
@@ -135,11 +181,13 @@ export async function fireDeadline(ctx: EngineContext, deadlineId: string): Prom
       rulesVersion: d.rulesVersion,
     });
     const skipped =
-      d.entityKind === "lease"
-        ? await handleLeaseMilestone(ctx, tx, d.entityId, id, termEnd, eventId)
-        : d.entityKind === "application"
-          ? await handleApplicationMilestone(ctx, tx, d.entityId, d.milestone)
-          : null;
+      d.entityKind === "lease" && isPaymentMilestone(d.milestone)
+        ? await handlePaymentMilestone(ctx, tx, d.entityId, d.milestone)
+        : d.entityKind === "lease"
+          ? await handleLeaseMilestone(ctx, tx, d.entityId, id, termEnd, eventId)
+          : d.entityKind === "application"
+            ? await handleApplicationMilestone(ctx, tx, d.entityId, d.milestone)
+            : null;
     if (!skipped) return { fired: true, milestone: d.milestone };
     await tx.db.update(deadlines).set({ status: "skipped", note: skipped }).where(eq(deadlines.id, d.id));
     await appendEvent(tx, ctx, {
@@ -540,6 +588,8 @@ interface TaskInput {
   assigneeRole: (typeof tasks.$inferInsert)["assigneeRole"];
   dueOn: CalendarDate | null;
   dedupeKey: string;
+  /** Who created it: the system by default; `user:<id>` or `copilot:<id>` for staff tasks. */
+  createdBy?: Actor;
 }
 
 /** A person-led task on a lease (default), an application or an enquiry conversation, created once per dedupe key. */
@@ -556,9 +606,9 @@ export async function createTask(
       id: newId(),
       entityKind,
       entityId: leaseId,
-      createdBy: "system",
       createdAt: ctx.clock.now(),
       ...t,
+      createdBy: t.createdBy ?? "system",
     })
     .onConflictDoNothing({ target: tasks.dedupeKey })
     .returning({ id: tasks.id });
@@ -566,7 +616,7 @@ export async function createTask(
     await appendEvent(tx, ctx, {
       entity: { kind: entityKind, id: leaseId },
       type: "TASK_CREATED",
-      actor: "system",
+      actor: t.createdBy ?? "system",
       payload: { taskId: row.id, kind: t.kind, title: t.title },
     });
   }

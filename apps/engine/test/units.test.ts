@@ -6,7 +6,7 @@ import { LocalDiskStore, sniffImage } from "@leasing/adapters";
 import type { Database } from "@leasing/db";
 import { createApi } from "../src/api/app.ts";
 import { issueToken } from "../src/api/auth.ts";
-import { addStaff, freshDatabase, leaseCsv, noDb, testContext } from "./harness.ts";
+import { addStaff, completeMoveInChecklist, freshDatabase, leaseCsv, noDb, testContext } from "./harness.ts";
 import { importLeasesCsv } from "../src/manager/import.ts";
 import { jpegWithExif, pngWithText } from "../../../packages/adapters/test/fixtures.ts";
 import { advance } from "../src/manager/advance.ts";
@@ -287,6 +287,7 @@ describe.skipIf(noDb)("units API (Postgres)", () => {
     expect((await json("admin", `/api/units/${unit.id}/events`, "POST", { event: "WITHDRAW" })).status).toBe(422);
     expect((await json("admin", `/api/units/${unit.id}/events`, "POST", { event: "PUBLISH" })).status).toBe(422);
     t.clock.advanceDays(13);
+    await completeMoveInChecklist(t.ctx, unit.lease!.id);
     await advance(t.ctx, { kind: "lease", id: unit.lease!.id }, "MOVE_IN_COMPLETED", { actor: "system" });
     const after = (await (await call("admin", `/api/units/${unit.id}`)).json()) as { state: string };
     expect(after.state).toBe("OCCUPIED");

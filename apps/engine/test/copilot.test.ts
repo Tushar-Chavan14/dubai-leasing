@@ -205,6 +205,8 @@ describe.skipIf(noDb)("staff copilot (Postgres, scripted model)", () => {
       explain_rule: { rule: "rent_cap", lease: "TST-0101" },
       compute_renewal_cap: { lease: "TST-0101" },
       find_available_units: { bedrooms: 1 },
+      list_payments: { lease: "TST-0101" },
+      list_tickets: { lease: "TST-0101" },
     };
     // Read tools, for every role. The one propose tool has its own role tests (copilot-proposals.test.ts).
     const readTools = copilotTools.filter((t) => t.kind === "read");

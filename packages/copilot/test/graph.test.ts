@@ -184,16 +184,34 @@ describe("copilot tool loop (scripted model)", () => {
 });
 
 describe("registry and client", () => {
-  test("every tool reads, except exactly one propose tool (D25) for leasing roles only; no draft tools", () => {
-    const writers = copilotTools.filter((t) => t.kind !== "read");
-    expect(writers.map((t) => [t.name, t.kind])).toEqual([["propose_application", "propose"]]);
-    expect(writers[0]!.roles).toEqual(["leasing_officer", "leasing_manager"]);
+  test("tools read, draft (saved only) or propose (Confirm): the set and the roles are exactly these", () => {
+    const by = (kind: string) =>
+      copilotTools
+        .filter((t) => t.kind === kind)
+        .map((t) => t.name)
+        .toSorted();
+    expect(by("propose")).toEqual(["create_task", "propose_application", "propose_approval"]);
+    expect(by("draft")).toEqual(["draft_approval_note", "draft_email"]);
+    expect(copilotTools.every((t) => ["read", "draft", "propose"].includes(t.kind))).toBe(true);
+    const names = (role: "leasing_officer" | "leasing_manager" | "finance" | "admin") =>
+      toolsFor(role)
+        .filter((t) => t.kind !== "read")
+        .map((t) => t.name)
+        .toSorted();
+    expect(names("leasing_officer")).toEqual([
+      "create_task",
+      "draft_approval_note",
+      "draft_email",
+      "propose_application",
+      "propose_approval",
+    ]);
+    expect(names("leasing_manager")).toEqual(names("leasing_officer"));
+    expect(names("finance")).toEqual(["draft_approval_note", "draft_email", "propose_approval"]);
+    expect(names("admin")).toEqual(["draft_approval_note"]);
     const readers = copilotTools.filter((t) => t.kind === "read");
     for (const role of ["leasing_officer", "leasing_manager", "finance", "admin"] as const) {
       expect(toolsFor(role).filter((t) => t.kind === "read")).toHaveLength(readers.length);
     }
-    expect(toolsFor("finance").some((t) => t.kind !== "read")).toBe(false);
-    expect(toolsFor("admin").some((t) => t.kind !== "read")).toBe(false);
     expect(new Set(copilotTools.map((t) => t.name)).size).toBe(copilotTools.length);
   });
 
@@ -244,6 +262,8 @@ describe("registry and client", () => {
       "/api/applications",
       "/api/approvals/abc/decide",
       "/api/copilot/proposals?x=1",
+      "/api/copilot/drafts/abc",
+      "/api/leases/abc/email",
       "http://evil.example/api/copilot/proposals",
     ]) {
       await expect(client.propose(p, {})).rejects.toThrow("invalid engine path");

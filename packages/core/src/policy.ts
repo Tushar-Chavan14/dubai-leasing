@@ -83,7 +83,12 @@ export const CompanyPolicy = z.object({
   complaintMinConfidence: z.number().min(0).max(1).default(0.5),
   /** Hours to fix by urgency (0 = can wait a week … 3 = emergency). */
   ticketDueHours: z
-    .object({ "0": z.number().int().positive(), "1": z.number().int().positive(), "2": z.number().int().positive(), "3": z.number().int().positive() })
+    .object({
+      "0": z.number().int().positive(),
+      "1": z.number().int().positive(),
+      "2": z.number().int().positive(),
+      "3": z.number().int().positive(),
+    })
     .default({ "0": 168, "1": 48, "2": 24, "3": 4 }),
 });
 export type CompanyPolicy = z.infer<typeof CompanyPolicy>;

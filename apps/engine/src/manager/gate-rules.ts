@@ -93,6 +93,49 @@ export function vacateNoticeProblems(raw: unknown, today: CalendarDate): string[
   return problems;
 }
 
+/**
+ * Formal late-payment reminder (step 8, D27). Approving it sends the reminder; only its accepted
+ * send starts the rulebook's waiting period. Nothing in it is editable: amounts come from the
+ * payment record and the period from the lease's pinned rulebook.
+ */
+export const FormalReminderProposal = z.object({
+  leaseId: z.string(),
+  paymentId: z.string(),
+  seq: z.number().int().min(1),
+  of: z.number().int().min(1),
+  amountFils: z.number().int().positive(),
+  dueOn: calDate,
+  paymentStatus: z.enum(["overdue", "bounced"]),
+  friendlyReminders: z.number().int().min(0),
+  rulesVersion: z.string(),
+  lateRentDays: z.number().int().min(1),
+});
+export type FormalReminderProposal = z.infer<typeof FormalReminderProposal>;
+
+export function formalReminderProblems(raw: unknown): string[] {
+  const p = FormalReminderProposal.safeParse(raw);
+  if (!p.success) return p.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
+  const r = getRulebook(p.data.rulesVersion);
+  return p.data.lateRentDays === r.lateRentDaysAfterFormalReminder
+    ? []
+    : [`the waiting period must be the rulebook's ${r.lateRentDaysAfterFormalReminder} days (${r.version})`];
+}
+
+/**
+ * Safety or legal-threat complaint (step 8, D28): an officer acts at once. Approving opens an
+ * emergency maintenance ticket; rejecting closes the complaint with the officer's reason.
+ */
+export const SafetyComplaintProposal = z.object({
+  leaseId: z.string(),
+  complaintId: z.string(),
+  category: z.string(),
+  urgency: z.number().int().min(0).max(3),
+  atRisk: z.boolean(),
+  safety: z.number().nullable(),
+  legalThreat: z.number().nullable(),
+});
+export type SafetyComplaintProposal = z.infer<typeof SafetyComplaintProposal>;
+
 /** Asking rent outside the company range for the unit's bedroom count (policy, not law). */
 export const PriceProposal = z.object({
   unitId: z.string(),
@@ -229,6 +272,8 @@ const rules: Partial<Record<GateId, GateRule>> = {
   ejari_submission: { editable: [], check: shapeOnly(EjariSubmissionProposal) },
   ejari_rejected_twice: { editable: ["note"], check: shapeOnly(EjariRejectedProposal) },
   vacate_notice: { editable: [], check: (raw, today) => vacateNoticeProblems(raw, today) },
+  formal_reminder: { editable: [], check: (raw) => formalReminderProblems(raw) },
+  safety_complaint: { editable: ["note"], check: shapeOnly(SafetyComplaintProposal) },
   price_out_of_range: {
     editable: [],
     check: (raw) => {

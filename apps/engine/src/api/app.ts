@@ -15,6 +15,7 @@ import { type AuthEnv, issueToken, requireRole, requireUser } from "./auth.ts";
 import * as q from "./queries.ts";
 import { registerApplicationRoutes } from "./applications.ts";
 import { registerChannelRoutes, registerConversationRoutes } from "./channel.ts";
+import { registerTenancyDemoRoutes, registerTenancyRoutes } from "./tenancy.ts";
 import { leaseContractView, registerContractRoutes } from "./contracts.ts";
 import { registerCopilotRoutes } from "./copilot.ts";
 import { registerPortalRoutes } from "./portal.ts";
@@ -135,6 +136,7 @@ export function createApi(ctx: EngineContext, opts: ApiOptions) {
   registerApplicationRoutes(api, ctx);
   registerContractRoutes(api, ctx);
   registerConversationRoutes(api, ctx);
+  registerTenancyRoutes(api, ctx);
   // The copilot calls this same app in-process, as the user (architecture §8b).
   registerCopilotRoutes(api, ctx, app);
   api.get("/policy", async (c) => c.json(await withTx(ctx.database, (tx) => getCompanyPolicy(tx, ctx.clock.today()))));
@@ -175,6 +177,7 @@ export function createApi(ctx: EngineContext, opts: ApiOptions) {
       return c.json({ today: ctx.clock.today(), offsetDays: 0 });
     });
     api.post("/demo/sweep", async (c) => c.json({ fired: (await sweepDueDeadlines(ctx)).filter((f) => f.fired) }));
+    registerTenancyDemoRoutes(api, ctx);
   }
 
   app.route("/api", api);

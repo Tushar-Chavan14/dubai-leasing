@@ -1,21 +1,23 @@
 import type { LocalDiskStore } from "@leasing/adapters";
-import { InboundType, maskPii } from "@leasing/core";
+import { addDays, InboundType, maskPii } from "@leasing/core";
 import { sha256Hex } from "@leasing/core/tokens";
 import {
   applications,
   approvals,
+  complaints,
   contracts,
   contractSigners,
   documents,
   leaseParties,
   leases,
+  maintenanceTickets,
   parties,
   type Tx,
   unitPhotos,
   units,
   withTx,
 } from "@leasing/db";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import type { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
@@ -25,7 +27,11 @@ import { effectiveProposal, RenewalNoticeProposal } from "../manager/gate-rules.
 import { receiveInbound, termReplies } from "../manager/inbound.ts";
 import { addApplicationDocument, removeApplicationDocument, uploadedDocuments } from "../manager/applications.ts";
 import { contractPdf, signContract, signView } from "../manager/contracts.ts";
+import { openForReply } from "../manager/collections.ts";
+import { getCompanyPolicy } from "../manager/events.ts";
 import { type LinkRow, resolveLink } from "../manager/links.ts";
+import { moveInStatus } from "../manager/move-in.ts";
+import { addTenancyPhoto } from "../manager/tenancy-files.ts";
 import { noticeSentForTerm, sentNoticeValid } from "../manager/outbound.ts";
 import type { AuthEnv } from "./auth.ts";
 
@@ -61,6 +67,48 @@ const unknownLink = () =>
 
 /** Links that may show the applicant the property they're viewing (details and photos). */
 const PROPERTY_PURPOSES = new Set(["viewing", "application"]);
+
+/** What the tenant can do during the tenancy: open payments to reply about, their reports, the move-in report. */
+async function tenancyView(ctx: EngineContext, tx: Tx, lease: typeof leases.$inferSelect, purpose: string) {
+  const open = await openForReply(tx, lease.id);
+  const reports = await tx.db
+    .select({
+      ref: complaints.ref,
+      status: complaints.status,
+      category: complaints.category,
+      createdAt: complaints.createdAt,
+      ticketStatus: maintenanceTickets.status,
+    })
+    .from(complaints)
+    .leftJoin(maintenanceTickets, eq(maintenanceTickets.complaintId, complaints.id))
+    .where(eq(complaints.leaseId, lease.id))
+    .orderBy(desc(complaints.createdAt))
+    .limit(10);
+  const moveIn =
+    purpose === "move_in_ack"
+      ? await moveInStatus(ctx, tx, lease.id).then((s) => ({
+          checked: s.items.filter((i) => i.kind === "check" && i.done).map((i) => i.label),
+          rooms: s.items.filter((i) => i.kind === "room").map((i) => i.label),
+        }))
+      : null;
+  const today = ctx.clock.today();
+  const policy = await getCompanyPolicy(tx, today);
+  return {
+    today,
+    /** The latest "will pay by" date the form accepts (policy). */
+    latestPayBy: addDays(today, policy.promiseToPayMaxDays),
+    canReportIssue: ["ACTIVE", "RENEWAL", "MOVE_OUT", "DISPUTE"].includes(lease.state),
+    openPayments: open.map((p) => ({
+      id: p.id,
+      seq: p.seq,
+      amountFils: p.amountFils,
+      dueOn: p.dueOn,
+      status: p.status,
+    })),
+    reports,
+    moveIn,
+  };
+}
 
 export function registerPortalRoutes(app: Hono<AuthEnv>, ctx: EngineContext, mediaStore?: LocalDiskStore) {
   /** A photo of the unit behind an applicant's viewing/status link; never another unit's. */
@@ -131,9 +179,11 @@ export function registerPortalRoutes(app: Hono<AuthEnv>, ctx: EngineContext, med
       const offerValid = !!sent && sentNoticeValid(sent.proposedRentFils, sent.sentAt, lease);
       const replies = await termReplies(tx, lease);
       const reply = replies.latest;
+      const tenancy = await tenancyView(ctx, tx, lease, link.purpose);
       return {
         purpose: link.purpose,
         linkUsed: !!link.usedAt,
+        tenancy,
         tenantFirstName: (tenant?.name ?? "").split(/\s+/)[0] ?? "",
         lease: {
           state: lease.state,
@@ -240,7 +290,13 @@ export function registerPortalRoutes(app: Hono<AuthEnv>, ctx: EngineContext, med
       const [lease] = await tx.db.select().from(leases).where(eq(leases.id, link.entityId));
       if (!lease) throw unknownLink();
       let outboundMessageId: string | undefined;
-      if (body.type === "NOTICE_ACKNOWLEDGED") {
+      if (body.type === "MOVE_IN_ACKNOWLEDGED") {
+        if (link.purpose !== "move_in_ack")
+          throw conflict("Open the 'Confirm the move-in report' link from your email.");
+        if (link.usedAt) throw conflict("You already confirmed the move-in report. Thank you.");
+      } else if (body.type === "PAYMENT_REPLY" || body.type === "COMPLAINT_SUBMITTED") {
+        if (link.purpose !== "tenancy") throw conflict("Open the 'My tenancy' link from your newest email to do this.");
+      } else if (body.type === "NOTICE_ACKNOWLEDGED") {
         outboundMessageId = link.outboundMessageId ?? (await noticeSentForTerm(tx, lease))?.id;
         if (!outboundMessageId) throw conflict("There is no notice to acknowledge yet.");
       } else {
@@ -264,6 +320,49 @@ export function registerPortalRoutes(app: Hono<AuthEnv>, ctx: EngineContext, med
     });
     return c.json({ ref: r.ref, duplicate: r.duplicate }, r.duplicate ? 200 : 202);
   });
+
+  // ---- tenancy photos: own move-in photos, payment proof, photos of an issue ----
+  app.post(
+    "/api/portal/:token/files",
+    bodyLimit({ maxSize: 11 * 1024 * 1024, onError: (c) => c.json({ error: "the photo is larger than 10 MB" }, 413) }),
+    async (c, next) => {
+      const token = c.req.param("token");
+      if (limited(token)) return c.json({ error: "Too many requests; try again in a minute." }, 429);
+      const link = await withTx(ctx.database, (tx) => resolveLink(tx, token, ctx.clock.now()));
+      if (!link || link.entityKind !== "lease" || link.usedAt) throw unknownLink();
+      if (link.purpose !== "move_in_ack" && link.purpose !== "tenancy") throw unknownLink();
+      await next();
+    },
+    async (c) => {
+      const link = (await withTx(ctx.database, (tx) => resolveLink(tx, c.req.param("token"), ctx.clock.now())))!;
+      const form = await c.req.formData();
+      const file = form.get("file");
+      if (!(file instanceof File)) throw unprocessable("attach a photo as `file`", [], "invalid_request");
+      const allowed = link.purpose === "move_in_ack" ? ["tenant_condition_photo"] : ["payment_proof", "issue_photo"];
+      const kind = z.enum(["tenant_condition_photo", "payment_proof", "issue_photo"]).parse(form.get("kind"));
+      if (!allowed.includes(kind))
+        throw unprocessable("this link can't take that kind of photo", [], "invalid_request");
+      const room = z
+        .string()
+        .trim()
+        .max(60)
+        .optional()
+        .parse(form.get("room") || undefined);
+      const r = await addTenancyPhoto(
+        ctx,
+        {
+          leaseId: link.entityId,
+          kind,
+          uploadedBy: `tenant:${link.partyId ?? "unknown"}`,
+          partyId: link.partyId,
+          room: room ?? null,
+          linkId: link.id,
+        },
+        new Uint8Array(await file.arrayBuffer()),
+      );
+      return c.json({ id: r.id, kind: r.kind, bytes: r.bytes }, 201);
+    },
+  );
 
   // ---- applicant documents (upload link only) ----
   app.post(

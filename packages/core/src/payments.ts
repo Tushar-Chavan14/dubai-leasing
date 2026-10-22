@@ -9,7 +9,8 @@ export interface Instalment {
 }
 
 /**
- * The rent instalments of one term (pure; no model, no rulebook value). `cheques` equal parts
+ * The rent instalments of one term (pure; no model, no rulebook value). The term's rent (the
+ * annual rent, or its share of whole months for a term that isn't a year) in `cheques` equal parts
  * (the remainder fils go to the first ones), due on the start date and then every
  * 12 / cheques months, so 4 cheques fall on months 0, 3, 6, 9 of the term. Terms of other
  * lengths spread the instalments over their own months.
@@ -25,7 +26,10 @@ export function paymentSchedule(term: {
   if (term.endOn <= term.startOn) throw new RangeError("the term must end after it starts");
   const months = Math.max(1, Math.round(diffDays(term.startOn, term.endOn) / 30.4375));
   const step = months / term.cheques;
-  const amounts = splitFils(term.annualRentFils, term.cheques);
+  // The rent is annual: a term of another length pays its share of whole months (rounded down
+  // to a fil). CONFIRM WITH THE BUSINESS how short and long terms are priced.
+  const termFils = months === 12 ? term.annualRentFils : Math.floor((term.annualRentFils * months) / 12);
+  const amounts = splitFils(termFils, term.cheques);
   return amounts.map((amountFils, i) => ({
     n: i + 1,
     dueOn: addMonths(term.startOn, Math.floor(i * step)),

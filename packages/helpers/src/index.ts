@@ -8,9 +8,15 @@ export {
   renewalNotice,
 } from "./renewal/notice.ts";
 export {
+  MoveInCommentContext,
+  MoveInCommentData,
+  moveInCommentClassifier,
   OfferReplyContext,
   OfferReplyData,
   offerReplyClassifier,
+  PaymentReplyContext,
+  PaymentReplyData,
+  paymentReplyClassifier,
   ReplyContext,
   ReplyData,
   replyClassifier,
@@ -21,3 +27,4 @@ export * from "./contract/index.ts";
 export * from "./registration/index.ts";
 export * from "./leasing-assistant/index.ts";
 export { type FormalReminderInput, formalReminderNotice } from "./collections/formal-reminder.ts";
+export * from "./complaint-triage/index.ts";

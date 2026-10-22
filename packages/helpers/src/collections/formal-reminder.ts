@@ -66,7 +66,12 @@ export function formalReminderNotice(n: FormalReminderInput): NoticeDocument {
       },
       { kind: "small", text: `Rules applied: ${n.rulesVersion}.` },
       ...(n.demo
-        ? [{ kind: "small" as const, text: "Demo build: wording to be reviewed by a lawyer before real use; Ejari is simulated." }]
+        ? [
+            {
+              kind: "small" as const,
+              text: "Demo build: wording to be reviewed by a lawyer before real use; Ejari is simulated.",
+            },
+          ]
         : []),
     ],
   };

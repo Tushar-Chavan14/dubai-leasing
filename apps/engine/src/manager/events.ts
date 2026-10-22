@@ -8,8 +8,8 @@ import {
   defaultCompanyPolicy,
   type CalendarDate,
 } from "@leasing/core";
-import { companyPolicy, leaseEvents, type Tx } from "@leasing/db";
-import { desc, lte } from "drizzle-orm";
+import { companyPolicy, leaseEvents, leases, type Tx } from "@leasing/db";
+import { desc, eq, lte } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
 
 export interface EventInput {
@@ -22,9 +22,16 @@ export interface EventInput {
   rulesVersion?: string | null;
 }
 
-/** Appends to the audit log. Payloads are PII-masked before they are stored. */
+/**
+ * Appends to the audit log. Payloads are PII-masked before they are stored. A lease event without
+ * an explicit `rulesVersion` records the version pinned on the lease (rule 4).
+ */
 export async function appendEvent(tx: Tx, ctx: EngineContext, e: EventInput): Promise<string> {
   const id = newId();
+  const rulesVersion =
+    e.rulesVersion === undefined && e.entity.kind === "lease"
+      ? await leaseRulesVersion(tx, e.entity.id)
+      : e.rulesVersion;
   await tx.db.insert(leaseEvents).values({
     id,
     entityKind: e.entity.kind,
@@ -34,7 +41,7 @@ export async function appendEvent(tx: Tx, ctx: EngineContext, e: EventInput): Pr
     toState: e.toState ?? null,
     actor: e.actor,
     payload: maskPii(e.payload ?? {}),
-    rulesVersion: e.rulesVersion ?? null,
+    rulesVersion: rulesVersion ?? null,
     at: ctx.clock.now(),
   });
   return id;
@@ -59,4 +66,10 @@ export async function getCompanyPolicyVersion(
   return row
     ? { version: row.version, values: CompanyPolicySchema.parse(row.values) }
     : { version: null, values: defaultCompanyPolicy };
+}
+
+/** The rulebook version pinned on a lease, for events recorded against it. */
+export async function leaseRulesVersion(tx: Tx, leaseId: string): Promise<string | null> {
+  const [row] = await tx.db.select({ v: leases.rulesVersion }).from(leases).where(eq(leases.id, leaseId));
+  return row?.v ?? null;
 }

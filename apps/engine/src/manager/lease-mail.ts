@@ -25,7 +25,9 @@ import { and, eq, isNull } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
 import { appendEvent, getCompanyPolicy } from "./events.ts";
 import { createLink } from "./links.ts";
+import { onFormalReminderSent } from "./collections.ts";
 import { createTask } from "./milestones.ts";
+import { composeTenancyMail, type TenancyMailKind } from "./tenancy-mail.ts";
 
 /**
  * Lease emails for steps 5–6, sent by a job: the signing link (with the approved PDF), the
@@ -34,7 +36,7 @@ import { createTask } from "./milestones.ts";
  * time, so their tokens exist only in the email.
  */
 export const LEASE_MAIL_JOB = "lease.mail";
-export type LeaseMailKind = "sign" | "signed" | "ejari_issued";
+export type LeaseMailKind = "sign" | "signed" | "ejari_issued" | TenancyMailKind;
 export interface LeaseMailJob {
   leaseId: string;
   kind: LeaseMailKind;
@@ -51,7 +53,16 @@ export async function queueLeaseMail(ctx: EngineContext, tx: Tx, j: LeaseMailJob
   });
 }
 
-const PURPOSE: Record<LeaseMailKind, "link" | "receipt"> = { sign: "link", signed: "receipt", ejari_issued: "receipt" };
+const PURPOSE: Record<LeaseMailKind, "link" | "receipt" | "reminder" | "formal_reminder"> = {
+  sign: "link",
+  signed: "receipt",
+  ejari_issued: "receipt",
+  move_in: "link",
+  rent_reminder: "reminder",
+  rent_friendly: "reminder",
+  formal_reminder: "formal_reminder",
+  complaint_ack: "receipt",
+};
 
 interface Prepared {
   id: string;
@@ -99,6 +110,7 @@ export async function sendLeaseMail(ctx: EngineContext, j: LeaseMailJob) {
 
     let to: string | null = null;
     let mail: Prepared["mail"];
+    let template = j.kind === "sign" ? "contract_sign" : j.kind === "signed" ? "contract_signed" : "ejari_issued";
     const attachments: MailAttachment[] = [];
     const missingEmail = async (who: string) => {
       await createTask(ctx, tx, lease.id, {
@@ -163,6 +175,14 @@ export async function sendLeaseMail(ctx: EngineContext, j: LeaseMailJob) {
       } else {
         mail = contractSignedEmail({ name: s.signer.nameEn, unitLabel, leaseRef: lease.ref, demo: ctx.demoMode });
       }
+    } else if (j.kind !== "ejari_issued") {
+      const c = await composeTenancyMail(ctx, tx, lease, unitLabel, j.kind, j.key);
+      if (!c) return null;
+      if ("noEmail" in c) return missingEmail("The tenant");
+      to = c.to;
+      mail = c.mail;
+      template = c.template;
+      attachments.push(...c.attachments);
     } else {
       const [sub] = await tx.db.select().from(ejariSubmissions).where(eq(ejariSubmissions.id, j.key));
       if (sub?.status !== "issued" || !sub.ejariNo) return null;
@@ -181,7 +201,21 @@ export async function sendLeaseMail(ctx: EngineContext, j: LeaseMailJob) {
           contentType: "application/pdf",
         });
       }
-      mail = ejariIssuedEmail({ name: tenant.party.fullNameEn, unitLabel, ejariNo: sub.ejariNo, demo: ctx.demoMode });
+      // From here the tenant has a portal: report an issue, reply about rent.
+      const ttlDays = (await getCompanyPolicy(tx, ctx.clock.today())).tenancyLinkDays;
+      const tenancy = await createLink(ctx, tx, {
+        purpose: "tenancy",
+        entity: { kind: "lease", id: lease.id },
+        partyId: tenant.party.id,
+        ttlDays,
+      });
+      mail = ejariIssuedEmail({
+        name: tenant.party.fullNameEn,
+        unitLabel,
+        ejariNo: sub.ejariNo,
+        tenancyUrl: tenancy.url,
+        demo: ctx.demoMode,
+      });
     }
 
     const id = existing?.id ?? newId();
@@ -196,7 +230,7 @@ export async function sendLeaseMail(ctx: EngineContext, j: LeaseMailJob) {
         milestone,
         to,
         intendedTo: to,
-        template: j.kind === "sign" ? "contract_sign" : j.kind === "signed" ? "contract_signed" : "ejari_issued",
+        template,
         subject: mail.subject,
         status: "sending",
         createdAt: ctx.clock.now(),
@@ -242,6 +276,8 @@ export async function sendLeaseMail(ctx: EngineContext, j: LeaseMailJob) {
       actor: "system",
       payload: { outboundMessageId: prepared.id, kind: j.kind, key: j.key, seq: j.seq, messageId: receipt.messageId },
     });
+    // Only an accepted formal reminder starts the legal clock (D27).
+    if (ok && j.kind === "formal_reminder") await onFormalReminderSent(ctx, tx, j.key, prepared.id);
   });
   return { sent: ok, outboundMessageId: prepared.id };
 }

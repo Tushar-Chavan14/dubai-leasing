@@ -34,6 +34,7 @@ export function Nav({ inboxCount }: { inboxCount: number }) {
     { href: "/leases", label: "Leases", icon: <IconKey size={17} /> },
     { href: "/units", label: "Units", icon: <IconBuilding size={17} /> },
     { href: "/tasks", label: "Tasks", icon: <IconChecklist size={17} /> },
+    { href: "/maintenance", label: "Maintenance", icon: <IconKey size={17} /> },
     { href: "/sri", label: "Rent index", icon: <IconArea size={17} /> },
     { href: "/rules", label: "Rules", icon: <IconBook size={17} /> },
     { href: "/copilot", label: "Copilot", icon: <IconSpark size={17} /> },

@@ -463,7 +463,10 @@ export const maintenanceTickets = pgTable(
     updatedAt: ts("updated_at").notNull(),
     closedAt: ts("closed_at"),
   },
-  (t) => [uniqueIndex("maintenance_tickets_complaint_uq").on(t.complaintId), index("maintenance_tickets_status_idx").on(t.status, t.dueBy)],
+  (t) => [
+    uniqueIndex("maintenance_tickets_complaint_uq").on(t.complaintId),
+    index("maintenance_tickets_status_idx").on(t.status, t.dueBy),
+  ],
 );
 
 export const inspections = pgTable("inspections", {

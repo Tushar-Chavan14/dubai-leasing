@@ -25,6 +25,7 @@ import { createLink } from "./links.ts";
 import { createTask } from "./milestones.ts";
 import { processApplicationInbound, receiveApplicationInbound } from "./applications.ts";
 import { noticeSentForTerm } from "./outbound.ts";
+import { isTenancyType, processTenancyInbound, receiveTenancyInbound } from "./tenancy-inbound.ts";
 
 export const INBOUND_JOB = "inbound.process";
 type LeaseRow = typeof leases.$inferSelect;
@@ -75,6 +76,14 @@ export async function receiveInbound(ctx: EngineContext, tx: Tx, req: InboundReq
     );
   }
   if (req.entity.kind === "application") return receiveApplicationInbound(ctx, tx, req, parsed.data);
+  // Tenancy forms (phase 3): move-in report, payment reply, report an issue.
+  if (isTenancyType(req.type)) {
+    return receiveTenancyInbound(ctx, tx, req, parsed.data as never, (t, id, leaseId) =>
+      ctx.scheduler
+        .send(t, { name: INBOUND_JOB, data: { inboundEventId: id }, singletonKey: `${leaseId}:inbound:${id}` })
+        .then(() => {}),
+    );
+  }
   // Leases take renewal forms only; application forms can't be posted against a lease.
   if (req.type !== "NOTICE_ACKNOWLEDGED" && req.type !== "RENEWAL_REPLY") {
     throw unprocessable(`${req.type} is not a lease form`, [], "invalid_payload");
@@ -178,6 +187,7 @@ async function processInboundOnce(ctx: EngineContext, inboundEventId: string) {
   const [ev] = await ctx.database.db.select().from(inboundEvents).where(eq(inboundEvents.id, inboundEventId));
   if (!ev || ev.status !== "received") return { done: false, reason: "not waiting" };
   if (ev.entityKind === "application") return processApplicationInbound(ctx, ev);
+  if (isTenancyType(ev.type)) return processTenancyInbound(ctx, ev);
 
   let classification: { data: ReplyData | undefined; reasons: string[]; helperRunId: string; status: string } | null =
     null;

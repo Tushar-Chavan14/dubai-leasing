@@ -8,6 +8,7 @@ import { conflict, notFound } from "../errors.ts";
 import { advance } from "../manager/advance.ts";
 import { appendEvent } from "../manager/events.ts";
 import { effectiveProposal, RenewalNoticeProposal } from "../manager/gate-rules.ts";
+import { isTenancyType } from "../manager/tenancy-inbound.ts";
 import { receiveInbound } from "../manager/inbound.ts";
 import { draftRenewalNotice, renewalCycleKey } from "../manager/milestones.ts";
 import { noticeSentForTerm, renewableApproval } from "../manager/outbound.ts";
@@ -29,6 +30,16 @@ export function registerRenewalRoutes(api: Hono<AuthEnv>, ctx: EngineContext) {
         .from(leases)
         .where(eq(leases.id, c.req.param("id")));
       if (!lease) throw notFound("lease");
+      // Tenancy forms (report an issue, payment reply, move-in report) don't need a notice.
+      if (isTenancyType(body.type)) {
+        return receiveInbound(ctx, tx, {
+          type: body.type,
+          payload: body.payload,
+          channel: "staff",
+          actor: actorOf(c),
+          entity: { kind: "lease", id: lease.id },
+        });
+      }
       const sent = await noticeSentForTerm(tx, lease);
       if (!sent) throw conflict("no renewal notice has been sent for this term yet");
       return receiveInbound(ctx, tx, {

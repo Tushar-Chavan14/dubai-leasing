@@ -57,10 +57,12 @@ tests pass.
     logged-in user. No tool may approve a gate, send a message, change state, submit to Ejari,
     edit rules or policy, or open uploaded documents. Legal and money values in its answers
     come from rulebook tools. Tenant-written text reaching the copilot is untrusted data.
-    `propose` tools need the user's Confirm click. One confirmed action exists (decision D25):
-    a `propose_application` proposal creates an application, and its viewing invitation email,
-    through the normal route, as the user, only when that user clicks Confirm in the chat. The
-    copilot's client can store a proposal but can never confirm one.
+    `propose` tools need the user's Confirm click. Three confirmed actions exist (decisions D25,
+    D26): an application (with its viewing invitation email), a task, and a pending approval
+    request (`formal_reminder`, `vacate_notice`), each created through the normal route, as the
+    user, only when that user clicks Confirm in the chat. `draft` tools save text the user opens
+    in the normal form and sends or posts themselves; the copilot never sends. The copilot's
+    client can store a proposal or a draft but can never confirm, send or post one.
 
 ## Repo map
 

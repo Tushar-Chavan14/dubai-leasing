@@ -23,6 +23,18 @@ const TONES: Record<string, "good" | "warn" | "bad" | "quiet" | undefined> = {
   CONVERTED: "good",
   REJECTED: "bad",
   WITHDRAWN: "quiet",
+  // rent payments
+  scheduled: "quiet",
+  paid: "good",
+  overdue: "warn",
+  bounced: "bad",
+  // complaints and tickets
+  triaging: "quiet",
+  review: "warn",
+  escalated: "bad",
+  ticketed: "warn",
+  in_progress: "warn",
+  closed: "quiet",
   // enquiry conversations
   bot: "quiet",
   handoff: "warn",

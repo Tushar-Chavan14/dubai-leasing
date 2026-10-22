@@ -257,10 +257,10 @@ describe("find_available_units by unit code, and the prompt per role", () => {
         throw new Error("no");
       },
     };
-    const user: StaffUser = { id: "o", email: "o@test.example", name: "O", role: "leasing_officer" };
+    const officer: StaffUser = { id: "o", email: "o@test.example", name: "O", role: "leasing_officer" };
     await findAvailableUnits.run(findAvailableUnits.input.parse({ unitCode: "JVC-0412" }), {
       engine,
-      user,
+      user: officer,
       today: "2026-11-02",
     });
     expect(asked).toBe("/api/available-units?code=JVC-0412");
@@ -268,16 +268,15 @@ describe("find_available_units by unit code, and the prompt per role", () => {
     expect(findAvailableUnits.input.safeParse({ unitCode: "JVC%" }).success).toBe(false);
   });
 
-  test("leasing roles are told to propose (no confirming in text); others that they can't create applications", async () => {
+  test("each role is told what it may prepare; nobody confirms in text", async () => {
     const { systemPrompt } = await import("../src/prompt.ts");
     const as = (role: StaffUser["role"]) => systemPrompt({ id: "u", email: "u@x", name: "U", role }, "2026-11-02");
     for (const role of ["leasing_officer", "leasing_manager"] as const) {
-      expect(as(role)).toContain("call propose_application straight away");
-      expect(as(role)).toContain("Don't ask them to confirm in text");
+      expect(as(role)).toContain("propose_application");
+      expect(as(role)).toContain("don't ask them to confirm in text");
     }
-    for (const role of ["finance", "admin"] as const) {
-      expect(as(role)).toContain("Your role can't create applications");
-      expect(as(role)).not.toContain("call propose_application");
-    }
+    expect(as("finance")).toContain("Your role can't create applications or tasks");
+    expect(as("finance")).not.toContain("propose_application");
+    expect(as("admin")).toContain("can't create applications, tasks or approvals");
   });
 });

@@ -25,6 +25,9 @@ import {
 import { and, eq, inArray, isNotNull, isNull, notLike, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { EngineContext } from "../context.ts";
+import { PAYMENT_MILESTONES, scheduleTermPayments } from "./collections.ts";
+import { queueLeaseMail } from "./lease-mail.ts";
+import { ensureMoveInInspection, moveInMissing } from "./move-in.ts";
 import { conflict, notFound, unprocessable } from "../errors.ts";
 import { appendEvent, getCompanyPolicy } from "./events.ts";
 import { sentAtOfApproval } from "./outbound.ts";
@@ -296,6 +299,8 @@ async function advanceLease(
     lease: event === "RENEWED" ? lease : merged,
     today,
     newTerm: event === "RENEWED" ? { startOn: merged.startOn, endOn: merged.endOn } : undefined,
+    // Move-in (step 7): the checklist is read inside this transaction, so it can't change under us.
+    moveInMissing: event === "MOVE_IN_COMPLETED" ? await moveInMissing(ctx, tx, id) : undefined,
   });
   if (guard && !guard.ok) throw unprocessable(`cannot ${event}`, guard.reasons, "guard_failed");
 
@@ -407,12 +412,22 @@ async function onEnterLease(ctx: EngineContext, tx: Tx, lease: LeaseRow, from: s
   const [unit] = await tx.db.select({ state: units.state }).from(units).where(eq(units.id, lease.unitId));
   const cascade = { actor, payload: { leaseId: lease.id }, rulesVersion: lease.rulesVersion };
   switch (lease.state) {
+    case "MOVE_IN":
+      // Step 7: the checklist exists from the moment the keys can be handed over.
+      await ensureMoveInInspection(ctx, tx, lease.id);
+      return;
     case "REGISTRATION":
       // Step 6: the submission is built from the signed contract and waits for an officer.
       await proposeEjariSubmission(ctx, tx, lease, "system");
       return;
     case "ACTIVE": {
       await scheduleLeaseMilestones(ctx, tx, lease);
+      // Rent instalments for this term (a renewed term gets its own); finance confirms each (D27).
+      if (from === "MOVE_IN" || from === "RENEWAL")
+        await scheduleTermPayments(ctx, tx, lease, { assumePastPaid: false });
+      // The tenant confirms the move-in report and gets their portal link.
+      if (from === "MOVE_IN")
+        await queueLeaseMail(ctx, tx, { leaseId: lease.id, kind: "move_in", key: lease.id, seq: 1 });
       if (unit?.state === "LISTED" || unit?.state === "READY") {
         await advanceUnit(ctx, tx, lease.unitId, "LEASE_ACTIVATED", cascade);
       }
@@ -426,6 +441,8 @@ async function onEnterLease(ctx: EngineContext, tx: Tx, lease: LeaseRow, from: s
               eq(deadlines.entityId, lease.id),
               eq(deadlines.status, "pending"),
               notLike(deadlines.milestone, `%@${lease.endOn}`),
+              // Payment deadlines follow the payment, not the term: an unpaid cheque still gets chased.
+              ...PAYMENT_MILESTONES.map((m) => notLike(deadlines.milestone, `${m}@%`)),
             ),
           );
         await cancelPendingApprovals(ctx, tx, lease.id, ["renewal_notice"]);
@@ -453,7 +470,8 @@ async function onEnterLease(ctx: EngineContext, tx: Tx, lease: LeaseRow, from: s
       return;
     }
     case "MOVE_OUT":
-      if (from === "ACTIVE" || from === "RENEWAL") await cancelPendingDeadlines(tx, lease.id, ["lease_end"]);
+      if (from === "ACTIVE" || from === "RENEWAL")
+        await cancelPendingDeadlines(tx, lease.id, ["lease_end", ...PAYMENT_MILESTONES]);
       await cancelPendingApprovals(ctx, tx, lease.id, ["renewal_notice"]);
       return;
     case "CLOSED":

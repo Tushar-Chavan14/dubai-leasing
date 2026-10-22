@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { CopilotWorkspace } from "../../../components/copilot/workspace";
-import type { ChatMessage, ProposalView } from "../../../components/copilot/use-chat";
+import type { ChatMessage, DraftView, ProposalView } from "../../../components/copilot/use-chat";
 import { PageHead } from "../../../components/ui";
 import { get } from "../../../lib/engine";
 import { dateTime } from "../../../lib/format";
@@ -26,6 +26,7 @@ interface ThreadDetail extends ThreadRow {
     at: string;
   }[];
   proposals: ProposalView[];
+  drafts?: DraftView[];
 }
 
 /** Stored rows → chat messages: tool rows attach to the answer that follows them. */
@@ -58,6 +59,11 @@ function toChat(t: ThreadDetail): ChatMessage[] {
     const owner = answers.find((a) => a.at >= p.createdAt) ?? answers.at(-1);
     const msg = owner && out.find((o) => o.id === owner.id);
     if (msg) msg.proposals = [...(msg.proposals ?? []), p];
+  }
+  for (const d of t.drafts ?? []) {
+    const owner = answers.find((a) => a.at >= d.createdAt) ?? answers.at(-1);
+    const msg = owner && out.find((o) => o.id === owner.id);
+    if (msg) msg.drafts = [...(msg.drafts ?? []), d];
   }
   return out;
 }

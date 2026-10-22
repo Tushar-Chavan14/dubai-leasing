@@ -934,6 +934,28 @@ a.row-title:hover {
 a.list-row:hover {
   background: var(--surface-2);
 }
+.link-plain {
+  color: inherit;
+  text-decoration: none;
+}
+.link-plain:hover {
+  text-decoration: underline;
+}
+.task-actions {
+  margin-top: 8px;
+  display: grid;
+  gap: 8px;
+  max-width: 520px;
+}
+.task-actions .btn-row input {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.vacate-form {
+  padding: 12px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-m);
+}
 .list-row .title {
   font-weight: 550;
 }
@@ -2734,4 +2756,34 @@ tr[data-current="true"] td {
 .cp-proposal-actions {
   display: flex;
   gap: 8px;
+}
+.cp-draft-subject,
+.cp-draft-body {
+  margin: 0;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.cp-draft-body {
+  white-space: pre-wrap;
+  max-height: 180px;
+  overflow-y: auto;
+  color: var(--ink-2);
+}
+
+/* Move-in checklist (step 7). */
+.checklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.checklist li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-2);
+}
+.checklist li[data-done] {
+  color: var(--ink);
 }

@@ -107,3 +107,47 @@ export async function signContract(_prev: PortalState, formData: FormData): Prom
   if (!res.ok) return { error: body.error ?? "Something went wrong. Please try again." };
   return { ref: body.ref ?? "" };
 }
+
+const ids = (formData: FormData, name: string) => formData.getAll(name).map(String).filter(Boolean);
+
+/** Step 7: the tenant confirms (or disputes) the move-in report, with their own photos. */
+export async function moveInAck(_prev: PortalState, formData: FormData): Promise<PortalState> {
+  const choice = String(formData.get("agree") ?? "");
+  if (choice !== "yes" && choice !== "no") return { error: "Tell us whether the report is right." };
+  const comment = String(formData.get("comment") ?? "").trim();
+  if (choice === "no" && !comment) return { error: "Tell us what is different from the report." };
+  return submit(String(formData.get("token")), "MOVE_IN_ACKNOWLEDGED", {
+    agree: choice === "yes",
+    ...(comment ? { comment } : {}),
+    photoIds: ids(formData, "photoId"),
+  });
+}
+
+/** Step 8: reply about a payment. Buttons and dates are typed; the comment is classified. */
+export async function paymentReply(_prev: PortalState, formData: FormData): Promise<PortalState> {
+  const choice = String(formData.get("choice") ?? "");
+  if (!["paid", "will_pay", "dispute", "need_time"].includes(choice)) return { error: "Choose one of the options." };
+  const payBy = String(formData.get("payBy") ?? "");
+  if (choice === "will_pay" && !/^\d{4}-\d{2}-\d{2}$/.test(payBy)) return { error: "Choose the date you will pay by." };
+  const comment = String(formData.get("comment") ?? "").trim();
+  return submit(String(formData.get("token")), "PAYMENT_REPLY", {
+    paymentId: String(formData.get("paymentId")),
+    choice,
+    ...(choice === "will_pay" ? { payBy } : {}),
+    ...(comment ? { comment } : {}),
+    proofIds: ids(formData, "photoId"),
+  });
+}
+
+/** Step 8: report an issue (the description goes to Complaint Triage; "at risk" escalates at once). */
+export async function reportIssue(_prev: PortalState, formData: FormData): Promise<PortalState> {
+  const description = String(formData.get("description") ?? "").trim();
+  if (description.length < 5) return { error: "Describe the issue in a few words." };
+  const room = String(formData.get("room") ?? "").trim();
+  return submit(String(formData.get("token")), "COMPLAINT_SUBMITTED", {
+    description,
+    ...(room ? { room } : {}),
+    atRisk: formData.get("atRisk") === "on",
+    photoIds: ids(formData, "photoId"),
+  });
+}

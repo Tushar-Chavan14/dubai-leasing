@@ -4,8 +4,17 @@ import { notFound } from "next/navigation";
 import { ContractPanel, type ContractRow, type EjariAttempt, EjariPanel } from "../../../../components/contract-panel";
 import { type InboundRow, type OutboundRow, RenewalPanel } from "../../../../components/renewal-panel";
 import { RenewalTimeline } from "../../../../components/renewal-timeline";
+import {
+  type ComplaintRow,
+  ComplaintsPanel,
+  MoveInPanel,
+  type MoveInView,
+  type PaymentRow,
+  PaymentsPanel,
+} from "../../../../components/tenancy-panels";
 import { Due, PlanPlaceholder, Status } from "../../../../components/ui";
 import { PageHead } from "../../../../components/ui";
+import { AddTaskForm, EmailTenantForm, TaskActions, VacateNoticeForm } from "../../../../components/work-forms";
 import { get, publicGet } from "../../../../lib/engine";
 import {
   actorLabel,
@@ -73,16 +82,45 @@ const TONE: Record<string, string> = {
   TASK_CREATED: "warn",
 };
 
-export default async function LeasePage({ params }: { params: Promise<{ id: string }> }) {
+interface DraftRow {
+  id: string;
+  kind: string;
+  leaseId: string | null;
+  subject: string | null;
+  body: string;
+  status: string;
+}
+
+export default async function LeasePage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ draft?: string }>;
+}) {
   const { id } = await params;
+  const { draft: draftId } = await searchParams;
   const l = await get<LeaseDetail>(`/api/leases/${id}`);
   if (!l) notFound();
-  const [health, unit, me] = await Promise.all([
+  const [health, unit, me, payments, complaints] = await Promise.all([
     publicGet<{ today: string; demoMode: boolean }>("/health"),
     get<UnitDetail>(`/api/units/${l.unit.id}`),
     get<Me>("/api/me"),
+    get<PaymentRow[]>(`/api/leases/${id}/payments`),
+    get<ComplaintRow[]>(`/api/leases/${id}/complaints`),
   ]);
+  // The move-in checklist: while moving in, and afterwards as the condition record.
+  const moveIn = ["MOVE_IN", "ACTIVE", "RENEWAL", "MOVE_OUT", "DISPUTE"].includes(l.state)
+    ? await get<MoveInView>(`/api/leases/${id}/move-in`)
+    : null;
   const canAct = me?.role === "leasing_officer" || me?.role === "leasing_manager";
+  const canEmail = canAct || me?.role === "finance";
+  // A copilot draft (the user's own) prefills the email form; a used one doesn't.
+  const draftRow =
+    draftId && canEmail ? await get<DraftRow>(`/api/copilot/drafts/${encodeURIComponent(draftId)}`) : null;
+  const draft =
+    draftRow && draftRow.kind === "email" && draftRow.leaseId === l.id && draftRow.status === "draft" ? draftRow : null;
+  const running = l.state === "ACTIVE" || l.state === "RENEWAL";
   const today = health?.today ?? "";
   const tenant = l.parties.find((p) => p.role === "tenant");
   const landlord = l.parties.find((p) => p.role === "landlord");
@@ -134,6 +172,16 @@ export default async function LeasePage({ params }: { params: Promise<{ id: stri
 
       <div className="split section">
         <div className="stack">
+          {moveIn && <MoveInPanel leaseId={l.id} view={moveIn} canAct={canAct} active={l.state !== "MOVE_IN"} />}
+          {(payments?.length ?? 0) > 0 && (
+            <PaymentsPanel leaseId={l.id} rows={payments ?? []} role={me?.role ?? ""} today={today} />
+          )}
+          {["ACTIVE", "RENEWAL", "MOVE_OUT", "DISPUTE"].includes(l.state) && (
+            <ComplaintsPanel leaseId={l.id} rows={complaints ?? []} canAct={canAct} canLog={canAct} />
+          )}
+          {canEmail && tenant && (
+            <EmailTenantForm key={draft?.id ?? "new"} leaseId={l.id} tenantEmail={tenant.email} draft={draft} />
+          )}
           <ContractPanel leaseId={l.id} state={l.state} contracts={l.contracts ?? []} canAct={canAct} />
           <EjariPanel
             leaseId={l.id}
@@ -284,10 +332,11 @@ export default async function LeasePage({ params }: { params: Promise<{ id: stri
             </dl>
           </section>
 
-          {(l.approvals.length > 0 || openTasks.length > 0) && (
+          {(l.approvals.length > 0 || openTasks.length > 0 || canAct) && (
             <section className="panel" aria-labelledby="work-h">
               <div className="panel-head">
                 <h2 id="work-h">Open work</h2>
+                {canAct && <AddTaskForm leaseId={l.id} today={today} />}
               </div>
               <ul className="list" style={{ marginTop: 6 }}>
                 {l.approvals.map((a) => (
@@ -306,11 +355,24 @@ export default async function LeasePage({ params }: { params: Promise<{ id: stri
                         {roleLabel(t.assigneeRole)}
                         {t.dueOn && <span>by {shortDate(t.dueOn)}</span>}
                       </div>
+                      {me && (
+                        <TaskActions
+                          task={{ ...t, entityKind: "lease", entityId: l.id }}
+                          role={me.role}
+                          today={today}
+                        />
+                      )}
                     </div>
                     <Status value="open" label="Task" />
                   </li>
                 ))}
               </ul>
+              {canAct && running && (
+                <details className="panel-pad">
+                  <summary>Record a served 12-month notice</summary>
+                  <VacateNoticeForm leaseId={l.id} today={today} />
+                </details>
+              )}
             </section>
           )}
         </aside>

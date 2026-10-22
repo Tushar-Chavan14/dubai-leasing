@@ -5,6 +5,7 @@
  *   kyc      ID document reading and checks (vision model, fictional specimens)
  *   contract-review  addendum review for conflicts (chat model)
  *   ejari-field  Ejari rejection → contract field (decision model)
+ *   complaints  Complaint Triage: category, urgency, safety/legal routing (decision model) + acknowledgement (chat model)
  *   leasing-assistant  Telegram enquiries: intent, flags, handoff (decision model) + unit answers (chat model)
  *   copilot  staff copilot (chat model; uses TEST_DATABASE_URL, which it drops)
  * Without a name, runs them all. Exits non-zero if any eval fails its hard limits.
@@ -17,6 +18,7 @@ const runs: Record<string, string[]> = {
   "contract-review": ["packages/helpers/scripts/eval-contract.ts"],
   "ejari-field": ["packages/helpers/scripts/eval-ejari.ts"],
   "leasing-assistant": ["packages/helpers/scripts/eval-leasing-assistant.ts"],
+  complaints: ["packages/helpers/scripts/eval-complaints.ts"],
   copilot: ["apps/engine/src/evals/copilot.ts"],
 };
 const names = name ? [name] : Object.keys(runs);

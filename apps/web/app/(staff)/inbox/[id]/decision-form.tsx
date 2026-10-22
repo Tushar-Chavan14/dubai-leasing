@@ -56,7 +56,7 @@ export function DecisionForm({
             <input name="proposedRentAed" defaultValue={currentRentAed ?? ""} inputMode="decimal" autoFocus />
           </span>
           <span className="hint">
-            Checked against the rulebook cap and the 90-day notice deadline before it's accepted.
+            Checked against the rulebook's rent cap and notice deadline before it's accepted.
           </span>
         </label>
       )}

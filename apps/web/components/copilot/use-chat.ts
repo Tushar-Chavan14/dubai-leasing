@@ -9,21 +9,64 @@ export interface ToolStep {
   status: "running" | "ok" | "failed";
 }
 
-/** An action the copilot proposed; only the user's Confirm click carries it out (D25). */
-export interface ProposalView {
+interface ProposalBase {
   id: string;
-  kind: "create_application";
   status: "pending" | "confirmed" | "cancelled" | "failed" | "expired";
-  summary: {
-    unitCode: string;
-    unit: string;
-    applicant: string;
-    email: string;
-    viewingLabel: string;
-    askingRent: string;
-  };
-  result: { applicationId?: string; ref?: string; error?: string } | null;
+  result: { applicationId?: string; ref?: string; taskId?: string; approvalId?: string; error?: string } | null;
   expiresAt: string;
+  createdAt: string;
+}
+
+/** An action the copilot proposed; only the user's Confirm click carries it out (D25, D26). */
+export type ProposalView = ProposalBase &
+  (
+    | {
+        kind: "create_application";
+        summary: {
+          unitCode: string;
+          unit: string;
+          applicant: string;
+          email: string;
+          viewingLabel: string;
+          askingRent: string;
+        };
+      }
+    | {
+        kind: "create_task";
+        summary: { leaseRef: string; title: string; assigneeRole: string; dueOn: string | null };
+      }
+    | {
+        kind: "request_approval";
+        summary:
+          | {
+              gate: "formal_reminder";
+              leaseRef: string;
+              instalment: number;
+              amount: string;
+              dueOn: string;
+              status: string;
+            }
+          | {
+              gate: "vacate_notice";
+              leaseRef: string;
+              ground: string;
+              servedOn: string;
+              deliveryMethod: string;
+              leaseEndOn: string;
+            };
+      }
+  );
+
+/** Text the copilot drafted; the user opens it in the normal form and sends it themselves (D26). */
+export interface DraftView {
+  id: string;
+  kind: "email" | "approval_note";
+  leaseId: string | null;
+  leaseRef: string | null;
+  approvalId: string | null;
+  subject: string | null;
+  body: string;
+  status: "draft" | "used";
   createdAt: string;
 }
 
@@ -35,6 +78,7 @@ export interface ChatMessage {
   unverified: string[];
   status: "streaming" | "done" | "error";
   proposals?: ProposalView[];
+  drafts?: DraftView[];
 }
 
 export interface PageRef {
@@ -50,7 +94,8 @@ type StreamEvent =
   | { type: "discard" }
   | { type: "done"; messageId: string; answer: string; unverified: string[] }
   | { type: "error"; error: string }
-  | { type: "proposal"; proposal: ProposalView };
+  | { type: "proposal"; proposal: ProposalView }
+  | { type: "draft"; draft: DraftView };
 
 let seq = 0;
 const localId = () => `m${Date.now().toString(36)}${(seq++).toString(36)}`;
@@ -142,6 +187,9 @@ export function useCopilotChat(opts: { page?: PageRef | undefined; threadId?: st
                 break;
               case "proposal":
                 patchLast((m) => ({ ...m, proposals: [...(m.proposals ?? []), e.proposal] }));
+                break;
+              case "draft":
+                patchLast((m) => ({ ...m, drafts: [...(m.drafts ?? []), e.draft] }));
                 break;
             }
           }

@@ -7,10 +7,18 @@ import type { EngineContext } from "../context.ts";
 
 const DAY = 86_400_000;
 
-export type LinkPurpose = "tenancy" | "notice_ack" | "application" | "viewing" | "kyc_upload" | "offer" | "sign";
+export type LinkPurpose =
+  | "tenancy"
+  | "notice_ack"
+  | "application"
+  | "viewing"
+  | "kyc_upload"
+  | "offer"
+  | "sign"
+  | "move_in_ack";
 
 /** Single-use purposes: spent by the one submission they exist for. */
-const SINGLE_USE = new Set<LinkPurpose>(["notice_ack", "kyc_upload", "offer", "sign"]);
+const SINGLE_USE = new Set<LinkPurpose>(["notice_ack", "kyc_upload", "offer", "sign", "move_in_ack"]);
 const PATH: Record<LinkPurpose, (token: string) => string> = {
   tenancy: (t) => `/t/${t}`,
   application: (t) => `/t/${t}`,
@@ -19,6 +27,7 @@ const PATH: Record<LinkPurpose, (token: string) => string> = {
   kyc_upload: (t) => `/t/${t}/documents`,
   offer: (t) => `/t/${t}/offer`,
   sign: (t) => `/t/${t}/sign`,
+  move_in_ack: (t) => `/t/${t}/move-in`,
 };
 
 /**

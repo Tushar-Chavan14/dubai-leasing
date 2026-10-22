@@ -676,3 +676,114 @@ describe.skipIf(noDb)("Ejari registration (step 6)", () => {
     expect(ts.map((x) => x.kind)).toContain("ejari_unreachable");
   });
 });
+
+describe.skipIf(noDb)("end to end: contract → Ejari → move-in → rent → complaint (phase 3 exit)", () => {
+  beforeEach(async () => {
+    database = await freshDatabase();
+  });
+
+  /** tev1: a leak report is a routine plumbing issue; everything else agrees, as in the tests above. */
+  const decide = (state: string): SystemOneResponse =>
+    /"""[^"]*leak/i.test(state)
+      ? {
+          model: "tev1:test",
+          answers: {
+            category: { type: "choice", choice: "plumbing", confidence: 0.92, probabilities: {} },
+            urgency: { type: "score", score: 1, confidence: 0.8, probabilities: {} },
+            safety: { type: "noul", noul: 0.04 },
+            legal_threat: { type: "noul", noul: 0.02 },
+            system_instruction: { type: "noul", noul: 0.02 },
+            language: { type: "choice", choice: "en", confidence: 0.99, probabilities: {} },
+          },
+        }
+      : agreeingDecision();
+
+  test("signed, registered, moved in, a cheque bounces, the formal reminder starts the rulebook clock, a leak becomes a ticket", async () => {
+    const ejari = new FakeEjari(() => ({ ok: true, ejariNo: "SIM-2026-0000777", issuedOn: "2026-11-01" }));
+    const llm = new FakeLlm(
+      decide,
+      undefined,
+      () => "Thank you for your report. Our leasing team has received it and will contact you.",
+    );
+    const s = await setup({ ejari, llm });
+    const { completeMoveInChecklist } = await import("./harness.ts");
+    const { sweepDueDeadlines } = await import("../src/manager/milestones.ts");
+    const { createLink } = await import("../src/manager/links.ts");
+    const { withTx, payments, complaints, maintenanceTickets } = await import("@leasing/db");
+
+    // Steps 5–6: contract signed, Ejari issued.
+    await toRegistration(s);
+    await decideApproval(s.ctx, (await approvalOf(s.leaseId, "ejari_submission")).id, s.officer, {
+      decision: "approve",
+    });
+    await s.drain({ ejari: true });
+    expect((await leaseRow(s.leaseId)).state).toBe("MOVE_IN");
+
+    // Step 7: the checklist gates the move-in; then ACTIVE with the instalments and the move-in email.
+    expect((await s.staff(s.officer, `/api/leases/${s.leaseId}/move-in/complete`, "POST")).status).toBe(422);
+    await completeMoveInChecklist(s.ctx, s.leaseId);
+    expect((await s.staff(s.officer, `/api/leases/${s.leaseId}/move-in/complete`, "POST")).status).toBe(200);
+    await s.drain();
+    expect((await leaseRow(s.leaseId)).state).toBe("ACTIVE");
+    const pays = await database.db.select().from(payments).where(eq(payments.leaseId, s.leaseId)).orderBy(payments.seq);
+    expect(pays.map((p) => [p.dueOn as string, p.amountFils, p.status as string])).toEqual([
+      ["2026-12-01", 3_375_000, "scheduled"],
+      ["2027-03-01", 3_375_000, "scheduled"],
+      ["2027-06-01", 3_375_000, "scheduled"],
+      ["2027-09-01", 3_375_000, "scheduled"],
+    ]);
+    expect(s.mailer.sent.some((m) => m.to === "lena.applicant@demo.example" && /move-in/i.test(m.subject))).toBe(true);
+
+    // Step 8: the reminder goes out a week before; the first cheque bounces.
+    s.clock.advanceDays(23); // 2026-11-24
+    await sweepDueDeadlines(s.ctx);
+    await s.drain();
+    expect(s.mailer.sent.at(-1)!.subject).toMatch(/^Rent reminder: payment 1 of 4/);
+    s.clock.advanceDays(7); // 2026-12-01
+    expect(
+      (await s.staff(s.finance, `/api/payments/${pays[0]!.id}/record`, "POST", { outcome: "bounced" })).status,
+    ).toBe(200);
+    await s.drain();
+    s.clock.advanceDays(7);
+    await sweepDueDeadlines(s.ctx);
+    await s.drain();
+    s.clock.advanceDays(7); // 2026-12-15: two friendly reminders → formal reminder drafted, not sent
+    await sweepDueDeadlines(s.ctx);
+    await s.drain();
+    const formal = await approvalOf(s.leaseId, "formal_reminder");
+    expect(formal.status).toBe("pending");
+    expect(s.mailer.sent.some((m) => /formal/i.test(m.subject))).toBe(false);
+    await decideApproval(s.ctx, formal.id, s.manager, { decision: "approve" });
+    await s.drain();
+    const p1 = (await database.db.select().from(payments).where(eq(payments.id, pays[0]!.id)))[0]!;
+    expect(p1.formalReminderSentOn as string).toBe("2026-12-15");
+    expect(p1.evictionEligibleOn as string).toBe("2027-01-14"); // + 30 days, dubai-2025-01
+
+    // A leak reported in the portal becomes a ticket; the tenant gets the checked acknowledgement.
+    const link = await withTx(database, (tx) =>
+      createLink(s.ctx, tx, {
+        purpose: "tenancy",
+        entity: { kind: "lease", id: s.leaseId },
+        partyId: s.tenantId,
+        ttlDays: 30,
+      }),
+    );
+    const r = await s.portal("/api/inbound", "POST", {
+      token: link.token,
+      type: "COMPLAINT_SUBMITTED",
+      payload: { description: "Water leak under the kitchen sink", room: "Kitchen", atRisk: false },
+    });
+    expect(r.status).toBe(202);
+    const { processInbound, INBOUND_JOB } = await import("../src/manager/inbound.ts");
+    for (const j of s.scheduler.jobs.filter((x) => x.name === INBOUND_JOB))
+      await processInbound(s.ctx, String(j.data.inboundEventId));
+    await s.drain();
+    const [c] = await database.db.select().from(complaints).where(eq(complaints.leaseId, s.leaseId));
+    expect(c).toMatchObject({ status: "ticketed", category: "plumbing" });
+    const [ticket] = await database.db.select().from(maintenanceTickets);
+    expect(ticket).toMatchObject({ status: "open", urgency: 1 });
+    expect(s.mailer.sent.at(-1)!.subject).toContain(`We received your report ${c!.ref}`);
+    // Nothing on the lease moved on its own: it is still ACTIVE and a person decides what's next.
+    expect((await leaseRow(s.leaseId)).state).toBe("ACTIVE");
+  });
+});

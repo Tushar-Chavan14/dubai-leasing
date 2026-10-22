@@ -1,6 +1,17 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { calendarDate as d, newId } from "@leasing/core";
-import { approvals, type Database, deadlines, leaseEvents, leases, parties, tasks, units, withTx } from "@leasing/db";
+import {
+  approvals,
+  type Database,
+  deadlines,
+  leaseEvents,
+  leases,
+  parties,
+  payments,
+  tasks,
+  units,
+  withTx,
+} from "@leasing/db";
 import { getRulebook, rulebookValues } from "@leasing/rulebook";
 import { and, eq, like } from "drizzle-orm";
 import { advance } from "../src/manager/advance.ts";
@@ -9,15 +20,16 @@ import { importLeasesCsv, importUnitsCsv } from "../src/manager/import.ts";
 import { fireDeadline, sweepDueDeadlines } from "../src/manager/milestones.ts";
 import { sendRenewalNotice } from "../src/manager/outbound.ts";
 import { createDraft, publishRulebook, updateDraft } from "../src/manager/rulebooks.ts";
-import { addStaff, freshDatabase, leaseCsv, noDb, testContext, unitCsv } from "./harness.ts";
+import { addStaff, completeMoveInChecklist, freshDatabase, leaseCsv, noDb, testContext, unitCsv } from "./harness.ts";
 
 // 08:00 Dubai on 2026-10-19.
 const START = "2026-10-19T04:00:00Z";
 let database: Database;
 type Ctx = ReturnType<typeof testContext>["ctx"];
 
+/** One imported lease. One cheque by default (already due, so assumed paid): these tests are about renewal. */
 async function importOne(ctx: Ctx, row: Partial<Record<string, string>>) {
-  const [r] = await importLeasesCsv(ctx, leaseCsv([row]), "import");
+  const [r] = await importLeasesCsv(ctx, leaseCsv([{ cheques: "1", ...row }]), "import");
   if (!r?.leaseId) throw new Error(`import failed: ${JSON.stringify(r)}`);
   return r.leaseId;
 }
@@ -31,8 +43,12 @@ const deadlineFor = async (leaseId: string, prefix: string) =>
       .from(deadlines)
       .where(and(eq(deadlines.entityId, leaseId), like(deadlines.milestone, `${prefix}@%`)))
   )[0]!;
+/** Lease-lifecycle tasks (finance's import check of assumed-paid cheques is tested in tenancy.test.ts). */
 const taskKinds = async (leaseId: string) =>
-  (await database.db.select().from(tasks).where(eq(tasks.entityId, leaseId))).map((t) => t.kind).toSorted();
+  (await database.db.select().from(tasks).where(eq(tasks.entityId, leaseId)))
+    .map((t) => t.kind)
+    .filter((k) => k !== "payment_import_check")
+    .toSorted();
 const fired = async (leaseId: string) =>
   (await events(leaseId))
     .filter((e) => e.type === "MILESTONE_FIRED")
@@ -194,7 +210,9 @@ describe.skipIf(noDb)("manager (Postgres)", () => {
       const again = await importLeasesCsv(ctx, csv, "import");
       expect(again[0]?.status).toBe("skipped");
       expect(await database.db.select().from(leases)).toHaveLength(1);
-      expect(await database.db.select().from(deadlines)).toHaveLength(6);
+      // 6 renewal milestones + reminder and overdue checks for the 2 instalments still ahead; none twice.
+      expect(await database.db.select().from(deadlines)).toHaveLength(10);
+      expect(await database.db.select().from(payments)).toHaveLength(4);
     });
 
     test("overlapping lease on the same unit is refused", async () => {
@@ -255,7 +273,10 @@ describe.skipIf(noDb)("manager (Postgres)", () => {
         lease_end: ["2027-05-31", "pending"],
       });
       await sweepDueDeadlines(ctx);
-      const [t] = await database.db.select().from(tasks).where(eq(tasks.entityId, id));
+      const [t] = await database.db
+        .select()
+        .from(tasks)
+        .where(and(eq(tasks.entityId, id), eq(tasks.kind, "landlord_intent")));
       expect(t?.kind).toBe("landlord_intent");
       expect(t?.details).toMatchObject({ repossessionNoticeDeadline: "2026-05-31", possibleThisTerm: false });
     });
@@ -379,6 +400,7 @@ describe.skipIf(noDb)("manager (Postgres)", () => {
       const id = await importOne(ctx, { start_on: "2026-11-01", end_on: "2027-02-28" });
       expect((await lease(id)).state).toBe("MOVE_IN");
       clock.advanceDays(13); // 2026-11-01
+      await completeMoveInChecklist(ctx, id);
       await advance(ctx, { kind: "lease", id }, "MOVE_IN_COMPLETED", { actor: "system" });
       expect((await lease(id)).state).toBe("RENEWAL");
       const aps = await database.db.select().from(approvals).where(eq(approvals.entityId, id));

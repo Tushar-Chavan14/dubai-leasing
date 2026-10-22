@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Due, Empty, PageHead } from "../../../components/ui";
+import { TaskActions } from "../../../components/work-forms";
 import { get, publicGet } from "../../../lib/engine";
 import { roleLabel, shortDate } from "../../../lib/format";
 import { IconChecklist } from "../../../lib/icons";
@@ -52,26 +53,27 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
         ) : (
           <ul className="list">
             {rows.map((t) => (
-              <li key={t.id}>
-                <Link href={taskHref(t)} className="list-row">
-                  <div>
-                    <div className="title">{t.title}</div>
-                    <div className="meta">
-                      <span>{roleLabel(t.assigneeRole)}</span>
-                      <span>Created {shortDate(t.createdAt.slice(0, 10))}</span>
-                    </div>
+              <li key={t.id} className="list-row">
+                <div>
+                  <Link href={taskHref(t)} className="title link-plain">
+                    {t.title}
+                  </Link>
+                  <div className="meta">
+                    <span>{roleLabel(t.assigneeRole)}</span>
+                    <span>Created {shortDate(t.createdAt.slice(0, 10))}</span>
                   </div>
-                  <div className="side">
-                    {t.dueOn ? (
-                      <>
-                        <span className="num">{shortDate(t.dueOn)}</span>
-                        {today && <Due today={today} on={t.dueOn} />}
-                      </>
-                    ) : (
-                      <span className="muted">No due date</span>
-                    )}
-                  </div>
-                </Link>
+                  {me && <TaskActions task={t} role={me.role} today={today} />}
+                </div>
+                <div className="side">
+                  {t.dueOn ? (
+                    <>
+                      <span className="num">{shortDate(t.dueOn)}</span>
+                      {today && <Due today={today} on={t.dueOn} />}
+                    </>
+                  ) : (
+                    <span className="muted">No due date</span>
+                  )}
+                </div>
               </li>
             ))}
           </ul>

@@ -3,6 +3,8 @@ import { leaseParties, leases, parties, type Tx, units, withTx } from "@leasing/
 import { getRulebook, rulesVersionForTerm } from "@leasing/rulebook";
 import { and, eq, inArray, ne } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
+import { scheduleTermPayments } from "./collections.ts";
+import { ensureMoveInInspection } from "./move-in.ts";
 import { parseCsv } from "../import/csv.ts";
 import { importedLeaseState, LeaseImportRow } from "../import/lease-row.ts";
 import { parseUnitRow } from "../import/unit-row.ts";
@@ -275,8 +277,11 @@ async function importRow(
   });
 
   const reasons: string[] = [];
+  if (leaseState === "MOVE_IN") await ensureMoveInInspection(ctx, tx, lease.id);
   if (leaseState === "ACTIVE" || leaseState === "RENEWAL") {
     await scheduleLeaseMilestones(ctx, tx, lease);
+    // Running leases: instalments already due are assumed paid (flagged); later ones are chased.
+    await scheduleTermPayments(ctx, tx, lease, { assumePastPaid: true, actor });
     const r2 = getRulebook(rulesVersion);
     if (today > addDays(r.end_on, -r2.renewalNoticeDays)) {
       reasons.push(

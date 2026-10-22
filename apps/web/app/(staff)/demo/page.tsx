@@ -29,11 +29,29 @@ async function rewind() {
   redirect(`/demo?${new URLSearchParams(r.ok ? { rewound: "1" } : { error: r.error?.error ?? "Rewind failed" })}`);
 }
 
+async function demoPayment(formData: FormData) {
+  "use server";
+  const action = formData.get("action") === "pay" ? "pay" : "bounce";
+  const leaseRef = String(formData.get("leaseRef") ?? "");
+  const r = await engine<{ seq: number; status: string }>(`/api/demo/payments/${action}`, {
+    method: "POST",
+    body: JSON.stringify({ leaseRef }),
+  });
+  revalidatePath("/", "layout");
+  const msg = r.ok
+    ? `${leaseRef}: instalment ${r.data.seq} ${action === "pay" ? "confirmed paid" : "recorded as bounced; the tenant gets a friendly reminder"}.`
+    : (r.error?.error ?? "That didn't work");
+  redirect(`/demo?${new URLSearchParams(r.ok ? { pay: msg } : { error: msg })}`);
+}
+
 export default async function DemoPage({
   searchParams,
 }: {
-  searchParams: Promise<{ fired?: string; n?: string; d?: string; error?: string; rewound?: string }>;
+  searchParams: Promise<{ fired?: string; n?: string; d?: string; error?: string; rewound?: string; pay?: string }>;
 }) {
+  const leasesForPay = (await engine<{ ref: string; state: string }[]>("/api/leases")).data?.filter((l) =>
+    ["ACTIVE", "RENEWAL", "MOVE_OUT"].includes(l.state),
+  );
   const sp = await searchParams;
   const clock = await engine<{ now: string; today: string; offsetDays: number }>("/api/demo/clock");
   if (!clock.ok) {
@@ -141,6 +159,34 @@ export default async function DemoPage({
           )}
         </section>
       </div>
+      <section className="panel panel-pad section" aria-labelledby="pay-demo-h">
+        <h2 id="pay-demo-h" className="section-title">
+          Rent collections
+        </h2>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Fast-forward to a cheque date, then bounce it: the tenant gets friendly reminders, and after two a formal
+          reminder goes to a leasing manager for approval. Its accepted email starts the rulebook&apos;s waiting period.
+        </p>
+        {sp.pay && <p className="row-done">{sp.pay}</p>}
+        <form action={demoPayment} className="btn-row" style={{ alignItems: "end" }}>
+          <label className="field">
+            <span className="field-label">Lease</span>
+            <select name="leaseRef" required>
+              {(leasesForPay ?? []).map((l) => (
+                <option key={l.ref} value={l.ref}>
+                  {l.ref}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button type="submit" name="action" value="bounce" className="btn">
+            Bounce the next cheque
+          </button>
+          <button type="submit" name="action" value="pay" className="btn">
+            Mark the next payment paid
+          </button>
+        </form>
+      </section>
       <section className="panel panel-pad section" aria-labelledby="ejari-demo-h">
         <h2 id="ejari-demo-h" className="section-title">
           Simulated Ejari

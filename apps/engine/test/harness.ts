@@ -136,3 +136,36 @@ export function unitCsv(rows: Partial<Record<string, string>>[]): string {
     ...rows.map((r, i) => keys.map((k) => r[k] ?? defaults[k] ?? (k === "unit_code" ? `TU-${i}` : "")).join(",")),
   ].join("\n");
 }
+
+/**
+ * Ticks every move-in checklist item and records a condition photo row per room (no file on
+ * disk: the guard only checks the records). For tests that go MOVE_IN → ACTIVE.
+ */
+export async function completeMoveInChecklist(ctx: EngineContext, leaseId: string): Promise<void> {
+  const { withTx, inspections, documents } = await import("@leasing/db");
+  const { eq } = await import("drizzle-orm");
+  const { ensureMoveInInspection } = await import("../src/manager/move-in.ts");
+  await withTx(ctx.database, async (tx) => {
+    const insp = await ensureMoveInInspection(ctx, tx, leaseId);
+    const items = (insp.items as { id: string; label: string; kind: string; done: boolean }[]).map((i) => ({
+      ...i,
+      done: true,
+      doneBy: "test",
+    }));
+    await tx.db.update(inspections).set({ items }).where(eq(inspections.id, insp.id));
+    for (const room of items.filter((i) => i.kind === "room")) {
+      await tx.db.insert(documents).values({
+        id: newId(),
+        leaseId,
+        kind: "condition_photo",
+        sha256: `test-${room.label}`,
+        path: "test/none.jpg",
+        mime: "image/jpeg",
+        status: "uploaded",
+        room: room.label,
+        inspectionId: insp.id,
+        uploadedBy: "user:test",
+      });
+    }
+  });
+}
