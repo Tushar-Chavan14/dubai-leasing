@@ -99,7 +99,8 @@ export async function requestLoginCode(
   });
   if (!prepared) return { sent: true };
   const receipt = await ctx.mailer.send({ to: email, ...prepared.mail }).catch(async (e: unknown) => {
-    const error = maskPiiText(e instanceof Error ? e.message : String(e));
+    // SMTP errors often echo the recipient; keep the address out of the stored text.
+    const error = maskPiiText((e instanceof Error ? e.message : String(e)).replaceAll(email, "[recipient]"));
     await ctx.database.db
       .update(outboundMessages)
       .set({ status: "failed", error })

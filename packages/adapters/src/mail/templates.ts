@@ -498,7 +498,8 @@ export interface LoginCodeMail {
 
 /** The one-time sign-in code for the web chat. Valid for 10 minutes. */
 export function loginCodeEmail(d: LoginCodeMail): Rendered {
-  const subject = `Your sign-in code: ${d.code}`;
+  // The code stays out of the subject: subjects show in notifications and lock screens.
+  const subject = "Your sign-in code";
   const paras = [
     `Your sign-in code is ${d.code}`,
     "It is valid for 10 minutes.",

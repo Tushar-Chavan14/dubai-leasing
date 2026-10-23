@@ -22,6 +22,7 @@ import { registerChannelRoutes, registerConversationRoutes } from "./channel.ts"
 import { registerTenancyDemoRoutes, registerTenancyRoutes } from "./tenancy.ts";
 import { leaseContractView, registerContractRoutes } from "./contracts.ts";
 import { registerCopilotRoutes } from "./copilot.ts";
+import { registerCustomerRoutes } from "./customer.ts";
 import { registerPortalRoutes } from "./portal.ts";
 import { registerReadRoutes } from "./reads.ts";
 import { registerRenewalRoutes } from "./renewals.ts";
@@ -107,6 +108,9 @@ export function createApi(ctx: EngineContext, opts: ApiOptions) {
   registerPortalRoutes(app, ctx, opts.mediaStore);
   // Telegram bot: secret-authenticated, outside the staff session.
   registerChannelRoutes(app, ctx, opts.channelSecret);
+
+  // Customer web chat: its own token audience, outside the staff session.
+  registerCustomerRoutes(app, ctx, opts);
 
   const api = new Hono<AuthEnv>();
   api.use("*", requireUser(ctx.database, opts.sessionSecret));

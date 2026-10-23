@@ -23,8 +23,8 @@ function setup(opts: { demoRecipient?: string } = {}) {
   return t;
 }
 /** The code from the latest email (tests read it the way a customer would). */
-const lastCode = (mailer: { sent: { subject: string }[] }) =>
-  /Your sign-in code: (\d{6})/.exec(mailer.sent.at(-1)!.subject)![1]!;
+const lastCode = (mailer: { sent: { text: string }[] }) =>
+  /Your sign-in code is (\d{6})/.exec(mailer.sent.at(-1)!.text)![1]!;
 const wrong = (code: string) => (code === "000000" ? "111111" : "000000");
 
 describe.skipIf(noDb)("customer email-code login", () => {
@@ -42,6 +42,9 @@ describe.skipIf(noDb)("customer email-code login", () => {
     expect(msgs[0]!.entityId).toBe(row!.id);
     expect(msgs[0]!.milestone).toBe(`login:${row!.id}`);
     expect(row!.codeHash).not.toContain(lastCode(mailer));
+    // The code is in the body only, never the subject (subjects show on lock screens).
+    expect(mailer.sent[0]!.subject).toBe("Your sign-in code");
+    expect(msgs[0]!.subject).not.toContain(lastCode(mailer));
     const r = await verifyLoginCode(ctx, "sara@example.com", lastCode(mailer));
     expect(r.needsProfile).toBe(true);
     expect(await database.db.select().from(customerAccounts)).toHaveLength(1);
@@ -51,6 +54,16 @@ describe.skipIf(noDb)("customer email-code login", () => {
     const events = await database.db.select().from(leaseEvents).where(eq(leaseEvents.entityKind, "customer_account"));
     expect(events.map((e) => e.actor)).toContain(`customer:${acc!.id}`);
     expect(JSON.stringify(events)).not.toContain("sara@example.com");
+  });
+
+  test("a failed send stores the error without the recipient address", async () => {
+    const { ctx, mailer } = setup();
+    mailer.failNext = new Error("550 rejected: sara@example.com mailbox unavailable");
+    await expect(requestLoginCode(ctx, "Sara@Example.com", "ip")).rejects.toThrow("could not be sent");
+    const [m] = await database.db.select().from(outboundMessages);
+    expect(m!.status).toBe("failed");
+    expect(m!.error).toContain("[recipient]");
+    expect(m!.error).not.toContain("sara@example.com");
   });
 
   test("normalises email: one account for any casing", async () => {
