@@ -13,7 +13,7 @@ export type EnquiryCommand = z.infer<typeof EnquiryCommand>;
 /** Telegram limits callback data to 64 bytes. */
 const CallbackData = z.string().min(1).max(64);
 
-const base = {
+const telegramBase = {
   channel: z.literal("telegram"),
   /** Telegram `update_id`: the same update delivered twice is handled once. */
   updateId: z.string().regex(/^\d{1,20}$/),
@@ -26,22 +26,83 @@ const base = {
   }),
 };
 
-export const ChannelUpdate = z.discriminatedUnion("kind", [
-  z.object({ ...base, kind: z.literal("text"), text: z.string().min(1).max(4096) }),
-  z.object({ ...base, kind: z.literal("command"), command: EnquiryCommand }),
-  z.object({ ...base, kind: z.literal("callback"), data: CallbackData }),
-  /** A photo, file, voice note or sticker. Never stored or forwarded (ID documents go through the upload link only). */
-  z.object({ ...base, kind: z.literal("media") }),
+/** Web chat: `updateId` is the client message id (UUID); `chatId` and `from.id` are the customer account id. */
+const webBase = {
+  channel: z.literal("web"),
+  updateId: z.uuid(),
+  chatId: z.uuid(),
+  from: z.object({
+    id: z.uuid(),
+    firstName: z.string().max(128).optional(),
+    languageCode: z.string().max(16).optional(),
+  }),
+};
+
+export const ChannelUpdate = z.union([
+  z.discriminatedUnion("kind", [
+    z.object({ ...telegramBase, kind: z.literal("text"), text: z.string().min(1).max(4096) }),
+    z.object({ ...telegramBase, kind: z.literal("command"), command: EnquiryCommand }),
+    z.object({ ...telegramBase, kind: z.literal("callback"), data: CallbackData }),
+    /** A photo, file, voice note or sticker. Never stored or forwarded (ID documents go through the upload link only). */
+    z.object({ ...telegramBase, kind: z.literal("media") }),
+  ]),
+  z.discriminatedUnion("kind", [
+    z.object({ ...webBase, kind: z.literal("text"), text: z.string().min(1).max(1000) }),
+    z.object({ ...webBase, kind: z.literal("callback"), data: CallbackData }),
+  ]),
 ]);
 export type ChannelUpdate = z.infer<typeof ChannelUpdate>;
 
 export const ChannelButton = z.object({ label: z.string().min(1).max(64), data: CallbackData });
 export type ChannelButton = z.infer<typeof ChannelButton>;
 
+/** A unit shown in the web chat. `rent` is formatted by code, never by a model. */
+export const UnitCard = z.object({
+  unitId: z.uuid(),
+  code: z.string(),
+  building: z.string(),
+  community: z.string(),
+  bedrooms: z.number().int(),
+  bathrooms: z.number().int(),
+  areaSqft: z.number(),
+  furnished: z.boolean(),
+  rent: z.string(),
+  photoUrl: z.string().nullable(),
+});
+export type UnitCard = z.infer<typeof UnitCard>;
+
+/** An application or lease shown in the web chat. */
+export const RecordCard = z.object({
+  kind: z.enum(["application", "lease"]),
+  id: z.string(),
+  ref: z.string(),
+  unitLabel: z.string(),
+  community: z.string(),
+  stage: z.string(),
+  stageLabel: z.string(),
+  dates: z.array(z.object({ label: z.string(), on: z.string() })),
+  nextPayment: z.object({ dueOn: z.string(), amount: z.string() }).nullable(),
+  needsDocuments: z.boolean(),
+});
+export type RecordCard = z.infer<typeof RecordCard>;
+
+/** Document upload prompt for an application, with what is already uploaded. */
+export const UploadCard = z.object({
+  applicationId: z.string(),
+  documents: z.array(
+    z.object({ id: z.string(), kind: z.string(), side: z.string().nullable(), uploadedAt: z.string() }),
+  ),
+});
+export type UploadCard = z.infer<typeof UploadCard>;
+
 export const ChannelReply = z.object({
   text: z.string().min(1).max(4000),
   /** Inline keyboard, one button per row. */
   buttons: z.array(ChannelButton).max(10).optional(),
+  /** Web chat only. */
+  cards: z.array(UnitCard).max(5).optional(),
+  records: z.array(RecordCard).max(10).optional(),
+  upload: UploadCard.optional(),
 });
 export type ChannelReply = z.infer<typeof ChannelReply>;
 
@@ -58,6 +119,7 @@ export const EnquiryFlow = z.object({
     "asking_email",
   ]),
   bedrooms: z.number().int().min(0).max(4).optional(),
+  furnished: z.boolean().optional(),
   community: z.string().max(120).optional(),
   unitId: z.uuid().optional(),
   /** ISO instant of the chosen viewing slot. */

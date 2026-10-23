@@ -537,7 +537,7 @@ export const conversations = pgTable(
   "conversations",
   {
     id: id(),
-    channel: text("channel").$type<"telegram" | "whatsapp">().notNull(),
+    channel: text("channel").$type<"telegram" | "whatsapp" | "web">().notNull(),
     externalChatId: text("external_chat_id").notNull(),
     partyId: uuid("party_id").references(() => parties.id),
     applicationId: uuid("application_id").references(() => applications.id),

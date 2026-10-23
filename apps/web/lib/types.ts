@@ -137,7 +137,7 @@ export interface CompanyPolicyView {
 /** Telegram enquiry conversations (decision D24). */
 export interface ConversationRow {
   id: string;
-  channel: "telegram" | "whatsapp";
+  channel: "telegram" | "whatsapp" | "web";
   status: "bot" | "handoff" | "closed";
   language: string | null;
   handoffReason: string | null;

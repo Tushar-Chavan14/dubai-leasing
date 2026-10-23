@@ -25,7 +25,9 @@ export type Actor =
   /** A landlord acting through the portal (party id), e.g. signing the contract. */
   | `landlord:${string}`
   /** Someone enquiring through the Telegram bot (conversation id), e.g. booking a viewing. */
-  | `enquirer:${string}`;
+  | `enquirer:${string}`
+  /** A signed-in web chat customer (account id). */
+  | `customer:${string}`;
 
 export const userActor = (userId: string): Actor => `user:${userId}`;
 export const helperActor = (name: string): Actor => `helper:${name}`;
