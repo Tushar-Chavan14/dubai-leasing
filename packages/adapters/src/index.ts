@@ -26,6 +26,7 @@ export {
   rentFriendlyEmail,
   rentReminderEmail,
   staffMessageEmail,
+  loginCodeEmail,
 } from "./mail/templates.ts";
 export type * from "./mail/types.ts";
 export { type PdfBlock, renderPdf } from "./pdf/render.ts";

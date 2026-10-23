@@ -489,6 +489,25 @@ export function staffMessageEmail(d: StaffMessageMail): Rendered {
   };
 }
 
+// ---------------------------------------------------------------- customer chat login
+
+export interface LoginCodeMail {
+  code: string;
+  demo: boolean;
+}
+
+/** The one-time sign-in code for the web chat. Valid for 10 minutes. */
+export function loginCodeEmail(d: LoginCodeMail): Rendered {
+  const subject = `Your sign-in code: ${d.code}`;
+  const paras = [
+    `Your sign-in code is ${d.code}`,
+    "It is valid for 10 minutes.",
+    "If you didn't ask for it, ignore this email.",
+  ];
+  const foot = footer(d.demo);
+  return { subject, text: [...paras, "", foot].join("\n"), html: layout(subject, paras, [], foot) };
+}
+
 // ---------------------------------------------------------------- move-out (phase 4)
 
 export interface MoveOutMail {

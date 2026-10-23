@@ -56,8 +56,10 @@ const mailer = new NodemailerMailer({
 // Only the simulated registry exists so far; live DLD access is a later phase (architecture §9).
 if (env.EJARI_MODE !== "mock") throw new Error("EJARI_MODE=live is not available yet; use mock");
 
+const sessionSecret = env.SESSION_SECRET ?? "demo-only-session-secret";
 const ctx: EngineContext = {
   database,
+  sessionSecret,
   clock,
   scheduler: bossScheduler(boss),
   /** The published version in force today (D23); RULES_VERSION only if none is. */
@@ -92,7 +94,6 @@ if (env.DEMO_MODE) {
   sweepTimer = setInterval(() => void requestSweep(boss).catch((e) => console.error("sweep:", e.message)), 30_000);
 }
 
-const sessionSecret = env.SESSION_SECRET ?? "demo-only-session-secret";
 if (env.TELEGRAM_BOT_TOKEN && !env.CHANNEL_SECRET)
   console.warn("CHANNEL_SECRET not set: the Telegram bot route is off");
 const app = createApi(ctx, {

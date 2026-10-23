@@ -37,6 +37,8 @@ export interface EngineContext {
   llm: Llm;
   /** Public base URL of the web app, for links in emails. */
   webUrl: string;
+  /** Pepper for customer login-code hashes (SESSION_SECRET). Customer login refuses to run without it. */
+  sessionSecret?: string;
   /** Staff copilot chat model (tool calling). Absent: the chat endpoint answers 503. */
   copilot?: CopilotModel;
   /** Sends an officer's reply into a Telegram enquiry chat. Absent: staff replies answer 503. */
