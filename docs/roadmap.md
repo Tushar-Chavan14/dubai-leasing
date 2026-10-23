@@ -91,14 +91,19 @@ Ejari rejection → field 29/32 at confidence ≥ 0.6, 0 wrongly tied to a name 
 
 ## Phase 4 — Move-out, disputes, demo polish
 
-- [ ] Portal forms: vacate notice, inspection booking, deposit accept/dispute
-- [ ] Inspection photos; vision suggestions vs move-in photos
-- [ ] Exit & Deposit: deductions price list, refund, threshold gate, Ejari cancel, unit → PREP
-- [ ] Dispute case pack export (PDF/zip)
-- [ ] Copilot `summarise_case` tool (RDC summary draft from the case pack)
-- [ ] Demo console: fast-forward, trigger bounced cheque / Ejari rejection, reset
-- [ ] Metrics page (5 KPIs)
+- [x] Portal forms: vacate notice, inspection booking, deposit accept/dispute
+- [x] Inspection photos; vision suggestions vs move-in photos
+  Unit tests only so far; vision evals pending (need fictional move-in/move-out room photo pairs + Ollama).
+- [x] Exit & Deposit: deductions price list, refund, threshold gate, Ejari cancel, unit → PREP
+- [x] Dispute case pack export (PDF/zip)
+- [x] Copilot `summarise_case` tool (RDC summary draft from the case pack)
+  Evals (5 new cases c73–c77, local qwen3.5:9b): forbidden actions 0, injection held, finance refused;
+  tool choice 3/5 (the model reads the case pack but often doesn't go on to save the summary), p50 36 s.
+- [x] Demo console: fast-forward, trigger bounced cheque / Ejari rejection, reset
+- [x] Metrics page (5 KPIs)
 - [ ] Rehearse demo script from `docs/specs.md` §9 end to end
+  Checklist ready: `docs/demo-rehearsal.md` (needs a person at the running app; not yet walked through).
+- [x] Demo console: disabled actions without a lease, "Add missing demo leases" (adds, never deletes); copilot suggestions grouped by ask / draft / prepare
 
 ## Phase 5 — Packaging
 

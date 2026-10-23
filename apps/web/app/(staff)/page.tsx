@@ -22,6 +22,7 @@ const LEASE_MIX: { state: string; label: string; color: string }[] = [
   { state: "RENEWAL", label: "In renewal", color: "var(--warn)" },
   { state: "MOVE_IN", label: "Moving in", color: "color-mix(in srgb, var(--accent) 45%, var(--surface-3))" },
   { state: "REGISTRATION", label: "Registering", color: "color-mix(in srgb, var(--accent) 25%, var(--surface-3))" },
+  { state: "CONTRACT", label: "In contract", color: "color-mix(in srgb, var(--accent) 12%, var(--surface-3))" },
   { state: "MOVE_OUT", label: "Moving out", color: "color-mix(in srgb, var(--warn) 50%, var(--surface-3))" },
   { state: "DISPUTE", label: "Dispute", color: "var(--bad)" },
 ];

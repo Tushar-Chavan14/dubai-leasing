@@ -18,6 +18,10 @@ import {
   splitFils,
   startOfDubaiDay,
   toDubaiDate,
+  CompanyPolicy,
+  defaultCompanyPolicy,
+  DepositResponse,
+  VacateNotice,
 } from "../src/index.ts";
 
 describe("calendar dates", () => {
@@ -177,5 +181,40 @@ describe("env", () => {
   });
   test("missing DATABASE_URL", () => {
     expect(() => loadEnv({})).toThrow(/DATABASE_URL/);
+  });
+});
+
+describe("move-out forms (step 10)", () => {
+  test("IBANs are masked in text and under an `iban` key", () => {
+    expect(maskPiiText("refund to AE07 0331 2345 6789 0123 456 please")).toBe(
+      "refund to **** **** **** **** ***3 456 please",
+    );
+    expect(maskPii({ iban: "AE070331234567890123456" }).iban).toBe("*********************56");
+  });
+  test("deposit response: accept needs account and IBAN (normalised); dispute needs a reason", () => {
+    const ok = DepositResponse.parse({
+      revision: 1,
+      choice: "accept",
+      accountName: "A Tenant",
+      iban: "ae07 0331 2345 6789 0123 456",
+    });
+    expect(ok.iban).toBe("AE070331234567890123456");
+    expect(DepositResponse.safeParse({ revision: 1, choice: "accept", accountName: "A Tenant" }).success).toBe(false);
+    expect(DepositResponse.safeParse({ revision: 1, choice: "accept", accountName: "A", iban: "12345" }).success).toBe(
+      false,
+    );
+    expect(DepositResponse.safeParse({ revision: 1, choice: "dispute" }).success).toBe(false);
+    expect(
+      DepositResponse.safeParse({ revision: 1, choice: "dispute", reason: "the wall was cracked at move-in" }).success,
+    ).toBe(true);
+  });
+  test("notice to vacate needs the confirmation tick", () => {
+    expect(VacateNotice.safeParse({ moveOutOn: "2027-01-31" }).success).toBe(false);
+    expect(VacateNotice.safeParse({ moveOutOn: "2027-01-31", confirmVacate: true }).success).toBe(true);
+  });
+  test("the default price list parses and every id is unique", () => {
+    const ids = defaultCompanyPolicy.deductionPriceList.map((p) => p.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(CompanyPolicy.parse(defaultCompanyPolicy).deductionPriceList).toHaveLength(ids.length);
   });
 });

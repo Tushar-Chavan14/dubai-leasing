@@ -1,9 +1,13 @@
 import type { LocalDiskStore } from "@leasing/adapters";
+import { leasingMetrics } from "../manager/metrics.ts";
+import { resetDemoData } from "../demo/reset-data.ts";
+import { seedMissingDemoLeases } from "../demo/seed.ts";
 import { ApprovalDecision, maskPiiText } from "@leasing/core";
 import { staffUsers, withTx } from "@leasing/db";
 import { asc, eq } from "drizzle-orm";
 import { type Context, Hono } from "hono";
 import { z } from "zod";
+import { unprocessable } from "../errors.ts";
 import type { EngineDemoClock } from "../clock.ts";
 import type { EngineContext } from "../context.ts";
 import { DomainError, notFound } from "../errors.ts";
@@ -51,6 +55,8 @@ export interface ApiOptions {
   demoClock?: EngineDemoClock;
   /** Shared secret for the Telegram bot's route; unset turns the route off. */
   channelSecret?: string | undefined;
+  /** The simulated registry (demo console: reject the next submission, reset). */
+  ejariMockUrl?: string | undefined;
 }
 
 export function createApi(ctx: EngineContext, opts: ApiOptions) {
@@ -123,6 +129,8 @@ export function createApi(ctx: EngineContext, opts: ApiOptions) {
   });
 
   api.get("/leases", async (c) => c.json(await q.listLeases(db)));
+  // The five KPIs (docs/specs.md §8), any staff role.
+  api.get("/metrics", async (c) => c.json(await withTx(ctx.database, (tx) => leasingMetrics(tx, ctx.clock.today()))));
   api.get("/leases/:id", async (c) => {
     const id = z.uuid().safeParse(c.req.param("id"));
     const l = id.success ? await q.getLease(db, id.data) : null;
@@ -177,6 +185,31 @@ export function createApi(ctx: EngineContext, opts: ApiOptions) {
       return c.json({ today: ctx.clock.today(), offsetDays: 0 });
     });
     api.post("/demo/sweep", async (c) => c.json({ fired: (await sweepDueDeadlines(ctx)).filter((f) => f.fired) }));
+    // The simulated registry rejects the next registration (name mismatch), to show the review path.
+    api.post("/demo/ejari/reject-next", async (c) => {
+      requireRole(c.get("user"), ["admin", "leasing_manager", "leasing_officer"]);
+      if (!opts.ejariMockUrl) throw unprocessable("the simulated registry isn't configured", [], "no_mock");
+      const r = await fetch(`${opts.ejariMockUrl.replace(/\/$/, "")}/api/v1/demo/reject-next`, {
+        method: "POST",
+      }).catch(() => null);
+      if (!r?.ok) throw unprocessable("the simulated registry didn't answer; is it running?", [], "mock_down");
+      return c.json({ ok: true });
+    });
+    // Adds the demo leases that are missing, next to existing data (nothing deleted).
+    api.post("/demo/seed-leases", async (c) => {
+      requireRole(c.get("user"), ["admin", "leasing_manager", "leasing_officer"]);
+      return c.json({ results: await seedMissingDemoLeases(ctx) });
+    });
+    // Everything back to the seeded demo, clock at today. Admin only.
+    api.post("/demo/reset", async (c) => {
+      requireRole(c.get("user"), ["admin"]);
+      z.object({ confirm: z.literal("RESET") }).parse(await c.req.json());
+      // The audit log goes with the data, so the reset itself is logged by the server.
+      console.warn(`demo reset by user:${c.get("user").id}`);
+      await demoClock.rewind();
+      const r = await resetDemoData(ctx.database, opts.ejariMockUrl ?? "http://localhost:4100");
+      return c.json({ ok: true, today: ctx.clock.today(), ...r });
+    });
     registerTenancyDemoRoutes(api, ctx);
   }
 

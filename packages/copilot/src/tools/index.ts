@@ -1,4 +1,6 @@
 import type { StaffRole } from "@leasing/core";
+import { getCasePack } from "./get-case-pack.ts";
+import { summariseCase } from "./summarise-case.ts";
 import type { CopilotTool } from "../types.ts";
 import { computeRenewalCap } from "./compute-renewal-cap.ts";
 import { createTaskTool } from "./create-task.ts";
@@ -41,6 +43,8 @@ export const copilotTools: readonly CopilotTool[] = [
   proposeApproval,
   draftEmail,
   draftApprovalNote,
+  getCasePack,
+  summariseCase,
 ] as readonly CopilotTool[];
 
 /** Tools a role may see. The engine checks the role again on every call. */

@@ -21,6 +21,8 @@ export {
   complaintAckEmail,
   formalReminderEmail,
   moveInEmail,
+  moveOutEmail,
+  depositStatementEmail,
   rentFriendlyEmail,
   rentReminderEmail,
   staffMessageEmail,

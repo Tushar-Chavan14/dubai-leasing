@@ -1,5 +1,15 @@
 import { z } from "zod";
 
+const DEFAULT_DEDUCTIONS = [
+  { id: "cleaning", label: "Deep cleaning", unit: "room" as const, priceFils: 25_000 },
+  { id: "repaint", label: "Repainting", unit: "room" as const, priceFils: 80_000 },
+  { id: "wall_repair", label: "Wall hole or crack repair", unit: "item" as const, priceFils: 15_000 },
+  { id: "key_replacement", label: "Key or access card replacement", unit: "item" as const, priceFils: 20_000 },
+  { id: "fixture_repair", label: "Broken fixture or fitting repair", unit: "item" as const, priceFils: 30_000 },
+  { id: "appliance_repair", label: "Appliance repair call-out", unit: "item" as const, priceFils: 35_000 },
+  { id: "floor_repair", label: "Floor damage repair", unit: "sqm" as const, priceFils: 12_000 },
+];
+
 /**
  * Company limits (policy, not law). Stored versioned in `company_policy`, editable by Admin.
  * Defaults below are placeholders until the client confirms them (docs/specs.md §10).
@@ -90,6 +100,30 @@ export const CompanyPolicy = z.object({
       "3": z.number().int().positive(),
     })
     .default({ "0": 168, "1": 48, "2": 24, "3": 4 }),
+  // --- move-out and deposit (policy placeholders; docs/specs.md §10) ---
+  /**
+   * The company's price list for damage beyond normal wear and tear (fils per unit). Deductions
+   * are only ever an item from this list × a quantity; any other amount needs finance's approval.
+   */
+  deductionPriceList: z
+    .array(
+      z.object({
+        id: z.string().regex(/^[a-z0-9_]{2,40}$/),
+        label: z.string().min(2).max(80),
+        unit: z.enum(["item", "room", "sqm"]),
+        priceFils: z.number().int().positive(),
+      }),
+    )
+    .min(1)
+    .default(DEFAULT_DEDUCTIONS),
+  /** The tenancy page offers "Give notice to move out" from this many days before the lease end. */
+  vacateNoticeOpensDays: z.number().int().min(0).max(365).default(150),
+  /** The tenant can book the move-out inspection on days this far before the move-out date (and on it). */
+  inspectionBookingWindowDays: z.number().int().min(0).max(30).default(7),
+  /** Days the tenant has to accept or dispute the deposit statement before an officer follows up. */
+  depositResponseDays: z.number().int().min(1).max(60).default(14),
+  /** Below this vision-model confidence a photo comparison makes no suggestion. Set from evals. */
+  exitVisionMinConfidence: z.number().min(0).max(1).default(0.6),
 });
 export type CompanyPolicy = z.infer<typeof CompanyPolicy>;
 
@@ -141,4 +175,9 @@ export const defaultCompanyPolicy: CompanyPolicy = {
   complaintLegalThreshold: 0.5,
   complaintMinConfidence: 0.5,
   ticketDueHours: { "0": 168, "1": 48, "2": 24, "3": 4 },
+  deductionPriceList: DEFAULT_DEDUCTIONS,
+  vacateNoticeOpensDays: 150,
+  inspectionBookingWindowDays: 7,
+  depositResponseDays: 14,
+  exitVisionMinConfidence: 0.6,
 };

@@ -15,10 +15,18 @@ export type LinkPurpose =
   | "kyc_upload"
   | "offer"
   | "sign"
-  | "move_in_ack";
+  | "move_in_ack"
+  | "deposit_response";
 
 /** Single-use purposes: spent by the one submission they exist for. */
-const SINGLE_USE = new Set<LinkPurpose>(["notice_ack", "kyc_upload", "offer", "sign", "move_in_ack"]);
+const SINGLE_USE = new Set<LinkPurpose>([
+  "notice_ack",
+  "kyc_upload",
+  "offer",
+  "sign",
+  "move_in_ack",
+  "deposit_response",
+]);
 const PATH: Record<LinkPurpose, (token: string) => string> = {
   tenancy: (t) => `/t/${t}`,
   application: (t) => `/t/${t}`,
@@ -28,6 +36,7 @@ const PATH: Record<LinkPurpose, (token: string) => string> = {
   offer: (t) => `/t/${t}/offer`,
   sign: (t) => `/t/${t}/sign`,
   move_in_ack: (t) => `/t/${t}/move-in`,
+  deposit_response: (t) => `/t/${t}/deposit`,
 };
 
 /**

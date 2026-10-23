@@ -186,3 +186,10 @@ export const IconBook = (p: IconProps) => (
     <path d="M8 2.5v6l1.75-1.25L11.5 8.5v-6" />
   </Icon>
 );
+/** Metrics: three bars on a baseline. */
+export const IconChart = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M3.5 16.5h13" />
+    <path d="M6 13.5v-4M10 13.5v-8M14 13.5v-6" />
+  </Icon>
+);

@@ -8,11 +8,18 @@ import { appendEvent, leaseRulesVersion } from "./events.ts";
 
 /**
  * Photos during the tenancy (phase 3): staff condition photos at move-in, and from the tenant
- * portal their own move-in photos, payment proofs and photos of an issue. Same rules as ID
- * uploads: JPEG/PNG/WebP by content, 10 MB, metadata (EXIF/GPS) stripped, stored in
- * UPLOADS_DIR by SHA-256, shown to staff only. Never sent to a model or a cloud API.
+ * portal their own move-in photos, payment proofs and photos of an issue; staff condition photos
+ * at move-out (phase 4). Same rules as ID uploads: JPEG/PNG/WebP by content, 10 MB, metadata
+ * (EXIF/GPS) stripped, stored in UPLOADS_DIR by SHA-256, shown to staff only. Never sent to a
+ * cloud API. Only staff condition photos (move-in and move-out) reach a model: the local vision
+ * model compares them room by room, suggestions only (D29).
  */
-export type TenancyFileKind = "condition_photo" | "tenant_condition_photo" | "payment_proof" | "issue_photo";
+export type TenancyFileKind =
+  | "condition_photo"
+  | "tenant_condition_photo"
+  | "payment_proof"
+  | "issue_photo"
+  | "move_out_photo";
 
 const MAX_BYTES = 10 * 1024 * 1024;
 /** Uploads through one portal link, removed ones included, so a link can't fill the disk. */

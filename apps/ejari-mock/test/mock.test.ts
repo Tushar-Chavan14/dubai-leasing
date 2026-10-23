@@ -67,7 +67,10 @@ describe.skipIf(noDb)("simulated Ejari", () => {
     if (!r.ok) throw new Error("expected issued");
     expect(r.ejariNo).toMatch(/^SIM-2026-\d{7}$/);
     expect(await ejari.register(priya(), { requestId: id })).toEqual(r);
-    const count = await pool.query("SELECT count(*)::int AS n FROM ejari_mock.registrations");
+    // Registrations seeded for the engine's imported demo leases don't count.
+    const count = await pool.query(
+      "SELECT count(*)::int AS n FROM ejari_mock.registrations WHERE NOT payload ? 'prior'",
+    );
     expect(count.rows[0].n).toBe(1);
     expect(await ejari.status(r.ejariNo)).toEqual({ state: "active" });
     const pdf = await ejari.certificate(r.ejariNo);
@@ -159,6 +162,20 @@ describe.skipIf(noDb)("simulated Ejari", () => {
     await expect(unreachable.register(priya(), { requestId: rid() })).rejects.toBeInstanceOf(EjariUnavailableError);
     const rows = await pool.query("SELECT outcome FROM ejari_mock.submissions");
     expect(rows.rows.map((r) => r.outcome)).toEqual(["unavailable"]);
+  });
+
+  test("demo console: the next submission is rejected once (demo mode only); a replay keeps its first answer", async () => {
+    const { app, ejari } = client();
+    const off = client({ demoMode: false });
+    const post = (a: typeof app) =>
+      a.fetch(new Request("http://ejari.test/api/v1/demo/reject-next", { method: "POST" }));
+    expect((await post(off.app)).status).toBe(403);
+    expect((await post(app)).status).toBe(200);
+    const id = rid();
+    const first = await ejari.register(priya(), { requestId: id });
+    expect(first).toMatchObject({ ok: false, reasons: [{ code: "NAME_MISMATCH" }] });
+    expect(await ejari.register(priya(), { requestId: id })).toEqual(first);
+    expect(await ejari.register(priya(), { requestId: rid() })).toMatchObject({ ok: true });
   });
 
   test("the page says it is simulated; reset only in demo mode", async () => {

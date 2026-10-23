@@ -60,7 +60,7 @@ export type ProposalView = ProposalBase &
 /** Text the copilot drafted; the user opens it in the normal form and sends it themselves (D26). */
 export interface DraftView {
   id: string;
-  kind: "email" | "approval_note";
+  kind: "email" | "approval_note" | "case_summary";
   leaseId: string | null;
   leaseRef: string | null;
   approvalId: string | null;

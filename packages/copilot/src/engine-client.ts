@@ -33,6 +33,7 @@ const ALLOWED = [
   new RegExp(`^/api/helper-runs/${ID}$`),
   new RegExp(`^/api/leases/${ID}/payments$`),
   new RegExp(`^/api/leases/${ID}/complaints$`),
+  new RegExp(`^/api/leases/${ID}/case-pack$`),
   /^\/api\/available-units(\?(bedrooms=[0-4]|community=[^&]*|maxRentFils=\d{1,12}|code=[A-Za-z0-9-]{2,40})(&(bedrooms=[0-4]|community=[^&]*|maxRentFils=\d{1,12}|code=[A-Za-z0-9-]{2,40}))*)?$/,
 ];
 

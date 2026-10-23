@@ -28,7 +28,9 @@ import { receiveInbound, termReplies } from "../manager/inbound.ts";
 import { addApplicationDocument, removeApplicationDocument, uploadedDocuments } from "../manager/applications.ts";
 import { contractPdf, signContract, signView } from "../manager/contracts.ts";
 import { openForReply } from "../manager/collections.ts";
+import { portalStatement } from "../manager/deposit.ts";
 import { getCompanyPolicy } from "../manager/events.ts";
+import { moveOutBooking } from "../manager/move-out.ts";
 import { type LinkRow, resolveLink } from "../manager/links.ts";
 import { moveInStatus } from "../manager/move-in.ts";
 import { addTenancyPhoto } from "../manager/tenancy-files.ts";
@@ -69,7 +71,8 @@ const unknownLink = () =>
 const PROPERTY_PURPOSES = new Set(["viewing", "application"]);
 
 /** What the tenant can do during the tenancy: open payments to reply about, their reports, the move-in report. */
-async function tenancyView(ctx: EngineContext, tx: Tx, lease: typeof leases.$inferSelect, purpose: string) {
+async function tenancyView(ctx: EngineContext, tx: Tx, lease: typeof leases.$inferSelect, link: LinkRow) {
+  const purpose = link.purpose;
   const open = await openForReply(tx, lease.id);
   const reports = await tx.db
     .select({
@@ -107,6 +110,26 @@ async function tenancyView(ctx: EngineContext, tx: Tx, lease: typeof leases.$inf
     })),
     reports,
     moveIn,
+    moveOut: await moveOutView(ctx, tx, lease, link),
+  };
+}
+
+/** Step 10: give notice (at the lease end), book the inspection, answer the deposit statement. */
+async function moveOutView(ctx: EngineContext, tx: Tx, lease: typeof leases.$inferSelect, link: LinkRow) {
+  const running = lease.state === "ACTIVE" || lease.state === "RENEWAL";
+  const replies = running ? await termReplies(tx, lease) : null;
+  const opens = addDays(lease.endOn, -(await getCompanyPolicy(tx, ctx.clock.today())).vacateNoticeOpensDays);
+  const statement = lease.state === "MOVE_OUT" || lease.state === "CLOSED" ? await portalStatement(tx, lease.id) : null;
+  const booking = lease.state === "MOVE_OUT" ? await moveOutBooking(ctx, tx, lease) : null;
+  return {
+    leaseEndOn: lease.endOn,
+    moveOutOn: lease.moveOutOn,
+    canGiveNotice: link.purpose === "tenancy" && running && !replies?.final && ctx.clock.today() >= opens,
+    booking:
+      booking && link.purpose === "tenancy" ? booking : booking ? { ...booking, canBook: false, slots: [] } : null,
+    statement,
+    canRespondToStatement:
+      link.purpose === "deposit_response" && !link.usedAt && statement?.status === "sent" && lease.state === "MOVE_OUT",
   };
 }
 
@@ -179,7 +202,7 @@ export function registerPortalRoutes(app: Hono<AuthEnv>, ctx: EngineContext, med
       const offerValid = !!sent && sentNoticeValid(sent.proposedRentFils, sent.sentAt, lease);
       const replies = await termReplies(tx, lease);
       const reply = replies.latest;
-      const tenancy = await tenancyView(ctx, tx, lease, link.purpose);
+      const tenancy = await tenancyView(ctx, tx, lease, link);
       return {
         purpose: link.purpose,
         linkUsed: !!link.usedAt,
@@ -294,8 +317,17 @@ export function registerPortalRoutes(app: Hono<AuthEnv>, ctx: EngineContext, med
         if (link.purpose !== "move_in_ack")
           throw conflict("Open the 'Confirm the move-in report' link from your email.");
         if (link.usedAt) throw conflict("You already confirmed the move-in report. Thank you.");
-      } else if (body.type === "PAYMENT_REPLY" || body.type === "COMPLAINT_SUBMITTED") {
+      } else if (
+        body.type === "PAYMENT_REPLY" ||
+        body.type === "COMPLAINT_SUBMITTED" ||
+        body.type === "VACATE_NOTICE" ||
+        body.type === "INSPECTION_BOOKED"
+      ) {
         if (link.purpose !== "tenancy") throw conflict("Open the 'My tenancy' link from your newest email to do this.");
+      } else if (body.type === "DEPOSIT_RESPONSE") {
+        if (link.purpose !== "deposit_response")
+          throw conflict("Open the 'Accept or dispute' link from your deposit statement email.");
+        if (link.usedAt) throw conflict("You already answered this deposit statement. Thank you.");
       } else if (body.type === "NOTICE_ACKNOWLEDGED") {
         outboundMessageId = link.outboundMessageId ?? (await noticeSentForTerm(tx, lease))?.id;
         if (!outboundMessageId) throw conflict("There is no notice to acknowledge yet.");

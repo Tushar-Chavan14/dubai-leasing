@@ -322,3 +322,32 @@ Phase 3, product owner's choice.
 - Safety and legal-threat reports go to an officer at once (`safety_complaint` approval + task);
   approving opens an emergency ticket.
 
+
+## D29 — Move-out and deposit: the model points, code prices, finance acts on every refund
+Phase 4, product owner's choice.
+- **The local vision model may compare condition photos** (amends D21, which limited it to
+  reading ID documents). Per room, the latest move-in and move-out staff photos go to the local
+  Ollama vision model in one call; never to a cloud API. Its options are the price-list item ids
+  plus `none`; it never gives an amount. Below `exitVisionMinConfidence`, `none` or an unknown id
+  is dropped. Results are suggestions: nothing is a deduction until an officer confirms it.
+- **Amounts are code.** A deduction is a `companyPolicy.deductionPriceList` item × quantity at the
+  list price (policy, not law), or an "other" amount an officer types, which always needs
+  finance's approval. Deductions are capped at the deposit; anything beyond is a manager task,
+  never claimed automatically. Normal wear and tear is not deductible. Unpaid rent is not
+  deducted (CONFIRM WITH LEGAL).
+- **Finance acts on every refund.** The `refund` approval (finance) is required when the refund is
+  above `refundApprovalThresholdFils`, the tenant disputes the statement, or an amount isn't on
+  the price list; nothing in it is editable (reject → the officer corrects the findings and
+  issues a new revision). In every case finance records the payout (date, bank reference),
+  which settles the deposit. A zero deposit is recorded the same way. Approving a disputed
+  statement pays the stated refund and lets the lease close; the tenant's recourse is the RDC
+  (CONFIRM WITH LEGAL). Finance alone reads the tenant's refund account (kept only in the
+  submission), each view recorded without the details; dispute text is stored masked.
+- **Notice to vacate** opens `vacateNoticeOpensDays` (policy, 150) before the lease end, so a
+  lease isn't put in MOVE_OUT months ahead; it offers only the lease end. Another date is an
+  early-termination request for a manager (contractual); a comment that needs a person holds it,
+  as with the renewal reply. Whether a tenant owes a minimum notice period is CONFIRM WITH LEGAL.
+- **Ejari is cancelled automatically** once the inspection is done and the move-out date is
+  reached (job, idempotent, retried while the registry is down; a person is told). Not on the
+  human-gate list; CONFIRM WITH LEGAL that no person needs to approve it. Settled
+  deposit + cancelled Ejari → `SETTLED` → `CLOSED` → unit `PREP`.

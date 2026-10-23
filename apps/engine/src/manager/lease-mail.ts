@@ -62,6 +62,8 @@ const PURPOSE: Record<LeaseMailKind, "link" | "receipt" | "reminder" | "formal_r
   rent_friendly: "reminder",
   formal_reminder: "formal_reminder",
   complaint_ack: "receipt",
+  move_out: "link",
+  deposit_statement: "link",
 };
 
 interface Prepared {

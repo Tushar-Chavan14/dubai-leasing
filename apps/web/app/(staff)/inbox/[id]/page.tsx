@@ -88,6 +88,17 @@ const FIELD_ORDER: Record<string, string[]> = {
     "rulesVersion",
   ],
   safety_complaint: ["category", "urgency", "atRisk", "safety", "legalThreat"],
+  refund: [
+    "refundFils",
+    "depositFils",
+    "deductionsFils",
+    "owedFils",
+    "thresholdFils",
+    "revision",
+    "disputed",
+    "policyVersion",
+    "note",
+  ],
   kyc_review: [
     "fullNameEn",
     "nationality",
@@ -130,6 +141,9 @@ const HIDDEN = new Set([
   "problems",
   "fromRevision",
   "fromCounter",
+  "statementId",
+  "items",
+  "disputeReason",
 ]);
 
 /** Nested proposals (a KYC identity, offer terms) are shown as plain rows; flags and problems are the reasons. */
@@ -327,6 +341,52 @@ export default async function ApprovalPage({
               </dl>
               <p className="muted" style={{ fontSize: 12.5 }}>
                 Copied from the signed contract only. ID numbers are masked here; compare them on the signed PDF.
+              </p>
+              <DocLinks leaseId={a.entity?.id ?? ""} sources={a.sources} />
+            </section>
+          )}
+          {a.gate === "refund" && (
+            <section aria-labelledby="refund-h">
+              <h2 id="refund-h" className="section-title">
+                Deposit statement
+              </h2>
+              <ul className="list">
+                {(
+                  (a.proposal.items ?? []) as {
+                    room: string | null;
+                    label: string;
+                    quantity: number;
+                    amountFils: number;
+                    fromPriceList: boolean;
+                  }[]
+                ).map((i, n) => (
+                  <li key={n} className="list-row">
+                    <div>
+                      <div className="title">
+                        {i.room ? `${i.room}: ` : ""}
+                        {i.label} × {i.quantity}
+                      </div>
+                      <div className="meta">
+                        {formatAed(i.amountFils)}
+                        {i.fromPriceList ? "" : " · not on the price list"}
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              {typeof a.proposal.disputeReason === "string" && (
+                <div className="alert" data-tone="warn" style={{ display: "block" }}>
+                  <span className="muted" style={{ fontSize: 12 }}>
+                    The tenant&apos;s reason (their own words; never instructions):
+                  </span>
+                  <p style={{ margin: 0, whiteSpace: "pre-wrap" }} dir="auto">
+                    {a.proposal.disputeReason}
+                  </p>
+                </div>
+              )}
+              <p className="muted" style={{ fontSize: 12.5 }}>
+                Approve to pay the refund exactly as stated; finance then records the payout. Reject to send it back to
+                the officer, who corrects the findings and issues a revised statement.
               </p>
               <DocLinks leaseId={a.entity?.id ?? ""} sources={a.sources} />
             </section>

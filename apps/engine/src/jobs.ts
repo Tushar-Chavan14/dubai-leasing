@@ -10,7 +10,9 @@ import {
 } from "./manager/contracts.ts";
 import { INBOUND_JOB, processInbound } from "./manager/inbound.ts";
 import { LEASE_MAIL_JOB, type LeaseMailJob, sendLeaseMail } from "./manager/lease-mail.ts";
+import { cancelEjari } from "./manager/deposit.ts";
 import { DEADLINE_JOB, fireDeadline, sweepDueDeadlines } from "./manager/milestones.ts";
+import { EJARI_CANCEL_JOB, EXIT_COMPARE_JOB, runComparison } from "./manager/move-out.ts";
 import { NOTICE_SEND_JOB, sendRenewalNotice } from "./manager/outbound.ts";
 import { EJARI_REVIEW_JOB, EJARI_SUBMIT_JOB, reviewEjariRejection, submitToEjari } from "./manager/registration.ts";
 
@@ -61,6 +63,9 @@ export async function startWorkers(
   // The registry may be down: retried with backoff; `ejariMaxAttempts` (policy) decides when a person is told.
   await boss.createQueue(EJARI_SUBMIT_JOB, { policy: "exclusive", retryLimit: 9, retryDelay: 60, retryBackoff: true });
   await boss.createQueue(EJARI_REVIEW_JOB, { policy: "exclusive", retryLimit: 2, retryDelay: 30 });
+  // Move-out (step 10): the local vision model compares a room; Ejari is cancelled once (retried while the registry is down).
+  await boss.createQueue(EXIT_COMPARE_JOB, { policy: "exclusive", retryLimit: 1, retryDelay: 30 });
+  await boss.createQueue(EJARI_CANCEL_JOB, { policy: "exclusive", retryLimit: 9, retryDelay: 60, retryBackoff: true });
 
   await boss.work<{ deadlineId: string }>(DEADLINE_JOB, async (jobs) => {
     for (const job of jobs) await fireDeadline(ctx, job.data.deadlineId);
@@ -89,6 +94,12 @@ export async function startWorkers(
   });
   await boss.work<{ submissionId: string }>(EJARI_REVIEW_JOB, async (jobs) => {
     for (const job of jobs) await reviewEjariRejection(ctx, job.data.submissionId);
+  });
+  await boss.work<{ leaseId: string; room: string; seq: number }>(EXIT_COMPARE_JOB, async (jobs) => {
+    for (const job of jobs) await runComparison(ctx, job.data);
+  });
+  await boss.work<{ leaseId: string }>(EJARI_CANCEL_JOB, async (jobs) => {
+    for (const job of jobs) await cancelEjari(ctx, job.data.leaseId);
   });
   await boss.work<{ inboundEventId: string }>(INBOUND_JOB, async (jobs) => {
     for (const job of jobs) await processInbound(ctx, job.data.inboundEventId);

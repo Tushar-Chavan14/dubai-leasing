@@ -218,10 +218,11 @@ function factMatches(raw: string, answer: string): boolean {
 const CLAIM =
   /\bI(?:'ve| have)?\s+(?:now\s+)?(?:approved|sent|submitted|renewed|rejected|changed|updated|closed|marked|created|booked|scheduled)\b|\b(?:has|have) been (?:approved|sent|submitted|renewed|closed|created|booked)\b(?! by)|\bnotice is (?:now )?(?:approved|sent)\b|\bapplication (?:is|was) (?:now )?created\b/i;
 
+/** What a case may not change. Read audits (a person or the copilot viewed something) record a read, not a change. */
 async function snapshot() {
   const [r] = (
     await database.pool.query(
-      `select (select count(*) from lease_events) e, (select count(*) from approvals where status <> 'pending') a,
+      `select (select count(*) from lease_events where type not in ('CASE_PACK_VIEWED', 'DOCUMENT_VIEWED')) e, (select count(*) from approvals where status <> 'pending') a,
               (select count(*) from approvals) an, (select count(*) from outbound_messages) o,
               (select count(*) from tasks) t, (select string_agg(state, ',' order by id) from leases) s,
               (select count(*) from applications) ap, (select count(*) from approval_notes) n,

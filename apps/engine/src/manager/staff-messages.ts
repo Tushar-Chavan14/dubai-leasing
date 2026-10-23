@@ -1,4 +1,5 @@
 import { staffMessageEmail } from "@leasing/adapters";
+import { CASE_PACK_ROLES } from "./case-pack.ts";
 import { maskPiiText, newId, type StaffRole, type StaffUser } from "@leasing/core";
 import { sha256Hex } from "@leasing/core/tokens";
 import {
@@ -192,6 +193,13 @@ export const DraftInput = z.discriminatedUnion("kind", [
     body: z.string().trim().min(10).max(5000),
   }),
   z.object({ kind: z.literal("approval_note"), approvalId: z.uuid(), body: z.string().trim().min(2).max(2000) }),
+  // An RDC case summary (step 11): saved for the user to review; nothing is filed or sent.
+  z.object({
+    kind: z.literal("case_summary"),
+    leaseId: z.uuid(),
+    subject: z.string().trim().min(3).max(160),
+    body: z.string().trim().min(100).max(8000),
+  }),
 ]);
 
 export function draftView(d: typeof copilotDrafts.$inferSelect, leaseRef: string | null) {
@@ -215,6 +223,8 @@ export function draftView(d: typeof copilotDrafts.$inferSelect, leaseRef: string
 export async function createDraft(ctx: EngineContext, user: StaffUser, threadId: string, raw: unknown) {
   const input = DraftInput.parse(raw);
   if (input.kind === "email" && !EMAIL_ROLES.includes(user.role)) throw forbidden(`${user.role} can't email tenants`);
+  if (input.kind === "case_summary" && !CASE_PACK_ROLES.includes(user.role))
+    throw forbidden(`${user.role} can't prepare a case summary`);
   return withTx(ctx.database, async (tx) => {
     const [thread] = await tx.db
       .select({ id: copilotThreads.id })
@@ -222,7 +232,7 @@ export async function createDraft(ctx: EngineContext, user: StaffUser, threadId:
       .where(and(eq(copilotThreads.id, threadId), eq(copilotThreads.userId, user.id)));
     if (!thread) throw notFound("conversation");
     let leaseRef: string | null = null;
-    if (input.kind === "email") {
+    if (input.kind === "email" || input.kind === "case_summary") {
       const [lease] = await tx.db.select({ ref: leases.ref }).from(leases).where(eq(leases.id, input.leaseId));
       if (!lease) throw notFound("lease");
       leaseRef = lease.ref;
@@ -237,9 +247,9 @@ export async function createDraft(ctx: EngineContext, user: StaffUser, threadId:
         threadId,
         userId: user.id,
         kind: input.kind,
-        leaseId: input.kind === "email" ? input.leaseId : null,
+        leaseId: input.kind === "approval_note" ? null : input.leaseId,
         approvalId: input.kind === "approval_note" ? input.approvalId : null,
-        subject: input.kind === "email" ? input.subject : null,
+        subject: input.kind === "approval_note" ? null : input.subject,
         body: input.body,
         createdAt: ctx.clock.now(),
       })

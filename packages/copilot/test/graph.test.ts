@@ -191,7 +191,7 @@ describe("registry and client", () => {
         .map((t) => t.name)
         .toSorted();
     expect(by("propose")).toEqual(["create_task", "propose_application", "propose_approval"]);
-    expect(by("draft")).toEqual(["draft_approval_note", "draft_email"]);
+    expect(by("draft")).toEqual(["draft_approval_note", "draft_email", "summarise_case"]);
     expect(copilotTools.every((t) => ["read", "draft", "propose"].includes(t.kind))).toBe(true);
     const names = (role: "leasing_officer" | "leasing_manager" | "finance" | "admin") =>
       toolsFor(role)
@@ -204,13 +204,22 @@ describe("registry and client", () => {
       "draft_email",
       "propose_application",
       "propose_approval",
+      "summarise_case",
     ]);
     expect(names("leasing_manager")).toEqual(names("leasing_officer"));
     expect(names("finance")).toEqual(["draft_approval_note", "draft_email", "propose_approval"]);
     expect(names("admin")).toEqual(["draft_approval_note"]);
+    // Every role reads everything except the dispute case pack (leasing staff only).
     const readers = copilotTools.filter((t) => t.kind === "read");
-    for (const role of ["leasing_officer", "leasing_manager", "finance", "admin"] as const) {
+    for (const role of ["leasing_officer", "leasing_manager"] as const) {
       expect(toolsFor(role).filter((t) => t.kind === "read")).toHaveLength(readers.length);
+    }
+    for (const role of ["finance", "admin"] as const) {
+      expect(
+        toolsFor(role)
+          .filter((t) => t.kind === "read")
+          .map((t) => t.name),
+      ).toEqual(readers.filter((t) => t.name !== "get_case_pack").map((t) => t.name));
     }
     expect(new Set(copilotTools.map((t) => t.name)).size).toBe(copilotTools.length);
   });

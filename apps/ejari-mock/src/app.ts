@@ -62,6 +62,8 @@ export function createEjariMock(o: MockOptions): Hono {
   const app = new Hono();
   const random = o.random ?? Math.random;
   const failureRate = o.failureRate ?? 0;
+  /** Demo console: the next new register/renew request is rejected for a name mismatch, once. */
+  let rejectNext = false;
 
   app.get("/health", (c) => c.json({ ok: true, simulated: true }));
 
@@ -115,7 +117,9 @@ export function createEjariMock(o: MockOptions): Hono {
           [p.dldPropertyNo, p.startOn, p.endOn, renewOf],
         )
       ).rows[0];
-      const reasons = registrationRejections(p, {
+      const forced = rejectNext;
+      rejectNext = false;
+      const found = registrationRejections(p, {
         property: property
           ? {
               unitNo: property.unit_no,
@@ -127,6 +131,17 @@ export function createEjariMock(o: MockOptions): Hono {
         person: person ? { idType: person.id_type, nameEn: person.name_en, expiresOn: person.expires_on } : null,
         overlapping: overlap?.ejari_no ?? null,
       });
+      const reasons = forced
+        ? [
+            ...found,
+            {
+              code: "NAME_MISMATCH",
+              field: null,
+              message:
+                "The tenant's name does not match the identity record (simulated rejection from the demo console).",
+            },
+          ]
+        : found;
       if (reasons.length) {
         await c.query(
           "INSERT INTO ejari_mock.submissions (request_id, kind, outcome, reasons, payload) VALUES ($1, $2, 'rejected', $3, $4)",
@@ -227,6 +242,12 @@ export function createEjariMock(o: MockOptions): Hono {
       "content-type": "application/pdf",
       "content-disposition": `inline; filename="simulated-ejari-${row.ejari_no}.pdf"`,
     });
+  });
+
+  app.post("/api/v1/demo/reject-next", (c) => {
+    if (!o.demoMode) return c.json({ error: "only in demo mode" }, 403);
+    rejectNext = true;
+    return c.json({ ok: true, rejectNext });
   });
 
   app.post("/api/v1/demo/reset", async (c) => {

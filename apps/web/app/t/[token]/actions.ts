@@ -151,3 +151,41 @@ export async function reportIssue(_prev: PortalState, formData: FormData): Promi
     photoIds: ids(formData, "photoId"),
   });
 }
+
+/** Step 10: notice to vacate at the lease end (an earlier date is a request a manager handles). */
+export async function giveNotice(_prev: PortalState, formData: FormData): Promise<PortalState> {
+  if (formData.get("confirm") !== "yes") return { error: "Tick the box to confirm you are giving notice." };
+  const moveOutOn = String(formData.get("moveOutOn") ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(moveOutOn)) return { error: "Choose your move-out date." };
+  const comment = String(formData.get("comment") ?? "").trim();
+  return submit(String(formData.get("token")), "VACATE_NOTICE", {
+    moveOutOn,
+    confirmVacate: true,
+    ...(comment ? { comment } : {}),
+  });
+}
+
+/** Step 10: book the move-out inspection (one of the offered slots). */
+export async function bookInspection(_prev: PortalState, formData: FormData): Promise<PortalState> {
+  const slotAt = String(formData.get("slotAt") ?? "");
+  if (!slotAt) return { error: "Choose a time." };
+  return submit(String(formData.get("token")), "INSPECTION_BOOKED", { slotAt });
+}
+
+/** Step 10: accept the deposit statement (refund account) or dispute it (reason). */
+export async function depositResponse(_prev: PortalState, formData: FormData): Promise<PortalState> {
+  const choice = String(formData.get("choice") ?? "");
+  const revision = Number(formData.get("revision"));
+  if (choice === "accept") {
+    const accountName = String(formData.get("accountName") ?? "").trim();
+    const iban = String(formData.get("iban") ?? "").trim();
+    if (!accountName || !iban) return { error: "Give the account name and IBAN for the refund." };
+    return submit(String(formData.get("token")), "DEPOSIT_RESPONSE", { revision, choice, accountName, iban });
+  }
+  if (choice === "dispute") {
+    const reason = String(formData.get("reason") ?? "").trim();
+    if (reason.length < 5) return { error: "Tell us what you disagree with." };
+    return submit(String(formData.get("token")), "DEPOSIT_RESPONSE", { revision, choice, reason });
+  }
+  return { error: "Choose accept or dispute." };
+}

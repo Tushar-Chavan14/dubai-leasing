@@ -99,6 +99,7 @@ const app = createApi(ctx, {
   sessionSecret,
   mediaStore,
   channelSecret: env.CHANNEL_SECRET,
+  ejariMockUrl: env.EJARI_MOCK_URL,
   ...(demoClock ? { demoClock } : {}),
 });
 // Copilot answers stream for up to a minute on small GPUs; Bun's default 10 s idle timeout

@@ -26,6 +26,7 @@ import { appendEvent, getCompanyPolicy } from "./events.ts";
 import { runAndRecord } from "./helpers.ts";
 import { approvedUnsentNotice, enqueueNoticeSend, noticeSentForTerm } from "./outbound.ts";
 import { handlePaymentMilestone, isPaymentMilestone } from "./collections.ts";
+import { handleMoveOutMilestone, isMoveOutMilestone } from "./move-out.ts";
 import { lookupSri } from "./sri.ts";
 import type { RenewalNoticeProposal } from "./gate-rules.ts";
 
@@ -183,11 +184,13 @@ export async function fireDeadline(ctx: EngineContext, deadlineId: string): Prom
     const skipped =
       d.entityKind === "lease" && isPaymentMilestone(d.milestone)
         ? await handlePaymentMilestone(ctx, tx, d.entityId, d.milestone)
-        : d.entityKind === "lease"
-          ? await handleLeaseMilestone(ctx, tx, d.entityId, id, termEnd, eventId)
-          : d.entityKind === "application"
-            ? await handleApplicationMilestone(ctx, tx, d.entityId, d.milestone)
-            : null;
+        : d.entityKind === "lease" && isMoveOutMilestone(d.milestone)
+          ? await handleMoveOutMilestone(ctx, tx, d.entityId)
+          : d.entityKind === "lease"
+            ? await handleLeaseMilestone(ctx, tx, d.entityId, id, termEnd, eventId)
+            : d.entityKind === "application"
+              ? await handleApplicationMilestone(ctx, tx, d.entityId, d.milestone)
+              : null;
     if (!skipped) return { fired: true, milestone: d.milestone };
     await tx.db.update(deadlines).set({ status: "skipped", note: skipped }).where(eq(deadlines.id, d.id));
     await appendEvent(tx, ctx, {

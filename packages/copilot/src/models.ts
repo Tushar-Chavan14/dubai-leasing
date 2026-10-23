@@ -18,6 +18,9 @@ export function ollamaCopilotModel(cfg: { url: string; model: string }): Copilot
     temperature: 0,
     think: false,
     keepAlive: "10m",
+    // The system prompt and tool schemas alone are ~4.2k tokens; Ollama's 4096 default silently
+    // truncates the question. Leave room for history and tool results.
+    numCtx: 16384,
     // Answers are short by design; a hard stop keeps a runaway answer from holding the model.
     numPredict: 400,
   });

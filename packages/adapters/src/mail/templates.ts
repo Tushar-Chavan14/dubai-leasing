@@ -488,3 +488,61 @@ export function staffMessageEmail(d: StaffMessageMail): Rendered {
     html: layout(d.subject, paras, [{ label: "My tenancy", url: d.tenancyUrl }], foot),
   };
 }
+
+// ---------------------------------------------------------------- move-out (phase 4)
+
+export interface MoveOutMail {
+  name: string;
+  unitLabel: string;
+  /** Formatted move-out date. */
+  moveOutOn: string;
+  bookUrl: string;
+  demo: boolean;
+}
+
+/** Step 10: the tenant is moving out; book the inspection. */
+export function moveOutEmail(d: MoveOutMail): Rendered {
+  const subject = `Moving out of ${d.unitLabel}: book your inspection`;
+  const paras = [
+    `Dear ${d.name},`,
+    `We have recorded that your tenancy of ${d.unitLabel} ends and you move out on ${d.moveOutOn}.`,
+    "Please book a time for the move-out inspection. We will check the keys and access cards and photograph each room, and compare them with the photos from your move-in. Normal wear and tear is never deducted from your deposit.",
+    "After the inspection we will send you the deposit statement to accept or dispute.",
+  ];
+  const actions = [{ label: "Book the inspection", url: d.bookUrl }];
+  const foot = footer(d.demo);
+  return {
+    subject,
+    text: [...paras, "", `Book the inspection: ${d.bookUrl}`, "", foot].join("\n"),
+    html: layout(subject, paras, actions, foot),
+  };
+}
+
+export interface DepositStatementMail {
+  name: string;
+  unitLabel: string;
+  revision: number;
+  deposit: string;
+  deductions: string;
+  refund: string;
+  respondUrl: string;
+  respondDays: number;
+  demo: boolean;
+}
+
+/** Step 10: the deposit statement (PDF attached); accept with refund details or dispute. */
+export function depositStatementEmail(d: DepositStatementMail): Rendered {
+  const subject = `Your deposit statement for ${d.unitLabel}${d.revision > 1 ? ` (revised, ${d.revision})` : ""}`;
+  const paras = [
+    `Dear ${d.name},`,
+    `Your security deposit was ${d.deposit}. After the move-out inspection the deductions are ${d.deductions}, so the refund to you is ${d.refund}. The attached statement lists each item.`,
+    `Please accept the statement and give your bank details for the refund, or dispute it and tell us why, within ${d.respondDays} days. A person reviews every dispute.`,
+  ];
+  const actions = [{ label: "Accept or dispute", url: d.respondUrl }];
+  const foot = footer(d.demo);
+  return {
+    subject,
+    text: [...paras, "", `Accept or dispute: ${d.respondUrl}`, "", foot].join("\n"),
+    html: layout(subject, paras, actions, foot),
+  };
+}

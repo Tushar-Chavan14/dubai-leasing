@@ -11,7 +11,7 @@ import {
   isCalendarDate,
   OfferTerms,
 } from "@leasing/core";
-import { KycFlag, KycIdentity } from "@leasing/helpers";
+import { KycFlag, KycIdentity, StatementItem } from "@leasing/helpers";
 import type { approvals } from "@leasing/db";
 import {
   canSendRenewalNotice,
@@ -260,6 +260,44 @@ const shapeOnly = (schema: z.ZodTypeAny) => (raw: Record<string, unknown>) => {
   return p.success ? [] : p.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
 };
 
+/**
+ * Deposit refund (step 10). Finance approves the statement exactly as computed: a refund above
+ * the threshold, a statement the tenant disputes, or one with an amount not on the price list.
+ * Nothing is editable; to change an amount, reject and the officer issues a new revision.
+ */
+export const RefundProposal = z.object({
+  leaseId: z.string(),
+  statementId: z.string(),
+  revision: z.number().int().min(1),
+  depositFils: z.number().int().min(0),
+  items: z.array(StatementItem),
+  deductionsFils: z.number().int().min(0),
+  refundFils: z.number().int().min(0),
+  owedFils: z.number().int().min(0),
+  thresholdFils: z.number().int().min(0),
+  disputed: z.boolean(),
+  /** Tenant-written (untrusted): shown to finance, never acted on. */
+  disputeReason: z.string().max(2000).nullable(),
+  policyVersion: z.number().int().nullable(),
+  note: z.string().max(2000).optional(),
+});
+export type RefundProposal = z.infer<typeof RefundProposal>;
+
+export function refundProblems(raw: unknown): string[] {
+  const parsed = RefundProposal.safeParse(raw);
+  if (!parsed.success) return parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
+  const p = parsed.data;
+  const problems: string[] = [];
+  for (const i of p.items)
+    if (i.amountFils !== i.unitPriceFils * i.quantity)
+      problems.push(`${i.label}: amount doesn't match price × quantity`);
+  const total = p.items.reduce((s, i) => s + i.amountFils, 0);
+  if (p.deductionsFils !== Math.min(total, p.depositFils)) problems.push("deductions don't match the items");
+  if (p.owedFils !== total - p.deductionsFils) problems.push("the amount beyond the deposit doesn't match the items");
+  if (p.refundFils !== p.depositFils - p.deductionsFils) problems.push("refund isn't the deposit minus the deductions");
+  return problems;
+}
+
 interface GateRule {
   /** Fields a person may change with "edit". Everything else must stay as proposed. */
   editable: readonly string[];
@@ -273,6 +311,7 @@ const rules: Partial<Record<GateId, GateRule>> = {
   ejari_rejected_twice: { editable: ["note"], check: shapeOnly(EjariRejectedProposal) },
   vacate_notice: { editable: [], check: (raw, today) => vacateNoticeProblems(raw, today) },
   formal_reminder: { editable: [], check: (raw) => formalReminderProblems(raw) },
+  refund: { editable: ["note"], check: (raw) => refundProblems(raw) },
   safety_complaint: { editable: ["note"], check: shapeOnly(SafetyComplaintProposal) },
   price_out_of_range: {
     editable: [],

@@ -28,6 +28,7 @@ import type { EngineContext } from "../context.ts";
 import { PAYMENT_MILESTONES, scheduleTermPayments } from "./collections.ts";
 import { queueLeaseMail } from "./lease-mail.ts";
 import { ensureMoveInInspection, moveInMissing } from "./move-in.ts";
+import { onEnterMoveOut } from "./move-out.ts";
 import { conflict, notFound, unprocessable } from "../errors.ts";
 import { appendEvent, getCompanyPolicy } from "./events.ts";
 import { sentAtOfApproval } from "./outbound.ts";
@@ -76,6 +77,10 @@ const leasePatches: Partial<Record<LeaseEvent, z.ZodType<Record<string, unknown>
   EJARI_ISSUED: z
     .object({ ejariNo: z.string().trim().min(1), issuedOn: calDate })
     .transform((p) => ({ ejariNo: p.ejariNo, ejariIssuedOn: p.issuedOn })),
+  // The move-out date the tenant gave (the lease end unless a person agreed an earlier one).
+  TENANT_VACATE_NOTICE: z
+    .object({ moveOutOn: calDate.optional() })
+    .transform((p): Record<string, unknown> => (p.moveOutOn ? { moveOutOn: p.moveOutOn } : {})),
   RENEWED: z
     .object({ startOn: calDate, endOn: calDate, annualRentFils: z.number().int().positive() })
     .transform((p) => ({ startOn: p.startOn, endOn: p.endOn, annualRentFils: p.annualRentFils })),
@@ -473,6 +478,8 @@ async function onEnterLease(ctx: EngineContext, tx: Tx, lease: LeaseRow, from: s
       if (from === "ACTIVE" || from === "RENEWAL")
         await cancelPendingDeadlines(tx, lease.id, ["lease_end", ...PAYMENT_MILESTONES]);
       await cancelPendingApprovals(ctx, tx, lease.id, ["renewal_notice"]);
+      // Step 10: the inspection, its booking email and the move-out milestone.
+      await onEnterMoveOut(ctx, tx, lease);
       return;
     case "CLOSED":
       await cancelPendingDeadlines(tx, lease.id, []);

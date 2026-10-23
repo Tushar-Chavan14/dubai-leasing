@@ -99,3 +99,108 @@ export async function updateTicket(_p: TenancyActionState, f: FormData): Promise
   revalidatePath("/maintenance");
   return leaseId ? done(leaseId, "Updated.") : { ok: "Updated." };
 }
+
+// ---------------------------------------------------------------- move-out (step 10)
+
+export async function tickMoveOutItem(_p: TenancyActionState, f: FormData): Promise<TenancyActionState> {
+  const leaseId = String(f.get("leaseId"));
+  const item = String(f.get("item"));
+  const r = await engine(`/api/leases/${leaseId}/move-out/items/${encodeURIComponent(item)}`, {
+    method: "POST",
+    body: JSON.stringify({ done: f.get("done") === "true" }),
+  });
+  return r.ok ? done(leaseId, "Saved.") : formError(r);
+}
+
+export async function compareRooms(_p: TenancyActionState, f: FormData): Promise<TenancyActionState> {
+  const leaseId = String(f.get("leaseId"));
+  const r = await engine(`/api/leases/${leaseId}/move-out/compare`, { method: "POST", body: "{}" });
+  return r.ok
+    ? done(leaseId, "Comparing with the move-in photos. Suggestions appear here in a minute; refresh to see them.")
+    : formError(r);
+}
+
+export async function addDamage(_p: TenancyActionState, f: FormData): Promise<TenancyActionState> {
+  const leaseId = String(f.get("leaseId"));
+  const itemId = String(f.get("itemId") ?? "");
+  const quantity = Number(f.get("quantity") ?? 1);
+  const room = String(f.get("room") ?? "").trim();
+  const otherLabel = String(f.get("otherLabel") ?? "").trim();
+  const otherAed = Number(f.get("otherAed") ?? 0);
+  if (!itemId) return { error: "Choose an item from the price list." };
+  if (itemId === "other" && (!otherLabel || !(otherAed > 0)))
+    return { error: "Describe the item and give an amount (finance must approve it)." };
+  const r = await engine(`/api/leases/${leaseId}/move-out/findings`, {
+    method: "POST",
+    body: JSON.stringify({
+      room: room || null,
+      itemId,
+      quantity,
+      ...(itemId === "other" ? { otherLabel, otherAmountFils: Math.round(otherAed * 100) } : {}),
+      fromSuggestion: f.get("fromSuggestion") === "true",
+    }),
+  });
+  return r.ok ? done(leaseId, "Damage item added.") : formError(r);
+}
+
+export async function removeDamage(_p: TenancyActionState, f: FormData): Promise<TenancyActionState> {
+  const leaseId = String(f.get("leaseId"));
+  const r = await engine(`/api/leases/${leaseId}/move-out/findings/${encodeURIComponent(String(f.get("findingId")))}`, {
+    method: "DELETE",
+  });
+  return r.ok ? done(leaseId, "Removed.") : formError(r);
+}
+
+export async function completeMoveOut(_p: TenancyActionState, f: FormData): Promise<TenancyActionState> {
+  const leaseId = String(f.get("leaseId"));
+  const r = await engine(`/api/leases/${leaseId}/move-out/complete`, { method: "POST", body: "{}" });
+  return r.ok
+    ? done(
+        leaseId,
+        "Inspection complete. The deposit statement is emailed to the tenant; Ejari is cancelled from the move-out date.",
+      )
+    : formError(r);
+}
+
+export async function reissueStatement(_p: TenancyActionState, f: FormData): Promise<TenancyActionState> {
+  const leaseId = String(f.get("leaseId"));
+  const r = await engine(`/api/leases/${leaseId}/deposit/reissue`, { method: "POST", body: "{}" });
+  return r.ok ? done(leaseId, "A revised statement is emailed to the tenant.") : formError(r);
+}
+
+export async function recordRefund(_p: TenancyActionState, f: FormData): Promise<TenancyActionState> {
+  const leaseId = String(f.get("leaseId"));
+  const r = await engine(`/api/leases/${leaseId}/deposit/refund-paid`, {
+    method: "POST",
+    body: JSON.stringify({ paidOn: String(f.get("paidOn") ?? ""), ref: String(f.get("ref") ?? "") }),
+  });
+  return r.ok ? done(leaseId, "Refund recorded. The deposit is settled.") : formError(r);
+}
+
+/** Finance only: the tenant's refund account, fetched on request (each view is recorded). */
+export async function showRefundAccount(_p: TenancyActionState, f: FormData): Promise<TenancyActionState> {
+  const leaseId = String(f.get("leaseId"));
+  const r = await engine<{ accountName: string; iban: string }>(`/api/leases/${leaseId}/deposit/refund-account`);
+  if (!r.ok) return formError(r);
+  return { ok: `Pay to ${r.data.accountName}, IBAN ${r.data.iban}` };
+}
+
+// ---------------------------------------------------------------- dispute (step 11)
+
+export async function openDispute(_p: TenancyActionState, f: FormData): Promise<TenancyActionState> {
+  const leaseId = String(f.get("leaseId"));
+  const r = await engine(`/api/leases/${leaseId}/dispute`, {
+    method: "POST",
+    body: JSON.stringify({ reason: String(f.get("reason") ?? "") }),
+  });
+  return r.ok ? done(leaseId, "Dispute opened. Export the case pack for the RDC.") : formError(r);
+}
+
+export async function resolveDispute(_p: TenancyActionState, f: FormData): Promise<TenancyActionState> {
+  const leaseId = String(f.get("leaseId"));
+  const r = await engine(`/api/leases/${leaseId}/dispute/resolve`, {
+    method: "POST",
+    body: JSON.stringify({ outcome: String(f.get("outcome") ?? ""), note: String(f.get("note") ?? "") }),
+  });
+  return r.ok ? done(leaseId, "Dispute resolved.") : formError(r);
+}

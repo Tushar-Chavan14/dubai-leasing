@@ -26,7 +26,7 @@ import {
   withTx,
 } from "@leasing/db";
 import { activeRulesVersion } from "@leasing/rulebook";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { createEngineClock } from "../clock.ts";
 import type { EngineContext, Scheduler } from "../context.ts";
 import { advance } from "../manager/advance.ts";
@@ -85,6 +85,12 @@ const LET_UNIT_DETAILS: Record<
     parkingSpaces: 2,
     description: "Furnished two-bedroom with a large living room and two balconies.",
   },
+  "JLT-2205": {
+    floor: 22,
+    bathrooms: 1,
+    parkingSpaces: 1,
+    description: "One-bedroom with a lake view; the tenancy ends soon (move-out demo).",
+  },
   "JVC-0310": {
     floor: 3,
     bathrooms: 1,
@@ -109,6 +115,8 @@ export function demoLeasesCsv(today: CalendarDate): string {
   const near = leaseTerm(addDays(addMonths(today, 5), 10));
   const mid = leaseTerm(addMonths(today, 8));
   const far = leaseTerm(addMonths(today, 11));
+  // Step 10 demo: ends in 40 days, inside the notice window (give notice from the demo console).
+  const ending = leaseTerm(addDays(today, 40));
   const header =
     "unit_code,building,community,unit_no,dld_property_no,makani_no,dewa_premise_no,bedrooms,area_sqft,furnished,landlord_name,landlord_email,tenant_name,tenant_email,tenant_phone,tenant_emirates_id,tenant_nationality,start_on,end_on,annual_rent_aed,cheques,deposit_aed,ejari_no";
   const rows = [
@@ -186,6 +194,31 @@ export function demoLeasesCsv(today: CalendarDate): string {
       "6",
       "2400",
       "DEMO-EJ-0000310",
+    ],
+    [
+      "JLT-2205",
+      "Demo Lakes Tower",
+      "Jumeirah Lake Towers",
+      "2205",
+      "DEMO-DLD-002205",
+      "3333311111",
+      "DEMO-DEWA-2205",
+      "1",
+      "760",
+      "no",
+      "Fictional Holdings LLC",
+      "landlord@demo.example",
+      "Noor Demo Haddad",
+      "noor.tenant@demo.example",
+      "+971 50 000 0004",
+      fictionalEid(1000004),
+      "Fictionland",
+      ending.start,
+      ending.end,
+      "78000",
+      "4",
+      "3900",
+      "DEMO-EJ-0002205",
     ],
   ];
   return [header, ...rows.map((r) => r.join(","))].join("\n");
@@ -420,4 +453,26 @@ if (import.meta.main) {
   await seedDemo(database);
   await database.close();
   console.log("demo data seeded");
+}
+
+/**
+ * Demo console: imports the demo leases that are missing, next to whatever data exists (nothing
+ * is deleted or changed). A unit that already has a live lease is reported, not touched; the
+ * import's own duplicate check makes this safe to run twice.
+ */
+export async function seedMissingDemoLeases(ctx: EngineContext) {
+  const results = await importLeasesCsv(ctx, demoLeasesCsv(ctx.clock.today()), "demo");
+  for (const [code, d] of Object.entries(LET_UNIT_DETAILS)) {
+    await ctx.database.db
+      .update(units)
+      .set(d)
+      .where(and(eq(units.code, code), isNull(units.description)));
+  }
+  return results.map((r) => ({
+    row: r.row,
+    status: r.status,
+    ref: r.ref ?? null,
+    state: r.state ?? null,
+    reasons: r.reasons,
+  }));
 }

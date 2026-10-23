@@ -447,14 +447,14 @@ describe.skipIf(noDb)("manager (Postgres)", () => {
         toState: "MOVE_OUT",
         rulesVersion: "dubai-2025-01",
       });
-      // Renewal milestones are cancelled once the tenant leaves; lease_end stays.
+      // Renewal milestones are cancelled once the tenant leaves; lease_end stays and the move-out date is added.
       const pending = (
         await database.db
           .select()
           .from(deadlines)
           .where(and(eq(deadlines.entityId, id), eq(deadlines.status, "pending")))
       ).map((x) => x.milestone);
-      expect(pending).toEqual(["lease_end@2027-05-31"]);
+      expect(pending).toEqual(["lease_end@2027-05-31", "move_out_date@2027-05-31"]);
     });
 
     test("unit events carry a rules version", async () => {

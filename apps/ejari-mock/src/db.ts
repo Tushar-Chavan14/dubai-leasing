@@ -66,6 +66,18 @@ const PROPERTIES: [dld: string, unit: string, makani: string][] = [
   ["DEMO-DLD-000310", "310", "2222211111"],
   ["DEMO-DLD-001608", "1608", "1111144444"],
   ["DEMO-DLD-000412", "412", "2222233333"],
+  ["DEMO-DLD-002205", "2205", "3333311111"],
+];
+
+/**
+ * Registrations of the engine's imported demo leases (made before the demo, so the registry
+ * knows them and a move-out can cancel them). Dates aren't tracked for these.
+ */
+const PRIOR_REGISTRATIONS: [ejariNo: string, dld: string, eidSerial: string, tenant: string][] = [
+  ["DEMO-EJ-0001204", "DEMO-DLD-001204", "1000001", "Sara Example Khan"],
+  ["DEMO-EJ-0000807", "DEMO-DLD-000807", "1000002", "Rami Sample Nasser"],
+  ["DEMO-EJ-0000310", "DEMO-DLD-000310", "1000003", "Mina Test Varghese"],
+  ["DEMO-EJ-0002205", "DEMO-DLD-002205", "1000004", "Noor Demo Haddad"],
 ];
 
 const eid = (year: string, serial: string) => {
@@ -90,6 +102,7 @@ export function demoPeople(): [idNo: string, type: "emirates_id" | "passport", n
     [eid("1900", "1000001"), "emirates_id", "Sara Example Khan", "Fictionland"],
     [eid("1900", "1000002"), "emirates_id", "Rami Sample Nasser", "Fictionland"],
     [eid("1900", "1000003"), "emirates_id", "Mina Test Varghese", "Fictionland"],
+    [eid("1900", "1000004"), "emirates_id", "Noor Demo Haddad", "Fictionland"],
   ];
 }
 
@@ -107,6 +120,15 @@ export async function seed(pool: Pool | PoolClient): Promise<void> {
       `INSERT INTO ejari_mock.icp_people (id_no, id_type, name_en, nationality, expires_on) VALUES ($1, $2, $3, $4, '2032-12-31')
        ON CONFLICT (id_no) DO NOTHING`,
       [idNo, type, name, nationality],
+    );
+  }
+  for (const [no, dld, serial, tenant] of PRIOR_REGISTRATIONS) {
+    await pool.query(
+      `INSERT INTO ejari_mock.registrations
+         (ejari_no, dld_property_no, tenant_id_no, tenant_name, landlord_name, start_on, end_on, annual_rent_fils, payload, issued_on)
+       VALUES ($1, $2, $3, $4, $5, '2000-01-01', '2099-12-31', 0, '{"prior": true}', '2000-01-01')
+       ON CONFLICT (ejari_no) DO NOTHING`,
+      [no, dld, eid("1900", serial), tenant, OWNER],
     );
   }
 }

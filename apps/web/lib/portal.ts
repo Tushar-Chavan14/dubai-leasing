@@ -98,3 +98,29 @@ export interface SignPortalView {
     addendum: { clauses: string[]; freeText: string | null };
   };
 }
+
+/** Step 10 in the tenant portal (engine `moveOutView`). */
+export interface MoveOutView {
+  leaseEndOn: string;
+  moveOutOn: string | null;
+  canGiveNotice: boolean;
+  booking: { moveOutOn: string; scheduledAt: string | null; done: boolean; canBook: boolean; slots: string[] } | null;
+  statement: {
+    revision: number;
+    status: string;
+    depositFils: number;
+    deductionsFils: number;
+    refundFils: number;
+    items: { room: string | null; label: string; quantity: number; amountFils: number }[];
+    paidOn: string | null;
+  } | null;
+  canRespondToStatement: boolean;
+}
+
+/** What the move-out portal pages read. */
+export interface MoveOutPortalView {
+  purpose: string;
+  linkUsed: boolean;
+  unit: { label: string; community: string } | null;
+  tenancy: { moveOut: MoveOutView };
+}

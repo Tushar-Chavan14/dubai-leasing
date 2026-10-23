@@ -30,8 +30,9 @@ export function registerRenewalRoutes(api: Hono<AuthEnv>, ctx: EngineContext) {
         .from(leases)
         .where(eq(leases.id, c.req.param("id")));
       if (!lease) throw notFound("lease");
-      // Tenancy forms (report an issue, payment reply, move-in report) don't need a notice.
-      if (isTenancyType(body.type)) {
+      // Tenancy forms (report an issue, payment reply, move-in report, move-out) and a notice to
+      // vacate given another way don't need a renewal notice.
+      if (isTenancyType(body.type) || body.type === "VACATE_NOTICE") {
         return receiveInbound(ctx, tx, {
           type: body.type,
           payload: body.payload,
@@ -177,7 +178,10 @@ export function registerRenewalRoutes(api: Hono<AuthEnv>, ctx: EngineContext) {
       .select()
       .from(documents)
       .where(and(eq(documents.id, docId), eq(documents.leaseId, leaseId)));
-    if (!doc || !["renewal_notice", "contract", "contract_signed", "ejari_certificate"].includes(doc.kind)) {
+    if (
+      !doc ||
+      !["renewal_notice", "contract", "contract_signed", "ejari_certificate", "deposit_statement"].includes(doc.kind)
+    ) {
       throw notFound("document");
     }
     if (doc.kind === "contract" || doc.kind === "contract_signed") {

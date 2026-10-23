@@ -207,15 +207,22 @@ describe.skipIf(noDb)("staff copilot (Postgres, scripted model)", () => {
       find_available_units: { bedrooms: 1 },
       list_payments: { lease: "TST-0101" },
       list_tickets: { lease: "TST-0101" },
+      get_case_pack: { lease: "TST-0101" },
     };
-    // Read tools, for every role. The one propose tool has its own role tests (copilot-proposals.test.ts).
+    // Read tools, for each role they are given to; the engine refuses the others (the case pack is
+    // leasing staff only). Propose tools have their own role tests (copilot-proposals.test.ts).
     const readTools = copilotTools.filter((t) => t.kind === "read");
     expect(Object.keys(args).toSorted()).toEqual(readTools.map((t) => t.name).toSorted());
     for (const role of ROLES) {
       const u = await addStaff(database, role);
       const engine = inProcessClient(app, issueToken(SECRET, u.id, Date.now()));
       for (const tool of readTools) {
-        const out = await tool.run(tool.input.parse(args[tool.name]), { engine, user: u, today: clock.today() });
+        const run = tool.run(tool.input.parse(args[tool.name]), { engine, user: u, today: clock.today() });
+        if (!tool.roles.includes(role)) {
+          await expect(run).rejects.toThrow();
+          continue;
+        }
+        const out = await run;
         expect([role, tool.name, tool.output.safeParse(out).success]).toEqual([role, tool.name, true]);
       }
     }

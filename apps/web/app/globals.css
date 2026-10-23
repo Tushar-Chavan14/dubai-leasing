@@ -2787,3 +2787,43 @@ tr[data-current="true"] td {
 .checklist li[data-done] {
   color: var(--ink);
 }
+
+/* Metrics: five KPI tiles. */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 14px;
+}
+.kpi {
+  padding: 16px 18px;
+}
+.kpi .kpi-value {
+  font-size: 28px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  margin: 6px 0 4px;
+}
+.kpi .kpi-label {
+  font-size: 13px;
+  color: var(--muted, inherit);
+}
+
+/* Copilot starters grouped by what it can do. */
+.cp-starter-group {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  text-align: left;
+}
+.cp-starter-kind {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.cp-starter[data-kind="draft"],
+.cp-starter[data-kind="prepare"] {
+  border-style: dashed;
+}

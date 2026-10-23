@@ -3,6 +3,8 @@ import {
   addDays,
   type CalendarDate,
   type ComplaintSubmitted,
+  type DepositResponse,
+  type InspectionBooked,
   formatAed,
   type MoveInAcknowledged,
   newId,
@@ -22,6 +24,8 @@ import { and, eq, inArray, like } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
 import { conflict, unprocessable } from "../errors.ts";
 import { processComplaint } from "./complaints.ts";
+import { applyDepositResponse, latestStatement } from "./deposit.ts";
+import { bookInspection, moveOutBooking } from "./move-out.ts";
 import { appendEvent, getCompanyPolicy } from "./events.ts";
 import { runAndRecord } from "./helpers.ts";
 import type { InboundRequest } from "./inbound.ts";
@@ -34,13 +38,19 @@ import { ownPhotos } from "./tenancy-files.ts";
  * typed (Zod); free text is classified, never obeyed. Nothing here changes rent, amounts or dates:
  * a payment reply creates work for finance; a complaint goes to Complaint Triage.
  */
-export const TENANCY_TYPES = ["MOVE_IN_ACKNOWLEDGED", "PAYMENT_REPLY", "COMPLAINT_SUBMITTED"] as const;
+export const TENANCY_TYPES = [
+  "MOVE_IN_ACKNOWLEDGED",
+  "PAYMENT_REPLY",
+  "COMPLAINT_SUBMITTED",
+  "INSPECTION_BOOKED",
+  "DEPOSIT_RESPONSE",
+] as const;
 export type TenancyType = (typeof TENANCY_TYPES)[number];
 export const isTenancyType = (t: string): t is TenancyType => (TENANCY_TYPES as readonly string[]).includes(t);
 
 type LeaseRow = typeof leases.$inferSelect;
 type InboundRow = typeof inboundEvents.$inferSelect;
-type Payload = MoveInAcknowledged | PaymentReply | ComplaintSubmitted;
+type Payload = MoveInAcknowledged | PaymentReply | ComplaintSubmitted | InspectionBooked | DepositResponse;
 
 /** Validates against the lease, picks the dedupe key, stores the submission and queues it. */
 export async function receiveTenancyInbound(
@@ -92,6 +102,22 @@ export async function receiveTenancyInbound(
     const same = last[0] && JSON.stringify(last[0].payload) === JSON.stringify(p);
     dedupeKey = same ? last[0]!.dedupeKey : `payment_reply:${pay.id}#${earlier.length + 1}`;
     summary = { paymentId: pay.id, seq: pay.seq, choice: p.choice, payBy: p.payBy ?? null };
+  } else if (type === "INSPECTION_BOOKED") {
+    const p = payload as InspectionBooked;
+    const booking = await moveOutBooking(ctx, tx, lease);
+    if (!booking.canBook) throw conflict("There is no move-out inspection to book right now.");
+    const at = new Date(p.slotAt).toISOString();
+    if (!booking.slots.includes(at)) throw unprocessable("choose one of the offered times", [], "invalid_slot");
+    dedupeKey = `inspection_booked:${lease.id}:${at}`;
+    summary = { slotAt: at };
+  } else if (type === "DEPOSIT_RESPONSE") {
+    const p = payload as DepositResponse;
+    const s = await latestStatement(tx, lease.id);
+    if (lease.state !== "MOVE_OUT" || !s || s.status !== "sent" || s.revision !== p.revision)
+      throw conflict("This deposit statement can no longer be answered; use the newest email from us.");
+    // One answer per statement revision; the bank details stay in inbound_events only.
+    dedupeKey = `deposit_response:${s.id}`;
+    summary = { choice: p.choice, revision: s.revision };
   } else {
     const p = payload as ComplaintSubmitted;
     if (!["ACTIVE", "RENEWAL", "MOVE_OUT", "DISPUTE"].includes(lease.state))
@@ -205,7 +231,11 @@ export async function processTenancyInbound(ctx: EngineContext, ev: InboundRow) 
     const result =
       locked.type === "MOVE_IN_ACKNOWLEDGED"
         ? await applyMoveInAck(ctx, tx, lease, locked, cls)
-        : await applyPaymentReply(ctx, tx, lease, locked, cls);
+        : locked.type === "INSPECTION_BOOKED"
+          ? await applyInspectionBooked(ctx, tx, lease, locked)
+          : locked.type === "DEPOSIT_RESPONSE"
+            ? await applyDepositResponse(ctx, tx, lease, locked)
+            : await applyPaymentReply(ctx, tx, lease, locked, cls);
     await tx.db
       .update(inboundEvents)
       .set({ status: result.applied ? "applied" : "stored_only", result: result.detail, processedAt: ctx.clock.now() })
@@ -218,6 +248,25 @@ type Classified = { needsPerson: boolean; reasons: string[]; helperRunId: string
 interface Applied {
   applied: boolean;
   detail: Record<string, unknown>;
+}
+
+/** The tenant booked the move-out inspection; a slot gone meanwhile leaves it for an officer. */
+async function applyInspectionBooked(ctx: EngineContext, tx: Tx, lease: LeaseRow, ev: InboundRow): Promise<Applied> {
+  const p = ev.payload as InspectionBooked;
+  try {
+    const r = await bookInspection(ctx, tx, lease, new Date(p.slotAt), ev.actor as Actor);
+    return { applied: true, detail: r };
+  } catch (e) {
+    await createTask(ctx, tx, lease.id, {
+      kind: "inspection_booking_failed",
+      title: `${lease.ref}: the tenant's inspection booking (${p.slotAt}) could not be applied; call them to agree a time`,
+      details: { inboundEventId: ev.id, reason: e instanceof Error ? e.message : String(e) },
+      assigneeRole: "leasing_officer",
+      dueOn: ctx.clock.today(),
+      dedupeKey: `${lease.id}:inspection_booking_failed:${ev.id}`,
+    });
+    return { applied: false, detail: { reason: "slot no longer available" } };
+  }
 }
 
 /** Move-in report: the tenant's photos join the inspection; a disagreement or flagged comment goes to an officer. */

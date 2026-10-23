@@ -79,7 +79,7 @@ export default async function CopilotPage({ searchParams }: { searchParams: Prom
     <>
       <PageHead
         title="Copilot"
-        lede="Ask about leases, deadlines, approvals, available units and the rules. It reads the same data you can see and quotes the rule version. It can prepare a new application for you to confirm; it can't approve, send or change anything else."
+        lede="Ask about leases, deadlines, approvals, available units and the rules. It reads the same data you can see and quotes the rule version. It drafts emails for you to send and prepares applications, tasks and approval requests for you to confirm; it can't approve, send or change anything else."
       />
       <div className="cp-page">
         <aside className="cp-threads" aria-label="Your conversations">

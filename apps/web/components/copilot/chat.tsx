@@ -31,17 +31,61 @@ const TOOL_LABEL: Record<string, string> = {
   propose_approval: "Prepared an approval request for you to confirm",
   draft_email: "Drafted an email for you to review",
   draft_approval_note: "Drafted a note for you to review",
+  get_case_pack: "Read the case pack",
+  summarise_case: "Drafted a case summary for you to review",
 };
 
-const STARTERS: Record<PageRef["kind"] | "none", string[]> = {
+/**
+ * Suggestions on an empty chat, grouped by what the copilot can do: ask (reads), draft (saved for
+ * you to send) and prepare (a proposal you confirm). A suggestion ending in "…" is put in the box
+ * for you to finish instead of being sent.
+ */
+type Starter = { text: string; kind: "ask" | "draft" | "prepare" };
+const ask = (text: string): Starter => ({ text, kind: "ask" });
+const draft = (text: string): Starter => ({ text, kind: "draft" });
+const prepare = (text: string): Starter => ({ text, kind: "prepare" });
+const STARTERS: Record<PageRef["kind"] | "none", Starter[]> = {
   lease: [
-    "Why is this lease waiting?",
-    "How much can rent go up at renewal?",
-    "Was the renewal notice sent and acknowledged?",
+    ask("Why is this lease waiting?"),
+    ask("How much can rent go up at renewal?"),
+    ask("Was the renewal notice sent and acknowledged?"),
+    ask("Any overdue or bounced rent on this lease?"),
+    ask("Any open complaints or maintenance tickets?"),
+    ask("What happened on this lease so far?"),
+    draft("Draft an email to the tenant about…"),
+    draft("Prepare an RDC case summary for this lease."),
+    prepare("Create a task to…"),
+    prepare("Prepare a formal late-payment reminder for the overdue instalment."),
   ],
-  unit: ["What's the lease status for this unit?", "When does the current lease end?"],
-  approval: ["Explain this approval and what it's based on.", "What happens after it's approved?"],
-  none: ["What's due this week?", "Which approvals are waiting?", "Which units are available for viewing?"],
+  unit: [
+    ask("What's the lease status for this unit?"),
+    ask("When does the current lease end?"),
+    ask("Is this unit available for viewing, and at what rent?"),
+    prepare("Book a viewing of this unit for…"),
+  ],
+  approval: [
+    ask("Explain this approval and what it's based on."),
+    ask("What happens after it's approved?"),
+    ask("Which rule applies here, and in which version?"),
+    draft("Draft a note on this approval saying…"),
+  ],
+  none: [
+    ask("What's due this week?"),
+    ask("Which approvals are waiting?"),
+    ask("Which leases need attention this week?"),
+    ask("Which units are available for viewing?"),
+    ask("Who has overdue rent?"),
+    ask("Which maintenance tickets are late?"),
+    ask("What does the rule say about the rent increase cap?"),
+    draft("Draft an email to the tenant of…"),
+    prepare("Book a viewing for a new applicant…"),
+    prepare("Create a task to…"),
+  ],
+};
+const KIND_LABEL: Record<Starter["kind"], string> = {
+  ask: "Ask",
+  draft: "Draft (you send it)",
+  prepare: "Prepare (you confirm it)",
 };
 
 /** Highlights unverified values inside a line of answer text. */
@@ -112,7 +156,7 @@ function Steps({ tools }: { tools: ToolStep[] }) {
           ) : (
             <span className="cp-dot" />
           )}
-          {TOOL_LABEL[t.name] ?? t.name}
+          {t.status === "failed" ? `A step failed (${t.name})` : (TOOL_LABEL[t.name] ?? t.name)}
           {typeof t.args.lease === "string" && <span className="ref">{t.args.lease}</span>}
         </li>
       ))}
@@ -308,12 +352,20 @@ function ProposalCard({ p, onChange }: { p: ProposalView; onChange: (v: Proposal
 /** A draft the copilot wrote (D26). It opens in the normal form, where the user edits and sends it. */
 function DraftCard({ d }: { d: DraftView }) {
   const href =
-    d.kind === "email" ? `/leases/${d.leaseId}?draft=${d.id}#email` : `/inbox/${d.approvalId}?draft=${d.id}#notes`;
+    d.kind === "email"
+      ? `/leases/${d.leaseId}?draft=${d.id}#email`
+      : d.kind === "case_summary"
+        ? `/leases/${d.leaseId}?draft=${d.id}#case`
+        : `/inbox/${d.approvalId}?draft=${d.id}#notes`;
   return (
     <div className="cp-proposal" data-status={d.status}>
       <div className="cp-proposal-head">
         <strong>
-          {d.kind === "email" ? `Draft email${d.leaseRef ? ` · ${d.leaseRef}` : ""}` : "Draft approval note"}
+          {d.kind === "email"
+            ? `Draft email${d.leaseRef ? ` · ${d.leaseRef}` : ""}`
+            : d.kind === "case_summary"
+              ? `Draft case summary${d.leaseRef ? ` · ${d.leaseRef}` : ""}`
+              : "Draft approval note"}
         </strong>
         <span className="status" data-tone={d.status === "used" ? "good" : "quiet"}>
           {d.status === "used" ? "Used" : "Not sent"}
@@ -328,7 +380,11 @@ function DraftCard({ d }: { d: DraftView }) {
       {d.status === "draft" && (
         <div className="cp-proposal-actions">
           <Link className="btn small" href={href}>
-            {d.kind === "email" ? "Open in the email form" : "Open in the approval"}
+            {d.kind === "email"
+              ? "Open in the email form"
+              : d.kind === "case_summary"
+                ? "Open on the lease"
+                : "Open in the approval"}
           </Link>
         </div>
       )}
@@ -421,13 +477,35 @@ export function CopilotChat({
             <p>
               Ask about leases, deadlines, approvals or the rules. Answers come from the system, with the rule version.
             </p>
-            <div className="cp-starters">
-              {STARTERS[page?.kind ?? "none"].map((s) => (
-                <button key={s} type="button" className="cp-starter" onClick={() => void chat.send(s)}>
-                  {s}
-                </button>
-              ))}
-            </div>
+            {(["ask", "draft", "prepare"] as const).map((kind) => {
+              const list = STARTERS[page?.kind ?? "none"].filter((x) => x.kind === kind);
+              return list.length ? (
+                <div key={kind} className="cp-starter-group">
+                  <span className="cp-starter-kind">{KIND_LABEL[kind]}</span>
+                  <div className="cp-starters">
+                    {list.map((x) => (
+                      <button
+                        key={x.text}
+                        type="button"
+                        className="cp-starter"
+                        data-kind={kind}
+                        onClick={() => {
+                          if (x.text.endsWith("…")) {
+                            setDraft(`${x.text.slice(0, -1)} `);
+                            input.current?.focus();
+                          } else void chat.send(x.text);
+                        }}
+                      >
+                        {x.text}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null;
+            })}
+            <p className="muted" style={{ fontSize: 12, margin: "6px 0 0" }}>
+              It never approves, sends, records payments or changes a lease: those stay with you.
+            </p>
           </div>
         ) : (
           chat.messages.map((m) => <Message key={m.id} m={m} onProposal={chat.updateProposal} />)

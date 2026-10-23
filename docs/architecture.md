@@ -185,9 +185,9 @@ guard and some a gate (an approved, unused approval of that gate is required and
 | Lease | `MOVE_IN_COMPLETED` | MOVE_IN → ACTIVE | Ejari no. present, and the move-in checklist complete: DEWA active, keys and access cards handed over (ticked by leasing staff) and at least one condition photo per room (rooms from bedrooms and bathrooms). The guard gets `moveInMissing` from the engine; "checklist not started" if there is no inspection. Entering ACTIVE schedules the term's instalments and queues the move-in email (report + acknowledgement link) |
 | Lease | `RENEWAL_WINDOW_OPENED` | ACTIVE → RENEWAL | fired by the T−5 months milestone |
 | Lease | `RENEWED` | RENEWAL → ACTIVE | gate `renewal_notice` for this term; term and rent must equal the approved proposal; a rent increase also needs its notice email SMTP-accepted on or before T−90 (Dubai date, `noticeSentInTime`); cancels the old term's pending deadlines; creates an Ejari-renewal task |
-| Lease | `TENANT_VACATE_NOTICE` | RENEWAL/ACTIVE → MOVE_OUT | — (tenant's choice) |
+| Lease | `TENANT_VACATE_NOTICE` | RENEWAL/ACTIVE → MOVE_OUT | — (tenant's choice); payload may set `moveOutOn` (portal: the lease end only). Entering MOVE_OUT (any way in) creates the `move_out` inspection, a `move_out_date@<date>` milestone and the inspection-booking email (D29) |
 | Lease | `TERMINATED` | RENEWAL/ACTIVE → MOVE_OUT | gate `vacate_notice` (ground sale/own use/major works/demolition, served by notary or registered mail by T−12 months); only at or after lease end; own use sets the unit's relist lock |
-| Lease | `SETTLED` | MOVE_OUT → CLOSED | deposit settled and Ejari cancelled |
+| Lease | `SETTLED` | MOVE_OUT → CLOSED | deposit settled (finance's refund record) and Ejari cancelled; fired by the system as soon as both are true |
 | Lease | `DISPUTE_OPENED` / `DISPUTE_RESOLVED_*` | → DISPUTE → ACTIVE/MOVE_OUT/CLOSED | CLOSED uses the settlement guard |
 
 There is no ungated landlord "not renewed" event: a landlord ends a tenancy only through
@@ -393,7 +393,7 @@ flowchart LR
 | Collections | payment-reply and move-in comment class (`paymentReplyClassifier`, `moveInCommentClassifier`: complaint, hardship, dispute → a person) | — (every reminder is a fixed template) | — | instalment schedule (`paymentSchedule`), reminder chain, formal reminder proposal, eviction-eligible date from the lease's rulebook (D27) |
 | Complaint Triage | category, urgency 0–3, safety, legal threat, system instruction, language | 2–3 sentence acknowledgement from the category and urgency band only (never the tenant's text), post-checked; fixed EN/AR template on any doubt (D28) | — | routing (escalate / review / ticket), ticket due hours from policy |
 | Renewal & Notice | reply class | — | — | cap, dates, template |
-| Exit & Deposit | — | — | photo differences (suggestions) | deductions, refund |
+| Exit & Deposit | — | — | photo differences per room, move-in vs move-out, price-list ids only, suggestions an officer confirms (`exit_compare`, D29) | statement: price list × quantity, capped at the deposit, refund, approval reasons (`exit_deposit`) |
 
 ## 6. Models (`packages/llm`)
 
@@ -604,6 +604,61 @@ Notes:
 - **Not covered here:** a formal reminder served another way (notary, courier) is recorded by a
   person outside the system; partial payments are a finance task.
 
+### Move-out and deposit (step 10, D29)
+
+`apps/engine/src/manager/move-out.ts` and `deposit.ts`.
+
+- **Entering MOVE_OUT** sets `move_out_on` (the lease end unless the event set one), creates the
+  `move_out` inspection (keys returned, access cards returned, DEWA final reading requested, a
+  photo of every room), adds the `move_out_date@<date>` milestone and emails the booking link.
+- **Inspection.** Staff tick the checks and photograph each room (`move_out_photo`). "Compare
+  with move-in photos" queues one `exit.compare` job per room that has both; the job runs the
+  local vision model outside any transaction and drops an answer whose `seq` moved on. Officers
+  confirm suggestions or add items (price list × quantity, or `other` + amount); nothing is
+  added by the model. Completing needs every check and room and no comparison pending.
+- **Statement.** Completing runs `exit_deposit` (pure code) with the policy version in force,
+  stores revision n with its PDF and emails it with a single-use `deposit_response` link. Damage
+  beyond the deposit is an `amount_owed` manager task. Findings lock while a statement is open;
+  finance's rejection of the `refund` approval supersedes it and the officer reissues.
+- **Refund.** See the `DEPOSIT_RESPONSE` row in §8a. Finance records every payout
+  (`POST /leases/:id/deposit/refund-paid`, finance role only), which sets `deposit_settled_on`.
+- **Ejari cancel.** `ejari.cancel` job (`singletonKey <leaseId>:ejari_cancel`) once the
+  inspection is done and today ≥ the move-out date (queued at completion, or by the
+  `move_out_date` milestone). Idempotent: skips if already cancelled; a "no active registration"
+  answer counts only if `status()` says cancelled. Failure → `ejari_cancel_failed` task, job retries.
+- **Settlement.** `trySettle` fires `SETTLED` when the deposit is settled and Ejari (if any) is
+  cancelled; CLOSED cascades the unit to PREP.
+
+### Disputes (step 11, person-led)
+
+`apps/engine/src/manager/case-pack.ts`. A leasing manager opens a dispute (`POST
+/leases/:id/dispute`, reason → `DISPUTE_OPENED`) and resolves it (`/dispute/resolve`: tenancy
+continues, tenant leaves, or closed when the deposit is settled and Ejari cancelled). Leasing staff
+export the case pack (`GET /leases/:id/case-pack.zip`; the JSON index at `/case-pack` is what the
+copilot reads): `timeline.pdf` (every lease and application event in order, with rules versions),
+`index.json`, the generated documents and condition photos, and `manifest.json` with each file's
+SHA-256. ID images are left out (hashes and check status only); tenant text is masked and marked
+untrusted. Each export appends `CASE_PACK_EXPORTED` with the zip's hash.
+
+### Demo console (DEMO_MODE only)
+
+Fast-forward and back to today; bounce or pay the next cheque; "Reject the next Ejari submission"
+(the simulated registry's `POST /api/v1/demo/reject-next`, once, name mismatch); "Tenant gives
+notice" (records `VACATE_NOTICE` on the tenant's behalf; seed lease JLT-2205 ends 40 days after
+seeding); "Reset demo data" (admin, typed RESET): truncates every app table but `staff_users`
+(lifting the audit log's no-truncate guard inside that one transaction, as `demo:reset` drops the
+schema), drops queued jobs, resets the registry and reseeds, clock at today. The registry seeds
+registrations for the imported demo leases so a move-out can cancel them.
+
+### Metrics (docs/specs.md §8)
+
+`apps/engine/src/manager/metrics.ts`, `GET /api/metrics` (any staff role), page `/metrics`.
+From records only, each with the rows behind it: enquiry → Ejari issued (median days; from the
+Telegram conversation, else the application), Ejari rejection rate (rejected / answered
+submissions, per lease), notices on time (notice SMTP-accepted by the `notice_send` date, T−100,
+Dubai date), rent overdue (days past due per overdue or bounced instalment), deposit return time
+(move-out inspection done → refund paid, median days).
+
 ## 8. Channels
 
 Two channels with fixed jobs:
@@ -752,9 +807,9 @@ call, walk-in); those submissions carry `channel = "staff"` and the officer's id
 | 8 Tenancy | Payment reply (paid + ≤ 3 proofs · will pay by date ≤ `promiseToPayMaxDays` · dispute · need time) | `PAYMENT_REPLY` | Paid → finance verifies (never marked paid); will pay → `rent_payby` follow-up on that date; dispute, need time or a flagged comment → manager task. Replies never change amounts or dates |
 | 9 Renewal | Acknowledge notice | `NOTICE_ACKNOWLEDGED` | Stop the follow-up task; store evidence |
 | 9 Renewal | Renew · Vacate · Discuss (+ comment) | `RENEWAL_REPLY` | Renew → `renewal_accepted` task; an officer clicks "Renew lease" (`RENEWED`, gated) → Ejari-renewal task. Vacate (portal asks to confirm) → `TENANT_VACATE_NOTICE` → `MOVE_OUT`, unless the comment needs a person: then held (`stored_only`) with a review task. Discuss → manager task; a renew or vacate answer may follow, one final answer per term |
-| 10 Move out | Give notice to vacate (move-out date) | `VACATE_NOTICE` | Check notice period against contract; schedule inspection |
-| 10 Move out | Pick an inspection slot | `INSPECTION_BOOKED` | Create inspection task |
-| 10 Move out | Deposit statement: Accept · Dispute (reason) + refund details | `DEPOSIT_RESPONSE` | Accept → refund (gate if above threshold); Dispute → approval / `DISPUTE` |
+| 10 Move out | Give notice to vacate (`tenancy` link, from `vacateNoticeOpensDays` before the lease end; only the lease end is offered, confirm tick, comment) | `VACATE_NOTICE` | One final answer per term (shared with the renewal reply). Lease end → `TENANT_VACATE_NOTICE` → `MOVE_OUT`, unless the comment needs a person (held, `reply_review`). Another date → `early_termination_request` manager task (contractual), nothing changes. Minimum notice period: CONFIRM WITH LEGAL |
+| 10 Move out | Pick an inspection slot (`tenancy` link; one-hour slots on viewing days/hours, `inspectionBookingWindowDays` before the move-out date) | `INSPECTION_BOOKED` | Inspection booked (re-booking moves it) + `move_out_inspection` officer task |
+| 10 Move out | Deposit statement: Accept (account name + IBAN) · Dispute (reason) (single-use `deposit_response` link, `depositResponseDays`) | `DEPOSIT_RESPONSE` | Accept → `refund_payout` finance task, or first the `refund` approval when above the threshold / an amount off the price list; Dispute → `refund` approval (reason untrusted) + `deposit_dispute` manager task. Finance's rejection → the officer revises and reissues. The IBAN stays in `inbound_events` only; finance reads it through `GET /leases/:id/deposit/refund-account` (finance only, `REFUND_ACCOUNT_VIEWED` recorded) |
 
 Free-text fields (comments, issue descriptions) go to the decision model. The renewal reply
 classifier (tev1, `packages/helpers/src/reply-classifier`) asks three questions: intent
@@ -885,8 +940,8 @@ export interface CopilotTool<I extends z.ZodTypeAny, O extends z.ZodTypeAny> {
 
 | Kind | Examples | Effect | Needs UI confirmation |
 |---|---|---|---|
-| `read` | `search_entities`, `get_lease`, `get_lease_timeline`, `list_deadlines`, `list_approvals`, `get_helper_run`, `list_outbound_messages`, `explain_rule`, `compute_renewal_cap`, `find_available_units`, `list_payments`, `list_tickets` | None | No |
-| `draft` | `draft_email` (leasing roles, finance), `draft_approval_note` (any staff); `summarise_case` (phase 4) | Saves a `copilot_drafts` row in the user's thread; the user opens it in the normal form, edits it and sends or posts it. The copilot never sends | No |
+| `read` | `search_entities`, `get_lease`, `get_lease_timeline`, `list_deadlines`, `list_approvals`, `get_helper_run`, `list_outbound_messages`, `explain_rule`, `compute_renewal_cap`, `find_available_units`, `get_case_pack` (leasing roles; the dispute case index, tenant text untrusted), `list_payments`, `list_tickets` | None | No |
+| `draft` | `draft_email` (leasing roles, finance), `draft_approval_note` (any staff), `summarise_case` (leasing roles; an RDC case summary built from `get_case_pack`, opened on the lease page with copy/download, never filed) | Saves a `copilot_drafts` row in the user's thread; the user opens it in the normal form, edits it and sends or posts it. The copilot never sends | No |
 | `propose` | `propose_application` (D25), `create_task` (leasing roles), `propose_approval` (gates `formal_reminder`: leasing roles and finance; `vacate_notice`: leasing roles) (D26) | Stores a proposal; on Confirm the normal engine route creates the application, the task or the pending approval, as the user | **Yes**: the user clicks Confirm in the chat |
 
 **Proposals and Confirm (phase 3, D25):** `propose_application` stores a `copilot_proposals`
@@ -1069,7 +1124,7 @@ Key columns:
 - `conversations` (phase 3): `channel`, `external_chat_id` (unique with channel), `external_user_id`, `status (bot|handoff|closed)`, `language`, `flow jsonb`, `flow_version`, `handoff_reason`, `contact_email`, `contact_phone`, `contact_at`, `party_id`, `application_id`, `assigned_to`, `last_message_at`
 - `messages`: `conversation_id`, `direction (in|out)`, `body`, `external_id` (Telegram update id; `unique(conversation_id, direction, external_id)`), `author` (`system` or `user:<id>`), `meta jsonb` (reply kind, `inReplyTo`, buttons), `at`
 - `outbound_messages`: `entity_id`, `purpose`, `milestone`, `to`, `intended_to`, `template`, `status (sending|sent|failed)`, `approval_id`, `document_id`, `body_sha256`, `attachment_sha256s`, `message_id`, `smtp_response`, `preview_url`, `sent_at`, `acknowledged_at`, `unique(entity_id, purpose, milestone)`
-- `action_links`: `token_hash`, `purpose` (`tenancy`, `notice_ack`, `application`, `viewing`, `kyc_upload`, `offer`, `sign`, `move_in_ack`), `entity_id`, `single_use`, `expires_at`, `used_at`
+- `action_links`: `token_hash`, `purpose` (`tenancy`, `notice_ack`, `application`, `viewing`, `kyc_upload`, `offer`, `sign`, `move_in_ack`, `deposit_response`), `entity_id`, `single_use`, `expires_at`, `used_at`
 - `contracts`: `lease_id`, `version` (unique per lease), `status (pending_approval|rejected|sent|signed|superseded)`, `fields jsonb`, `sources jsonb` (per field `{entity, id, column}`), `addendum jsonb`, `flags jsonb`, `input_hash`, `helper_run_id`, `document_id`, `sha256`, `approval_id`, `signed_document_id`, `signed_sha256`, `sent_at`, `signed_at`
 - `contract_signers`: `contract_id`, `party_id`, `role (tenant|landlord)` unique per contract, `name_en`, `email`, `link_id`, `outbound_message_id`, `signed_at`, `typed_name`, `ip`, `user_agent`, `inbound_event_id`
 - `ejari_submissions`: `lease_id`, `approval_id`, `attempt` (unique per approval), `payload jsonb`, `payload_sha256`, `status (queued|sending|issued|rejected|error)`, `tries`, `ejari_no`, `reasons jsonb`, `error`, `autofix jsonb`, `certificate_document_id`
@@ -1079,9 +1134,11 @@ Key columns:
 - `copilot_threads`: `user_id`, `context_entity` (kind + id the panel was opened on, nullable), `created_at`
 - `copilot_messages`: `thread_id`, `role (user|assistant|tool)`, `content`, `tool_name`, `tool_args jsonb`, `tool_result_sha256`, `unverified_values jsonb`, `model`, `latency_ms`, `at`
 - `copilot_proposals` (D25, D26): `thread_id`, `user_id`, `kind (create_application|create_task|request_approval)`, `payload`, `summary`, `status`, `result`, `expires_at`
-- `copilot_drafts` (D26): `thread_id`, `user_id`, `kind (email|approval_note)`, `lease_id`, `approval_id`, `subject`, `body`, `status (draft|used)`; `approval_notes`: `approval_id`, `author`, `body`, `created_at`
+- `copilot_drafts` (D26): `thread_id`, `user_id`, `kind (email|approval_note|case_summary)`, `lease_id`, `approval_id`, `subject`, `body`, `status (draft|used)`; `approval_notes`: `approval_id`, `author`, `body`, `created_at`
 - Phase 3 tenancy (migration 0014, additive): `payments` gains `paid_ref`, `confirmed_by`, `bounced_on`, `friendly_count`, `formal_reminder_sent_on`, `eviction_eligible_on`; `documents` gains `room`, `inspection_id`, `payment_id`, `complaint_id`, `uploaded_by` (kinds `condition_photo`, `tenant_condition_photo`, `payment_proof`, `issue_photo`, `formal_reminder`); `inspections.items`/`photos` hold the move-in checklist; `complaints` gains `ref`, `at_risk`, `source`, `inbound_event_id` unique, `helper_run_id`, `category_confidence`, `injection`, `language`, `status (open|triaging|review|escalated|ticketed|closed)`, `closed_reason`
 - `maintenance_tickets`: `ref`, `lease_id`, `complaint_id`, `category`, `urgency (0–3)`, `status (open|in_progress|done|cancelled)`, `due_by` (created + `ticketDueHours[urgency]`), `notes`, `closed_at`
+- Phase 4 move-out (migration 0015, additive, D29): `leases.move_out_on`; `inspections` gains `scheduled_at`, `booked_by`, `suggestions jsonb` (per room: `status pending|ok|needs_human`, `seq`, suggestions, `helper_run_id`), `findings jsonb` (confirmed items: price-list id × quantity, or `other` + amount); `documents` kinds `move_out_photo`, `deposit_statement`
+- `deposit_statements`: `lease_id`, `revision` (unique per lease), `inspection_id`, `deposit_fils`, `items jsonb`, `deductions_fils`, `refund_fils`, `owed_fils`, `policy_version`, `status (sent|accepted|disputed|approved|paid|superseded)`, `needs_approval`, `approval_id`, `document_id`, `response_inbound_id`, `paid_on`, `payment_ref`, `paid_by`
 
 ## 11. Deployment
 

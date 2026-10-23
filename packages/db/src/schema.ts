@@ -177,6 +177,8 @@ export const leases = pgTable(
     ejariIssuedOn: calDate("ejari_issued_on"),
     ejariCancelledOn: calDate("ejari_cancelled_on"),
     depositSettledOn: calDate("deposit_settled_on"),
+    /** Step 10: the date the tenant leaves (the lease end unless a person agreed otherwise). */
+    moveOutOn: calDate("move_out_on"),
     source: text("source").$type<"engine" | "import" | "demo">().notNull().default("engine"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -477,11 +479,59 @@ export const inspections = pgTable("inspections", {
   kind: text("kind").$type<"move_in" | "move_out">().notNull(),
   status: text("status").$type<"scheduled" | "done">().notNull().default("scheduled"),
   scheduledOn: calDate("scheduled_on"),
+  /** Move-out: the slot the tenant booked (or staff set). */
+  scheduledAt: ts("scheduled_at"),
+  /** `tenant:<partyId>` or `user:<id>`. */
+  bookedBy: text("booked_by"),
   items: jsonb("items").notNull().default([]),
   photos: jsonb("photos").notNull().default([]),
+  /** Move-out: the vision model's per-room suggestions (never applied by themselves, D29). */
+  suggestions: jsonb("suggestions").$type<Record<string, unknown>[]>().notNull().default([]),
+  /** Move-out: damage items an officer confirmed (price-list item × quantity, or an "other" amount). */
+  findings: jsonb("findings").$type<Record<string, unknown>[]>().notNull().default([]),
   doneOn: calDate("done_on"),
   createdAt: createdAt(),
 });
+
+/**
+ * Deposit statements (step 10). Each revision is computed in code from the deposit, the confirmed
+ * findings and the price list in force; amounts are never edited by hand. Finance acts on every
+ * refund: `refund` approval when above the threshold, disputed or with an "other" item, and in all
+ * cases the payout record that settles the deposit.
+ */
+export const depositStatements = pgTable(
+  "deposit_statements",
+  {
+    id: id(),
+    leaseId: uuid("lease_id")
+      .notNull()
+      .references(() => leases.id),
+    revision: smallint("revision").notNull(),
+    inspectionId: uuid("inspection_id").references(() => inspections.id),
+    depositFils: fils("deposit_fils").notNull(),
+    items: jsonb("items").$type<Record<string, unknown>[]>().notNull().default([]),
+    deductionsFils: fils("deductions_fils").notNull(),
+    refundFils: fils("refund_fils").notNull(),
+    /** Damage beyond the deposit: a manager decides; never claimed automatically. */
+    owedFils: fils("owed_fils").notNull().default(0),
+    /** Company policy version the prices came from (null = built-in defaults). */
+    policyVersion: integer("policy_version"),
+    status: text("status")
+      .$type<"sent" | "accepted" | "disputed" | "approved" | "paid" | "superseded">()
+      .notNull()
+      .default("sent"),
+    needsApproval: boolean("needs_approval").notNull().default(false),
+    approvalId: uuid("approval_id"),
+    documentId: uuid("document_id"),
+    responseInboundId: uuid("response_inbound_id"),
+    paidOn: calDate("paid_on"),
+    paymentRef: text("payment_ref"),
+    paidBy: text("paid_by"),
+    createdBy: text("created_by").notNull(),
+    createdAt: ts("created_at").notNull(),
+  },
+  (t) => [uniqueIndex("deposit_statements_lease_rev_uq").on(t.leaseId, t.revision)],
+);
 
 export const conversations = pgTable(
   "conversations",
@@ -680,7 +730,17 @@ export const actionLinks = pgTable(
     id: id(),
     tokenHash: text("token_hash").notNull().unique(),
     purpose: text("purpose")
-      .$type<"tenancy" | "notice_ack" | "application" | "viewing" | "kyc_upload" | "offer" | "sign" | "move_in_ack">()
+      .$type<
+        | "tenancy"
+        | "notice_ack"
+        | "application"
+        | "viewing"
+        | "kyc_upload"
+        | "offer"
+        | "sign"
+        | "move_in_ack"
+        | "deposit_response"
+      >()
       .notNull(),
     entityKind: text("entity_kind").$type<EntityKind>().notNull(),
     entityId: uuid("entity_id").notNull(),
@@ -807,7 +867,7 @@ export const copilotDrafts = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => staffUsers.id),
-    kind: text("kind").$type<"email" | "approval_note">().notNull(),
+    kind: text("kind").$type<"email" | "approval_note" | "case_summary">().notNull(),
     leaseId: uuid("lease_id").references(() => leases.id),
     approvalId: uuid("approval_id").references(() => approvals.id),
     subject: text("subject"),

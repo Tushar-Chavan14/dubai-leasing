@@ -18,6 +18,7 @@ import { appendEvent } from "./events.ts";
 import { checkDecision, effectiveProposal, FormalReminderProposal, RenewalNoticeProposal } from "./gate-rules.ts";
 import { onFormalReminderApproved } from "./collections.ts";
 import { onSafetyComplaintDecided } from "./complaints.ts";
+import { onRefundDecided } from "./deposit.ts";
 import { onContractDecided } from "./contracts.ts";
 import { enqueueNoticeSend } from "./outbound.ts";
 import { onEjariRejectedDecided, onEjariSubmissionDecided } from "./registration.ts";
@@ -157,6 +158,8 @@ export async function decideApproval(
       await onFormalReminderApproved(ctx, tx, a.id, FormalReminderProposal.parse(effectiveProposal(updated)));
     }
     if (a.gate === "safety_complaint") await onSafetyComplaintDecided(ctx, tx, updated, status, user.id);
+    // Deposit refund (step 10): approved → finance pays and records it; rejected → the officer revises.
+    if (a.gate === "refund") await onRefundDecided(ctx, tx, updated, status);
     if (status !== "rejected" && a.gate === "price_out_of_range") {
       await applyApprovedPrice(ctx, tx, updated, user.id);
     }

@@ -1,5 +1,14 @@
 import { replyReceivedEmail } from "@leasing/adapters";
-import { type Actor, type InboundType, inboundPayloads, maskPiiText, newId, type RenewalReply } from "@leasing/core";
+import {
+  type Actor,
+  type InboundType,
+  inboundPayloads,
+  addDays,
+  maskPiiText,
+  newId,
+  type RenewalReply,
+  type VacateNotice,
+} from "@leasing/core";
 import { sha256Hex, shortRef } from "@leasing/core/tokens";
 import {
   actionLinks,
@@ -84,16 +93,23 @@ export async function receiveInbound(ctx: EngineContext, tx: Tx, req: InboundReq
         .then(() => {}),
     );
   }
-  // Leases take renewal forms only; application forms can't be posted against a lease.
-  if (req.type !== "NOTICE_ACKNOWLEDGED" && req.type !== "RENEWAL_REPLY") {
+  // Leases take renewal forms and the notice to vacate; application forms can't be posted against a lease.
+  if (req.type !== "NOTICE_ACKNOWLEDGED" && req.type !== "RENEWAL_REPLY" && req.type !== "VACATE_NOTICE") {
     throw unprocessable(`${req.type} is not a lease form`, [], "invalid_payload");
   }
   const [lease] = await tx.db.select().from(leases).where(eq(leases.id, req.entity.id));
   if (!lease) throw conflict("lease not found");
   if (req.type === "NOTICE_ACKNOWLEDGED" && !req.outboundMessageId) throw unprocessable("no notice to acknowledge");
   let dedupeKey = `ack:${req.outboundMessageId ?? "none"}`;
-  if (req.type === "RENEWAL_REPLY") {
-    // One final answer per term; after "discuss" the tenant may still renew or move out.
+  if (req.type === "VACATE_NOTICE") {
+    if (lease.state !== "ACTIVE" && lease.state !== "RENEWAL")
+      throw conflict("Notice to move out can be given while the tenancy is running.");
+    // Not months ahead: MOVE_OUT starts the inspection booking and stops the renewal path.
+    const opens = addDays(lease.endOn, -(await getCompanyPolicy(tx, ctx.clock.today())).vacateNoticeOpensDays);
+    if (ctx.clock.today() < opens) throw conflict(`Notice to move out can be given from ${opens}.`);
+  }
+  if (req.type === "RENEWAL_REPLY" || req.type === "VACATE_NOTICE") {
+    // One final answer per term (a notice to vacate is one); after "discuss" the tenant may still renew or move out.
     // Concurrent submissions compute the same key, so only one of them is stored.
     const replies = await termReplies(tx, lease);
     if (replies.final) return { ref: replies.final.ref, duplicate: true, id: replies.final.id };
@@ -139,6 +155,7 @@ export async function receiveInbound(ctx: EngineContext, tx: Tx, req: InboundReq
       type: req.type,
       channel: req.channel,
       ...(req.type === "RENEWAL_REPLY" ? { choice: (parsed.data as RenewalReply).choice } : {}),
+      ...(req.type === "VACATE_NOTICE" ? { moveOutOn: (parsed.data as VacateNotice).moveOutOn } : {}),
     },
     rulesVersion: lease.rulesVersion,
   });
@@ -191,8 +208,9 @@ async function processInboundOnce(ctx: EngineContext, inboundEventId: string) {
 
   let classification: { data: ReplyData | undefined; reasons: string[]; helperRunId: string; status: string } | null =
     null;
-  if (ev.type === "RENEWAL_REPLY") {
-    const reply = ev.payload as RenewalReply;
+  if (ev.type === "RENEWAL_REPLY" || ev.type === "VACATE_NOTICE") {
+    // A notice to vacate is classified like a "vacate" renewal reply: "unless…", threats, instructions.
+    const reply = { choice: "vacate" as const, ...(ev.payload as Partial<RenewalReply>) };
     if (reply.comment?.trim()) {
       classification = await withTx(ctx.database, async (tx) => {
         const [lease] = await tx.db.select().from(leases).where(eq(leases.id, ev.entityId));
@@ -226,7 +244,9 @@ async function processInboundOnce(ctx: EngineContext, inboundEventId: string) {
     const result =
       locked.type === "NOTICE_ACKNOWLEDGED"
         ? await applyAcknowledgement(ctx, tx, lease, locked)
-        : await applyRenewalReply(ctx, tx, lease, locked, classification);
+        : locked.type === "VACATE_NOTICE"
+          ? await applyVacateNotice(ctx, tx, lease, locked, classification)
+          : await applyRenewalReply(ctx, tx, lease, locked, classification);
     await tx.db
       .update(inboundEvents)
       .set({ status: result.applied ? "applied" : "stored_only", result: result.detail, processedAt: ctx.clock.now() })
@@ -234,7 +254,7 @@ async function processInboundOnce(ctx: EngineContext, inboundEventId: string) {
     return { lease, result, ev: locked };
   });
   if (!outcome) return { done: false, reason: "already processed" };
-  if (outcome.ev.channel === "portal" && outcome.ev.type === "RENEWAL_REPLY") {
+  if (outcome.ev.channel === "portal" && (outcome.ev.type === "RENEWAL_REPLY" || outcome.ev.type === "VACATE_NOTICE")) {
     await sendReplyReceipt(ctx, outcome.lease, outcome.ev.ref, outcome.result.summary).catch(() => {});
   }
   return { done: true, applied: outcome.result.applied };
@@ -353,18 +373,11 @@ async function applyRenewalReply(
   }
   if (reply.choice === "vacate") {
     // The tenant's own decision not to renew: an allowed transition, no gate.
+    // Entering MOVE_OUT emails the tenant the inspection booking link (move-out.ts).
     await advance(ctx, { kind: "lease", id: lease.id }, "TENANT_VACATE_NOTICE", {
       actor: ev.actor as Actor,
       tx,
       payload: { moveOutOn: lease.endOn, inboundRef: ev.ref, channel: ev.channel },
-    });
-    await createTask(ctx, tx, lease.id, {
-      kind: "move_out_planning",
-      title: `Tenant of ${lease.ref} is moving out on ${lease.endOn}: book the inspection`,
-      details: base,
-      assigneeRole: "leasing_officer",
-      dueOn: today,
-      dedupeKey: `${lease.id}:move_out_planning@${lease.endOn}`,
     });
     return {
       applied: true,
@@ -384,6 +397,86 @@ async function applyRenewalReply(
     applied: true,
     summary: "you would like to discuss the renewal",
     detail: { ...base, action: "discussion task created" },
+  };
+}
+
+type Classification = { data: ReplyData | undefined; reasons: string[]; helperRunId: string; status: string } | null;
+
+/**
+ * Notice to vacate from the tenancy page (step 10). At the lease end it moves the lease to
+ * MOVE_OUT, unless the comment needs a person. Any other date is an early-termination request:
+ * contractual, so a manager handles it and nothing changes here.
+ */
+async function applyVacateNotice(
+  ctx: EngineContext,
+  tx: Tx,
+  lease: LeaseRow,
+  ev: InboundRow,
+  cls: Classification,
+): Promise<Applied> {
+  const p = ev.payload as VacateNotice;
+  const comment = p.comment?.trim() ? maskPiiText(p.comment.trim()) : null;
+  const today = ctx.clock.today();
+  const base = {
+    inboundRef: ev.ref,
+    moveOutOn: p.moveOutOn,
+    helperRunId: cls?.helperRunId ?? null,
+    classification: cls?.data ?? null,
+  };
+  if (lease.state !== "ACTIVE" && lease.state !== "RENEWAL") {
+    await createTask(ctx, tx, lease.id, {
+      kind: "reply_out_of_window",
+      title: `Notice to vacate for ${lease.ref} arrived while the lease is ${lease.state}`,
+      details: { ...base, comment, untrusted: true },
+      assigneeRole: "leasing_manager",
+      dueOn: today,
+      dedupeKey: `${lease.id}:reply_out_of_window:${ev.id}`,
+    });
+    return {
+      applied: false,
+      summary: "we will review your notice",
+      detail: { ...base, reason: `lease is ${lease.state}` },
+    };
+  }
+  if (p.moveOutOn !== lease.endOn) {
+    await createTask(ctx, tx, lease.id, {
+      kind: "early_termination_request",
+      title: `Tenant of ${lease.ref} asks to move out on ${p.moveOutOn}, before the lease end ${lease.endOn}`,
+      details: { ...base, comment, untrusted: !!comment },
+      assigneeRole: "leasing_manager",
+      dueOn: today,
+      dedupeKey: `${lease.id}:early_termination_request:${ev.id}`,
+    });
+    return {
+      applied: false,
+      summary: "you asked to move out before your lease ends; we will contact you about the terms",
+      detail: { ...base, action: "early termination request for a manager" },
+    };
+  }
+  if (comment && (!cls?.data || cls.data.needsPerson || cls.status !== "ok")) {
+    await createTask(ctx, tx, lease.id, {
+      kind: "reply_review",
+      title: `Read the tenant's comment on their notice to vacate ${lease.ref}`,
+      details: { ...base, comment, untrusted: true, reasons: cls?.reasons ?? ["comment could not be classified"] },
+      assigneeRole: "leasing_manager",
+      dueOn: today,
+      dedupeKey: `${lease.id}:reply_review:${ev.id}`,
+    });
+    return {
+      applied: false,
+      summary: "we will review your notice and contact you",
+      detail: { ...base, action: "move-out held for review", reason: "the comment needs a person to read it" },
+    };
+  }
+  await advance(ctx, { kind: "lease", id: lease.id }, "TENANT_VACATE_NOTICE", {
+    actor: ev.actor as Actor,
+    tx,
+    payload: { moveOutOn: lease.endOn, inboundRef: ev.ref, channel: ev.channel },
+  });
+  return {
+    applied: true,
+    summary: `you will move out on ${lease.endOn}`,
+    detail: { ...base, action: "lease moved to move-out" },
   };
 }
 

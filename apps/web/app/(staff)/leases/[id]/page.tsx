@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import { CasePanel } from "../../../../components/case-panel";
+import { MoveOutPanel, type MoveOutView } from "../../../../components/move-out-panel";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ContractPanel, type ContractRow, type EjariAttempt, EjariPanel } from "../../../../components/contract-panel";
@@ -113,6 +115,10 @@ export default async function LeasePage({
   const moveIn = ["MOVE_IN", "ACTIVE", "RENEWAL", "MOVE_OUT", "DISPUTE"].includes(l.state)
     ? await get<MoveInView>(`/api/leases/${id}/move-in`)
     : null;
+  // Step 10: the move-out inspection and deposit (kept afterwards as the record).
+  const moveOut = ["MOVE_OUT", "DISPUTE", "CLOSED"].includes(l.state)
+    ? await get<MoveOutView>(`/api/leases/${id}/move-out`)
+    : null;
   const canAct = me?.role === "leasing_officer" || me?.role === "leasing_manager";
   const canEmail = canAct || me?.role === "finance";
   // A copilot draft (the user's own) prefills the email form; a used one doesn't.
@@ -120,6 +126,10 @@ export default async function LeasePage({
     draftId && canEmail ? await get<DraftRow>(`/api/copilot/drafts/${encodeURIComponent(draftId)}`) : null;
   const draft =
     draftRow && draftRow.kind === "email" && draftRow.leaseId === l.id && draftRow.status === "draft" ? draftRow : null;
+  const caseDraft =
+    draftRow && draftRow.kind === "case_summary" && draftRow.leaseId === l.id && draftRow.status === "draft"
+      ? draftRow
+      : null;
   const running = l.state === "ACTIVE" || l.state === "RENEWAL";
   const today = health?.today ?? "";
   const tenant = l.parties.find((p) => p.role === "tenant");
@@ -172,12 +182,22 @@ export default async function LeasePage({
 
       <div className="split section">
         <div className="stack">
+          {moveOut && <MoveOutPanel leaseId={l.id} view={moveOut} role={me?.role ?? ""} today={health?.today ?? ""} />}
           {moveIn && <MoveInPanel leaseId={l.id} view={moveIn} canAct={canAct} active={l.state !== "MOVE_IN"} />}
           {(payments?.length ?? 0) > 0 && (
             <PaymentsPanel leaseId={l.id} rows={payments ?? []} role={me?.role ?? ""} today={today} />
           )}
           {["ACTIVE", "RENEWAL", "MOVE_OUT", "DISPUTE"].includes(l.state) && (
             <ComplaintsPanel leaseId={l.id} rows={complaints ?? []} canAct={canAct} canLog={canAct} />
+          )}
+          {["ACTIVE", "RENEWAL", "MOVE_OUT", "DISPUTE", "CLOSED"].includes(l.state) && (
+            <CasePanel
+              key={caseDraft?.id ?? "case"}
+              leaseId={l.id}
+              state={l.state}
+              role={me?.role ?? ""}
+              summary={caseDraft ? { subject: caseDraft.subject, body: caseDraft.body } : null}
+            />
           )}
           {canEmail && tenant && (
             <EmailTenantForm key={draft?.id ?? "new"} leaseId={l.id} tenantEmail={tenant.email} draft={draft} />

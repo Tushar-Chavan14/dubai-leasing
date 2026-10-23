@@ -28,3 +28,4 @@ export * from "./registration/index.ts";
 export * from "./leasing-assistant/index.ts";
 export { type FormalReminderInput, formalReminderNotice } from "./collections/formal-reminder.ts";
 export * from "./complaint-triage/index.ts";
+export * from "./exit-deposit/index.ts";

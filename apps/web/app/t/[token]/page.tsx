@@ -4,13 +4,15 @@ import { publicGet } from "../../../lib/engine";
 import { longDate } from "../../../lib/format";
 import { IconCheck, IconWarning } from "../../../lib/icons";
 import type { ApplicationPortalView } from "../../../lib/portal";
+import type { MoveOutView } from "../../../lib/portal";
 import { ApplicationStatus } from "./application-status";
 import { AcknowledgeForm, ReplyForm } from "./forms";
 
 interface PortalView {
-  purpose: "tenancy" | "notice_ack" | "move_in_ack";
+  purpose: "tenancy" | "notice_ack" | "move_in_ack" | "deposit_response";
   tenancy: {
     canReportIssue: boolean;
+    moveOut: MoveOutView;
     openPayments: { id: string; seq: number; amountFils: number; dueOn: string; status: string }[];
     reports: {
       ref: string | null;
@@ -57,6 +59,43 @@ export default async function TenancyPage({ params }: { params: Promise<{ token:
       </div>
 
       {v.purpose === "move_in_ack" && redirectTo(`/t/${token}/move-in`)}
+      {v.purpose === "deposit_response" && redirectTo(`/t/${token}/deposit`)}
+
+      {v.purpose === "tenancy" &&
+        (v.tenancy.moveOut.canGiveNotice || v.tenancy.moveOut.booking || v.tenancy.moveOut.statement) && (
+          <section className="panel panel-pad stack">
+            <h2 className="section-title" style={{ margin: 0 }}>
+              Moving out
+            </h2>
+            {v.tenancy.moveOut.canGiveNotice && (
+              <a className="btn" style={{ width: "fit-content" }} href={`/t/${token}/vacate`}>
+                Give notice to move out
+              </a>
+            )}
+            {v.tenancy.moveOut.booking && (
+              <p style={{ margin: 0 }}>
+                Moving out on <b>{longDate(v.tenancy.moveOut.booking.moveOutOn)}</b>.{" "}
+                {v.tenancy.moveOut.booking.done ? (
+                  "The inspection is done."
+                ) : (
+                  <a href={`/t/${token}/inspection`}>
+                    {v.tenancy.moveOut.booking.scheduledAt ? "Change the inspection time" : "Book the inspection"}
+                  </a>
+                )}
+              </p>
+            )}
+            {v.tenancy.moveOut.statement && (
+              <p style={{ margin: 0 }}>
+                Deposit statement {v.tenancy.moveOut.statement.revision}: refund{" "}
+                <b>{formatAed(v.tenancy.moveOut.statement.refundFils)}</b>
+                {v.tenancy.moveOut.statement.paidOn
+                  ? `, paid on ${longDate(v.tenancy.moveOut.statement.paidOn)}`
+                  : ` (${v.tenancy.moveOut.statement.status})`}
+                .
+              </p>
+            )}
+          </section>
+        )}
 
       {v.tenancy.openPayments.length > 0 && (
         <section className="panel panel-pad stack">

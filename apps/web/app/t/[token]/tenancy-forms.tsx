@@ -3,7 +3,15 @@
 import { useActionState, useState } from "react";
 import { IconCheck, IconWarning } from "../../../lib/icons";
 import { checkPhotoFile, preparePhoto } from "../../../lib/images";
-import { moveInAck, paymentReply, type PortalState, reportIssue } from "./actions";
+import {
+  bookInspection,
+  depositResponse,
+  giveNotice,
+  moveInAck,
+  paymentReply,
+  type PortalState,
+  reportIssue,
+} from "./actions";
 
 function Done({ state, what }: { state: PortalState; what: string }) {
   return (
@@ -185,6 +193,127 @@ export function ReportIssueForm({ token }: { token: string }) {
       <Photos token={token} kind="issue_photo" max={5} label="Photos (optional)" />
       <button type="submit" className="btn primary" disabled={pending}>
         {pending ? "Sending…" : "Send report"}
+      </button>
+    </form>
+  );
+}
+
+const dubaiTime = (iso: string) =>
+  new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Dubai",
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(iso));
+
+/** Step 10: notice to vacate. Only the lease end is offered; another date goes to a manager as a request. */
+export function VacateNoticeForm({ token, leaseEndOn }: { token: string; leaseEndOn: string }) {
+  const [state, action, pending] = useActionState<PortalState, FormData>(giveNotice, {});
+  if (state.ref) return <Done state={state} what="notice" />;
+  return (
+    <form action={action} className="stack">
+      <input type="hidden" name="token" value={token} />
+      <input type="hidden" name="moveOutOn" value={leaseEndOn} />
+      <ErrorLine text={state.error} />
+      <p style={{ margin: 0 }}>
+        You will move out when your lease ends, on <b>{leaseEndOn}</b>. To leave earlier, say so in the comment: a
+        person will contact you about the terms.
+      </p>
+      <label className="field">
+        <span className="field-label">Comment (optional)</span>
+        <textarea name="comment" rows={3} maxLength={2000} dir="auto" />
+      </label>
+      <label>
+        <input type="checkbox" name="confirm" value="yes" required /> I am giving notice that I will move out and not
+        renew.
+      </label>
+      <button type="submit" className="btn primary" disabled={pending}>
+        {pending ? "Sending…" : "Give notice"}
+      </button>
+    </form>
+  );
+}
+
+export function InspectionBookingForm({
+  token,
+  slots,
+  current,
+}: {
+  token: string;
+  slots: string[];
+  current: string | null;
+}) {
+  const [state, action, pending] = useActionState<PortalState, FormData>(bookInspection, {});
+  if (state.ref) return <Done state={state} what="booking" />;
+  if (!slots.length) return <p className="muted">No times are open right now. The leasing team will contact you.</p>;
+  return (
+    <form action={action} className="stack">
+      <input type="hidden" name="token" value={token} />
+      <ErrorLine text={state.error} />
+      {current && (
+        <p style={{ margin: 0 }}>
+          Booked: <b>{dubaiTime(current)}</b> (Dubai time). Pick another time to move it.
+        </p>
+      )}
+      <fieldset className="choice-list">
+        <legend className="field-label">Choose a time (Dubai time, about one hour)</legend>
+        {slots.map((s) => (
+          <label key={s}>
+            <input type="radio" name="slotAt" value={s} required defaultChecked={s === current} /> {dubaiTime(s)}
+          </label>
+        ))}
+      </fieldset>
+      <button type="submit" className="btn primary" disabled={pending}>
+        {pending ? "Booking…" : "Book"}
+      </button>
+    </form>
+  );
+}
+
+export function DepositResponseForm({ token, revision }: { token: string; revision: number }) {
+  const [state, action, pending] = useActionState<PortalState, FormData>(depositResponse, {});
+  const [choice, setChoice] = useState("");
+  if (state.ref) return <Done state={state} what="answer" />;
+  return (
+    <form action={action} className="stack">
+      <input type="hidden" name="token" value={token} />
+      <input type="hidden" name="revision" value={revision} />
+      <ErrorLine text={state.error} />
+      <fieldset className="choice-list">
+        <legend className="field-label">Your answer</legend>
+        <label>
+          <input type="radio" name="choice" value="accept" onChange={() => setChoice("accept")} /> I accept the
+          statement
+        </label>
+        <label>
+          <input type="radio" name="choice" value="dispute" onChange={() => setChoice("dispute")} /> I dispute it
+        </label>
+      </fieldset>
+      {choice === "accept" && (
+        <>
+          <label className="field">
+            <span className="field-label">Account holder name</span>
+            <input name="accountName" maxLength={120} required autoComplete="name" />
+          </label>
+          <label className="field">
+            <span className="field-label">IBAN</span>
+            <input name="iban" maxLength={40} required placeholder="AE07 0331 2345 6789 0123 456" autoComplete="off" />
+          </label>
+        </>
+      )}
+      {choice === "dispute" && (
+        <label className="field">
+          <span className="field-label">What do you disagree with?</span>
+          <textarea name="reason" rows={4} maxLength={2000} dir="auto" required />
+          <span className="muted" style={{ fontSize: 13 }}>
+            A person reviews every dispute. You can also contact the Rental Disputes Centre.
+          </span>
+        </label>
+      )}
+      <button type="submit" className="btn primary" disabled={pending || !choice}>
+        {pending ? "Sending…" : "Send"}
       </button>
     </form>
   );

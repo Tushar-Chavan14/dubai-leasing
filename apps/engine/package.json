@@ -19,6 +19,7 @@
     "@leasing/llm": "workspace:*",
     "@leasing/rulebook": "workspace:*",
     "drizzle-orm": "0.45.4",
+    "fflate": "0.8.2",
     "hono": "4.13.13",
     "pg": "8.23.1",
     "pg-boss": "12.38.0",

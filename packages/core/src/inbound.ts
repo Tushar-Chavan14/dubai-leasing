@@ -70,6 +70,51 @@ export const ComplaintSubmitted = z
   .strict();
 export type ComplaintSubmitted = z.infer<typeof ComplaintSubmitted>;
 
+/**
+ * Step 10: the tenant gives notice that they will move out. The portal offers only the lease end
+ * date; any other date is an early-termination request a person handles (contractual, not automatic).
+ */
+export const VacateNotice = z
+  .object({
+    moveOutOn: z.iso.date(),
+    comment: z.string().trim().max(2000).optional(),
+    /** The tenant ticked "I am giving notice that I will move out" (required). */
+    confirmVacate: z.literal(true),
+  })
+  .strict();
+export type VacateNotice = z.infer<typeof VacateNotice>;
+
+/** Step 10: the tenant picks a move-out inspection slot (an instant offered by the portal). */
+export const InspectionBooked = z.object({ slotAt: z.iso.datetime({ offset: true }) }).strict();
+export type InspectionBooked = z.infer<typeof InspectionBooked>;
+
+/**
+ * Step 10: the tenant's answer to the deposit statement. Accept gives the refund account; Dispute
+ * gives a reason (tenant-written: classified, never obeyed). Neither changes an amount.
+ */
+export const DepositResponse = z
+  .object({
+    revision: z.number().int().min(1),
+    choice: z.enum(["accept", "dispute"]),
+    accountName: z.string().trim().min(2).max(120).optional(),
+    iban: z
+      .string()
+      .transform((v) => v.replace(/\s+/g, "").toUpperCase())
+      .pipe(z.string().regex(/^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/, "enter a valid IBAN"))
+      .optional(),
+    reason: z.string().trim().max(2000).optional(),
+  })
+  .strict()
+  .refine((p) => p.choice !== "accept" || (!!p.accountName && !!p.iban), {
+    message: "give the account name and IBAN for the refund",
+    path: ["iban"],
+  })
+  .refine((p) => p.choice !== "dispute" || (p.reason?.length ?? 0) >= 5, {
+    message: "tell us what you disagree with",
+    path: ["reason"],
+  });
+export type DepositResponse = z.infer<typeof DepositResponse>;
+
 export const InboundType = z.enum([
   "NOTICE_ACKNOWLEDGED",
   "RENEWAL_REPLY",
@@ -79,6 +124,9 @@ export const InboundType = z.enum([
   "MOVE_IN_ACKNOWLEDGED",
   "PAYMENT_REPLY",
   "COMPLAINT_SUBMITTED",
+  "VACATE_NOTICE",
+  "INSPECTION_BOOKED",
+  "DEPOSIT_RESPONSE",
 ]);
 export type InboundType = z.infer<typeof InboundType>;
 
@@ -92,4 +140,7 @@ export const inboundPayloads = {
   MOVE_IN_ACKNOWLEDGED: MoveInAcknowledged,
   PAYMENT_REPLY: PaymentReply,
   COMPLAINT_SUBMITTED: ComplaintSubmitted,
+  VACATE_NOTICE: VacateNotice,
+  INSPECTION_BOOKED: InspectionBooked,
+  DEPOSIT_RESPONSE: DepositResponse,
 } as const;

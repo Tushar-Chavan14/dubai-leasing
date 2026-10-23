@@ -161,6 +161,53 @@ describe.skipIf(noDb)("demo clock routes (demo mode)", () => {
   });
 });
 
+describe.skipIf(noDb)("demo console: reset and Ejari rejection (demo mode)", () => {
+  test("reset is admin-only, needs RESET, reseeds and keeps staff; reject-next needs the registry", async () => {
+    database = await freshDatabase();
+    const t = testContext(database, "2026-10-19T04:00:00Z", { demoMode: true });
+    const demoClock = new EngineDemoClock(database);
+    await demoClock.refresh();
+    const app = createApi(
+      { ...t.ctx, clock: demoClock },
+      {
+        sessionSecret: SECRET,
+        mediaStore: new LocalDiskStore(mkdtempSync(join(tmpdir(), "leasing-media-"))),
+        demoClock,
+        ejariMockUrl: "http://127.0.0.1:9", // nothing listens: the registry part reports false
+      },
+    );
+    const tokens: Record<string, string> = {};
+    for (const role of ["admin", "leasing_manager", "finance"] as const)
+      tokens[role] = issueToken(SECRET, (await addStaff(database, role)).id, Date.now());
+    const call = (role: string, path: string, body: unknown) =>
+      app.request(path, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${tokens[role]}` },
+        body: JSON.stringify(body),
+      });
+    expect((await call("leasing_manager", "/api/demo/reset", { confirm: "RESET" })).status).toBe(403);
+    expect((await call("admin", "/api/demo/reset", { confirm: "yes" })).status).toBe(400);
+    const r = await call("admin", "/api/demo/reset", { confirm: "RESET" });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toMatchObject({ ok: true, mockReset: false });
+    const leasesNow = await database.pool.query("select ref from leases");
+    expect(leasesNow.rows.length).toBeGreaterThanOrEqual(4);
+    // Staff stay signed in across a reset.
+    expect((await call("admin", "/api/demo/reset", { confirm: "RESET" })).status).toBe(200);
+
+    // Adding missing demo leases deletes nothing and is safe to repeat.
+    const before = (await database.pool.query("select count(*)::int as n from leases")).rows[0].n as number;
+    const added = (await (await call("leasing_manager", "/api/demo/seed-leases", {})).json()) as {
+      results: { status: string }[];
+    };
+    expect(added.results.every((r) => r.status !== "imported")).toBe(true);
+    expect((await database.pool.query("select count(*)::int as n from leases")).rows[0].n).toBe(before);
+    expect((await call("finance", "/api/demo/seed-leases", {})).status).toBe(403);
+    expect((await call("finance", "/api/demo/ejari/reject-next", {})).status).toBe(403);
+    expect((await call("leasing_manager", "/api/demo/ejari/reject-next", {})).status).toBe(422);
+  });
+});
+
 describe.skipIf(noDb)("pg-boss in the Manager's transaction", () => {
   test("a job sent in a rolled-back transaction never exists", async () => {
     database = await freshDatabase();

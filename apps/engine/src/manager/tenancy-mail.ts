@@ -1,8 +1,10 @@
 import {
   complaintAckEmail,
+  depositStatementEmail,
   formalReminderEmail,
   type MailAttachment,
   moveInEmail,
+  moveOutEmail,
   renderPdf,
   rentFriendlyEmail,
   rentReminderEmail,
@@ -11,6 +13,7 @@ import { formatAed, newId } from "@leasing/core";
 import {
   approvals,
   complaints,
+  depositStatements,
   documents,
   helperRuns,
   leaseParties,
@@ -34,7 +37,14 @@ import { moveInStatus } from "./move-in.ts";
  * `tenancyLinkDays`); the move-in email also a single-use `move_in_ack` link. Text is fixed,
  * except the complaint acknowledgement, which the Complaint Triage helper wrote and checked.
  */
-export type TenancyMailKind = "move_in" | "rent_reminder" | "rent_friendly" | "formal_reminder" | "complaint_ack";
+export type TenancyMailKind =
+  | "move_in"
+  | "rent_reminder"
+  | "rent_friendly"
+  | "formal_reminder"
+  | "complaint_ack"
+  | "move_out"
+  | "deposit_statement";
 
 export interface Composed {
   to: string;
@@ -195,6 +205,54 @@ export async function composeTenancyMail(
       mail,
       attachments: [{ filename: `formal-reminder-${reference}.pdf`, content: pdf, contentType: "application/pdf" }],
       template: "formal_reminder",
+    };
+  }
+
+  if (kind === "move_out") {
+    if (lease.state !== "MOVE_OUT") return null;
+    const tenancy = await tenancyLink(ctx, tx, lease, tenant.id);
+    const mail = moveOutEmail({
+      name: tenant.fullNameEn,
+      unitLabel,
+      moveOutOn: fmtDate(lease.moveOutOn ?? lease.endOn),
+      bookUrl: `${tenancy.url}/inspection`,
+      demo,
+    });
+    return { to, mail, attachments: [], template: "move_out" };
+  }
+
+  if (kind === "deposit_statement") {
+    const [s] = await tx.db.select().from(depositStatements).where(eq(depositStatements.id, key));
+    // A statement replaced or answered meanwhile isn't sent.
+    if (!s || s.status !== "sent" || lease.state !== "MOVE_OUT" || !s.documentId) return null;
+    const [doc] = await tx.db.select().from(documents).where(eq(documents.id, s.documentId));
+    if (!doc) return null;
+    const policy = await getCompanyPolicy(tx, ctx.clock.today());
+    const link = await createLink(ctx, tx, {
+      purpose: "deposit_response",
+      entity: { kind: "lease", id: lease.id },
+      partyId: tenant.id,
+      ttlDays: policy.depositResponseDays,
+    });
+    const mail = depositStatementEmail({
+      name: tenant.fullNameEn,
+      unitLabel,
+      revision: s.revision,
+      deposit: formatAed(s.depositFils),
+      deductions: formatAed(s.deductionsFils),
+      refund: formatAed(s.refundFils),
+      respondUrl: link.url,
+      respondDays: policy.depositResponseDays,
+      demo,
+    });
+    const pdf = new Uint8Array(await ctx.documents.read(doc.path));
+    return {
+      to,
+      mail,
+      attachments: [
+        { filename: `deposit-statement-${lease.ref}-${s.revision}.pdf`, content: pdf, contentType: "application/pdf" },
+      ],
+      template: "deposit_statement",
     };
   }
 
