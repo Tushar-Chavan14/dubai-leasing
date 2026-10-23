@@ -13,6 +13,8 @@ type UnitRow = typeof units.$inferSelect;
 export type Filters = {
   bedrooms?: number | undefined;
   community?: string | undefined;
+  /** Furnished or not (unknown counts as not furnished). */
+  furnished?: boolean | undefined;
   /** Annual asking rent at most this (fils). */
   maxRentFils?: number | undefined;
   /** One unit by its code (exact, ignoring case). */
@@ -45,6 +47,7 @@ export async function listedUnits(tx: Tx, f: Filters, policy: CompanyPolicy, max
   const matching = rows.filter(
     (u) =>
       priceSettled(u, policy) &&
+      (f.furnished === undefined || (u.furnished ?? false) === f.furnished) &&
       (f.bedrooms === undefined ? true : f.bedrooms >= 4 ? (u.bedrooms ?? 0) >= 4 : u.bedrooms === f.bedrooms),
   );
   const out: UnitRow[] = [];

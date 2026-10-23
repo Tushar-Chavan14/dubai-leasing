@@ -769,6 +769,19 @@ describe.skipIf(noDb)("channel route and staff conversation views", () => {
     expect((await post(s.app, cmd("701", "start"), issueToken(SECRET, s.officer.id, Date.now()))).status).toBe(401);
   });
 
+  test("the Telegram route refuses a web update", async () => {
+    const s = await setup();
+    const web = {
+      channel: "web",
+      kind: "text",
+      text: "hi",
+      updateId: newId(),
+      chatId: newId(),
+      from: { id: newId() },
+    };
+    expect((await post(s.app, { ...web, from: { id: web.chatId } }, CHANNEL_SECRET)).status).toBe(400);
+  });
+
   test("without a channel secret the route is off", async () => {
     const s = await setup();
     const off = createApi(s.ctx, {

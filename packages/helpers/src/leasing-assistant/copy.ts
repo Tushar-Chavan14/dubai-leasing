@@ -55,6 +55,17 @@ const en = {
   backCta: "Other homes",
   bedrooms: (n: number) => (n === 0 ? "Studio" : n >= 4 ? "4+ bedrooms" : `${n} bedroom${n === 1 ? "" : "s"}`),
   perYear: (rent: string) => `${rent} a year`,
+  // Web chat (customer accounts).
+  autopilotCant:
+    'I can help you find a home, book a viewing, check your applications and leases, and upload requested documents. For a problem in your home, use "Report an issue" in your My tenancy email.',
+  askFurnished: "Do you want it furnished?",
+  furnishedYes: "Furnished: Yes",
+  furnishedNo: "Furnished: No",
+  furnishedAny: "Furnished: Any",
+  findHome: "Find a home",
+  findAnother: "Find another home",
+  myRecords: "My applications & leases",
+  finishProfile: "Please finish your profile (your full name) before I can book a viewing. Then tap the home again.",
 } satisfies Copy;
 
 const ar: typeof en = {
@@ -106,6 +117,16 @@ const ar: typeof en = {
   bedrooms: (n: number) =>
     n === 0 ? "ستوديو" : n >= 4 ? "4 غرف نوم أو أكثر" : n === 1 ? "غرفة نوم واحدة" : `${n} غرف نوم`,
   perYear: (rent: string) => `${rent} سنوياً`,
+  autopilotCant:
+    'يمكنني مساعدتك في العثور على منزل، وحجز معاينة، ومتابعة طلباتك وعقودك، ورفع المستندات المطلوبة. لأي مشكلة في منزلك، استخدم "الإبلاغ عن مشكلة" في رسالة "إيجارك" الإلكترونية.',
+  askFurnished: "هل تريده مفروشاً؟",
+  furnishedYes: "مفروش: نعم",
+  furnishedNo: "مفروش: لا",
+  furnishedAny: "مفروش: أي",
+  findHome: "ابحث عن منزل",
+  findAnother: "ابحث عن منزل آخر",
+  myRecords: "طلباتي وعقودي",
+  finishProfile: "يرجى إكمال ملفك الشخصي (اسمك الكامل) قبل أن أحجز لك معاينة. ثم اضغط على المنزل مرة أخرى.",
 };
 
 export const enquiryCopy: Record<EnquiryLanguage, typeof en> = { en, ar };

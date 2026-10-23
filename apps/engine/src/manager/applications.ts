@@ -98,7 +98,7 @@ export interface NewApplication {
   /** Books the viewing in the same transaction; its invitation is the applicant's first email. */
   viewingAt?: Date | null;
   /** Staff by default; the Telegram bot (D24) and a confirmed copilot proposal (D25) book their own. */
-  source?: "staff" | "telegram" | "copilot";
+  source?: "staff" | "telegram" | "copilot" | "web_chat";
 }
 
 /**

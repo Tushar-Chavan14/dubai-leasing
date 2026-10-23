@@ -34,6 +34,8 @@ export function registerChannelRoutes(app: Hono<AuthEnv>, ctx: EngineContext, se
     if (!header.startsWith("Bearer ") || !sameSecret(header.slice(7), secret))
       return c.json({ error: "unauthorised", code: "unauthorised" }, 401);
     const update = ChannelUpdate.parse(await c.req.json());
+    // The union also holds web updates; those come only from the customer chat route.
+    if (update.channel !== "telegram") return c.json({ error: "telegram updates only", code: "bad_channel" }, 400);
     return c.json(await handleChannelUpdate(ctx, update));
   });
 }

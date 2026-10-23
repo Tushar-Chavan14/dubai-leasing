@@ -4,6 +4,7 @@ import {
   type ChannelReply,
   type ChannelUpdate,
   type CompanyPolicy,
+  type UnitCard,
   type EnquiryFlow,
   type EnquiryLanguage,
   formatAed,
@@ -13,7 +14,17 @@ import {
   normalisePhone,
   type StaffUser,
 } from "@leasing/core";
-import { applications, conversations, messages, parties, tasks, type Tx, units, withTx } from "@leasing/db";
+import {
+  applications,
+  conversations,
+  customerAccounts,
+  messages,
+  parties,
+  tasks,
+  type Tx,
+  units,
+  withTx,
+} from "@leasing/db";
 import {
   enquiryCopy,
   formatSlot,
@@ -77,7 +88,9 @@ export interface UpdateResult {
   reply: ChannelReply | null;
 }
 
-const enquirer = (conv: ConvRow): Actor => `enquirer:${conv.id}`;
+const isWeb = (conv: ConvRow) => conv.channel === "web";
+const enquirer = (conv: ConvRow): Actor =>
+  isWeb(conv) && conv.customerAccountId ? `customer:${conv.customerAccountId}` : `enquirer:${conv.id}`;
 const langOf = (conv: ConvRow): EnquiryLanguage => (conv.language === "ar" ? "ar" : "en");
 
 function inboundBody(u: ChannelUpdate): string {
@@ -224,6 +237,7 @@ export async function handleChannelUpdate(ctx: EngineContext, update: ChannelUpd
 /** Finds or creates the customer's conversation and locks it. A different sender is refused. */
 async function lockConversation(ctx: EngineContext, tx: Tx, u: ChannelUpdate): Promise<ConvRow> {
   const language = u.from.languageCode?.toLowerCase().startsWith("ar") ? "ar" : "en";
+  if (u.channel === "web") return lockWebConversation(ctx, tx, u, language);
   await tx.db
     .insert(conversations)
     .values({
@@ -251,6 +265,55 @@ async function lockConversation(ctx: EngineContext, tx: Tx, u: ChannelUpdate): P
   return conv;
 }
 
+/**
+ * The signed-in customer's own conversation (one per account). Their email and phone come from
+ * the account, so the contact steps never run; the first message records that once.
+ */
+async function lockWebConversation(
+  ctx: EngineContext,
+  tx: Tx,
+  u: ChannelUpdate,
+  language: EnquiryLanguage,
+): Promise<ConvRow> {
+  const [account] = await tx.db.select().from(customerAccounts).where(eq(customerAccounts.id, u.chatId));
+  if (!account) throw notFound("customer account");
+  const now = ctx.clock.now();
+  const [created] = await tx.db
+    .insert(conversations)
+    .values({
+      id: newId(),
+      channel: "web",
+      externalChatId: u.chatId,
+      externalUserId: u.from.id,
+      customerAccountId: account.id,
+      language,
+      flow: IDLE_FLOW,
+      contactEmail: account.email,
+      contactPhone: account.phone,
+      contactAt: now,
+      createdAt: now,
+    })
+    .onConflictDoNothing({ target: [conversations.channel, conversations.externalChatId] })
+    .returning({ id: conversations.id });
+  if (created) {
+    await appendEvent(tx, ctx, {
+      entity: { kind: "conversation", id: created.id },
+      rulesVersion: ctx.rulesVersion,
+      type: "ENQUIRY_CONTACT_SET",
+      actor: `customer:${account.id}`,
+      payload: { email: account.email, source: "account" },
+    });
+  }
+  const [conv] = await tx.db
+    .select()
+    .from(conversations)
+    .where(and(eq(conversations.channel, "web"), eq(conversations.externalChatId, u.chatId)))
+    .for("update");
+  if (!conv) throw notFound("conversation");
+  if (conv.externalUserId !== u.from.id) throw forbidden("this chat belongs to another user");
+  return conv;
+}
+
 /** The reply already sent for this update (a redelivered update gets the same answer, once more). */
 async function storedReply(tx: Tx, conversationId: string, updateId: string): Promise<ChannelReply | null> {
   const rows = await tx.db
@@ -261,6 +324,8 @@ async function storedReply(tx: Tx, conversationId: string, updateId: string): Pr
     .limit(20);
   const hit = rows.find((m) => m.meta.inReplyTo === updateId);
   if (!hit) return null;
+  // Web replies are stored whole (cards and all).
+  if (hit.meta.reply) return hit.meta.reply as ChannelReply;
   const buttons = hit.meta.buttons as ChannelButton[] | undefined;
   return { text: hit.body, ...(buttons?.length ? { buttons } : {}) };
 }
@@ -292,7 +357,12 @@ async function finish(
       direction: "out",
       body: o.reply.text,
       author: "system",
-      meta: { kind: o.kind, inReplyTo, ...(o.reply.buttons ? { buttons: o.reply.buttons } : {}) },
+      meta: {
+        kind: o.kind,
+        inReplyTo,
+        ...(o.reply.buttons ? { buttons: o.reply.buttons } : {}),
+        ...(isWeb(conv) ? { reply: o.reply } : {}),
+      },
       at: ctx.clock.now(),
     });
   }
@@ -321,7 +391,8 @@ async function withoutModel(
     return { reply: { text: t.inHandoff }, kind: "in_handoff" };
   }
 
-  const contact = await contactStep(ctx, tx, conv, u);
+  // Web customers sign in with their email, so the contact steps never run for them.
+  const contact = isWeb(conv) ? null : await contactStep(ctx, tx, conv, u);
   if (contact) return contact;
 
   if (u.kind === "command") {
@@ -367,6 +438,10 @@ async function withoutModel(
   if (u.kind === "callback") {
     const d = u.data;
     if (d.startsWith("lang:")) return setLanguage(d.slice(5));
+    if (isWeb(conv)) {
+      const web = await webCallback(tx, conv, d, policy);
+      if (web) return web;
+    }
     if (d === "units") return { reply: { text: t.askBedrooms, buttons: bedroomButtons(lang) }, kind: "ask_bedrooms" };
     const bed = /^bed:([0-4])$/.exec(d);
     if (bed) return search(tx, conv, { bedrooms: Number(bed[1]) }, policy);
@@ -519,6 +594,69 @@ function bedroomButtons(lang: EnquiryLanguage): ChannelButton[] {
   return [0, 1, 2, 3, 4].map((n) => ({ label: enquiryCopy[lang].bedrooms(n), data: `bed:${n}` }));
 }
 
+function furnishedButtons(lang: EnquiryLanguage): ChannelButton[] {
+  const t = enquiryCopy[lang];
+  return [
+    { label: t.furnishedYes, data: "furn:yes" },
+    { label: t.furnishedNo, data: "furn:no" },
+    { label: t.furnishedAny, data: "furn:any" },
+  ];
+}
+
+/** The two buttons every web reply can end on, so the customer is never at a dead end. */
+function webMenuButtons(lang: EnquiryLanguage, first: "findHome" | "findAnother" = "findHome"): ChannelButton[] {
+  const t = enquiryCopy[lang];
+  return [
+    { label: t[first], data: "units" },
+    { label: t.myRecords, data: "records" },
+  ];
+}
+
+/**
+ * Buttons only the web chat has: the property-type questions (bedrooms, then furnished). The
+ * Telegram callback strings (`units`, `bed:N`, `unit:<id>`, `slot:...`) keep their handlers.
+ */
+async function webCallback(tx: Tx, conv: ConvRow, d: string, policy: CompanyPolicy): Promise<Outcome | null> {
+  const lang = langOf(conv);
+  const t = enquiryCopy[lang];
+  if (d === "units") {
+    return {
+      reply: { text: t.askBedrooms, buttons: bedroomButtons(lang) },
+      kind: "ask_bedrooms",
+      flow: { step: "choosing_bedrooms", ...(conv.flow.community ? { community: conv.flow.community } : {}) },
+    };
+  }
+  const bed = /^bed:([0-4])$/.exec(d);
+  if (bed) {
+    return {
+      reply: { text: t.askFurnished, buttons: furnishedButtons(lang) },
+      kind: "ask_furnished",
+      flow: {
+        step: "choosing_furnished",
+        bedrooms: Number(bed[1]),
+        ...(conv.flow.community ? { community: conv.flow.community } : {}),
+      },
+    };
+  }
+  const furn = /^furn:(yes|no|any)$/.exec(d);
+  if (furn) {
+    const furnished = furn[1] === "any" ? undefined : furn[1] === "yes";
+    return search(tx, conv, { bedrooms: conv.flow.bedrooms, community: conv.flow.community, furnished }, policy);
+  }
+  // The records list arrives with the tenancy records task; until then the autopilot says what it can do.
+  if (d === "records") return autopilotDeclined(conv);
+  return null;
+}
+
+/** What the web chat says where Telegram would pass the customer to an officer: nobody is handed anything. */
+function autopilotDeclined(conv: ConvRow): Outcome {
+  const lang = langOf(conv);
+  return {
+    reply: { text: enquiryCopy[lang].autopilotCant, buttons: webMenuButtons(lang) },
+    kind: "autopilot_declined",
+  };
+}
+
 /** Re-asks the current step's question (used when a slow model answer arrived too late). */
 async function promptForStep(ctx: EngineContext, tx: Tx, conv: ConvRow, policy: CompanyPolicy) {
   const t = enquiryCopy[langOf(conv)];
@@ -531,6 +669,10 @@ async function promptForStep(ctx: EngineContext, tx: Tx, conv: ConvRow, policy: 
       return { reply: { text: t.askName } };
     case "asking_email":
       return { reply: { text: t.askEmail(conv.flow.nameEn ?? "") } };
+    case "choosing_bedrooms":
+      return { reply: { text: t.askBedrooms, buttons: bedroomButtons(langOf(conv)) } };
+    case "choosing_furnished":
+      return { reply: { text: t.askFurnished, buttons: furnishedButtons(langOf(conv)) } };
     case "choosing_slot":
       return conv.flow.unitId ? showUnit(ctx, tx, conv, conv.flow.unitId, policy) : { reply: null };
     default:
@@ -582,11 +724,13 @@ async function search(tx: Tx, conv: ConvRow, f: Filters, policy: CompanyPolicy):
   const flow: EnquiryFlow = {
     step: "choosing_unit",
     ...(f.bedrooms !== undefined ? { bedrooms: f.bedrooms } : {}),
+    ...(f.furnished !== undefined ? { furnished: f.furnished } : {}),
     ...(f.community ? { community: f.community } : {}),
   };
   if (!found.length) return { reply: { text: t.noResults, buttons: bedroomButtons(lang) }, kind: "no_results", flow };
   return {
     reply: {
+      ...(isWeb(conv) ? { cards: found.map(unitCard) } : {}),
       text: t.results(found.length),
       buttons: found.map((u) => ({
         label: buttonLabel(
@@ -597,6 +741,23 @@ async function search(tx: Tx, conv: ConvRow, f: Filters, policy: CompanyPolicy):
     },
     kind: "results",
     flow,
+  };
+}
+
+/** A unit as the web chat shows it. The rent is formatted by code from the asking rent. */
+function unitCard(u: UnitRow): UnitCard {
+  return {
+    unitId: u.id,
+    code: u.code,
+    building: u.building,
+    community: u.community,
+    bedrooms: u.bedrooms ?? 0,
+    bathrooms: u.bathrooms ?? 0,
+    areaSqft: u.areaSqft ?? 0,
+    furnished: u.furnished ?? false,
+    rent: formatAed(u.askingRentFils ?? 0),
+    // Photos are served only to staff and to token links so far; a customer photo route comes with the unit page.
+    photoUrl: null,
   };
 }
 
@@ -636,11 +797,41 @@ async function pickSlot(ctx: EngineContext, tx: Tx, conv: ConvRow, at: Date, pol
   if (!conv.flow.unitId) return search(tx, conv, {}, policy);
   if (!(await slotIsFree(ctx, tx, conv.flow.unitId, at, policy)))
     return { ...(await showUnit(ctx, tx, conv, conv.flow.unitId, policy, t.slotTaken)), kind: "slot_taken" };
+  if (isWeb(conv)) return bookForAccount(ctx, tx, conv, at, policy);
   return {
     reply: { text: t.askName },
     kind: "ask_name",
     flow: { ...conv.flow, step: "asking_name", slot: at.toISOString() },
   };
+}
+
+/** Web booking: the name, email and phone are the account's. No name is asked in the chat. */
+async function bookForAccount(
+  ctx: EngineContext,
+  tx: Tx,
+  conv: ConvRow,
+  at: Date,
+  policy: CompanyPolicy,
+): Promise<Outcome> {
+  const lang = langOf(conv);
+  const [account] = conv.customerAccountId
+    ? await tx.db.select().from(customerAccounts).where(eq(customerAccounts.id, conv.customerAccountId))
+    : [];
+  if (!account) throw notFound("customer account");
+  const fullName = account.fullName?.trim() ?? "";
+  if (!fullName) {
+    return {
+      reply: { text: enquiryCopy[lang].finishProfile, buttons: webMenuButtons(lang) },
+      kind: "profile_incomplete",
+    };
+  }
+  return book(
+    ctx,
+    tx,
+    { ...conv, contactPhone: account.phone, flow: { ...conv.flow, slot: at.toISOString(), nameEn: fullName } },
+    account.email,
+    policy,
+  );
 }
 
 async function slotIsFree(ctx: EngineContext, tx: Tx, unitId: string, at: Date, policy: CompanyPolicy) {
@@ -682,7 +873,14 @@ async function book(ctx: EngineContext, tx: Tx, conv: ConvRow, email: string, po
     .limit(1);
   if (open) {
     const when = open.viewingAt ? formatSlot(open.viewingAt, lang) : "—";
-    return { reply: { text: t.alreadyBooked(when) }, kind: "already_booked", flow: IDLE_FLOW };
+    return {
+      reply: {
+        text: t.alreadyBooked(when),
+        ...(isWeb(conv) ? { buttons: webMenuButtons(lang, "findAnother") } : {}),
+      },
+      kind: "already_booked",
+      flow: IDLE_FLOW,
+    };
   }
   if (!(await slotIsFree(ctx, tx, unitId, at, policy)))
     return { ...(await showUnit(ctx, tx, conv, unitId, policy, t.slotTaken)), kind: "slot_taken" };
@@ -698,7 +896,7 @@ async function book(ctx: EngineContext, tx: Tx, conv: ConvRow, email: string, po
         phone: conv.contactPhone,
         kind: "individual",
         viewingAt: at,
-        source: "telegram",
+        source: isWeb(conv) ? "web_chat" : "telegram",
       },
       enquirer(conv),
       tx,
@@ -722,7 +920,10 @@ async function book(ctx: EngineContext, tx: Tx, conv: ConvRow, email: string, po
     payload: { applicationId: created.id, ref: created.ref, unitCode: unit.code, viewingAt: at.toISOString() },
   });
   return {
-    reply: { text: t.booked(formatSlot(at, lang), `${unit.building}, ${unit.community}`) },
+    reply: {
+      text: t.booked(formatSlot(at, lang), `${unit.building}, ${unit.community}`),
+      ...(isWeb(conv) ? { buttons: webMenuButtons(lang, "findAnother") } : {}),
+    },
     kind: "booked",
     flow: IDLE_FLOW,
   };
@@ -778,6 +979,7 @@ async function applyAssistant(
   const filters = {
     bedrooms: data.search.bedrooms ?? conv.flow.bedrooms,
     community: data.search.community ?? conv.flow.community,
+    furnished: conv.flow.furnished,
   };
   switch (data.intent) {
     case "search_units":
@@ -825,6 +1027,8 @@ async function handoff(
   text: string,
   actor: Actor = "helper:leasing_assistant",
 ): Promise<Outcome> {
+  // The web chat never hands over: no task, no status change, no event (customer chat design).
+  if (isWeb(conv)) return autopilotDeclined(conv);
   const reason = reasons.join(" ").slice(0, 1000) || "Handed to an officer.";
   await tx.db
     .update(conversations)
@@ -864,10 +1068,11 @@ async function handoff(
 
 /** An officer replies in the customer's chat. The conversation stays with officers until released. */
 export async function staffReply(ctx: EngineContext, conversationId: string, user: StaffUser, text: string) {
-  const sender = ctx.channel;
-  if (!sender) throw new DomainError("the Telegram channel is not configured", 503, "channel_unavailable");
   const [conv] = await ctx.database.db.select().from(conversations).where(eq(conversations.id, conversationId));
   if (!conv) throw notFound("conversation");
+  if (isWeb(conv)) throw conflict("web chat conversations are not answered by staff", "web_chat_no_staff_reply");
+  const sender = ctx.channel;
+  if (!sender) throw new DomainError("the Telegram channel is not configured", 503, "channel_unavailable");
   if (conv.status === "closed") throw conflict("the conversation is closed", "conversation_closed");
   // Sent to this conversation's own chat id, from its row; never to anything the request names.
   const sent = await sender.reply(conv.externalChatId, { text });

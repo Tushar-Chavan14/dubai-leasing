@@ -113,6 +113,9 @@ export const EnquiryFlow = z.object({
     "asking_contact_email",
     "asking_contact_phone",
     "idle",
+    /** Web chat only: the property-type buttons (bedrooms, then furnished). */
+    "choosing_bedrooms",
+    "choosing_furnished",
     "choosing_unit",
     "choosing_slot",
     "asking_name",
