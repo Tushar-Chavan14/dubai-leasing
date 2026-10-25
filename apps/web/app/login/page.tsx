@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { initials } from "../../components/ui";
 import { publicGet } from "../../lib/engine";
 import { roleLabel } from "../../lib/format";
@@ -79,6 +80,9 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
               </button>
             </form>
           )}
+          <p className="muted" style={{ marginTop: 20 }}>
+            Looking for a home? <Link href="/properties">Browse properties</Link>
+          </p>
         </div>
       </section>
     </div>

@@ -18,8 +18,8 @@ export default async function ConversationsPage() {
         title="Enquiries"
         lede={
           <>
-            Telegram conversations with people looking for a home. The bot answers, shows listed units and books
-            viewings; anything else comes to an officer.{" "}
+            Telegram and web chat conversations with people looking for a home. The bot answers, shows listed units and
+            books viewings; anything else comes to an officer.{" "}
             {waiting ? (
               <strong>
                 {waiting} {waiting === 1 ? "needs" : "need"} an officer.
@@ -49,7 +49,10 @@ export default async function ConversationsPage() {
                       ) : null}
                     </div>
                     <div className="meta">
-                      <span>Telegram{c.language === "ar" ? " · Arabic" : ""}</span>
+                      <span>
+                        {c.channel === "web" ? "Web chat" : "Telegram"}
+                        {c.language === "ar" ? " · Arabic" : ""}
+                      </span>
                       <span>{c.contactEmail ?? "No email yet"}</span>
                       {c.contactPhone ? <span className="num">{c.contactPhone}</span> : null}
                       {c.status === "handoff" && c.handoffReason ? <span>{c.handoffReason}</span> : null}

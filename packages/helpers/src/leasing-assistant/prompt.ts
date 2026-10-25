@@ -9,7 +9,7 @@ export const INTENT_CRITERIA: Record<EnquiryIntent, string> = {
   book_viewing: "Wants to see or visit an apartment, or asks when they can view it",
   talk_to_person: "Asks to speak to a person, an agent or a manager, or to be called",
   existing_tenant:
-    "Already rents from us and writes about their current home: rent payment, repairs, contract, renewal, moving out",
+    'Already rents from us or is already our applicant and writes about their own lease, application or documents: my lease or contract status, my application, rent payment, repairs, renewal, moving out, or documents they want to upload or send (for example "my passport", "my Emirates ID", "عقدي", "طلبي")',
   greeting: "Only a greeting, thanks or small talk",
   none: "None of the above",
 };

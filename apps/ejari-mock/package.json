@@ -4,10 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun --env-file=../../.env --watch src/main.ts"
+    "dev": "bun --env-file=../../.env --watch src/main.ts",
+    "generate": "drizzle-kit generate"
   },
   "dependencies": {
     "@leasing/core": "workspace:*",
+    "drizzle-orm": "0.45.4",
     "hono": "4.13.13",
     "pdf-lib": "1.17.1",
     "pg": "8.23.1",
@@ -15,6 +17,7 @@
   },
   "devDependencies": {
     "@leasing/adapters": "workspace:*",
-    "@types/pg": "8.23.1"
+    "@types/pg": "8.23.1",
+    "drizzle-kit": "0.31.11"
   }
 }

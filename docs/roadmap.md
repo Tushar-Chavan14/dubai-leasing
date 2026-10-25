@@ -112,3 +112,18 @@ Ejari rejection → field 29/32 at confidence ≥ 0.6, 0 wrongly tied to a name 
 - [ ] Self-hosted install script (local Postgres, Ollama, Bun services via systemd) + install guide
 - [ ] WhatsApp channel adapter (when keys are available)
 - [ ] Optional Claude plugin wrapping the MCP server
+
+## Phase 6 — Customer chat
+
+D30 slices 1 and 2 (accounts, login, records, uploads) were built, then replaced by D31 (public chat, no accounts).
+
+- [x] ~~Customer accounts, email-code login, 30-day customer session~~ (replaced by D31: no accounts)
+- [x] Web channel in the enquiry engine: area, bedrooms, furnished questions, unit cards, viewing booking
+- [x] Autopilot with no handoff; staff can't reply into web chats
+- [x] ~~Own applications and leases in chat~~ (replaced by D31: only the "My tenancy" email link)
+- [x] ~~KYC upload from chat~~ (replaced by D31: uploads only through emailed portal links)
+- [x] ~~Demo sign-in emails on the demo console~~ (removed with accounts)
+- [x] Evals: new cases la43–la46; `existing_tenant` prompt covers applicants and documents
+- [x] Public chat (D31): contact first, change email, `leasing_visitor` cookie, web-server relay with `CHANNEL_SECRET`, `/chat` and a floating launcher
+- [x] Public `/properties` and `/properties/[id]` with a self-service enquiry form (`source "web_form"`, free grid slot, per-IP and per-email limits)
+- [x] More demo units (7 listed (6 new plus JVC-0412), several communities) and an Ejari mock registry derived from the shared demo unit list

@@ -1,73 +1,38 @@
-import { luhnCheckDigit } from "@leasing/core";
-import type { Pool, PoolClient } from "pg";
+import { fileURLToPath } from "node:url";
+import { DEMO_PROPERTIES, luhnCheckDigit } from "@leasing/core";
+import { sql } from "drizzle-orm";
+import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
+import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { Pool } from "pg";
+import * as schema from "./schema.ts";
+import { icpPeople, properties, registrations, submissions } from "./schema.ts";
+
+export type MockDb = NodePgDatabase<typeof schema>;
+
+export interface MockDatabase {
+  db: MockDb;
+  close(): Promise<void>;
+}
+
+export function createMockDatabase(url: string, opts: { max?: number } = {}): MockDatabase {
+  const pool = new Pool({ connectionString: url, max: opts.max ?? 4 });
+  return { db: drizzle(pool, { schema }), close: () => pool.end() };
+}
+
+const migrationsFolder = fileURLToPath(new URL("../migrations", import.meta.url));
 
 /**
- * The simulated registry keeps its data in its own Postgres schema, `ejari_mock`, in the same
- * local database as the engine (decision D22). The engine never reads these tables: it only
- * talks to this service over HTTP, as it will with the real registry.
+ * Applies this service's migrations. Safe to run on every start. They are tracked inside
+ * `ejari_mock`, apart from the engine's, so the two never touch each other's history.
  */
-export const SCHEMA_SQL = `
-CREATE SCHEMA IF NOT EXISTS ejari_mock;
-CREATE SEQUENCE IF NOT EXISTS ejari_mock.ejari_seq;
-CREATE TABLE IF NOT EXISTS ejari_mock.properties (
-  dld_property_no text PRIMARY KEY,
-  unit_no text NOT NULL,
-  makani_no text NOT NULL,
-  plot_no text,
-  usage text NOT NULL DEFAULT 'residential',
-  owner_name text NOT NULL
-);
-CREATE TABLE IF NOT EXISTS ejari_mock.icp_people (
-  id_no text PRIMARY KEY,
-  id_type text NOT NULL,
-  name_en text NOT NULL,
-  nationality text,
-  expires_on date NOT NULL
-);
-CREATE TABLE IF NOT EXISTS ejari_mock.registrations (
-  ejari_no text PRIMARY KEY,
-  dld_property_no text NOT NULL,
-  tenant_id_no text NOT NULL,
-  tenant_name text NOT NULL,
-  landlord_name text NOT NULL,
-  start_on date NOT NULL,
-  end_on date NOT NULL,
-  annual_rent_fils bigint NOT NULL,
-  state text NOT NULL DEFAULT 'active',
-  payload jsonb NOT NULL,
-  issued_on date NOT NULL,
-  cancelled_on date,
-  cancel_reason text,
-  created_at timestamptz NOT NULL DEFAULT now()
-);
-CREATE TABLE IF NOT EXISTS ejari_mock.submissions (
-  id bigserial PRIMARY KEY,
-  request_id text UNIQUE,
-  kind text NOT NULL,
-  outcome text NOT NULL,
-  ejari_no text,
-  reasons jsonb NOT NULL DEFAULT '[]',
-  payload jsonb NOT NULL,
-  received_at timestamptz NOT NULL DEFAULT now()
-);
-`;
-
-/** Creates the schema and tables if missing. Safe to run on every start. */
-export async function bootstrap(pool: Pool): Promise<void> {
-  await pool.query(`SET client_min_messages = warning; ${SCHEMA_SQL}`);
+export async function bootstrap(db: MockDb): Promise<void> {
+  await migrate(db, { migrationsFolder, migrationsSchema: "ejari_mock" });
 }
 
 const OWNER = "Fictional Holdings LLC";
 
-/** Demo units, matching the engine's demo seed (all fictional). */
-const PROPERTIES: [dld: string, unit: string, makani: string][] = [
-  ["DEMO-DLD-001204", "1204", "1111122222"],
-  ["DEMO-DLD-000807", "807", "1111133333"],
-  ["DEMO-DLD-000310", "310", "2222211111"],
-  ["DEMO-DLD-001608", "1608", "1111144444"],
-  ["DEMO-DLD-000412", "412", "2222233333"],
-  ["DEMO-DLD-002205", "2205", "3333311111"],
-];
+/** Demo units: the same list the engine's demo seed builds its units from (all fictional). */
+const PROPERTIES = DEMO_PROPERTIES;
 
 /**
  * Registrations of the engine's imported demo leases (made before the demo, so the registry
@@ -107,37 +72,47 @@ export function demoPeople(): [idNo: string, type: "emirates_id" | "passport", n
 }
 
 /** Seeds the demo properties and people (idempotent). */
-export async function seed(pool: Pool | PoolClient): Promise<void> {
-  for (const [dld, unit, makani] of PROPERTIES) {
-    await pool.query(
-      `INSERT INTO ejari_mock.properties (dld_property_no, unit_no, makani_no, owner_name) VALUES ($1, $2, $3, $4)
-       ON CONFLICT (dld_property_no) DO NOTHING`,
-      [dld, unit, makani, OWNER],
-    );
-  }
-  for (const [idNo, type, name, nationality] of demoPeople()) {
-    await pool.query(
-      `INSERT INTO ejari_mock.icp_people (id_no, id_type, name_en, nationality, expires_on) VALUES ($1, $2, $3, $4, '2032-12-31')
-       ON CONFLICT (id_no) DO NOTHING`,
-      [idNo, type, name, nationality],
-    );
-  }
-  for (const [no, dld, serial, tenant] of PRIOR_REGISTRATIONS) {
-    await pool.query(
-      `INSERT INTO ejari_mock.registrations
-         (ejari_no, dld_property_no, tenant_id_no, tenant_name, landlord_name, start_on, end_on, annual_rent_fils, payload, issued_on)
-       VALUES ($1, $2, $3, $4, $5, '2000-01-01', '2099-12-31', 0, '{"prior": true}', '2000-01-01')
-       ON CONFLICT (ejari_no) DO NOTHING`,
-      [no, dld, eid("1900", serial), tenant, OWNER],
-    );
-  }
+export async function seed(db: MockDb): Promise<void> {
+  await db
+    .insert(properties)
+    .values(
+      PROPERTIES.map(([dldPropertyNo, unitNo, makaniNo]) => ({ dldPropertyNo, unitNo, makaniNo, ownerName: OWNER })),
+    )
+    .onConflictDoNothing();
+  await db
+    .insert(icpPeople)
+    .values(
+      demoPeople().map(([idNo, idType, nameEn, nationality]) => ({
+        idNo,
+        idType,
+        nameEn,
+        nationality,
+        expiresOn: "2032-12-31",
+      })),
+    )
+    .onConflictDoNothing();
+  await db
+    .insert(registrations)
+    .values(
+      PRIOR_REGISTRATIONS.map(([ejariNo, dldPropertyNo, serial, tenantName]) => ({
+        ejariNo,
+        dldPropertyNo,
+        tenantIdNo: eid("1900", serial),
+        tenantName,
+        landlordName: OWNER,
+        startOn: "2000-01-01",
+        endOn: "2099-12-31",
+        annualRentFils: 0,
+        payload: { prior: true as const },
+        issuedOn: "2000-01-01",
+      })),
+    )
+    .onConflictDoNothing();
 }
 
 /** Demo only: empties the registry and seeds it again. */
-export async function reset(pool: Pool): Promise<void> {
-  await pool.query(
-    "TRUNCATE ejari_mock.registrations, ejari_mock.submissions, ejari_mock.properties, ejari_mock.icp_people",
-  );
-  await pool.query("ALTER SEQUENCE ejari_mock.ejari_seq RESTART");
-  await seed(pool);
+export async function reset(db: MockDb): Promise<void> {
+  await db.execute(sql`TRUNCATE ${registrations}, ${submissions}, ${properties}, ${icpPeople}`);
+  await db.execute(sql`ALTER SEQUENCE ejari_mock.ejari_seq RESTART`);
+  await seed(db);
 }

@@ -1,5 +1,7 @@
 # Customer chat ("auto-pilot") — design
 
+> Superseded in part by D31 / docs/superpowers/plans/2026-10-23-public-chat-and-listings.md
+
 Status: approved direction, 2026-10-23. Questions are closed. The product owner reviews the
 plan.
 

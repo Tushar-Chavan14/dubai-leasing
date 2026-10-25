@@ -351,3 +351,116 @@ Phase 4, product owner's choice.
   reached (job, idempotent, retried while the registry is down; a person is told). Not on the
   human-gate list; CONFIRM WITH LEGAL that no person needs to approve it. Settled
   deposit + cancelled Ejari → `SETTLED` → `CLOSED` → unit `PREP`.
+
+## D30 — Customer web chat: logged-in customers, same enquiry engine
+Superseded in part by D31: the accounts, login codes, records and upload parts were removed; the web chat is public.
+Slices 1 (accounts, login, enquiries, viewings) and 2 (records, KYC uploads) are built.
+Product owner's choice.
+- **Customer accounts.** Table `customer_accounts`: id, email (unique, lowercased), full_name,
+  phone (+E.164, nullable), role (`customer`), session_version, created_at, last_login_at.
+- **Login codes.** Table `customer_login_codes`: hashed (sha256 + server pepper), valid 10 min,
+  5 wrong tries kill the code, at most 5 codes per email per hour. A new code voids older ones.
+  The answer is always "if the address is valid we've sent a code". Clock-based expiry. Sent
+  through the mail adapter (template `login_code`, entity kind `customer_account`). The adapter
+  already stores only a body hash; the email subject never contains the code, so staff reading
+  `outbound_messages` can't see a live code. Code requests are also limited per IP (20 an hour,
+  in memory, from `x-real-ip`, else the rightmost `x-forwarded-for` hop (the one our proxy adds), forwarded by `apps/web` server actions:
+  the engine must not be exposed directly, or the per-IP limit can be spoofed; the per-email
+  limit still holds). Deployment requirement: the web app must sit behind a reverse proxy that
+  overwrites `X-Forwarded-For`, and the engine must not be publicly reachable. Documented, not
+  redesigned.
+- **Masked history.** Chat text is stored PII-masked (rule 8), so customers see masked IDs and
+  phone numbers in their own history after a reload.
+- **Session.** HMAC token `{aid, aud:"customer", sv, exp}` signed with `SESSION_SECRET`.
+  `requireUser` rejects any token with `aud` and `requireCustomer` requires it. 30 days.
+  httpOnly cookie `leasing_customer`, separate from the staff `leasing_session`. Logout bumps
+  `session_version`: signed out on every device.
+- **Records.** An account sees the applications and leases of every party whose `email` equals
+  the account email (lowercased), matched at query time. Applications match
+  `applications.party_id`. Leases match `lease_parties` with role `tenant`. If nothing matches,
+  the chat behaves as for a prospect and never says "no records for this email" (it asks the
+  area question). Shown: applications not CONVERTED, REJECTED or WITHDRAWN; leases not CLOSED
+  (MOVE_OUT and DISPUTE stay listed). A lease card carries start, end and the next unpaid
+  payment (scheduled, overdue or bounced; date and `formatAed` amount). Stage names, dates and
+  amounts come from stored fields and fixed code maps, never a model. An application in
+  SCREENING with an unused, unexpired `kyc_upload` link shows "needs documents". The reply lists
+  at most 8 records as buttons (plus the two menu buttons); one record is shown directly.
+  On web, intent `existing_tenant` as the only handoff reason shows the records; any other
+  reason alongside it (complaint, injection, low confidence) still gets the fixed decline.
+- **Conversations.** `conversations.channel` gains `web`. One web conversation per account:
+  `external_chat_id` = account id, new nullable `customer_account_id` FK. Status is always
+  `bot`. The flow goes back to `idle` after each booking. The web chat never hands over: no
+  `enquiry_handoff` task, no `handoff` status; where Telegram would hand off, the customer gets
+  a fixed autopilot reply. Staff can't reply into a web conversation (`staffReply` refuses it).
+  The Telegram route rejects any update whose channel isn't `telegram`.
+- **Search questions.** Code asks area, then bedrooms, then furnished (buttons), before showing
+  unit cards. Rent on a card is the approved asking rent, formatted by code.
+- **Actor.** `customer:<accountId>` (actors are plain strings, as with
+  `enquirer:<conversationId>`).
+- **Applications** from the chat use `source: "web_chat"` and reuse or create the party the way
+  `createApplication` already does.
+- **Uploads.** The engine finds the application's open `kyc_upload` link and calls the existing
+  `addApplicationDocument`, `removeApplicationDocument` and `receiveInbound` (`DOCS_UPLOADED`)
+  with it. This is one code path with the portal. `inbound_events.channel` gains
+  `customer_chat`. Routes `GET`/`POST /api/customer/applications/:id/documents`,
+  `DELETE …/documents/:docId`, `POST …/documents/submit`. Order of checks: ownership (404 for
+  anyone else's application), then an open link and state SCREENING (409), before any body is
+  read. A second submit is 409 (link used), as in the portal. The web route streams the body
+  to the engine, requires a same-origin request and a `content-length` (411 without, 413 over
+  10 MB).
+- **Demo sign-in.** In `DEMO_MODE` only, the `login_code` outbound row keeps `previewUrl` and
+  `GET /api/demo/customer-sign-in-emails` (staff roles) lists the latest 10 (address, sent time,
+  Ethereal preview link) on the demo console, as nobody can otherwise read the code. Outside
+  demo mode `previewUrl` stays null and the route doesn't exist.
+- **Prompt.** The `existing_tenant` intent criterion also covers applicants and documents
+  (my lease, my application, "my passport", "عقدي"). Eval 37/46 → 39/46; on Telegram this
+  intent may hand off slightly more often (la27).
+- **Rule 10 amendment (AGENTS.md):** the customer chat (logged-in customers, autopilot) may
+  take enquiries and book viewings, show customers their own applications and leases, and take
+  KYC document uploads. Everything outbound still goes by email.
+
+## D31 — Public customer chat and property pages
+Amends D30. Product owner's choice. Customer accounts, login, records and uploads are gone; the
+web chat is public and works like the Telegram bot.
+- **No accounts.** Migration 0017 drops `customer_accounts`, `customer_login_codes` and
+  `conversations.customer_account_id`. The `/account/*` pages, the customer session and
+  `leasing_customer` cookie, the `/api/customer/*` routes, the chat records and upload code and
+  the demo sign-in list are removed. D30's "Rule 10 amendment" is replaced by the one below.
+- **Chat = Telegram flow.** Contact first (email required, phone optional with Skip), a Change
+  email button always available, the name asked at booking, then enquiries, viewings and general
+  questions, with the autopilot and no handoff (fixed reply, no task, no `handoff` status; staff
+  can't reply into web chats). Search keeps D30's area, bedrooms, furnished questions. No lease
+  or application records, no document uploads, no email verification. Intent `existing_tenant`
+  (as the only handoff reason) gets a fixed reply (EN and AR) pointing to the "My tenancy" link
+  in the customer's latest email. Documents go only through emailed portal links.
+- **Relay.** The browser never calls the engine. The web server sets an httpOnly random
+  `leasing_visitor` cookie (UUIDv4, 180 days) and relays to `POST /channel/web/updates` and
+  `POST /channel/web/history` with `CHANNEL_SECRET`, as the Telegram bot does. Conversation:
+  `channel "web"`, `external_chat_id` = visitor id. Limits per forwarded client IP (in memory,
+  per hour): 200 updates, 3000 history reads.
+- **Public pages.** `/properties` (bookable units only: the same rule as the chat) and
+  `/properties/[id]` in `apps/web`, with a floating chat launcher and `/chat` as a full page.
+  Engine routes `GET /public/units`, `/public/units/:id`, `/public/units/:id/photos/:photoId`,
+  `/public/units/:id/slots` and `POST /public/enquiries`, all secret-gated. Rent is formatted by
+  code from the asking rent.
+- **Enquiry form.** Name, email, optional phone and a viewing slot. It calls `createApplication`
+  with source `web_form` and actor `enquirer:web-form:<id>` (the visitor id, or a fresh one). The
+  slot must be one of the unit's free grid slots (else 409 `viewing_slot_taken`); a unit that is
+  no longer bookable is 409; the same email can't hold two open requests for a unit. Limits: 10
+  enquiries per IP per hour (POST) and 3 open `web_form` applications per email (429). The
+  invitation email goes out as for staff bookings.
+- **Photos.** The seed has none; cards without a photo show a generated placeholder (gradient and
+  building name). No stock images.
+- **Deployment requirement** (as D30): the web app sits behind a reverse proxy that overwrites
+  `X-Forwarded-For`, and the engine is not publicly reachable; otherwise per-IP limits can be
+  spoofed. A call with no forwarded address is counted under one shared "unknown" key, so a
+  misconfigured proxy is still limited. The per-IP limiter uses wall-clock `Date.now()`: an
+  in-memory rate limiter, not domain time (the `Clock` rule covers domain code only).
+- **Known limits.** Plus-address aliases (`name+1@...`) bypass the per-email cap. All caps are
+  per process and in memory: they reset on restart and aren't shared between engine instances.
+- **Ejari mock.** Its registry derives from the shared demo unit list in
+  `packages/core/src/demo-units.ts` (`DEMO_PROPERTIES`), which the seed also builds its units
+  from, so every seeded unit registers (including MRN-1502). The name-case rejection stays.
+- **Rule 10 amendment (AGENTS.md):** the public web chat, like Telegram, takes enquiries and
+  books viewings only. Tenants act through emailed portal links. Everything outbound still goes
+  by email.

@@ -25,7 +25,8 @@ export default async function ConversationPage({ params }: { params: Promise<{ i
         badge={<Status value={c.status} />}
         lede={
           <>
-            Telegram{c.language === "ar" ? ", in Arabic" : ""}.{" "}
+            {c.channel === "web" ? "Web chat" : "Telegram"}
+            {c.language === "ar" ? ", in Arabic" : ""}.{" "}
             {c.contactEmail ? (
               <>
                 Contact:{" "}
@@ -87,7 +88,9 @@ export default async function ConversationPage({ params }: { params: Promise<{ i
           </ol>
         </section>
         <aside className="panel panel-pad">
-          {canAct ? (
+          {c.channel === "web" ? (
+            <p className="muted">Customer web chat runs on autopilot; staff can&apos;t reply here.</p>
+          ) : canAct ? (
             <ConversationActions id={c.id} status={c.status} />
           ) : (
             <p className="muted">Your role can read enquiries but not reply.</p>

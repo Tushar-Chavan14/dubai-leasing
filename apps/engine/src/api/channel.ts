@@ -1,4 +1,3 @@
-import { createHash, timingSafeEqual } from "node:crypto";
 import { ChannelUpdate, maskPiiText, type StaffRole } from "@leasing/core";
 import type { Hono } from "hono";
 import { z } from "zod";
@@ -11,32 +10,64 @@ import {
   releaseConversation,
   staffReply,
 } from "../manager/enquiries.ts";
+import { webHistory } from "../manager/web-chat.ts";
 import { type AuthEnv, requireRole } from "./auth.ts";
+import { clientIp, ipLimiter, secretGate } from "./secret-gate.ts";
 
 const OFFICERS: StaffRole[] = ["leasing_officer", "leasing_manager", "admin"];
 
-const digest = (s: string) => createHash("sha256").update(s).digest();
-
-/** Constant-time compare of fixed-length digests, so the secret's length doesn't leak either. */
-function sameSecret(given: string, expected: string): boolean {
-  return timingSafeEqual(digest(given), digest(expected));
-}
+const MAX_UPDATES_PER_IP = 200;
+const MAX_HISTORY_PER_IP = 3000;
 
 /**
- * The Telegram bot's route (decision D24): `POST /channel/telegram/updates`, outside the staff
- * session, authenticated with `CHANNEL_SECRET`. The reply in the response is for the chat the
- * update came from; the bot sends it there and nowhere else. Without a secret the route is off.
+ * Channel relays, outside the staff session, authenticated with `CHANNEL_SECRET` (decision D24):
+ * `POST /channel/telegram/updates` for the Telegram bot and, for the public web chat,
+ * `POST /channel/web/updates` and `POST /channel/web/history`, called by the web server only.
+ * The reply in the response is for the chat the update came from. The web server sets the visitor
+ * id from its own cookie and forwards the client IP in `x-forwarded-for` for the per-IP limits.
+ * Without a secret the routes are off.
  */
 export function registerChannelRoutes(app: Hono<AuthEnv>, ctx: EngineContext, secret: string | undefined) {
+  const gate = secretGate(secret);
+  const updatesLimited = ipLimiter(MAX_UPDATES_PER_IP);
+  const historyLimited = ipLimiter(MAX_HISTORY_PER_IP);
+
   app.post("/channel/telegram/updates", async (c) => {
-    if (!secret) return c.json({ error: "channel disabled", code: "channel_disabled" }, 503);
-    const header = c.req.header("authorization") ?? "";
-    if (!header.startsWith("Bearer ") || !sameSecret(header.slice(7), secret))
-      return c.json({ error: "unauthorised", code: "unauthorised" }, 401);
+    const denied = gate(c);
+    if (denied) return denied;
     const update = ChannelUpdate.parse(await c.req.json());
-    // The union also holds web updates; those come only from the customer chat route.
+    // The union also holds web updates; those come only from the web route.
     if (update.channel !== "telegram") return c.json({ error: "telegram updates only", code: "bad_channel" }, 400);
     return c.json(await handleChannelUpdate(ctx, update));
+  });
+
+  app.post("/channel/web/updates", async (c) => {
+    const denied = gate(c);
+    if (denied) return denied;
+    if (updatesLimited(clientIp(c)))
+      return c.json({ error: "Too many requests; try again later.", code: "rate_limited" }, 429);
+    const update = ChannelUpdate.parse(await c.req.json());
+    if (update.channel !== "web") return c.json({ error: "web updates only", code: "bad_channel" }, 400);
+    // The visitor id is both the chat and the sender.
+    if (update.chatId !== update.from.id) return c.json({ error: "chat and sender differ", code: "bad_visitor" }, 400);
+    return c.json(await handleChannelUpdate(ctx, update));
+  });
+
+  app.post("/channel/web/history", async (c) => {
+    const denied = gate(c);
+    if (denied) return denied;
+    if (historyLimited(clientIp(c)))
+      return c.json({ error: "Too many requests; try again later.", code: "rate_limited" }, 429);
+    const body = z
+      .object({
+        visitorId: z.uuid(),
+        after: z.iso
+          .datetime({ offset: true })
+          .transform((s) => new Date(s))
+          .optional(),
+      })
+      .parse(await c.req.json().catch(() => ({})));
+    return c.json(await webHistory(ctx, body.visitorId, body.after));
   });
 }
 

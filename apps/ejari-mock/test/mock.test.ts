@@ -2,13 +2,14 @@ import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { EjariUnavailableError, HttpEjariClient } from "@leasing/adapters";
 import { type CalendarDate, type EjariPayload, FixedClock, luhnCheckDigit } from "@leasing/core";
 import { PDFDocument } from "pdf-lib";
-import { Pool } from "pg";
+import { count, sql } from "drizzle-orm";
 import { createEjariMock } from "../src/app.ts";
-import { bootstrap, reset } from "../src/db.ts";
+import { bootstrap, createMockDatabase, type MockDb, reset } from "../src/db.ts";
+import { registrations, submissions } from "../src/schema.ts";
 
 const DB_URL = process.env.TEST_DATABASE_URL;
 const noDb = !DB_URL;
-let pool: Pool;
+let db: MockDb;
 const clock = new FixedClock(new Date("2026-11-01T04:00:00Z"));
 const d = (s: string) => s as CalendarDate;
 const eid = (year: string, serial: string) => `784-${year}-${serial}-${luhnCheckDigit(`784${year}${serial}`)}`;
@@ -36,7 +37,7 @@ const priya = (over: Partial<EjariPayload> = {}): EjariPayload => ({
 
 function client(opts: { failureRate?: number; demoMode?: boolean } = {}) {
   const app = createEjariMock({
-    pool,
+    db,
     clock,
     failureRate: opts.failureRate ?? 0,
     random: () => 0.5,
@@ -50,13 +51,13 @@ const rid = () => `request-${++n}-${Math.random().toString(36).slice(2)}`;
 describe.skipIf(noDb)("simulated Ejari", () => {
   beforeAll(async () => {
     if (!/test/.test(new URL(DB_URL!).pathname)) throw new Error("TEST_DATABASE_URL must name a *test* database");
-    pool = new Pool({ connectionString: DB_URL, max: 3 });
-    await pool.query("SET client_min_messages = warning; DROP SCHEMA IF EXISTS ejari_mock CASCADE");
-    await bootstrap(pool);
-    await bootstrap(pool); // a second start changes nothing
+    db = createMockDatabase(DB_URL!, { max: 3 }).db;
+    await db.execute(sql`SET client_min_messages = warning; DROP SCHEMA IF EXISTS ejari_mock CASCADE`);
+    await bootstrap(db);
+    await bootstrap(db); // a second start changes nothing
   });
   beforeEach(async () => {
-    await reset(pool);
+    await reset(db);
   });
 
   test("registers a matching contract once, even when the request is repeated", async () => {
@@ -68,10 +69,11 @@ describe.skipIf(noDb)("simulated Ejari", () => {
     expect(r.ejariNo).toMatch(/^SIM-2026-\d{7}$/);
     expect(await ejari.register(priya(), { requestId: id })).toEqual(r);
     // Registrations seeded for the engine's imported demo leases don't count.
-    const count = await pool.query(
-      "SELECT count(*)::int AS n FROM ejari_mock.registrations WHERE NOT payload ? 'prior'",
-    );
-    expect(count.rows[0].n).toBe(1);
+    const [issued] = await db
+      .select({ n: count() })
+      .from(registrations)
+      .where(sql`NOT ${registrations.payload} ? 'prior'`);
+    expect(issued!.n).toBe(1);
     expect(await ejari.status(r.ejariNo)).toEqual({ state: "active" });
     const pdf = await ejari.certificate(r.ejariNo);
     expect(new TextDecoder().decode(pdf.slice(0, 5))).toBe("%PDF-");
@@ -160,8 +162,8 @@ describe.skipIf(noDb)("simulated Ejari", () => {
       fetch: () => Promise.reject(new Error("connection refused")),
     });
     await expect(unreachable.register(priya(), { requestId: rid() })).rejects.toBeInstanceOf(EjariUnavailableError);
-    const rows = await pool.query("SELECT outcome FROM ejari_mock.submissions");
-    expect(rows.rows.map((r) => r.outcome)).toEqual(["unavailable"]);
+    const rows = await db.select({ outcome: submissions.outcome }).from(submissions);
+    expect(rows.map((r) => r.outcome)).toEqual(["unavailable"]);
   });
 
   test("demo console: the next submission is rejected once (demo mode only); a replay keeps its first answer", async () => {

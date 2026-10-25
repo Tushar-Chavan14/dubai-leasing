@@ -64,6 +64,23 @@ export async function listedUnit(tx: Tx, unitId: string, policy: CompanyPolicy):
   return (await unitHasContractedLease(tx, u.id)) ? null : u;
 }
 
+/**
+ * The areas and bedroom counts the web chat may offer: only what a customer can actually book
+ * (the same filter as `listedUnits`), so a button never leads to "nothing matches".
+ * `bedrooms` is bucketed like the filter: 4 stands for 4 or more.
+ */
+export async function bookableFacets(
+  tx: Tx,
+  policy: CompanyPolicy,
+  f: Filters = {},
+): Promise<{ communities: string[]; bedrooms: number[] }> {
+  const rows = await listedUnits(tx, f, policy, 500);
+  return {
+    communities: [...new Set(rows.map((u) => u.community))].sort(),
+    bedrooms: [...new Set(rows.map((u) => Math.min(u.bedrooms ?? 0, 4)))].sort((a, b) => a - b),
+  };
+}
+
 export async function listedCommunities(tx: Tx): Promise<string[]> {
   const rows = await tx.db
     .selectDistinct({ community: units.community })

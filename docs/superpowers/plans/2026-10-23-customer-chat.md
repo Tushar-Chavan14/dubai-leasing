@@ -1,5 +1,7 @@
 # Customer Chat (Autopilot) Implementation Plan
 
+> Superseded in part by D31 / docs/superpowers/plans/2026-10-23-public-chat-and-listings.md
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a logged-in `/chat` page that runs on its own, with no officer. Customers sign up with an email code. They enquire about properties, see unit cards and book viewings, as many times as they like. They check their own applications and leases, upload KYC documents when asked, and get answers to general questions.

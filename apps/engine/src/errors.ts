@@ -1,7 +1,7 @@
 export class DomainError extends Error {
   constructor(
     message: string,
-    readonly status: 400 | 401 | 403 | 404 | 409 | 422 | 503,
+    readonly status: 400 | 401 | 403 | 404 | 409 | 422 | 429 | 503,
     readonly code: string,
     readonly reasons: string[] = [],
   ) {

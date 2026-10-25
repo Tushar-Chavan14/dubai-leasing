@@ -1,6 +1,6 @@
 export * from "./clock.ts";
 export * from "./contract.ts";
-export * from "./customer.ts";
+export * from "./demo-units.ts";
 export * from "./dates.ts";
 export * from "./ejari.ts";
 export * from "./emirates-id.ts";

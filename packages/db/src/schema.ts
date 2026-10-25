@@ -126,7 +126,7 @@ export const applications = pgTable(
       .notNull()
       .references(() => parties.id),
     state: text("state").$type<ApplicationState>().notNull().default("ENQUIRY"),
-    source: text("source").$type<"telegram" | "staff" | "import" | "copilot" | "web_chat">().notNull(),
+    source: text("source").$type<"telegram" | "staff" | "import" | "copilot" | "web_chat" | "web_form">().notNull(),
     reservationPaidOn: calDate("reservation_paid_on"),
     /** The current offer (`OfferTerms`); earlier revisions live in the event log. */
     offer: jsonb("offer").$type<OfferTerms>(),
@@ -533,37 +533,6 @@ export const depositStatements = pgTable(
   (t) => [uniqueIndex("deposit_statements_lease_rev_uq").on(t.leaseId, t.revision)],
 );
 
-/** A person who signs in to the public web chat with an emailed code. Not staff, not a tenant portal link. */
-export const customerAccounts = pgTable("customer_accounts", {
-  id: id(),
-  /** Lowercased. */
-  email: text("email").notNull().unique(),
-  /** Null until the customer gives their name. */
-  fullName: text("full_name"),
-  phone: text("phone"),
-  role: text("role").$type<"customer">().notNull().default("customer"),
-  /** Bumped to sign out every session of this account. */
-  sessionVersion: integer("session_version").notNull().default(0),
-  createdAt: createdAt(),
-  lastLoginAt: ts("last_login_at"),
-});
-
-/** One emailed sign-in code. Only the hash is stored; a new code voids older ones. */
-export const customerLoginCodes = pgTable(
-  "customer_login_codes",
-  {
-    id: id(),
-    email: text("email").notNull(),
-    codeHash: text("code_hash").notNull(),
-    expiresAt: ts("expires_at").notNull(),
-    attempts: integer("attempts").notNull().default(0),
-    usedAt: ts("used_at"),
-    voidedAt: ts("voided_at"),
-    createdAt: ts("created_at").notNull(),
-  },
-  (t) => [index("customer_login_codes_email_idx").on(t.email, t.createdAt)],
-);
-
 export const conversations = pgTable(
   "conversations",
   {
@@ -573,10 +542,6 @@ export const conversations = pgTable(
     partyId: uuid("party_id").references(() => parties.id),
     applicationId: uuid("application_id").references(() => applications.id),
     assignedTo: uuid("assigned_to").references(() => staffUsers.id),
-    /** Set for web chat: one conversation per signed-in customer. */
-    customerAccountId: uuid("customer_account_id")
-      .references(() => customerAccounts.id)
-      .unique(),
     status: text("status").$type<"bot" | "handoff" | "closed">().notNull().default("bot"),
     language: text("language"),
     /** The Telegram user who owns this private chat; an update from anyone else is refused. */
@@ -800,7 +765,7 @@ export const inboundEvents = pgTable(
     type: text("type").$type<InboundType>().notNull(),
     entityKind: text("entity_kind").$type<EntityKind>().notNull(),
     entityId: uuid("entity_id").notNull(),
-    channel: text("channel").$type<"portal" | "staff" | "customer_chat">().notNull(),
+    channel: text("channel").$type<"portal" | "staff">().notNull(),
     actor: text("actor").notNull(),
     linkId: uuid("link_id"),
     /** One reply per kind per term: "<type>@<leaseEnd>" (portal) or a random key (staff). */

@@ -1,27 +1,13 @@
+import type { registrations, submissions } from "./schema.ts";
+
 const esc = (s: unknown) =>
   String(s ?? "").replace(
     /[&<>"']/g,
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!,
   );
 
-interface Reg {
-  ejari_no: string;
-  dld_property_no: string;
-  tenant_name: string;
-  start_on: string;
-  end_on: string;
-  state: string;
-  issued_on: string;
-}
-interface Sub {
-  kind: string;
-  outcome: string;
-  ejari_no: string | null;
-  reasons: { code: string; message: string }[];
-  property: string;
-  tenant: string;
-  received_at: Date;
-}
+type Reg = typeof registrations.$inferSelect;
+type Sub = typeof submissions.$inferSelect;
 
 /**
  * The demo console of the simulated registry. Deliberately plain (system font, greys, one
@@ -31,15 +17,15 @@ export function page(regs: Reg[], subs: Sub[]): string {
   const regRows = regs
     .map(
       (r) =>
-        `<tr><td><a href="/api/v1/registrations/${encodeURIComponent(r.ejari_no)}/certificate.pdf">${esc(r.ejari_no)}</a></td><td>${esc(r.dld_property_no)}</td><td>${esc(r.tenant_name)}</td><td>${esc(r.start_on)} → ${esc(r.end_on)}</td><td>${esc(r.issued_on)}</td><td><span class="tag ${esc(r.state)}">${esc(r.state)}</span></td></tr>`,
+        `<tr><td><a href="/api/v1/registrations/${encodeURIComponent(r.ejariNo)}/certificate.pdf">${esc(r.ejariNo)}</a></td><td>${esc(r.dldPropertyNo)}</td><td>${esc(r.tenantName)}</td><td>${esc(r.startOn)} → ${esc(r.endOn)}</td><td>${esc(r.issuedOn)}</td><td><span class="tag ${esc(r.state)}">${esc(r.state)}</span></td></tr>`,
     )
     .join("");
   const subRows = subs
     .map(
       (s) =>
-        `<tr><td>${esc(new Date(s.received_at).toISOString().replace("T", " ").slice(0, 19))}</td><td>${esc(s.kind)}</td><td>${esc(s.property)}</td><td>${esc(s.tenant)}</td><td><span class="tag ${esc(s.outcome)}">${esc(s.outcome)}</span></td><td>${
+        `<tr><td>${esc(s.receivedAt.toISOString().replace("T", " ").slice(0, 19))}</td><td>${esc(s.kind)}</td><td>${esc(s.payload.dldPropertyNo)}</td><td>${esc(s.payload.tenantNameEn)}</td><td><span class="tag ${esc(s.outcome)}">${esc(s.outcome)}</span></td><td>${
           s.outcome === "issued"
-            ? esc(s.ejari_no)
+            ? esc(s.ejariNo)
             : s.reasons.map((r) => `<div><b>${esc(r.code)}</b> ${esc(r.message)}</div>`).join("")
         }</td></tr>`,
     )

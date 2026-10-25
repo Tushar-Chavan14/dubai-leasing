@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ChannelReply, ChannelUpdate, CustomerEmail, LoginCode, WebChatInput } from "../src/index.ts";
+import { ChannelReply, ChannelUpdate } from "../src/index.ts";
 
 const card = {
   unitId: "0190a000-0000-7000-8000-000000000001",
@@ -15,24 +15,7 @@ const card = {
 };
 const uuid = "0190a000-0000-7000-8000-000000000002";
 
-describe("customer types", () => {
-  test("CustomerEmail trims and lowercases", () => {
-    expect(CustomerEmail.parse(" Sam@Example.COM ")).toBe("sam@example.com");
-    expect(CustomerEmail.safeParse("nope").success).toBe(false);
-  });
-
-  test("LoginCode is exactly six digits", () => {
-    expect(LoginCode.safeParse("123456").success).toBe(true);
-    expect(LoginCode.safeParse("12345").success).toBe(false);
-    expect(LoginCode.safeParse("12a456").success).toBe(false);
-  });
-
-  test("WebChatInput", () => {
-    expect(WebChatInput.safeParse({ kind: "text", clientMessageId: uuid, text: "hi" }).success).toBe(true);
-    expect(WebChatInput.safeParse({ kind: "callback", clientMessageId: uuid, data: "x" }).success).toBe(true);
-    expect(WebChatInput.safeParse({ kind: "text", clientMessageId: "1", text: "hi" }).success).toBe(false);
-  });
-
+describe("web channel types", () => {
   test("ChannelUpdate accepts web updates and keeps Telegram validation", () => {
     const web = { channel: "web", kind: "text", updateId: uuid, chatId: uuid, from: { id: uuid }, text: "hi" };
     expect(ChannelUpdate.safeParse(web).success).toBe(true);

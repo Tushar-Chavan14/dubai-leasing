@@ -8,6 +8,9 @@ import {
   addYears,
   type CalendarDate,
   defaultCompanyPolicy,
+  DEMO_LISTED_UNITS,
+  DEMO_MRN_1502_MAKANI,
+  demoDldNo,
   loadEnv,
   luhnCheckDigit,
   newId,
@@ -30,7 +33,8 @@ import { and, eq, isNull } from "drizzle-orm";
 import { createEngineClock } from "../clock.ts";
 import type { EngineContext, Scheduler } from "../context.ts";
 import { advance } from "../manager/advance.ts";
-import { createApplication } from "../manager/applications.ts";
+import { createLink } from "../manager/links.ts";
+import { bookViewing, createApplication, recordViewingOutcome } from "../manager/applications.ts";
 import { appendEvent } from "../manager/events.ts";
 import { importLeasesCsv } from "../manager/import.ts";
 import { syncRulebooks } from "../manager/rulebooks.ts";
@@ -300,7 +304,7 @@ export async function seedDemo(database: Database): Promise<void> {
 
   // Three units without leases, walked through the Manager so their events are real.
   const empty = [
-    { code: "MRN-1502", unitNo: "1502", bedrooms: 1, makaniNo: null, target: "PREP" },
+    { code: "MRN-1502", unitNo: "1502", bedrooms: 1, makaniNo: DEMO_MRN_1502_MAKANI, target: "PREP" },
     { code: "MRN-1608", unitNo: "1608", bedrooms: 2, makaniNo: "1111144444", target: "READY" },
     { code: "JVC-0412", unitNo: "412", bedrooms: 1, makaniNo: "2222233333", target: "LISTED" },
   ] as const;
@@ -320,7 +324,7 @@ export async function seedDemo(database: Database): Promise<void> {
         building: u.code.startsWith("MRN") ? "Demo Marina Tower" : "Demo Circle Residence",
         community: u.code.startsWith("MRN") ? "Dubai Marina" : "Jumeirah Village Circle",
         unitNo: u.unitNo,
-        dldPropertyNo: `DEMO-DLD-00${u.unitNo.padStart(4, "0")}`,
+        dldPropertyNo: demoDldNo(u.unitNo),
         makaniNo: u.makaniNo,
         dewaPremiseNo: `DEMO-DEWA-${u.unitNo}`,
         areaSqft: u.bedrooms === 2 ? 1180 : 790,
@@ -342,6 +346,39 @@ export async function seedDemo(database: Database): Promise<void> {
       listedId = id;
     }
     console.log(`  unit ${u.code}: ${u.target}`);
+  }
+
+  // More fictional homes for the public site: listed, no leases, so they are bookable. Same
+  // Manager walk as JVC-0412 (MARK_READY, then PUBLISH).
+  for (const u of DEMO_LISTED_UNITS) {
+    const id = newId();
+    const inserted = await database.db
+      .insert(units)
+      .values({
+        id,
+        code: u.code,
+        building: u.building,
+        community: u.community,
+        unitNo: u.unitNo,
+        dldPropertyNo: demoDldNo(u.unitNo),
+        makaniNo: u.makaniNo,
+        dewaPremiseNo: `DEMO-DEWA-${u.unitNo}`,
+        areaSqft: u.areaSqft,
+        bedrooms: u.bedrooms,
+        furnished: u.furnished,
+        askingRentFils: u.askingRentFils,
+        floor: Number(u.unitNo.slice(0, -2)) || 2,
+        bathrooms: Math.max(1, u.bedrooms),
+        parkingSpaces: u.bedrooms === 0 ? 0 : 1,
+        description: u.description,
+        landlordPartyId: landlord?.id ?? null,
+      })
+      .onConflictDoNothing({ target: units.code })
+      .returning({ id: units.id });
+    if (!inserted.length) continue;
+    await advance(ctx, { kind: "unit", id }, "MARK_READY", { actor: "demo" });
+    await advance(ctx, { kind: "unit", id }, "PUBLISH", { actor: "demo" });
+    console.log(`  unit ${u.code}: LISTED`);
   }
 
   // Steps 5–6: a lease waiting for its contract on MRN-1608. The tenant applied with a passport
@@ -443,6 +480,36 @@ export async function seedDemo(database: Database): Promise<void> {
       "demo",
     );
     console.log(`  application ${a.ref}: ENQUIRY (book a viewing from the application page) (JVC-0412)`);
+
+    // A second applicant already at SCREENING with an open upload link, for the portal
+    // document-upload demo (open the upload link from the application page).
+    const o = await createApplication(
+      ctx,
+      {
+        unitId: listedId,
+        nameEn: "Omar Example",
+        email: "omar.applicant@demo.example",
+        kind: "individual",
+        requestedMoveInOn: addDays(today, 30),
+      },
+      "demo",
+    );
+    // Through the Manager like the staff flow, but the application emails are not queued (the seed
+    // sends none): the upload link is created here instead, as the "docs" email job would.
+    const quiet: EngineContext = { ...ctx, scheduler: { send: async () => null } };
+    await bookViewing(quiet, o.id, new Date(clock.now().getTime() + 86_400_000), "demo");
+    await recordViewingOutcome(quiet, o.id, "attended", "demo seed", "demo");
+    await withTx(database, (tx) =>
+      createLink(ctx, tx, {
+        purpose: "kyc_upload",
+        entity: { kind: "application", id: o.id },
+        partyId: o.partyId,
+        ttlDays: 7,
+      }),
+    );
+    console.log(
+      `  application ${o.ref}: SCREENING with an open upload link (portal document-upload demo: open the link from the application page) (JVC-0412)`,
+    );
   }
 }
 

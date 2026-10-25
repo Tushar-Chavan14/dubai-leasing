@@ -59,7 +59,6 @@ if (env.EJARI_MODE !== "mock") throw new Error("EJARI_MODE=live is not available
 const sessionSecret = env.SESSION_SECRET ?? "demo-only-session-secret";
 const ctx: EngineContext = {
   database,
-  sessionSecret,
   clock,
   scheduler: bossScheduler(boss),
   /** The published version in force today (D23); RULES_VERSION only if none is. */

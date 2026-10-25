@@ -121,9 +121,6 @@ async function advanceInTx(
     case "conversation":
       // Enquiry conversations have no state machine; their bookings go through the application.
       throw new Error("advance() does not apply to conversations");
-    case "customer_account":
-      // Customer accounts have no state machine.
-      throw new Error("advance() does not apply to customer accounts");
   }
 }
 

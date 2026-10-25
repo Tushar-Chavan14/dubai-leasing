@@ -19,11 +19,15 @@ const en = {
   badPhone: "That doesn't look like a phone number. Send it with the country code, or tap Skip.",
   skipCta: "Skip",
   contactSaved: "Thank you, we have your details. How many bedrooms are you looking for?",
+  contactSavedWeb: "Thank you, we have your details.",
   contactShow: (email: string, phone: string | null) =>
     `We have: ${email}${phone ? `, ${phone}` : ", no phone"}. To change them, send your email address again.`,
   askBedrooms: "How many bedrooms are you looking for?",
   results: (n: number) => `Here ${n === 1 ? "is 1 home" : `are ${n} homes`} for rent that match. Tap one for details:`,
   noResults: "Nothing matches that right now. Try another size, or send /agent to talk to a leasing officer.",
+  noResultsWeb: "Nothing matches that right now. Try another size or area.",
+  noSlotsWeb: "There are no free viewing times in the next few days. Please check again later.",
+  noGeneralAnswerWeb: "I don't have that information here. A leasing officer can answer it when you view a home.",
   unit: (facts: string) => `${facts}\n\nPick a viewing time below, or ask me a question about this home.`,
   unitGone: "Sorry, that home is no longer available. Here's what is:",
   pickUnitFirst: "Pick a home first, then I can book a viewing. How many bedrooms are you looking for?",
@@ -55,17 +59,20 @@ const en = {
   backCta: "Other homes",
   bedrooms: (n: number) => (n === 0 ? "Studio" : n >= 4 ? "4+ bedrooms" : `${n} bedroom${n === 1 ? "" : "s"}`),
   perYear: (rent: string) => `${rent} a year`,
-  // Web chat (customer accounts).
+  // Public web chat.
   autopilotCant:
-    'I can help you find a home, book a viewing, check your applications and leases, and upload requested documents. For a problem in your home, use "Report an issue" in your My tenancy email.',
+    'I can help you find a home and book a viewing. For a problem in your home, use "Report an issue" in your My tenancy email.',
+  existingTenantWeb:
+    "For your lease, payments or documents, please use the 'My tenancy' link in your latest email from us. I can help you find a home or book a viewing.",
+  changeEmail: "Change email",
+  askArea: "Which area would you like to live in?",
+  anyArea: "Any area",
   askFurnished: "Do you want it furnished?",
   furnishedYes: "Furnished: Yes",
   furnishedNo: "Furnished: No",
   furnishedAny: "Furnished: Any",
   findHome: "Find a home",
   findAnother: "Find another home",
-  myRecords: "My applications & leases",
-  finishProfile: "Please finish your profile (your full name) before I can book a viewing. Then tap the home again.",
 } satisfies Copy;
 
 const ar: typeof en = {
@@ -79,12 +86,16 @@ const ar: typeof en = {
   badPhone: "يبدو أن هذا ليس رقم هاتف. أرسله مع رمز الدولة، أو اضغط تخطي.",
   skipCta: "تخطي",
   contactSaved: "شكراً، حصلنا على بياناتك. كم عدد غرف النوم التي تبحث عنها؟",
+  contactSavedWeb: "شكراً، حصلنا على بياناتك.",
   contactShow: (email: string, phone: string | null) =>
     `لدينا: ${email}${phone ? `، ${phone}` : "، بدون رقم هاتف"}. لتغييرها، أرسل بريدك الإلكتروني مرة أخرى.`,
   askBedrooms: "كم عدد غرف النوم التي تبحث عنها؟",
   results: (n: number) =>
     `هذه ${n === 1 ? "وحدة واحدة متاحة" : `${n} وحدات متاحة`} للإيجار تطابق طلبك. اضغط على إحداها للتفاصيل:`,
   noResults: "لا يوجد ما يطابق طلبك حالياً. جرّب حجماً آخر، أو أرسل /agent للتحدث مع موظف التأجير.",
+  noResultsWeb: "لا يوجد ما يطابق طلبك حالياً. جرّب حجماً آخر أو منطقة أخرى.",
+  noSlotsWeb: "لا توجد مواعيد معاينة متاحة في الأيام القليلة القادمة. يرجى المحاولة لاحقاً.",
+  noGeneralAnswerWeb: "لا تتوفر لدي هذه المعلومة هنا. يمكن لموظف التأجير الإجابة عنها عند معاينة المنزل.",
   unit: (facts: string) => `${facts}\n\nاختر موعد معاينة من الأسفل، أو اسألني عن هذا المنزل.`,
   unitGone: "عذراً، هذا المنزل لم يعد متاحاً. إليك المتاح حالياً:",
   pickUnitFirst: "اختر منزلاً أولاً، ثم أحجز لك المعاينة. كم عدد غرف النوم التي تبحث عنها؟",
@@ -118,15 +129,18 @@ const ar: typeof en = {
     n === 0 ? "ستوديو" : n >= 4 ? "4 غرف نوم أو أكثر" : n === 1 ? "غرفة نوم واحدة" : `${n} غرف نوم`,
   perYear: (rent: string) => `${rent} سنوياً`,
   autopilotCant:
-    'يمكنني مساعدتك في العثور على منزل، وحجز معاينة، ومتابعة طلباتك وعقودك، ورفع المستندات المطلوبة. لأي مشكلة في منزلك، استخدم "الإبلاغ عن مشكلة" في رسالة "إيجارك" الإلكترونية.',
+    'يمكنني مساعدتك في العثور على منزل وحجز معاينة. لأي مشكلة في منزلك، استخدم "الإبلاغ عن مشكلة" في رسالة "إيجارك" الإلكترونية.',
+  existingTenantWeb:
+    'لعقدك أو دفعاتك أو مستنداتك، يرجى استخدام رابط "إيجارك" في آخر رسالة إلكترونية أرسلناها لك. يمكنني مساعدتك في العثور على منزل أو حجز معاينة.',
+  changeEmail: "تغيير البريد الإلكتروني",
+  askArea: "في أي منطقة تفضل السكن؟",
+  anyArea: "أي منطقة",
   askFurnished: "هل تريده مفروشاً؟",
   furnishedYes: "مفروش: نعم",
   furnishedNo: "مفروش: لا",
   furnishedAny: "مفروش: أي",
   findHome: "ابحث عن منزل",
   findAnother: "ابحث عن منزل آخر",
-  myRecords: "طلباتي وعقودي",
-  finishProfile: "يرجى إكمال ملفك الشخصي (اسمك الكامل) قبل أن أحجز لك معاينة. ثم اضغط على المنزل مرة أخرى.",
 };
 
 export const enquiryCopy: Record<EnquiryLanguage, typeof en> = { en, ar };

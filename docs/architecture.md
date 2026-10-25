@@ -661,11 +661,12 @@ Dubai date), rent overdue (days past due per overdue or bounced instalment), dep
 
 ## 8. Channels
 
-Two channels with fixed jobs:
+Three channels with fixed jobs:
 
 | Channel | Direction | Used for |
 |---|---|---|
 | Telegram bot (grammY) | Inbound + replies in the same chat | Enquiries and viewing booking (step 2) only |
+| Public web chat (`/chat`, D31) | Inbound + replies in the page, no login | Same as Telegram: enquiries and viewing booking only |
 | Email (Nodemailer, SMTP) | Outbound | Everything else: viewing confirmations, offers, contract and upload links, reminders, formal reminders, notices, receipts, deposit statements |
 
 Tenant actions after the enquiry stage happen in the tenant portal (§8a), reached by links in
@@ -743,6 +744,49 @@ Officer reply: staff app → /api/conversations/:id/reply → TelegramSender →
   slots.
 - **Staff** see `/conversations` (handoffs first), reply into the chat (any reply takes the
   conversation from the bot) and hand it back to the bot (closes the handoff task, resets the flow).
+
+### Public web chat and listings (D31)
+
+Visitors need no account. `apps/web` serves public pages and a chat that runs the same enquiry
+engine as Telegram (`enquiries.ts`) with `conversations.channel = "web"`: enquiries, viewings
+and general questions only. No lease or application records, no uploads, no email verification.
+
+- **Visitor and relay.** The web app sets an httpOnly `leasing_visitor` cookie (random UUIDv4,
+  180 days). Server actions relay to the engine with `CHANNEL_SECRET` (`Authorization: Bearer`)
+  and forward the client IP in `X-Forwarded-For`; the browser never calls the engine. One
+  conversation per visitor (`external_chat_id` = visitor id), status always `bot`.
+- **Flow.** As Telegram: contact first (email required, phone optional with Skip), a Change
+  email button always available, the name asked at booking. Search asks area, then bedrooms,
+  then furnished, then shows unit cards (rent = approved asking rent via `formatAed`). A booking
+  calls `createApplication(…, source "web_chat", viewingAt)`, actor `enquirer:<conversationId>`;
+  the invitation goes by email. Stored text is masked.
+- **Autopilot, no handoff.** Where Telegram creates an `enquiry_handoff` task and sets
+  `handoff`, the web chat sends a fixed reply and changes nothing. `existing_tenant` (as the only
+  reason) gets a fixed EN/AR reply pointing to the "My tenancy" link in the customer's latest
+  email. `staffReply` refuses web conversations (`web_chat_no_staff_reply`).
+- **Channel routes** (engine, secret-gated; no secret → 503, wrong → 401):
+  `POST /channel/web/updates` (200 per IP per hour; the chat id must equal the sender id) and
+  `POST /channel/web/history` (3000 per IP per hour; optional `after`, last 100 messages).
+  `POST /channel/telegram/updates` rejects non-telegram updates and the web route rejects
+  non-web ones.
+- **Public routes** (engine, secret-gated, per-IP limits per hour, in memory):
+  `GET /public/units`, `/public/units/:id`, `/public/units/:id/photos/:photoId` and
+  `/public/units/:id/slots` (3000 reads per IP; bookable units only, the same rule as the chat;
+  nothing internal leaves; rent formatted by code) and `POST /public/enquiries` (10 per IP).
+- **Enquiry form** (`/properties/[id]`): name, email, optional phone, a viewing slot. Calls
+  `createApplication(…, source "web_form", viewingAt)` with actor `enquirer:web-form:<id>`. The
+  slot must be a free grid slot (409 `viewing_slot_taken`); unit no longer bookable → 409
+  `unit_not_bookable`; same email already open on that unit → 409; at most 3 open `web_form`
+  applications per email (429). The invitation email goes out as for staff bookings.
+- **Web pages:** `/properties`, `/properties/[id]`, `/chat` (full page) and a floating chat
+  launcher on public pages. Units without a photo show a generated placeholder (no stock
+  images).
+- **Deployment requirement.** Per-IP limits trust `x-real-ip`, else the rightmost `x-forwarded-for` hop
+  (added by our proxy; earlier hops are client-supplied): the web app must sit behind a reverse proxy that overwrites
+  `X-Forwarded-For`, and the engine must not be publicly reachable.
+- **Demo data.** `packages/core/src/demo-units.ts` lists the demo units (`DEMO_PROPERTIES`) the
+  seed builds from; the Ejari mock's registry derives from the same list, so every seeded unit
+  registers.
 
 ### Mail adapter
 
@@ -1048,7 +1092,9 @@ rent, cheques, deposit. `EJARI_MODE=mock` uses `HttpEjariClient` against `EJARI_
 `live` is refused at start until DLD access exists. Tests use `FakeEjari`.
 
 `apps/ejari-mock` (Hono, port 4100) keeps its registry in its own Postgres schema
-`ejari_mock` in the same local database (created on start, decision D22): `properties`,
+`ejari_mock` in the same local database (decision D22), defined with Drizzle in
+`apps/ejari-mock/src/schema.ts` and migrated on start from its own `migrations/` (tracked in
+`ejari_mock.__drizzle_migrations`, apart from the engine's): `properties`,
 `icp_people` (simulated identity records), `registrations`, `submissions`. The engine never
 reads these tables. Seeded with the demo units and the fictional KYC specimen people and demo
 tenants.

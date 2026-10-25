@@ -26,7 +26,10 @@ const telegramBase = {
   }),
 };
 
-/** Web chat: `updateId` is the client message id (UUID); `chatId` and `from.id` are the customer account id. */
+/**
+ * Public web chat: `updateId` is the client message id (UUID); `chatId` and `from.id` are the
+ * visitor id (UUID), set by the web server. Only the web server, with `CHANNEL_SECRET`, posts these.
+ */
 const webBase = {
   channel: z.literal("web"),
   updateId: z.uuid(),
@@ -62,38 +65,14 @@ export const UnitCard = z.object({
   code: z.string(),
   building: z.string(),
   community: z.string(),
-  bedrooms: z.number().int(),
-  bathrooms: z.number().int(),
-  areaSqft: z.number(),
+  bedrooms: z.number().int().nullable(),
+  bathrooms: z.number().int().nullable(),
+  areaSqft: z.number().nullable(),
   furnished: z.boolean(),
   rent: z.string(),
   photoUrl: z.string().nullable(),
 });
 export type UnitCard = z.infer<typeof UnitCard>;
-
-/** An application or lease shown in the web chat. */
-export const RecordCard = z.object({
-  kind: z.enum(["application", "lease"]),
-  id: z.string(),
-  ref: z.string(),
-  unitLabel: z.string(),
-  community: z.string(),
-  stage: z.string(),
-  stageLabel: z.string(),
-  dates: z.array(z.object({ label: z.string(), on: z.string() })),
-  nextPayment: z.object({ dueOn: z.string(), amount: z.string() }).nullable(),
-  needsDocuments: z.boolean(),
-});
-export type RecordCard = z.infer<typeof RecordCard>;
-
-/** Document upload prompt for an application, with what is already uploaded. */
-export const UploadCard = z.object({
-  applicationId: z.string(),
-  documents: z.array(
-    z.object({ id: z.string(), kind: z.string(), side: z.string().nullable(), uploadedAt: z.string() }),
-  ),
-});
-export type UploadCard = z.infer<typeof UploadCard>;
 
 export const ChannelReply = z.object({
   text: z.string().min(1).max(4000),
@@ -101,8 +80,6 @@ export const ChannelReply = z.object({
   buttons: z.array(ChannelButton).max(10).optional(),
   /** Web chat only. */
   cards: z.array(UnitCard).max(5).optional(),
-  records: z.array(RecordCard).max(10).optional(),
-  upload: UploadCard.optional(),
 });
 export type ChannelReply = z.infer<typeof ChannelReply>;
 
@@ -114,6 +91,7 @@ export const EnquiryFlow = z.object({
     "asking_contact_phone",
     "idle",
     /** Web chat only: the property-type buttons (bedrooms, then furnished). */
+    "choosing_community",
     "choosing_bedrooms",
     "choosing_furnished",
     "choosing_unit",

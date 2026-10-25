@@ -52,7 +52,9 @@ tests pass.
 10. **Channels have fixed jobs.** Telegram receives enquiries only. Everything outbound to
     applicants, tenants and landlords goes by email through the `mail` adapter, which stores the
     message, attachment hashes and SMTP response as evidence. The 12-month repossession notice is
-    never sent by email: it goes by notary or registered mail, handled by a person.
+    never sent by email: it goes by notary or registered mail, handled by a person. Amendment
+    (D31): the public web chat, like Telegram, takes enquiries and books viewings only; tenants
+    act through emailed portal links. Everything outbound still goes by email.
 11. **The copilot only reads, drafts and proposes.** Copilot tools call the engine API as the
     logged-in user. No tool may approve a gate, send a message, change state, submit to Ejari,
     edit rules or policy, or open uploaded documents. Legal and money values in its answers
@@ -69,7 +71,7 @@ tests pass.
 ```
 apps/
   engine/          Manager worker + HTTP API (Hono). State machine, pg-boss jobs, helper runner.
-  web/             Next.js: staff app (approval inbox, lease views, copilot panel, demo console) + tenant portal (/t/...).
+  web/             Next.js: staff app (approval inbox, lease views, copilot panel, demo console) + tenant portal (/t/...) + public site (/properties, /properties/[id], public chat at /chat and a chat launcher; no customer login).
   telegram-bot/    grammY bot for incoming enquiries only (step 2). Posts events to engine API.
   ejari-mock/      Simulated Ejari service (Hono). Same contract as the future DLD adapter.
   mcp/             (phase 5) MCP server exposing the copilot tool registry to Claude, ChatGPT, etc.
