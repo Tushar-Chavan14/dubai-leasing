@@ -30,9 +30,10 @@ import { queueLeaseMail } from "./lease-mail.ts";
 import { ensureMoveInInspection, moveInMissing } from "./move-in.ts";
 import { onEnterMoveOut } from "./move-out.ts";
 import { conflict, notFound, unprocessable } from "../errors.ts";
-import { appendEvent, getCompanyPolicy } from "./events.ts";
+import { appendEvent, getCompanyPolicy, getCompanyPolicyVersion } from "./events.ts";
+import { noteDefaultLimits, offerPolicyAndRuleFor, priceRangeFor } from "./pricing.ts";
 import { sentAtOfApproval } from "./outbound.ts";
-import { applyVerifiedIdentity, onEnterApplication } from "./applications.ts";
+import { applyVerifiedIdentity, onEnterApplication, type OfferEntryOpts } from "./applications.ts";
 import { assertSignedContract } from "./contracts.ts";
 import { assertIssuedSubmission, proposeEjariSubmission } from "./registration.ts";
 import {
@@ -56,6 +57,8 @@ export interface AdvanceOptions {
   tx?: Tx;
   /** Rules version recorded on unit/application events (cascades pass the lease's). */
   rulesVersion?: string;
+  /** Internal, for the demo seed only: overrides autopilot flags when entering OFFER. Not on any route. */
+  offerEntry?: OfferEntryOpts;
 }
 
 export interface AdvanceResult {
@@ -121,6 +124,9 @@ async function advanceInTx(
     case "conversation":
       // Enquiry conversations have no state machine; their bookings go through the application.
       throw new Error("advance() does not apply to conversations");
+    case "company":
+      // Company and rule changes are configuration: they are logged, not advanced.
+      throw new Error("advance() does not apply to companies");
   }
 }
 
@@ -139,7 +145,7 @@ async function advanceUnit(
   const guard = t.guard?.({
     unit,
     today,
-    policy: await getCompanyPolicy(tx, today),
+    priceRange: (await priceRangeFor(tx, unit, today)).range,
     hasActiveEjari: await unitHasActiveEjari(tx, id),
     hasContractedLease: await unitHasContractedLease(tx, id),
   });
@@ -178,6 +184,13 @@ async function advanceApplication(
   // terms outside company limits need an approved offer_out_of_limits.
   let approval: ApprovalRow | undefined;
   const patch: Partial<typeof applications.$inferInsert> = {};
+  // Applying straight from an enquiry (no viewing) is a company policy toggle, off by default.
+  if (event === "APPLIED" && app.state === "ENQUIRY") {
+    const { version, values } = await getCompanyPolicyVersion(tx, ctx.clock.today());
+    if (!values.autopilot.apply_without_viewing)
+      throw conflict("a viewing is required before an application can proceed", "viewing_required");
+    opts = { ...opts, payload: { ...opts.payload, viewingSkipped: true, policyVersion: version } };
+  }
   if (event === "KYC_VERIFIED") {
     const basis = await kycBasis(tx, app, opts, ctx.clock.today());
     approval = basis.approval;
@@ -197,14 +210,17 @@ async function advanceApplication(
       throw conflict(`offer revision ${terms.revision} is out of date`, "stale_revision");
     }
     const [unit] = await tx.db.select().from(units).where(eq(units.id, app.unitId));
-    const policy = await getCompanyPolicy(tx, ctx.clock.today());
     if (!unit?.askingRentFils) throw conflict("the unit has no approved asking rent", "no_price");
+    const { policy, contractRuleId } = await offerPolicyAndRuleFor(tx, unit, ctx.clock.today());
     // Limits are judged against the unit's approved asking rent today, not the one stored in the offer.
-    const problems = offerProblems(
-      terms,
-      { askingRentFils: unit.askingRentFils, furnished: !!unit.furnished },
-      policy,
-      ctx.clock.today(),
+    const problems = noteDefaultLimits(
+      offerProblems(
+        terms,
+        { askingRentFils: unit.askingRentFils, furnished: !!unit.furnished },
+        policy,
+        ctx.clock.today(),
+      ),
+      contractRuleId,
     );
     if (problems.length)
       approval = await usableApproval(tx, "offer_out_of_limits", { kind: "application", id }, opts.approvalId);
@@ -227,7 +243,7 @@ async function advanceApplication(
   });
   if (approval) await markConsumed(tx, approval.id, eventId);
   const [updated] = await tx.db.select().from(applications).where(eq(applications.id, id));
-  await onEnterApplication(ctx, tx, updated!, t.from, opts.actor);
+  await onEnterApplication(ctx, tx, updated!, t.from, opts.actor, opts.offerEntry);
   return { entity: { kind: "application", id }, event, from: t.from, to: t.to, eventId };
 }
 
@@ -423,7 +439,20 @@ async function onEnterLease(ctx: EngineContext, tx: Tx, lease: LeaseRow, from: s
       return;
     case "REGISTRATION":
       // Step 6: the submission is built from the signed contract and waits for an officer.
-      await proposeEjariSubmission(ctx, tx, lease, "system");
+      // `ejari_draft_auto` (D37) only controls who drafts it: off, an officer is asked to draft it.
+      // Either way a person approves the `ejari_submission` gate; nothing is submitted here.
+      if ((await getCompanyPolicy(tx, ctx.clock.today())).autopilot.ejari_draft_auto) {
+        await proposeEjariSubmission(ctx, tx, lease, "system");
+      } else {
+        await createTask(ctx, tx, lease.id, {
+          kind: "draft_ejari_submission",
+          title: `Draft the Ejari submission for ${lease.ref} (the contract is signed)`,
+          details: {},
+          assigneeRole: "leasing_officer",
+          dueOn: ctx.clock.today(),
+          dedupeKey: `${lease.id}:draft_ejari_submission`,
+        });
+      }
       return;
     case "ACTIVE": {
       await scheduleLeaseMilestones(ctx, tx, lease);

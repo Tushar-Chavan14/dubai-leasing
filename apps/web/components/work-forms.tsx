@@ -4,6 +4,7 @@ import { useActionState, useState } from "react";
 import {
   addApprovalNote,
   addTask,
+  emailApplicant,
   emailTenant,
   markTaskDone,
   proposeVacateNotice,
@@ -231,19 +232,26 @@ export function AddTaskForm({ leaseId, today }: { leaseId: string; today: string
  */
 export function EmailTenantForm({
   leaseId,
+  applicationId,
   tenantEmail,
   draft,
 }: {
-  leaseId: string;
+  leaseId?: string;
+  /** An application: the email goes to its applicant (D42). */
+  applicationId?: string;
   tenantEmail: string | null;
   draft?: { id: string; subject: string | null; body: string } | null;
 }) {
-  const [state, submit, pending] = useActionState<TaskActionState, FormData>(emailTenant, {});
+  const who = applicationId ? "applicant" : "tenant";
+  const [state, submit, pending] = useActionState<TaskActionState, FormData>(
+    applicationId ? emailApplicant : emailTenant,
+    {},
+  );
   const [open, setOpen] = useState(!!draft);
   return (
     <section className="panel" id="email" aria-labelledby="email-h">
       <div className="panel-head">
-        <h2 id="email-h">Email the tenant</h2>
+        <h2 id="email-h">Email the {who}</h2>
         {!open && tenantEmail && (
           <button type="button" className="btn small" onClick={() => setOpen(true)}>
             Write
@@ -251,7 +259,7 @@ export function EmailTenantForm({
         )}
       </div>
       {!tenantEmail ? (
-        <p className="muted panel-pad">The tenant has no email address on file.</p>
+        <p className="muted panel-pad">The {who} has no email address on file.</p>
       ) : state.ok ? (
         <div className="panel-pad">
           <Result s={state} />
@@ -259,7 +267,11 @@ export function EmailTenantForm({
       ) : (
         open && (
           <form action={submit} className="stack panel-pad">
-            <input type="hidden" name="leaseId" value={leaseId} />
+            {applicationId ? (
+              <input type="hidden" name="applicationId" value={applicationId} />
+            ) : (
+              <input type="hidden" name="leaseId" value={leaseId} />
+            )}
             {draft && <input type="hidden" name="draftId" value={draft.id} />}
             {draft && (
               <p className="muted" style={{ margin: 0 }}>
@@ -267,8 +279,10 @@ export function EmailTenantForm({
               </p>
             )}
             <p className="muted" style={{ margin: 0 }}>
-              To {tenantEmail}. A link to their tenancy page is added below your message. Never use this for the
-              12-month repossession notice: that is served by notary or registered mail.
+              To {tenantEmail}.{" "}
+              {applicationId
+                ? "The email is stored with the application as evidence."
+                : "A link to their tenancy page is added below your message. Never use this for the 12-month repossession notice: that is served by notary or registered mail."}
             </p>
             <label className="field">
               <span className="field-label">Subject</span>

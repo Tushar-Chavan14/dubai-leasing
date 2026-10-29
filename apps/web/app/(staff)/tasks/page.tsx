@@ -10,8 +10,8 @@ import type { Me, TaskRow } from "../../../lib/types";
 export const metadata: Metadata = { title: "Tasks" };
 
 function taskHref(t: TaskRow): string {
-  if (t.entityKind === "lease") return `/leases/${t.entityId}`;
-  if (t.entityKind === "application") return `/applications/${t.entityId}`;
+  if (t.entityKind === "lease") return `/work?kind=lease&id=${t.entityId}`;
+  if (t.entityKind === "application") return `/work?kind=application&id=${t.entityId}`;
   if (t.entityKind === "conversation") return `/conversations/${t.entityId}`;
   return "/tasks";
 }

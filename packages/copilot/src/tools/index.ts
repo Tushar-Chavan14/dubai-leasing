@@ -19,6 +19,21 @@ import { listDeadlines } from "./list-deadlines.ts";
 import { listOutboundMessages } from "./list-outbound-messages.ts";
 import { proposeApplication } from "./propose-application.ts";
 import { searchEntities } from "./search-entities.ts";
+import { contractStatus } from "./contract-status.ts";
+import { getRecord } from "./get-record.ts";
+import { listCompanies } from "./list-companies.ts";
+import { listRecords } from "./list-records.ts";
+import { offerChoices } from "./offer-choices.ts";
+import { pipelineSummary } from "./pipeline-summary.ts";
+import { getEnquiry } from "./get-enquiry.ts";
+import { getUnit } from "./get-unit.ts";
+import { listEnquiries } from "./list-enquiries.ts";
+import { listTasks } from "./list-tasks.ts";
+import { proposePrepareContract } from "./propose-prepare-contract.ts";
+import { proposeRequestDocuments } from "./propose-request-documents.ts";
+import { proposeResendSigningLink } from "./propose-resend-signing-link.ts";
+import { proposeViewingInvite } from "./propose-viewing-invite.ts";
+import { viewingSlots } from "./viewing-slots.ts";
 
 /**
  * The copilot tool registry (architecture §8b). The engine's chat endpoint and, later, the MCP
@@ -26,6 +41,17 @@ import { searchEntities } from "./search-entities.ts";
  * Confirm click in the chat carries out (D25).
  */
 export const copilotTools: readonly CopilotTool[] = [
+  pipelineSummary,
+  listRecords,
+  getRecord,
+  contractStatus,
+  listCompanies,
+  listTasks,
+  listEnquiries,
+  getEnquiry,
+  getUnit,
+  viewingSlots,
+  offerChoices,
   searchEntities,
   getLease,
   getLeaseTimeline,
@@ -39,6 +65,10 @@ export const copilotTools: readonly CopilotTool[] = [
   listPayments,
   listTickets,
   proposeApplication,
+  proposeViewingInvite,
+  proposeRequestDocuments,
+  proposeResendSigningLink,
+  proposePrepareContract,
   createTaskTool,
   proposeApproval,
   draftEmail,
@@ -47,5 +77,22 @@ export const copilotTools: readonly CopilotTool[] = [
   summariseCase,
 ] as readonly CopilotTool[];
 
-/** Tools a role may see. The engine checks the role again on every call. */
-export const toolsFor = (role: StaffRole) => copilotTools.filter((t) => t.roles.includes(role));
+/** Tools of move-in through move-out; hidden while TENANCY_OPS is off. */
+const TENANCY_TOOLS = new Set([
+  "compute_renewal_cap",
+  "list_deadlines",
+  "get_lease_timeline",
+  "list_payments",
+  "list_tickets",
+  "get_case_pack",
+  "summarise_case",
+  // Its two gates (formal_reminder, vacate_notice) are both tenancy gates.
+  "propose_approval",
+]);
+
+/**
+ * Tools a role may see. The engine checks the role again on every call. `tenancyOps` is the
+ * engine's TENANCY_OPS and is required (no fail-open default).
+ */
+export const toolsFor = (role: StaffRole, opts: { tenancyOps: boolean }) =>
+  copilotTools.filter((t) => t.roles.includes(role) && (opts.tenancyOps || !TENANCY_TOOLS.has(t.name)));

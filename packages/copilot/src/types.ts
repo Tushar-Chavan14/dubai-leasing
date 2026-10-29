@@ -27,6 +27,13 @@ export interface ToolContext {
   user: StaffUser;
   /** Asia/Dubai calendar date from the engine's Clock. */
   today: string;
+  /**
+   * Values tools returned earlier in this turn, each with the page it opens (or null). The graph
+   * fills it; `offer_choices` accepts only these.
+   */
+  issued?: ReadonlyMap<string, string | null>;
+  /** The engine's TENANCY_OPS (the graph fills it). While off, tools stay on the Contract AI pipeline. */
+  tenancyOps?: boolean;
 }
 
 export type ToolKind = "read" | "draft" | "propose";

@@ -44,8 +44,9 @@ export const LeaseImportRow = z
     bedrooms: z.coerce.number().int().min(0).max(10),
     area_sqft: z.coerce.number().int().positive().optional(),
     furnished: yesNo,
-    landlord_name: z.string().min(1),
-    landlord_email: opt.pipe(z.email().nullable()),
+    /** Ignored since D44: the unit's company is the landlord. Old files may still have the columns. */
+    landlord_name: opt,
+    landlord_email: opt,
     tenant_name: z.string().min(1),
     tenant_email: opt.pipe(z.email().nullable()),
     tenant_phone: opt,

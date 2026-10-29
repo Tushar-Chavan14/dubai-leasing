@@ -10,6 +10,7 @@ import {
   releaseConversation,
   staffReply,
 } from "../manager/enquiries.ts";
+import { readVoiceBody, transcribeVoice } from "../manager/voice.ts";
 import { webHistory } from "../manager/web-chat.ts";
 import { type AuthEnv, requireRole } from "./auth.ts";
 import { clientIp, ipLimiter, secretGate } from "./secret-gate.ts";
@@ -18,6 +19,10 @@ const OFFICERS: StaffRole[] = ["leasing_officer", "leasing_manager", "admin"];
 
 const MAX_UPDATES_PER_IP = 200;
 const MAX_HISTORY_PER_IP = 3000;
+/** Status-check code requests per client IP per hour (D34); the per-email limit is counted in the database. */
+const MAX_STATUS_CODES_PER_IP = 20;
+/** Voice transcriptions per client IP per hour (public web chat). */
+const MAX_VOICE_PER_IP = 20;
 
 /**
  * Channel relays, outside the staff session, authenticated with `CHANNEL_SECRET` (decision D24):
@@ -31,6 +36,8 @@ export function registerChannelRoutes(app: Hono<AuthEnv>, ctx: EngineContext, se
   const gate = secretGate(secret);
   const updatesLimited = ipLimiter(MAX_UPDATES_PER_IP);
   const historyLimited = ipLimiter(MAX_HISTORY_PER_IP);
+  const codesLimited = ipLimiter(MAX_STATUS_CODES_PER_IP);
+  const voiceLimited = ipLimiter(MAX_VOICE_PER_IP);
 
   app.post("/channel/telegram/updates", async (c) => {
     const denied = gate(c);
@@ -50,7 +57,24 @@ export function registerChannelRoutes(app: Hono<AuthEnv>, ctx: EngineContext, se
     if (update.channel !== "web") return c.json({ error: "web updates only", code: "bad_channel" }, 400);
     // The visitor id is both the chat and the sender.
     if (update.chatId !== update.from.id) return c.json({ error: "chat and sender differ", code: "bad_visitor" }, 400);
-    return c.json(await handleChannelUpdate(ctx, update));
+    // A code request may send an email: limited per client IP (same forwarded-address rules as the other limits).
+    if (update.kind === "callback" && update.data === "status:start" && codesLimited(clientIp(c)))
+      return c.json({ error: "Too many requests; try again later.", code: "rate_limited" }, 429);
+    // The agent may email a status code from free text: it draws on the same per-IP budget as the button.
+    return c.json(await handleChannelUpdate(ctx, update, { codeQuota: () => !codesLimited(clientIp(c)) }));
+  });
+
+  /** Voice to text for the public chat: the audio is read in memory and dropped; the reply is only the masked transcript. */
+  app.post("/channel/web/voice", async (c) => {
+    const denied = gate(c);
+    if (denied) return denied;
+    if (voiceLimited(clientIp(c)))
+      return c.json({ error: "Too many requests; try again later.", code: "rate_limited" }, 429);
+    const read = await readVoiceBody(c.req.raw);
+    if ("error" in read) return c.json({ error: read.error, code: read.code }, read.status);
+    const bytes = read.bytes;
+    if (bytes.length === 0) return c.json({ ok: false, message: "I didn't catch that. Please try again." });
+    return c.json(await transcribeVoice(ctx, bytes));
   });
 
   app.post("/channel/web/history", async (c) => {

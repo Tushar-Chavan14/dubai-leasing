@@ -21,7 +21,7 @@ import { createApi } from "../src/api/app.ts";
 import { issueToken } from "../src/api/auth.ts";
 import { APPLICATION_MAIL_JOB, createApplication, sendApplicationMail } from "../src/manager/applications.ts";
 import { handleChannelUpdate } from "../src/manager/enquiries.ts";
-import { addStaff, freshDatabase, noDb, testContext } from "./harness.ts";
+import { addStaff, freshDatabase, noDb, testContext, testCompany } from "./harness.ts";
 
 const START = "2026-11-02T04:00:00Z"; // Monday 08:00 Dubai → first free slot 12:00 Dubai
 const SECRET = "test-session-secret";
@@ -112,6 +112,7 @@ async function setup(opts: { fresh?: boolean } = {}) {
   const unit = async (code: string, bedrooms: number, rentFils: number, community = "Jumeirah Village Circle") => {
     const id = newId();
     await database.db.insert(units).values({
+      companyId: await testCompany(database),
       id,
       code,
       building: `Demo ${code} Residence`,
@@ -266,6 +267,7 @@ describe.skipIf(noDb)("Telegram enquiries (step 2)", () => {
     const s = await setup();
     const studio = newId();
     await database.db.insert(units).values({
+      companyId: await testCompany(database),
       id: studio,
       code: "DTN-0001",
       building: "Demo Downtown",
@@ -439,7 +441,9 @@ describe.skipIf(noDb)("Telegram enquiries (step 2)", () => {
     await s.toNameStep("511", s.jvc1);
     await s.send(text("511", "Priya Example"));
     await s.toNameStep("511", s.jvc1);
-    expect((await s.send(text("511", "Priya Example"))).reply!.text).toContain("already have a viewing");
+    expect((await s.send(text("511", "Priya Example"))).reply!.text).toBe(
+      "If you already asked about this property, check your email for the details we sent.",
+    );
     expect(await database.db.select().from(applications)).toHaveLength(1);
   });
 

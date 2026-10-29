@@ -1,17 +1,21 @@
 import {
+  documentsChaseEmail,
   documentsRequestEmail,
   formatDubaiDateTime,
   type MailReceipt,
   offerAcceptedEmail,
+  noShowFollowupEmail,
   offerEmail,
   sniffImage,
   stripImageMetadata,
   viewingInvitationEmail,
+  viewingReminderEmail,
 } from "@leasing/adapters";
 import {
   type Actor,
   addDays,
   type CalendarDate,
+  type CompanyPolicy,
   diffDays,
   formatAed,
   type InboundType,
@@ -40,6 +44,7 @@ import {
   withTx,
 } from "@leasing/db";
 import {
+  KYC_DEFAULT_TIMEOUT_MS,
   KycSchemas,
   kycHelper,
   OfferContext,
@@ -47,22 +52,27 @@ import {
   OfferReplyContext,
   OfferReplyData,
   offerHelper,
+  offerProblems,
   offerReplyClassifier,
 } from "@leasing/helpers";
 import { rulesVersionForTerm } from "@leasing/rulebook";
 import { and, asc, eq, gt, inArray, isNull, lt, ne } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
-import { conflict, notFound, unprocessable } from "../errors.ts";
+import { conflict, DomainError, notFound, unprocessable } from "../errors.ts";
+import { logKycStep } from "./kyc-check.ts";
 import { advance, unitHasContractedLease } from "./advance.ts";
 import { requestApproval } from "./approvals.ts";
-import { appendEvent, getCompanyPolicy } from "./events.ts";
+import { companyLandlord } from "./company-legal.ts";
+import { appendEvent, getCompanyPolicy, getCompanyPolicyVersion } from "./events.ts";
+import { noteDefaultLimits, offerPolicyAndRuleFor } from "./pricing.ts";
 import type { KycReviewProposal, OfferLimitsProposal } from "./gate-rules.ts";
-import { runAndRecord } from "./helpers.ts";
+import { recordRun, runAndRecord, runOnly } from "./helpers.ts";
 import type { InboundRequest } from "./inbound.ts";
 import { INBOUND_JOB } from "./inbound.ts";
 import { CONTRACT_PREPARE_JOB } from "./contracts.ts";
 import { createLink, type LinkRow } from "./links.ts";
 import { createTask, DEADLINE_JOB } from "./milestones.ts";
+import { type Autopilot, autopilotNow, hoursFrom, quietNow, scheduleTimed, sendTime } from "./agent-switches.ts";
 
 /**
  * Steps 3–4 for a new tenant (architecture §3 Application, §8a): an application gets a one-time
@@ -71,7 +81,17 @@ import { createTask, DEADLINE_JOB } from "./milestones.ts";
  * engine creates the lease in CONTRACT. Every state change goes through `advance`.
  */
 export const APPLICATION_MAIL_JOB = "application.mail";
-export type ApplicationMailKind = "viewing" | "docs" | "offer" | "accepted";
+export type ApplicationMailKind =
+  | "viewing"
+  | "docs"
+  | "offer"
+  | "accepted"
+  // Switches (D37): sent by the same job, so every one is stored with its SMTP evidence.
+  | "viewing_reminder"
+  | "no_show"
+  | "docs_chase";
+/** Held offers released by `held_offer_auto_release`. */
+export const HELD_OFFER_RELEASE_JOB = "offer.release";
 
 type AppRow = typeof applications.$inferSelect;
 type UnitRow = typeof units.$inferSelect;
@@ -99,6 +119,31 @@ export interface NewApplication {
   viewingAt?: Date | null;
   /** Staff by default; the Telegram bot (D24) and a confirmed copilot proposal (D25) book their own. */
   source?: "staff" | "telegram" | "copilot" | "web_chat" | "web_form";
+}
+
+/** Application states that count as open (one person, one open application per unit). */
+export const OPEN_APPLICATION_STATES = ["ENQUIRY", "VIEWING", "SCREENING", "OFFER", "RESERVED"] as const;
+/** Open web-form plus web-chat applications one email address may hold at once (decision D31). */
+export const MAX_OPEN_WEB_PER_EMAIL = 3;
+
+/** The open applications under this email address, any source. */
+export async function openApplicationsFor(tx: Tx, email: string) {
+  return tx.db
+    .select({
+      unitId: applications.unitId,
+      source: applications.source,
+      state: applications.state,
+      viewingAt: applications.viewingAt,
+    })
+    .from(applications)
+    .innerJoin(parties, eq(parties.id, applications.partyId))
+    .where(and(eq(parties.email, email), inArray(applications.state, [...OPEN_APPLICATION_STATES])));
+}
+
+/** How many open applications this email holds that came in through the public form or the web chat. */
+export async function openWebApplicationsFor(tx: Tx, email: string): Promise<number> {
+  return (await openApplicationsFor(tx, email)).filter((o) => o.source === "web_form" || o.source === "web_chat")
+    .length;
 }
 
 /**
@@ -179,11 +224,13 @@ export async function bookViewing(ctx: EngineContext, applicationId: string, vie
       );
     }
     await tx.db.update(applications).set({ viewingAt }).where(eq(applications.id, app.id));
-    return advance(ctx, { kind: "application", id: app.id }, "VIEWING_BOOKED", {
+    const moved = await advance(ctx, { kind: "application", id: app.id }, "VIEWING_BOOKED", {
       actor,
       tx,
       payload: { viewingAt: viewingAt.toISOString() },
     });
+    await queueViewingReminder(ctx, tx, app.id, viewingAt);
+    return moved;
   };
   return inTx ? run(inTx) : withTx(ctx.database, run);
 }
@@ -243,23 +290,36 @@ export async function recordViewingOutcome(
       .update(applications)
       .set({ viewingOutcome: outcome, viewingOutcomeAt: now })
       .where(eq(applications.id, app.id));
-    return outcome === "attended"
-      ? advance(ctx, { kind: "application", id: app.id }, "APPLIED", {
-          actor,
-          tx,
-          payload: { viewingOutcome: "attended", note: masked },
-        })
-      : advance(ctx, { kind: "application", id: app.id }, "VIEWING_NO_SHOW", {
-          actor,
-          tx,
-          payload: { viewingOutcome: "no_show", note: masked },
-        });
+    if (outcome === "attended")
+      return advance(ctx, { kind: "application", id: app.id }, "APPLIED", {
+        actor,
+        tx,
+        payload: { viewingOutcome: "attended", note: masked },
+      });
+    const moved = await advance(ctx, { kind: "application", id: app.id }, "VIEWING_NO_SHOW", {
+      actor,
+      tx,
+      payload: { viewingOutcome: "no_show", note: masked },
+    });
+    await queueNoShowFollowup(ctx, tx, app.id);
+    return moved;
   });
 }
 
+/** Staff apply for an enquiry that has no viewing; the engine refuses it unless `apply_without_viewing` is on. */
+export async function applyWithoutViewing(ctx: EngineContext, applicationId: string, actor: Actor, inTx?: Tx) {
+  const run = async (tx: Tx) => {
+    const [app] = await tx.db.select().from(applications).where(eq(applications.id, applicationId)).for("update");
+    if (!app) throw notFound("application");
+    if (app.state !== "ENQUIRY") throw conflict(`application is ${app.state}, not an enquiry`, "wrong_state");
+    return advance(ctx, { kind: "application", id: applicationId }, "APPLIED", { actor, tx });
+  };
+  return inTx ? run(inTx) : withTx(ctx.database, run);
+}
+
 /** A fresh upload link (e.g. after a KYC review asked for new documents). */
-export async function requestDocuments(ctx: EngineContext, applicationId: string, actor: Actor) {
-  return withTx(ctx.database, async (tx) => {
+export async function requestDocuments(ctx: EngineContext, applicationId: string, actor: Actor, inTx?: Tx) {
+  const run = async (tx: Tx) => {
     const [app] = await tx.db.select().from(applications).where(eq(applications.id, applicationId)).for("update");
     if (!app) throw notFound("application");
     if (app.state !== "SCREENING") throw conflict(`application is ${app.state}, not waiting for documents`);
@@ -277,35 +337,75 @@ export async function requestDocuments(ctx: EngineContext, applicationId: string
     });
     const seq = await nextMailSeq(tx, app.id, "docs");
     await queueMail(ctx, tx, app.id, "docs", seq);
+    await queueDocsChase(ctx, tx, app.id, seq);
     return { seq };
-  });
+  };
+  return inTx ? run(inTx) : withTx(ctx.database, run);
 }
 
 /** Work on entering a state (called by `advance` in the same transaction). */
-export async function onEnterApplication(ctx: EngineContext, tx: Tx, app: AppRow, from: string, actor: Actor) {
+export async function onEnterApplication(
+  ctx: EngineContext,
+  tx: Tx,
+  app: AppRow,
+  from: string,
+  actor: Actor,
+  // Internal, for the demo seed only: overrides the company's autopilot flags for this entry.
+  // Never exposed through an HTTP route.
+  opts?: OfferEntryOpts,
+) {
   switch (app.state) {
     case "VIEWING":
       await queueMail(ctx, tx, app.id, "viewing", await nextMailSeq(tx, app.id, "viewing"));
       return;
-    case "SCREENING":
-      await queueMail(ctx, tx, app.id, "docs", await nextMailSeq(tx, app.id, "docs"));
+    case "SCREENING": {
+      const seq = await nextMailSeq(tx, app.id, "docs");
+      await queueMail(ctx, tx, app.id, "docs", seq);
+      await queueDocsChase(ctx, tx, app.id, seq);
       return;
+    }
     case "OFFER": {
-      if (from === "SCREENING") await proposeFirstOffer(ctx, tx, app);
+      if (from === "SCREENING") await proposeFirstOffer(ctx, tx, app, opts);
       else if (app.offer) {
-        await scheduleOfferExpiry(ctx, tx, app, app.offer);
-        await queueMail(ctx, tx, app.id, "offer", app.offer.revision);
+        // An in-limits counter made by the helper can be held for an officer. A revision a
+        // manager approved (out of limits) was already decided by a person: it goes out.
+        const counter = actor === "helper:offer";
+        if (counter && !(await autopilotFlag(ctx, tx, "auto_send_counter", opts))) {
+          await holdOffer(ctx, tx, app, app.offer.revision, opts);
+        } else {
+          await scheduleOfferExpiry(ctx, tx, app, app.offer);
+          await queueMail(ctx, tx, app.id, "offer", app.offer.revision);
+        }
       }
       return;
     }
     case "RESERVED": {
       const leaseId = await createLeaseFromApplication(ctx, tx, app, actor);
-      // Step 5 starts on its own: the contract is prepared by a job (it renders a PDF).
-      await ctx.scheduler.send(tx, {
-        name: CONTRACT_PREPARE_JOB,
-        data: { leaseId },
-        singletonKey: `${leaseId}:contract-prepare`,
-      });
+      // Step 5 starts on its own (the contract is prepared by a job, it renders a PDF), unless
+      // the company switched automatic preparation off: then an officer prepares it.
+      const pol = await getCompanyPolicyVersion(tx, ctx.clock.today());
+      if (pol.values.autopilot.auto_prepare_contract) {
+        await ctx.scheduler.send(tx, {
+          name: CONTRACT_PREPARE_JOB,
+          data: { leaseId },
+          singletonKey: `${leaseId}:contract-prepare`,
+        });
+      } else {
+        await appendEvent(tx, ctx, {
+          entity: { kind: "lease", id: leaseId },
+          type: "CONTRACT_PREP_HELD",
+          actor: "system",
+          payload: { policyVersion: pol.version },
+        });
+        await createTask(ctx, tx, leaseId, {
+          kind: "prepare_contract",
+          title: "Prepare the contract",
+          details: { policyVersion: pol.version },
+          assigneeRole: "leasing_officer",
+          dueOn: ctx.clock.today(),
+          dedupeKey: `${leaseId}:prepare_contract`,
+        });
+      }
       await advance(ctx, { kind: "application", id: app.id }, "LEASE_CREATED", {
         actor: "system",
         tx,
@@ -569,9 +669,9 @@ export async function receiveApplicationInbound(
 type InboundRow = typeof inboundEvents.$inferSelect;
 
 /** Runs the model work first (its own transaction), then applies the result under a lock. */
-export async function processApplicationInbound(ctx: EngineContext, ev: InboundRow) {
+export async function processApplicationInbound(ctx: EngineContext, ev: InboundRow, attempt = 1) {
   let model: Awaited<ReturnType<typeof runKyc>> | Awaited<ReturnType<typeof classifyOfferComment>> = null;
-  if (ev.type === "DOCS_UPLOADED") model = await runKyc(ctx, ev);
+  if (ev.type === "DOCS_UPLOADED") model = await runKyc(ctx, ev, attempt);
   if (ev.type === "OFFER_RESPONDED") model = await classifyOfferComment(ctx, ev);
 
   const outcome = await withTx(ctx.database, async (tx) => {
@@ -581,7 +681,7 @@ export async function processApplicationInbound(ctx: EngineContext, ev: InboundR
     if (!app) return null;
     const result =
       locked.type === "DOCS_UPLOADED"
-        ? await applyKyc(ctx, tx, app, locked, model as Awaited<ReturnType<typeof runKyc>>)
+        ? await applyKyc(ctx, tx, app, locked, model as Awaited<ReturnType<typeof runKyc>>, attempt)
         : await applyOfferResponse(ctx, tx, app, locked, model as Awaited<ReturnType<typeof classifyOfferComment>>);
     await tx.db
       .update(inboundEvents)
@@ -598,8 +698,13 @@ interface Applied {
   detail: Record<string, unknown>;
 }
 
-async function runKyc(ctx: EngineContext, ev: InboundRow) {
-  return withTx(ctx.database, async (tx) => {
+/**
+ * Reads the records in a short transaction, runs the helper with no transaction open (a model
+ * call can take minutes and must not hold a connection), logs each step as it happens, then
+ * records the run. Every model call has its own time limit (`KYC_DOC_TIMEOUT_SECONDS`).
+ */
+async function runKyc(ctx: EngineContext, ev: InboundRow, attempt: number) {
+  const prepared = await withTx(ctx.database, async (tx) => {
     const [app] = await tx.db.select().from(applications).where(eq(applications.id, ev.entityId));
     if (!app || app.state !== "SCREENING") return null;
     const [party] = await tx.db.select().from(parties).where(eq(parties.id, app.partyId));
@@ -609,34 +714,55 @@ async function runKyc(ctx: EngineContext, ev: InboundRow) {
       .from(documents)
       .where(and(eq(documents.applicationId, app.id), inArray(documents.id, ids)));
     const policy = await getCompanyPolicy(tx, ctx.clock.today());
-    const today = ctx.clock.today();
-    const readImage = async (docId: string) => {
-      const d = docs.find((x) => x.id === docId);
-      if (!d) throw new Error("document not on this application");
-      return new Uint8Array(await ctx.uploads.read(d.path));
-    };
-    return runAndRecord(
-      ctx,
-      tx,
-      kycHelper(ctx.llm, readImage),
-      KycSchemas,
-      { kind: "application", id: app.id },
-      "SCREENING",
-      {
-        applicant: { nameEn: party?.fullNameEn ?? "", kind: party?.kind ?? "individual" },
-        leaseStartOn: app.requestedMoveInOn ?? addDays(today, 14),
-        today,
-        minValidityDays: policy.kycMinValidityDays,
-        minConfidence: policy.kycMinConfidence,
-        documents: docs.map((d) => ({
-          docId: d.id,
-          kind: d.kind as "emirates_id" | "passport" | "visa" | "trade_licence",
-          side: (d.side ?? "page") as "front" | "back" | "page",
-        })),
-      },
-      ctx.rulesVersion,
-    );
+    return { app, party, docs, policy };
   });
+  if (!prepared) return null;
+  const { app, party, docs, policy } = prepared;
+  const today = ctx.clock.today();
+  const readImage = async (docId: string) => {
+    const d = docs.find((x) => x.id === docId);
+    if (!d) throw new Error("document not on this application");
+    return new Uint8Array(await ctx.uploads.read(d.path));
+  };
+  const entity = { kind: "application" as const, id: app.id };
+  const helperRunId = newId();
+  const began = performance.now(); // diagnostic latency only, not domain time
+  const helper = kycHelper(ctx.llm, readImage, {
+    timeoutMs: ctx.kyc?.docTimeoutMs ?? KYC_DEFAULT_TIMEOUT_MS,
+    onStep: (step) =>
+      logKycStep(ctx, app.id, attempt, ev.ref, step, { latencyMs: Math.round(performance.now() - began) }),
+  });
+  const run = await runOnly(
+    ctx,
+    helper,
+    KycSchemas,
+    entity,
+    "SCREENING",
+    {
+      applicant: { nameEn: party?.fullNameEn ?? "", kind: party?.kind ?? "individual" },
+      leaseStartOn: app.requestedMoveInOn ?? addDays(today, 14),
+      today,
+      minValidityDays: policy.kycMinValidityDays,
+      minConfidence: policy.kycMinConfidence,
+      documents: docs.map((d) => ({
+        docId: d.id,
+        kind: d.kind as "emirates_id" | "passport" | "visa" | "trade_licence",
+        side: (d.side ?? "page") as "front" | "back" | "page",
+      })),
+    },
+    ctx.rulesVersion,
+    helperRunId,
+  );
+  if (run.result.status !== "ok" && run.error) {
+    // The runner gave up (invalid answers twice): the log says so too.
+    await logKycStep(ctx, app.id, attempt, ev.ref, {
+      kind: "result",
+      status: "needs_human",
+      reason: maskPiiText(run.error),
+    });
+  }
+  await withTx(ctx.database, (tx) => recordRun(ctx, tx, helper.name, entity, ctx.rulesVersion, run, helperRunId));
+  return { run, helperRunId };
 }
 
 /**
@@ -649,6 +775,7 @@ async function applyKyc(
   app: AppRow,
   ev: InboundRow,
   kyc: Awaited<ReturnType<typeof runKyc>>,
+  attempt = 1,
 ): Promise<Applied> {
   if (app.state !== "SCREENING" || !kyc) {
     await task(ctx, tx, app.id, {
@@ -662,16 +789,36 @@ async function applyKyc(
     return { applied: false, detail: { reason: `application is ${app.state}` } };
   }
   const { run, helperRunId } = kyc;
-  const data = run.result.status === "ok" ? run.result.data : undefined;
+  if (run.result.status !== "ok") {
+    // Rule 6: no valid answer, so nothing advances. An officer gets a task; "Retry document check" runs it again.
+    const reason = maskPiiText(run.result.reasons[0] ?? "the document check could not finish");
+    await task(ctx, tx, app.id, {
+      kind: "kyc_check_failed",
+      title: `Document check for application ${appRef(app)} needs a person: ${reason}`,
+      details: { inboundRef: ev.ref, helperRunId, attempt },
+      assigneeRole: "leasing_officer",
+      dueOn: ctx.clock.today(),
+      dedupeKey: `${app.id}:kyc_check_failed:${ev.id}:${attempt}`,
+    });
+    return { applied: false, detail: { action: "kyc check failed", reason, helperRunId, attempt } };
+  }
+  // A check that finally worked closes the "needs a person" task an earlier failed run left open.
+  await tx.db
+    .update(tasks)
+    .set({ status: "cancelled" })
+    .where(and(eq(tasks.entityId, app.id), eq(tasks.kind, "kyc_check_failed"), eq(tasks.status, "open")));
+  const data = run.result.data;
   const documentIds = (ev.payload as { documentIds: string[] }).documentIds;
   // A newer submission replaces any review still waiting on the earlier one.
   await cancelPending(ctx, tx, app.id, ["kyc_review"], "newer documents were submitted");
   const onFile = data ? await partyWithSameId(tx, app, data.identity) : null;
-  if (data?.verdict === "verified" && !onFile) {
+  const pol = await getCompanyPolicyVersion(tx, ctx.clock.today());
+  const autoVerify = pol.values.autopilot.auto_kyc_verify;
+  if (data?.verdict === "verified" && !onFile && autoVerify) {
     await advance(ctx, { kind: "application", id: app.id }, "KYC_VERIFIED", {
       actor: "helper:kyc",
       tx,
-      payload: { helperRunId, documentIds, inboundRef: ev.ref },
+      payload: { helperRunId, documentIds, inboundRef: ev.ref, policyVersion: pol.version },
     });
     return { applied: true, detail: { action: "verified", helperRunId } };
   }
@@ -685,6 +832,14 @@ async function applyKyc(
           blocking: false,
         },
       ];
+  if (data?.verdict === "verified" && !onFile && !autoVerify) {
+    flags.push({
+      kind: "manual_review" as const,
+      message: "Automatic KYC verification is switched off.",
+      docId: null,
+      blocking: false,
+    });
+  }
   if (onFile) {
     flags.push({
       kind: "id_on_file",
@@ -702,6 +857,7 @@ async function applyKyc(
     flags,
     documentIds,
     applicantKind: party?.kind ?? "individual",
+    policyVersion: pol.version,
   };
   await requestApproval(ctx, tx, {
     gate: "kyc_review",
@@ -844,12 +1000,171 @@ export async function applyVerifiedIdentity(
 async function unitAndPolicy(ctx: EngineContext, tx: Tx, app: AppRow) {
   const [unit] = await tx.db.select().from(units).where(eq(units.id, app.unitId));
   if (!unit?.askingRentFils) throw conflict("the unit has no approved asking rent");
-  const policy = await getCompanyPolicy(tx, ctx.clock.today());
-  return { unit, policy, unitTerms: { askingRentFils: unit.askingRentFils, furnished: !!unit.furnished } };
+  const { policy, contractRuleId } = await offerPolicyAndRuleFor(tx, unit, ctx.clock.today());
+  return {
+    unit,
+    policy,
+    contractRuleId,
+    unitTerms: { askingRentFils: unit.askingRentFils, furnished: !!unit.furnished },
+  };
 }
 
-async function proposeFirstOffer(ctx: EngineContext, tx: Tx, app: AppRow) {
-  const { unit, policy, unitTerms } = await unitAndPolicy(ctx, tx, app);
+export type OfferEntryOpts = {
+  autopilot?: Partial<Pick<CompanyPolicy["autopilot"], "auto_send_offer" | "auto_send_counter">>;
+};
+
+async function autopilotFlag(
+  ctx: EngineContext,
+  tx: Tx,
+  flag: "auto_send_offer" | "auto_send_counter",
+  opts?: OfferEntryOpts,
+): Promise<boolean> {
+  const override = opts?.autopilot?.[flag];
+  if (override !== undefined) return override;
+  return (await getCompanyPolicy(tx, ctx.clock.today())).autopilot[flag];
+}
+
+/** The offer stays stored but unsent: an officer task asks for the send. No deadline yet. */
+async function holdOffer(ctx: EngineContext, tx: Tx, app: AppRow, revision: number, opts?: OfferEntryOpts) {
+  const { version } = await getCompanyPolicyVersion(tx, ctx.clock.today());
+  await appendEvent(tx, ctx, {
+    entity: { kind: "application", id: app.id },
+    type: "OFFER_HELD",
+    actor: "system",
+    payload: { revision, policyVersion: version, ...(opts?.autopilot ? { autopilotOverride: opts.autopilot } : {}) },
+    rulesVersion: ctx.rulesVersion,
+  });
+  await task(ctx, tx, app.id, {
+    kind: "send_offer",
+    title: `Send offer revision ${revision} (${appRef(app)})`,
+    details: { revision },
+    assigneeRole: "leasing_officer",
+    dueOn: ctx.clock.today(),
+    dedupeKey: `${app.id}:send_offer#${revision}`,
+  });
+  // `held_offer_auto_release` (D37): if no officer has sent it after N hours, the job tries to send it.
+  const a = await autopilotNow(ctx, tx);
+  if (a.held_offer_auto_release) {
+    await scheduleTimed(ctx, tx, {
+      name: HELD_OFFER_RELEASE_JOB,
+      data: { applicationId: app.id, revision },
+      singletonKey: `${app.id}:offer-release#${revision}`,
+      startAfter: sendTime(a, hoursFrom(ctx.clock.now(), a.held_offer_release_hours)),
+      entity: { kind: "application", id: app.id },
+    });
+  }
+}
+
+const eventRevision = (e: { payload: unknown }) => (e.payload as { revision?: number } | null)?.revision;
+
+/** Sends the held offer revision: expiry counts from today; one outbound row per revision. */
+export async function sendHeldOffer(
+  ctx: EngineContext,
+  applicationId: string,
+  actor: Actor,
+  /** The revision the caller meant (the auto-release job): refused if a newer one is held now. */
+  expectedRevision?: number,
+) {
+  const result = await withTx(ctx.database, async (tx) => {
+    const [app] = await tx.db.select().from(applications).where(eq(applications.id, applicationId)).for("update");
+    if (!app) throw notFound("application");
+    if (app.state !== "OFFER" || !app.offer) throw conflict("no offer is held", "offer_not_held");
+    const revision = app.offer.revision;
+    // Under the row lock: the job meant one revision; a newer held one is not its to send.
+    if (expectedRevision !== undefined && expectedRevision !== revision)
+      throw conflict("no offer is held", "offer_not_held");
+    const events = await tx.db
+      .select({ type: leaseEvents.type, payload: leaseEvents.payload })
+      .from(leaseEvents)
+      .where(and(eq(leaseEvents.entityId, app.id), inArray(leaseEvents.type, ["OFFER_HELD", "OFFER_SENT"])));
+    const held = events.some((e) => e.type === "OFFER_HELD" && eventRevision(e) === revision);
+    const sent = events.some((e) => e.type === "OFFER_SENT" && eventRevision(e) === revision);
+    if (!held || sent) throw conflict("no offer is held", "offer_not_held");
+    const { unit, policy, contractRuleId, unitTerms } = await unitAndPolicy(ctx, tx, app);
+    const today = ctx.clock.today();
+    // The policy or the asking rent may have changed while the offer was held: check again now.
+    const problems = noteDefaultLimits(offerProblems(app.offer, unitTerms, policy, today), contractRuleId);
+    if (problems.length) {
+      await askManagerForOffer(ctx, tx, app, unit, { ...app.offer, revision: revision + 1 }, problems, revision, null);
+      return { problems };
+    }
+    const terms: OfferTerms = { ...app.offer, expiresOn: addDays(today, policy.offerValidDays) };
+    await tx.db.update(applications).set({ offer: terms }).where(eq(applications.id, app.id));
+    await appendEvent(tx, ctx, {
+      entity: { kind: "application", id: app.id },
+      type: "OFFER_SENT",
+      actor,
+      payload: {
+        revision,
+        expiresOn: terms.expiresOn,
+        policyVersion: (await getCompanyPolicyVersion(tx, today)).version,
+      },
+      rulesVersion: ctx.rulesVersion,
+    });
+    await scheduleOfferExpiry(ctx, tx, app, terms);
+    await queueMail(ctx, tx, app.id, "offer", revision);
+    await tx.db
+      .update(tasks)
+      .set({ status: "done" })
+      .where(and(eq(tasks.dedupeKey, `${app.id}:send_offer#${revision}`), eq(tasks.status, "open")));
+    return { revision, expiresOn: terms.expiresOn };
+  });
+  if ("problems" in result)
+    throw unprocessable(
+      "the held offer is now outside the company limits; a leasing manager has been asked to approve it",
+      result.problems,
+      "offer_out_of_limits",
+    );
+  return result;
+}
+
+/**
+ * Job (`held_offer_auto_release`): sends a held offer nobody sent, through `sendHeldOffer`, which
+ * re-runs the limits check and refuses an offer that is now outside them (it asks a manager
+ * instead). The switch, the application's state and the held revision are checked again here.
+ * Actor `system:auto-release`. Safe to run twice: a sent revision is no longer held.
+ */
+export async function autoReleaseHeldOffer(ctx: EngineContext, applicationId: string, revision: number) {
+  const state = await withTx(ctx.database, async (tx) => {
+    const a = await autopilotNow(ctx, tx);
+    if (!a.held_offer_auto_release) return "switch is off";
+    const [app] = await tx.db.select().from(applications).where(eq(applications.id, applicationId));
+    if (!app || app.state !== "OFFER" || app.offer?.revision !== revision) return "the offer moved on";
+    const events = await tx.db
+      .select({ type: leaseEvents.type, payload: leaseEvents.payload })
+      .from(leaseEvents)
+      .where(and(eq(leaseEvents.entityId, app.id), inArray(leaseEvents.type, ["OFFER_HELD", "OFFER_SENT"])));
+    const held = events.some((e) => e.type === "OFFER_HELD" && eventRevision(e) === revision);
+    const sent = events.some((e) => e.type === "OFFER_SENT" && eventRevision(e) === revision);
+    if (!held || sent) return "the offer is not held";
+    if (quietNow(a, ctx.clock.now())) {
+      await scheduleTimed(ctx, tx, {
+        name: HELD_OFFER_RELEASE_JOB,
+        data: { applicationId, revision },
+        singletonKey: `${applicationId}:offer-release#${revision}~${ctx.clock.now().getTime()}`,
+        startAfter: sendTime(a, ctx.clock.now()),
+        entity: { kind: "application", id: applicationId },
+      });
+      return "postponed: quiet hours";
+    }
+    return null;
+  });
+  if (state) return { released: false as const, reason: state };
+  try {
+    await sendHeldOffer(ctx, applicationId, "system:auto-release", revision);
+    return { released: true as const };
+  } catch (e) {
+    // Outside the limits now: sendHeldOffer has already asked a leasing manager. Anything else is retried.
+    if (e instanceof DomainError && e.code === "offer_out_of_limits")
+      return { released: false as const, reason: "outside the company limits: a manager was asked" };
+    if (e instanceof DomainError && e.code === "offer_not_held")
+      return { released: false as const, reason: "the offer is not held" };
+    throw e;
+  }
+}
+
+async function proposeFirstOffer(ctx: EngineContext, tx: Tx, app: AppRow, opts?: OfferEntryOpts) {
+  const { unit, policy, contractRuleId, unitTerms } = await unitAndPolicy(ctx, tx, app);
   const { run, helperRunId } = await runAndRecord(
     ctx,
     tx,
@@ -872,7 +1187,16 @@ async function proposeFirstOffer(ctx: EngineContext, tx: Tx, app: AppRow) {
   const data = run.result.data;
   if (!data) throw new Error("offer helper failed");
   if (!data.inLimits) {
-    await askManagerForOffer(ctx, tx, app, unit, data.terms, data.problems, null, helperRunId);
+    await askManagerForOffer(
+      ctx,
+      tx,
+      app,
+      unit,
+      data.terms,
+      noteDefaultLimits(data.problems, contractRuleId),
+      null,
+      helperRunId,
+    );
     return;
   }
   await tx.db.update(applications).set({ offer: data.terms }).where(eq(applications.id, app.id));
@@ -883,6 +1207,10 @@ async function proposeFirstOffer(ctx: EngineContext, tx: Tx, app: AppRow) {
     payload: { revision: 1, terms: data.terms, helperRunId },
     rulesVersion: ctx.rulesVersion,
   });
+  if (!(await autopilotFlag(ctx, tx, "auto_send_offer", opts))) {
+    await holdOffer(ctx, tx, app, 1, opts);
+    return;
+  }
   await scheduleOfferExpiry(ctx, tx, app, data.terms);
   await queueMail(ctx, tx, app.id, "offer", 1);
 }
@@ -895,7 +1223,7 @@ async function askManagerForOffer(
   terms: OfferTerms,
   problems: string[],
   fromRevision: number | null,
-  helperRunId: string,
+  helperRunId: string | null,
 ) {
   const proposal: OfferLimitsProposal = { applicationId: app.id, terms, problems, fromRevision };
   await requestApproval(ctx, tx, {
@@ -906,7 +1234,9 @@ async function askManagerForOffer(
     proposal,
     reasons: problems,
     sources: [
-      { kind: "helper_run", helperRunId, label: "Offer helper (limits check)" },
+      helperRunId
+        ? { kind: "helper_run" as const, helperRunId, label: "Offer helper (limits check)" }
+        : { kind: "field" as const, label: "Limits check", value: "re-run when the held offer was about to be sent" },
       { kind: "field", label: "Approved asking rent", value: formatAed(terms.askingRentFils) },
     ],
     rulesVersion: ctx.rulesVersion,
@@ -1029,7 +1359,7 @@ async function applyOfferResponse(
   }
 
   // Counter-offer: a new revision from the structured fields only.
-  const { unit, policy, unitTerms } = await unitAndPolicy(ctx, tx, app);
+  const { unit, policy, contractRuleId, unitTerms } = await unitAndPolicy(ctx, tx, app);
   const { run, helperRunId } = await runAndRecord(
     ctx,
     tx,
@@ -1059,7 +1389,16 @@ async function applyOfferResponse(
     });
     return { applied: true, detail: { ...base, action: `revised offer ${data.terms.revision} sent (within limits)` } };
   }
-  await askManagerForOffer(ctx, tx, app, unit, data.terms, data.problems, reply.revision, helperRunId);
+  await askManagerForOffer(
+    ctx,
+    tx,
+    app,
+    unit,
+    data.terms,
+    noteDefaultLimits(data.problems, contractRuleId),
+    reply.revision,
+    helperRunId,
+  );
   return { applied: true, detail: { ...base, action: "counter outside limits: sent to a leasing manager" } };
 }
 
@@ -1198,13 +1537,14 @@ export async function recordReservation(
   });
 }
 
-/** RESERVED: the lease is created in CONTRACT from the accepted offer, the verified tenant and the unit's landlord. */
+/** RESERVED: the lease is created in CONTRACT from the accepted offer, the verified tenant and the unit's company as landlord. */
 async function createLeaseFromApplication(ctx: EngineContext, tx: Tx, app: AppRow, actor: Actor): Promise<string> {
   const terms = app.offer;
   if (!terms) throw conflict("no accepted offer");
   const [unit] = await tx.db.select().from(units).where(eq(units.id, app.unitId)).for("update");
   if (!unit) throw notFound("unit");
-  if (!unit.landlordPartyId) throw conflict(`unit ${unit.code} has no landlord on record`, "no_landlord");
+  // The unit's company is the landlord (D44). Its legal details are checked when the contract is prepared.
+  const { party: landlord } = await companyLandlord(tx, unit.companyId);
   if (await unitHasContractedLease(tx, unit.id)) throw conflict(`unit ${unit.code} already has a lease being signed`);
   const id = newId();
   // The version in force on the day the term starts (D23).
@@ -1226,7 +1566,7 @@ async function createLeaseFromApplication(ctx: EngineContext, tx: Tx, app: AppRo
   });
   await tx.db.insert(leaseParties).values([
     { leaseId: id, partyId: app.partyId, role: "tenant" },
-    { leaseId: id, partyId: unit.landlordPartyId, role: "landlord" },
+    { leaseId: id, partyId: landlord.id, role: "landlord" },
   ]);
   await appendEvent(tx, ctx, {
     entity: { kind: "lease", id },
@@ -1281,19 +1621,137 @@ async function nextMailSeq(tx: Tx, appId: string, kind: ApplicationMailKind): Pr
   return Math.max(1, events.length);
 }
 
-async function queueMail(ctx: EngineContext, tx: Tx, applicationId: string, kind: ApplicationMailKind, seq: number) {
-  await ctx.scheduler.send(tx, {
+async function queueMail(
+  ctx: EngineContext,
+  tx: Tx,
+  applicationId: string,
+  kind: ApplicationMailKind,
+  seq: number,
+  variant?: string,
+  startAfter?: Date,
+) {
+  const job = {
     name: APPLICATION_MAIL_JOB,
-    data: { applicationId, kind, seq },
-    singletonKey: `${applicationId}:${kind}#${seq}`,
-  });
+    data: { applicationId, kind, seq, ...(variant ? { variant } : {}) },
+    singletonKey: `${applicationId}:${kind}#${seq}${variant ? `@${variant}` : ""}`,
+  };
+  if (startAfter)
+    await scheduleTimed(ctx, tx, { ...job, startAfter, entity: { kind: "application", id: applicationId } });
+  else await ctx.scheduler.send(tx, job);
 }
 
-const PURPOSE: Record<ApplicationMailKind, "link" | "offer" | "receipt"> = {
+// ---------------------------------------------------------------- reminders and chases (D37)
+
+/** `viewing_reminder`: an email N hours before a booked viewing, unless that moment has passed or quiet hours push it past the viewing. */
+async function queueViewingReminder(ctx: EngineContext, tx: Tx, applicationId: string, viewingAt: Date) {
+  const a = await autopilotNow(ctx, tx);
+  if (!a.viewing_reminder) return;
+  const due = hoursFrom(viewingAt, -a.viewing_reminder_hours);
+  if (due.getTime() <= ctx.clock.now().getTime()) return;
+  const at = sendTime(a, due);
+  if (at.getTime() >= viewingAt.getTime()) return;
+  await queueMail(ctx, tx, applicationId, "viewing_reminder", 1, String(viewingAt.getTime()), at);
+}
+
+/** `no_show_followup`: a recorded no-show gets one friendly email (outside quiet hours). */
+async function queueNoShowFollowup(ctx: EngineContext, tx: Tx, applicationId: string) {
+  const a = await autopilotNow(ctx, tx);
+  if (!a.no_show_followup) return;
+  await queueMail(ctx, tx, applicationId, "no_show", 1, undefined, sendTime(a, ctx.clock.now()));
+}
+
+/** `kyc_chase`: N hours after a document request, one reminder with a fresh link if nothing was uploaded. */
+async function queueDocsChase(ctx: EngineContext, tx: Tx, applicationId: string, requestSeq: number) {
+  const a = await autopilotNow(ctx, tx);
+  if (!a.kyc_chase) return;
+  const at = sendTime(a, hoursFrom(ctx.clock.now(), a.kyc_chase_hours));
+  await queueMail(ctx, tx, applicationId, "docs_chase", 1, String(requestSeq), at);
+}
+
+/** The reminder kinds, which re-read their switch when they fire. */
+const REMINDER_SWITCH = {
+  viewing_reminder: "viewing_reminder",
+  no_show: "no_show_followup",
+  docs_chase: "kyc_chase",
+} as const satisfies Partial<Record<ApplicationMailKind, keyof Autopilot>>;
+
+/** What a re-send asked by the applicant (web chat status check) did. */
+export type ResendResult = "queued" | "already_today" | "not_now" | "being_prepared";
+
+/**
+ * Re-sends the upload link (SCREENING) or the offer email (OFFER, not yet answered, not lapsed) to
+ * the applicant's address on file, at most once per Dubai day per kind (dedupe: an audit event under
+ * the application's lock, and a day-specific outbound milestone). A new upload link replaces the
+ * earlier ones, as `requestDocuments` does. The address is never taken from the caller.
+ */
+export async function resendApplicantLink(
+  ctx: EngineContext,
+  applicationId: string,
+  kind: "docs" | "offer",
+  actor: Actor,
+  inTx?: Tx,
+): Promise<ResendResult> {
+  const run = async (tx: Tx): Promise<ResendResult> => {
+    const [app] = await tx.db.select().from(applications).where(eq(applications.id, applicationId)).for("update");
+    if (!app) return "not_now";
+    const today = ctx.clock.today();
+    const ok =
+      kind === "docs"
+        ? app.state === "SCREENING"
+        : app.state === "OFFER" && !!app.offer && !app.offerAcceptedAt && app.offer.expiresOn >= today;
+    if (!ok) return "not_now";
+    if (kind === "offer") {
+      // A held offer is not out until a person sends it (the rule of `sendHeldOffer`): nothing to re-send yet.
+      const revision = app.offer!.revision;
+      const events = await tx.db
+        .select({ type: leaseEvents.type, payload: leaseEvents.payload })
+        .from(leaseEvents)
+        .where(and(eq(leaseEvents.entityId, app.id), inArray(leaseEvents.type, ["OFFER_HELD", "OFFER_SENT"])));
+      const held = events.some((e) => e.type === "OFFER_HELD" && eventRevision(e) === revision);
+      const sent = events.some((e) => e.type === "OFFER_SENT" && eventRevision(e) === revision);
+      if (held && !sent) return "being_prepared";
+    }
+    const done = await tx.db
+      .select({ payload: leaseEvents.payload })
+      .from(leaseEvents)
+      .where(and(eq(leaseEvents.entityId, app.id), eq(leaseEvents.type, "APPLICANT_LINK_RESENT")));
+    if (
+      done.some(
+        (e) =>
+          (e.payload as { kind?: string; on?: string }).kind === kind && (e.payload as { on?: string }).on === today,
+      )
+    )
+      return "already_today";
+    const seq = kind === "docs" ? await nextMailSeq(tx, app.id, "docs") : app.offer!.revision;
+    if (kind === "docs") {
+      await tx.db
+        .update(actionLinks)
+        .set({ usedAt: ctx.clock.now() })
+        .where(
+          and(eq(actionLinks.entityId, app.id), eq(actionLinks.purpose, "kyc_upload"), isNull(actionLinks.usedAt)),
+        );
+    }
+    await appendEvent(tx, ctx, {
+      entity: { kind: "application", id: app.id },
+      type: "APPLICANT_LINK_RESENT",
+      actor,
+      payload: { kind, on: today, seq, via: "web_chat" },
+      rulesVersion: ctx.rulesVersion,
+    });
+    await queueMail(ctx, tx, app.id, kind, seq, `resend-${today}`);
+    return "queued";
+  };
+  return inTx ? run(inTx) : withTx(ctx.database, run);
+}
+
+const PURPOSE: Record<ApplicationMailKind, "link" | "offer" | "receipt" | "reminder"> = {
   viewing: "link",
   docs: "link",
   offer: "offer",
   accepted: "receipt",
+  viewing_reminder: "reminder",
+  no_show: "reminder",
+  docs_chase: "reminder",
 };
 
 /**
@@ -1305,10 +1763,30 @@ export async function sendApplicationMail(
   applicationId: string,
   kind: ApplicationMailKind,
   seq: number,
+  variant?: string,
 ) {
   const prepared = await withTx(ctx.database, async (tx) => {
     const [app] = await tx.db.select().from(applications).where(eq(applications.id, applicationId));
     if (!app) return null;
+    const sw = REMINDER_SWITCH[kind as keyof typeof REMINDER_SWITCH];
+    if (sw) {
+      // A reminder re-reads its switch and the entity's state when it fires (D37).
+      const a = await autopilotNow(ctx, tx);
+      if (!a[sw]) return null;
+      if (quietNow(a, ctx.clock.now())) {
+        // Policy changed after scheduling: try again once quiet hours end (a new key per postponement).
+        await queueMail(
+          ctx,
+          tx,
+          app.id,
+          kind,
+          seq,
+          `${variant ?? "q"}~${ctx.clock.now().getTime()}`,
+          sendTime(a, ctx.clock.now()),
+        );
+        return null;
+      }
+    }
     const still =
       kind === "viewing"
         ? app.state === "VIEWING" && !!app.viewingAt
@@ -1316,7 +1794,17 @@ export async function sendApplicationMail(
           ? app.state === "SCREENING"
           : kind === "offer"
             ? app.state === "OFFER" && app.offer?.revision === seq && !app.offerAcceptedAt
-            : !!app.offerAcceptedAt;
+            : kind === "viewing_reminder"
+              ? app.state === "VIEWING" &&
+                !!app.viewingAt &&
+                !app.viewingOutcome &&
+                app.viewingAt.getTime() > ctx.clock.now().getTime() &&
+                variant?.split("~")[0] === String(app.viewingAt.getTime())
+              : kind === "no_show"
+                ? app.viewingOutcome === "no_show"
+                : kind === "docs_chase"
+                  ? app.state === "SCREENING" && (await uploadedDocuments(tx, app.id)).length === 0
+                  : !!app.offerAcceptedAt;
     if (!still) return null;
     const [party] = await tx.db.select().from(parties).where(eq(parties.id, app.partyId));
     const [unit] = await tx.db.select().from(units).where(eq(units.id, app.unitId));
@@ -1332,7 +1820,7 @@ export async function sendApplicationMail(
       });
       return null;
     }
-    const milestone = `${kind}#${seq}`;
+    const milestone = `${kind}#${seq}${variant ? `@${variant}` : ""}`;
     const [existing] = await tx.db
       .select()
       .from(outboundMessages)
@@ -1376,6 +1864,59 @@ export async function sendApplicationMail(
         virtualTourUrl: unit.virtualTourUrl,
         statusUrl: status.url,
         reference: appRef(app),
+        demo: ctx.demoMode,
+      });
+    } else if (kind === "viewing_reminder") {
+      const property = await createLink(ctx, tx, {
+        purpose: "viewing",
+        entity: { kind: "application", id: app.id },
+        partyId: party.id,
+        ttlDays: 30,
+      });
+      mail = viewingReminderEmail({
+        applicantName: first,
+        unitLabel: unitLabel(unit),
+        address: unitAddress(unit),
+        viewingAt: app.viewingAt!,
+        propertyUrl: property.url,
+        statusUrl: status.url,
+        reference: appRef(app),
+        demo: ctx.demoMode,
+      });
+    } else if (kind === "no_show") {
+      const property = await createLink(ctx, tx, {
+        purpose: "viewing",
+        entity: { kind: "application", id: app.id },
+        partyId: party.id,
+        ttlDays: 30,
+      });
+      mail = noShowFollowupEmail({
+        applicantName: first,
+        unitLabel: unitLabel(unit),
+        reference: appRef(app),
+        propertyUrl: property.url,
+        demo: ctx.demoMode,
+      });
+    } else if (kind === "docs_chase") {
+      // A fresh link replaces the earlier ones, as a new document request does.
+      await tx.db
+        .update(actionLinks)
+        .set({ usedAt: ctx.clock.now() })
+        .where(
+          and(eq(actionLinks.entityId, app.id), eq(actionLinks.purpose, "kyc_upload"), isNull(actionLinks.usedAt)),
+        );
+      const upload = await createLink(ctx, tx, {
+        purpose: "kyc_upload",
+        entity: { kind: "application", id: app.id },
+        partyId: party.id,
+        ttlDays: 7,
+      });
+      mail = documentsChaseEmail({
+        applicantName: first,
+        unitLabel: unitLabel(unit),
+        reference: appRef(app),
+        uploadUrl: upload.url,
+        statusUrl: status.url,
         demo: ctx.demoMode,
       });
     } else if (kind === "docs") {

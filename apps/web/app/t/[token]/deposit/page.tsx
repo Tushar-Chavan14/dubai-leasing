@@ -1,3 +1,5 @@
+import { notFound } from "next/navigation";
+import { TENANCY_OPS } from "../../../../lib/env";
 import { formatAed } from "@leasing/core";
 import { publicGet } from "../../../../lib/engine";
 import type { MoveOutPortalView } from "../../../../lib/portal";
@@ -5,6 +7,7 @@ import { DepositResponseForm } from "../tenancy-forms";
 
 /** Step 10: the deposit statement; accept with refund details or dispute (single-use link). */
 export default async function DepositPage({ params }: { params: Promise<{ token: string }> }) {
+  if (!TENANCY_OPS) notFound();
   const { token } = await params;
   const v = await publicGet<MoveOutPortalView>(`/api/portal/${encodeURIComponent(token)}`);
   const s = v?.tenancy?.moveOut?.statement;

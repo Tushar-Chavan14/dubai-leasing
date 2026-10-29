@@ -10,7 +10,7 @@ import { createApi } from "../src/api/app.ts";
 import { issueToken } from "../src/api/auth.ts";
 import { importLeasesCsv } from "../src/manager/import.ts";
 import { syncRulebooks } from "../src/manager/rulebooks.ts";
-import { addStaff, freshDatabase, leaseCsv, noDb, testContext } from "./harness.ts";
+import { addStaff, freshDatabase, leaseCsv, noDb, testContext, testCompany } from "./harness.ts";
 
 const SECRET = "test-secret";
 const ROLES = ["leasing_officer", "leasing_manager", "finance", "admin"] as const;
@@ -47,6 +47,7 @@ describe.skipIf(noDb)("rulebook versions (Postgres)", () => {
       t.ctx,
       leaseCsv([{ unit_code: code, start_on: startOn, end_on: endOn }]),
       "import",
+      await testCompany(t.ctx.database),
     );
     expect(row?.status).toBe("imported");
     const [l] = await database.db.select().from(leases).where(eq(leases.id, row!.leaseId!));

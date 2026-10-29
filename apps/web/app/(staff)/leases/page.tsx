@@ -29,7 +29,7 @@ export default async function LeasesPage({ searchParams }: { searchParams: Promi
         title="Leases"
         lede="Sorted by end date. The next deadline is the earliest milestone still to come, in Dubai calendar days."
         actions={
-          <Link href="/import" className="btn">
+          <Link href="/settings/import" className="btn">
             Import leases
           </Link>
         }
@@ -49,7 +49,7 @@ export default async function LeasesPage({ searchParams }: { searchParams: Promi
             title={all.length ? "No leases match this filter" : "No leases yet"}
             action={
               all.length ? undefined : (
-                <Link href="/import" className="btn primary">
+                <Link href="/settings/import" className="btn primary">
                   Import existing leases
                 </Link>
               )
@@ -75,7 +75,7 @@ export default async function LeasesPage({ searchParams }: { searchParams: Promi
                 {rows.map((l) => (
                   <tr key={l.id}>
                     <td>
-                      <Link href={`/leases/${l.id}`} className="row-title">
+                      <Link href={`/work?kind=lease&id=${l.id}`} className="row-title">
                         {l.unitCode}
                       </Link>
                       <div className="row-sub">{l.tenantName ?? "No tenant on record"}</div>

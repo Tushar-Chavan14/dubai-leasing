@@ -1,21 +1,29 @@
 "use client";
 
-import { formatAed, parseAed } from "@leasing/core";
+import { formatAed, parseAed, SUBTYPES_BY_CATEGORY } from "@leasing/core";
 import { useRouter } from "next/navigation";
-import { useMemo, useState, useTransition } from "react";
-import { type ActionResult, createUnitAction, updateUnitAction } from "../app/(staff)/units/actions";
+import { useEffect, useMemo, useState, useTransition } from "react";
+import {
+  type ActionResult,
+  createUnitAction,
+  type PriceRangeView,
+  priceRangeAction,
+  updateUnitAction,
+} from "../app/(staff)/units/actions";
+import { aedShort } from "../lib/format";
 import { uploadPhoto } from "../lib/images";
 import { IconWarning } from "../lib/icons";
-import type { UnitRow } from "../lib/types";
+import { type Category, CATEGORIES, COMMUNITIES, subtypeLabel } from "../lib/portfolio";
+import type { CompanyRow, UnitRow } from "../lib/types";
 import { moveItem, type PhotoItem, PhotoPicker } from "./photo-picker";
-
-type Ranges = Record<string, { min: number; max: number }>;
 
 interface Values {
   code: string;
   building: string;
   community: string;
-  kind: "residential" | "commercial";
+  companyId: string;
+  category: Category;
+  subtype: string;
   unitNo: string;
   floor: string;
   dldPropertyNo: string;
@@ -32,27 +40,16 @@ interface Values {
   virtualTourUrl: string;
 }
 
-const COMMUNITIES = [
-  "Dubai Marina",
-  "Jumeirah Village Circle",
-  "Downtown Dubai",
-  "Business Bay",
-  "Dubai Creek Harbour",
-  "Jumeirah Lake Towers",
-  "Dubai Hills Estate",
-  "Arabian Ranches",
-  "Al Barsha",
-  "Palm Jumeirah",
-];
-
 const s = (v: unknown) => (v === null || v === undefined ? "" : String(v));
 
-function initial(u?: Partial<UnitRow>): Values {
+function initial(u: Partial<UnitRow> | undefined, defaultCompanyId: string): Values {
   return {
     code: s(u?.code),
     building: s(u?.building),
     community: s(u?.community),
-    kind: (u?.kind as Values["kind"]) ?? "residential",
+    companyId: u?.companyId ?? defaultCompanyId,
+    category: u?.category ?? "residential",
+    subtype: s(u?.subtype),
     unitNo: s(u?.unitNo),
     floor: s(u?.floor),
     dldPropertyNo: s(u?.dldPropertyNo),
@@ -75,16 +72,18 @@ const int = (v: string) => (v.trim() === "" ? null : Number(v));
 export function UnitForm({
   mode,
   unit,
-  ranges,
+  companies,
   lockedFields = [],
 }: {
   mode: "create" | "edit";
   unit?: UnitRow;
-  ranges: Ranges;
+  companies: CompanyRow[];
   lockedFields?: string[];
 }) {
   const router = useRouter();
-  const [v, setV] = useState<Values>(() => initial(unit));
+  const [v, setV] = useState<Values>(() =>
+    initial(unit, companies.find((c) => c.active)?.id ?? companies[0]?.id ?? ""),
+  );
   const [photos, setPhotos] = useState<PhotoItem[]>([]);
   const [result, setResult] = useState<ActionResult>({});
   const [progress, setProgress] = useState<string | null>(null);
@@ -102,13 +101,61 @@ export function UnitForm({
       return Number.NaN;
     }
   }, [v.askingRent]);
-  const range = ranges[v.bedrooms];
+  const residential = v.category === "residential";
+  const areaSqft = int(v.areaSqft);
+  const bedrooms = residential ? int(v.bedrooms) : null;
+  const rangeEnabled = !!v.companyId && !!v.community.trim();
+  const rangeArea = areaSqft !== null && Number.isInteger(areaSqft) && areaSqft >= 50 ? areaSqft : null;
+  const rangeKey = JSON.stringify([v.companyId, v.category, v.subtype, v.community.trim(), bedrooms, rangeArea]);
+  // The answer is stored with the inputs it was fetched for, so a stale one never shows while typing.
+  const [fetched, setFetched] = useState<{ key: string; data: PriceRangeView | null } | null>(null);
+  const view: PriceRangeView | null | "loading" | "idle" = !rangeEnabled
+    ? "idle"
+    : fetched?.key === rangeKey
+      ? fetched.data
+      : "loading";
+  useEffect(() => {
+    if (!rangeEnabled) return;
+    let live = true;
+    const t = setTimeout(async () => {
+      const data = await priceRangeAction({
+        companyId: v.companyId,
+        category: v.category,
+        subtype: v.subtype || null,
+        community: v.community.trim(),
+        bedrooms,
+        areaSqft: rangeArea,
+      });
+      if (live) setFetched({ key: rangeKey, data });
+    }, 300);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+  }, [rangeEnabled, rangeKey, v.companyId, v.category, v.subtype, v.community, bedrooms, rangeArea]);
+  const loaded = view && view !== "loading" && view !== "idle" ? view : null;
+  const range = loaded?.range ?? null;
+  const companyName = companies.find((c) => c.id === v.companyId)?.name ?? "The company";
   const rentTone =
     rentFils === null || Number.isNaN(rentFils) || !range
       ? undefined
-      : rentFils < range.min || rentFils > range.max
+      : (range.min !== null && rentFils < range.min) || (range.max !== null && rentFils > range.max)
         ? "warn"
         : "good";
+  const rangeText = (() => {
+    if (!range) return null;
+    const { min, max } = range;
+    const amount =
+      min !== null && max !== null
+        ? `${aedShort(min)} to ${aedShort(max)}`
+        : min !== null
+          ? `${aedShort(min)} or more`
+          : max !== null
+            ? `up to ${aedShort(max)}`
+            : "any amount";
+    const basis = loaded?.sriLabel ?? null;
+    return `Allowed: ${amount} (${companyName} ${v.category} rule${basis ? `, ${basis}` : ""})`;
+  })();
 
   function payload(): Record<string, unknown> | null {
     if (Number.isNaN(rentFils)) {
@@ -122,7 +169,9 @@ export function UnitForm({
       code: v.code,
       building: v.building,
       community: v.community,
-      kind: v.kind,
+      companyId: v.companyId,
+      category: v.category,
+      subtype: v.subtype || null,
       unitNo: v.unitNo,
       floor: int(v.floor),
       dldPropertyNo: v.dldPropertyNo,
@@ -130,7 +179,7 @@ export function UnitForm({
       plotNo: v.plotNo,
       dewaPremiseNo: v.dewaPremiseNo,
       areaSqft: int(v.areaSqft),
-      bedrooms: int(v.bedrooms),
+      bedrooms,
       bathrooms: int(v.bathrooms),
       parkingSpaces: int(v.parkingSpaces),
       furnished: v.furnished === "" ? null : v.furnished === "yes",
@@ -263,25 +312,51 @@ export function UnitForm({
             <input value={v.floor} onChange={set("floor")} inputMode="numeric" placeholder="12" {...inv("floor")} />
             {err("floor")}
           </label>
-          <div className="field span-6">
-            <span className="field-label">Use</span>
-            <div className="segmented" role="radiogroup" aria-label="Use">
-              {(["residential", "commercial"] as const).map((k) => (
-                <label key={k}>
+          <label className="field span-3">
+            <span className="field-label">Company</span>
+            <select value={v.companyId} onChange={set("companyId")} required {...inv("companyId")}>
+              {companies.length === 0 && <option value="">No companies yet</option>}
+              {companies
+                .filter((c) => c.active || c.id === v.companyId)
+                .map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+            </select>
+            {err("companyId")}
+          </label>
+          <div className="field span-3">
+            <span className="field-label">Category</span>
+            <div className="segmented" role="radiogroup" aria-label="Category">
+              {CATEGORIES.map((c) => (
+                <label key={c.value}>
                   <input
                     type="radio"
-                    name="kind"
-                    checked={v.kind === k}
-                    onChange={() => setV((p) => ({ ...p, kind: k }))}
+                    name="category"
+                    checked={v.category === c.value}
+                    disabled={locked("category")}
+                    onChange={() => setV((p) => ({ ...p, category: c.value, subtype: "" }))}
                   />
-                  <span>{k === "residential" ? "Residential" : "Commercial"}</span>
+                  <span>{c.label}</span>
                 </label>
               ))}
             </div>
-            {v.kind === "commercial" && (
-              <span className="hint">Commercial leases are flagged for a person at every step in this version.</span>
-            )}
+            {locked("category") && <span className="hint">Fixed while the unit has a lease</span>}
+            {err("category")}
           </div>
+          <label className="field span-3">
+            <span className="field-label">Type</span>
+            <select value={v.subtype} onChange={set("subtype")} {...inv("subtype")}>
+              <option value="">Not set</option>
+              {SUBTYPES_BY_CATEGORY[v.category].map((t) => (
+                <option key={t} value={t}>
+                  {subtypeLabel(t)}
+                </option>
+              ))}
+            </select>
+            {err("subtype")}
+          </label>
         </div>
       </section>
 
@@ -334,26 +409,28 @@ export function UnitForm({
       <section className="form-section">
         <header>
           <h2>Layout</h2>
-          <p>Used to match enquiries and to pick the company price range.</p>
+          <p>Used to match enquiries and to work out the allowed price range.</p>
         </header>
         <div className="grid-fields">
-          <div className="field span-6">
-            <span className="field-label">Bedrooms</span>
-            <div className="segmented" role="radiogroup" aria-label="Bedrooms">
-              {["0", "1", "2", "3", "4", "5", "6"].map((b) => (
-                <label key={b}>
-                  <input
-                    type="radio"
-                    name="bedrooms"
-                    checked={v.bedrooms === b}
-                    onChange={() => setV((p) => ({ ...p, bedrooms: b }))}
-                  />
-                  <span>{b === "0" ? "Studio" : b === "6" ? "6+" : b}</span>
-                </label>
-              ))}
+          {residential && (
+            <div className="field span-6">
+              <span className="field-label">Bedrooms</span>
+              <div className="segmented" role="radiogroup" aria-label="Bedrooms">
+                {["0", "1", "2", "3", "4", "5", "6"].map((b) => (
+                  <label key={b}>
+                    <input
+                      type="radio"
+                      name="bedrooms"
+                      checked={v.bedrooms === b}
+                      onChange={() => setV((p) => ({ ...p, bedrooms: b }))}
+                    />
+                    <span>{b === "0" ? "Studio" : b === "6" ? "6+" : b}</span>
+                  </label>
+                ))}
+              </div>
+              {err("bedrooms")}
             </div>
-            {err("bedrooms")}
-          </div>
+          )}
           <label className="field span-2">
             <span className="field-label">Area</span>
             <span className="affix">
@@ -418,7 +495,7 @@ export function UnitForm({
       <section className="form-section">
         <header>
           <h2>Asking rent</h2>
-          <p>Per year. Outside the company range, a leasing manager approves it before the unit can be marked ready.</p>
+          <p>Per year. Outside the allowed range, a leasing manager approves it before the unit can be marked ready.</p>
         </header>
         <div className="grid-fields">
           <label className="field span-3">
@@ -434,15 +511,25 @@ export function UnitForm({
               />
             </span>
             {err("askingRentFils") ??
-              (range ? (
-                <span className="hint" {...(rentTone ? { "data-tone": rentTone } : {})}>
-                  Company range for {v.bedrooms === "0" ? "studios" : `${v.bedrooms}-bed units`}:{" "}
-                  {formatAed(range.min).replace(".00", "")}–
-                  {formatAed(range.max).replace(".00", "").replace("AED ", "")}
-                  {rentTone === "warn" ? ". Outside it, so this needs approval." : ""}
+              (view === "idle" ? (
+                <span className="hint">Choose a company and community to see the allowed range.</span>
+              ) : view === "loading" ? (
+                <span className="hint">Checking the allowed range…</span>
+              ) : view === null ? (
+                <span className="hint" aria-live="polite">
+                  Could not check the allowed range.
+                </span>
+              ) : rangeText ? (
+                <span className="hint" aria-live="polite" {...(rentTone ? { "data-tone": rentTone } : {})}>
+                  {rangeText}
+                  {rentTone === "warn" ? ". This price is outside it, so it needs a manager's approval." : ""}
                 </span>
               ) : (
-                <span className="hint">No company range is set for this size; it will need approval.</span>
+                <span className="hint" aria-live="polite">
+                  {view.ruleId
+                    ? "This rule gives no allowed range for this unit yet (no rent index row and no AED limits). Setting a price will need a manager's approval."
+                    : "No rule covers this unit yet. Setting a price will need a manager's approval."}
+                </span>
               ))}
           </label>
         </div>

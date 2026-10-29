@@ -320,3 +320,48 @@ describe("leasing assistant through the runner", () => {
     expect(llm.calls).toHaveLength(0);
   });
 });
+
+describe("leasing assistant on the web channel", () => {
+  const webDecision = (o: Record<string, SystemOneResponse["answers"][string]> = {}): SystemOneResponse => {
+    const base = decision({ bedrooms: "none", community: "none" });
+    // No commercial question on web: the helper must not need it.
+    const { commercial: _commercial, ...answers } = base.answers;
+    return { ...base, answers: { ...answers, ...o } };
+  };
+  const choice = (c: string) => ({ type: "choice" as const, choice: c, confidence: 0.9, probabilities: {} });
+
+  test("the web questions exist only on web; commercial is not asked there", () => {
+    const web = enquiryQuestions(ctx({ channel: "web" }));
+    expect(Object.keys(web)).toEqual(expect.arrayContaining(["emirate", "category", "size_band"]));
+    expect(web.commercial).toBeUndefined();
+    const tg = enquiryQuestions(ctx());
+    expect(tg.emirate).toBeUndefined();
+    expect(tg.commercial).toBeDefined();
+    expect(enquiryState(ctx({ channel: "web" }))).toContain("web chat");
+  });
+
+  test("category, size band and emirate are read; a business enquiry is no handoff", async () => {
+    const llm = new FakeLlm(() =>
+      webDecision({ emirate: choice("dubai"), category: choice("commercial"), size_band: choice("medium") }),
+    );
+    const r = await leasingAssistant(llm).run(input(ctx({ channel: "web", text: "an office of 2000 sq ft" })));
+    expect(r.data!.handoff).toBe(false);
+    expect(r.data!.search).toMatchObject({ emirate: "dubai", category: "commercial", sizeBand: "medium" });
+  });
+
+  test("a value outside the options is dropped, not passed on", async () => {
+    const llm = new FakeLlm(() =>
+      webDecision({ emirate: choice("narnia"), category: choice("castle"), size_band: choice("huge") }),
+    );
+    const r = await leasingAssistant(llm).run(input(ctx({ channel: "web" })));
+    expect(r.data!.search.emirate).toBeUndefined();
+    expect(r.data!.search.category).toBeUndefined();
+    expect(r.data!.search.sizeBand).toBeUndefined();
+  });
+
+  test("Telegram never gets the web fields", async () => {
+    const llm = new FakeLlm(() => decision());
+    const r = await leasingAssistant(llm).run(input(ctx()));
+    expect(r.data!.search.category).toBeUndefined();
+  });
+});

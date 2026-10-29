@@ -81,7 +81,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
             </form>
           )}
           <p className="muted" style={{ marginTop: 20 }}>
-            Looking for a home? <Link href="/properties">Browse properties</Link>
+            Looking for a home? <Link href="/customer/properties">Browse properties</Link>
           </p>
         </div>
       </section>

@@ -2,7 +2,12 @@ import { CONTRACT_CLAUSES, type ContractClauseId } from "@leasing/core";
 import Link from "next/link";
 import { dateTime, humanise, proposalValue } from "../lib/format";
 import { IconCheck, IconWarning } from "../lib/icons";
-import { PrepareContractForm, ProposeEjariButton, ResendSignLinkButton } from "./contract-forms";
+import {
+  PrepareContractForm,
+  ProposeEjariButton,
+  ReprepareContractButton,
+  ResendSignLinkButton,
+} from "./contract-forms";
 import { Status } from "./ui";
 
 export interface ContractRow {
@@ -11,7 +16,11 @@ export interface ContractRow {
   status: string;
   fields: Record<string, unknown>;
   sources: Record<string, { entity: string; id: string; column: string }>;
-  addendum: { clauses: string[]; freeText: string | null };
+  addendum: {
+    clauses: string[];
+    freeText: string | null;
+    companyClauses?: { id: string; title: string; text: string }[];
+  };
   flags: { kind: string; quote: string; reason: string }[];
   sha256: string;
   signedSha256: string | null;
@@ -31,6 +40,12 @@ export interface ContractRow {
     signedAt: string | null;
     typedName: string | null;
   }[];
+}
+
+/** What the prepare form offers: the rule's preselected clauses and the company's approved clauses. */
+export interface ClauseOptions {
+  suggested: string[];
+  companyClauses: { ref: string; title: string; text: string; hasValues: boolean }[];
 }
 
 export interface EjariAttempt {
@@ -159,11 +174,13 @@ export function ContractPanel({
   state,
   contracts,
   canAct,
+  options,
 }: {
   leaseId: string;
   state: string;
   contracts: ContractRow[];
   canAct: boolean;
+  options?: ClauseOptions | undefined;
 }) {
   const current = contracts[0];
   const older = contracts.slice(1);
@@ -194,7 +211,13 @@ export function ContractPanel({
             prepare it here.
           </p>
           {canAct && (
-            <PrepareContractForm leaseId={leaseId} clauses={[]} freeText={null} label="Prepare the contract" />
+            <PrepareContractForm
+              leaseId={leaseId}
+              clauses={options?.suggested ?? []}
+              freeText={null}
+              label="Prepare the contract"
+              companyClauses={options?.companyClauses ?? []}
+            />
           )}
         </div>
       )}
@@ -229,7 +252,7 @@ export function ContractPanel({
               </a>
             )}
             {current.approvalId && current.status === "pending_approval" && (
-              <Link className="btn small" href={`/inbox/${current.approvalId}`}>
+              <Link className="btn small" href={`/work?approval=${current.approvalId}`}>
                 Open the approval
               </Link>
             )}
@@ -298,17 +321,37 @@ export function ContractPanel({
             <details>
               <summary>Addendum</summary>
               <ul className="reasons" style={{ marginTop: 8 }}>
-                {current.addendum.clauses.map((c) => (
-                  <li key={c}>
-                    <b>{CONTRACT_CLAUSES[c as ContractClauseId]?.title ?? c}.</b>{" "}
-                    {CONTRACT_CLAUSES[c as ContractClauseId]?.text}
-                  </li>
-                ))}
+                {current.addendum.clauses
+                  .filter((c) => Object.hasOwn(CONTRACT_CLAUSES, c))
+                  .map((c) => (
+                    <li key={c}>
+                      <b>{CONTRACT_CLAUSES[c as ContractClauseId].title}.</b>{" "}
+                      {CONTRACT_CLAUSES[c as ContractClauseId].text}
+                    </li>
+                  ))}
               </ul>
+              {(current.addendum.companyClauses?.length ?? 0) > 0 && (
+                <>
+                  <p className="muted" style={{ margin: "8px 0 0" }}>
+                    Additional terms (company)
+                  </p>
+                  <ul className="reasons">
+                    {current.addendum.companyClauses?.map((c) => (
+                      <li key={c.id}>
+                        <b>{c.title}.</b> {c.text}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
               {current.addendum.freeText && (
                 <blockquote className="tenant-text">{current.addendum.freeText}</blockquote>
               )}
             </details>
+          )}
+
+          {canAct && state === "CONTRACT" && current.status === "pending_approval" && (
+            <ReprepareContractButton leaseId={leaseId} />
           )}
 
           {canAct && state === "CONTRACT" && current.status !== "signed" && (
@@ -320,6 +363,7 @@ export function ContractPanel({
                   clauses={current.addendum.clauses}
                   freeText={current.addendum.freeText}
                   label="Prepare a new version"
+                  companyClauses={options?.companyClauses ?? []}
                 />
                 <p className="muted" style={{ fontSize: 12.5 }}>
                   The new version replaces this one: its approval is cancelled and its signing links stop working.
@@ -433,7 +477,7 @@ export function EjariPanel({
         ))}
         <div className="btn-row">
           {pendingApprovalId && (
-            <Link className="btn small" href={`/inbox/${pendingApprovalId}`}>
+            <Link className="btn small" href={`/work?approval=${pendingApprovalId}`}>
               Open the approval
             </Link>
           )}

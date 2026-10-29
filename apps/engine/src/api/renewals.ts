@@ -1,6 +1,6 @@
 import { InboundType, newId, type StaffRole } from "@leasing/core";
-import { approvals, documents, leases, sriAverages, sriOverrides, tasks, withTx } from "@leasing/db";
-import { and, asc, eq, inArray, like } from "drizzle-orm";
+import { approvals, leases, sriOverrides, tasks, withTx } from "@leasing/db";
+import { and, eq, inArray, like } from "drizzle-orm";
 import type { Hono } from "hono";
 import { z } from "zod";
 import type { EngineContext } from "../context.ts";
@@ -84,31 +84,6 @@ export function registerRenewalRoutes(api: Hono<AuthEnv>, ctx: EngineContext) {
     return c.json(r);
   });
 
-  api.get("/sri", async (c) =>
-    c.json(await db.select().from(sriAverages).orderBy(asc(sriAverages.community), asc(sriAverages.bedrooms))),
-  );
-
-  api.put("/sri", async (c) => {
-    requireRole(c.get("user"), ["admin", "leasing_manager"]);
-    const b = z
-      .object({
-        community: z.string().trim().min(1).max(120),
-        bedrooms: z.number().int().min(0).max(10),
-        avgAnnualRentFils: z.number().int().positive().max(100_000_000_00),
-      })
-      .parse(await c.req.json());
-    const today = ctx.clock.today();
-    const [row] = await db
-      .insert(sriAverages)
-      .values({ id: newId(), ...b, source: "manual", effectiveFrom: today, createdBy: actorOf(c) })
-      .onConflictDoUpdate({
-        target: [sriAverages.community, sriAverages.bedrooms, sriAverages.effectiveFrom],
-        set: { avgAnnualRentFils: b.avgAnnualRentFils, source: "manual", createdBy: actorOf(c) },
-      })
-      .returning();
-    return c.json(row);
-  });
-
   /** A lease-specific SRI value (e.g. read from the DLD calculator). Re-drafts a pending notice. */
   api.post("/leases/:id/sri-override", async (c) => {
     requireRole(c.get("user"), LEASING);
@@ -165,41 +140,5 @@ export function registerRenewalRoutes(api: Hono<AuthEnv>, ctx: EngineContext) {
       return { redrafted: true };
     });
     return c.json(result, 201);
-  });
-
-  /**
-   * Generated lease documents. Notices and Ejari certificates: any staff role. Contracts carry the
-   * tenant's ID numbers: leasing staff only, and every view is recorded on the lease.
-   */
-  api.get("/leases/:id/documents/:docId", async (c) => {
-    const leaseId = z.uuid().catch("00000000-0000-0000-0000-000000000000").parse(c.req.param("id"));
-    const docId = z.uuid().catch("00000000-0000-0000-0000-000000000000").parse(c.req.param("docId"));
-    const [doc] = await db
-      .select()
-      .from(documents)
-      .where(and(eq(documents.id, docId), eq(documents.leaseId, leaseId)));
-    if (
-      !doc ||
-      !["renewal_notice", "contract", "contract_signed", "ejari_certificate", "deposit_statement"].includes(doc.kind)
-    ) {
-      throw notFound("document");
-    }
-    if (doc.kind === "contract" || doc.kind === "contract_signed") {
-      requireRole(c.get("user"), LEASING);
-      await withTx(ctx.database, (tx) =>
-        appendEvent(tx, ctx, {
-          entity: { kind: "lease", id: leaseId },
-          type: "DOCUMENT_VIEWED",
-          actor: `user:${c.get("user").id}`,
-          payload: { documentId: doc.id, kind: doc.kind },
-        }),
-      );
-    }
-    const bytes = await ctx.documents.read(doc.path);
-    return c.body(new Uint8Array(bytes), 200, {
-      "content-type": "application/pdf",
-      "content-disposition": `inline; filename="${doc.kind}-${doc.sha256.slice(0, 8)}.pdf"`,
-      "cache-control": "private, no-store",
-    });
   });
 }

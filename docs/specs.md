@@ -30,6 +30,10 @@ person, and never miss a deadline.
 
 ### In scope
 
+> Scope note (D33): by default the product ends at Ejari registration. Move-in, rent collection,
+> complaints, renewal, move-out and disputes (steps 7 to 11) sit behind the `TENANCY_OPS` flag,
+> which is off. Items below that belong to those steps apply only when it is on.
+
 - Telegram bot for incoming enquiries and viewing booking (Arabic and English)
 - Email over SMTP (Nodemailer) for all outbound communication: viewing confirmations, offers,
   contract and upload links, rent reminders, formal reminders, renewal and other notices, receipts
@@ -70,7 +74,7 @@ Each step lists the helper, what it does, the human gate and acceptance criteria
 
 - Readiness checklist: title deed / DLD property number, unit number, makani number, area,
   bedrooms, furnished flag, DEWA premise number.
-- **Pricing helper** suggests asking rent from SRI average and company range.
+- **Pricing helper** suggests asking rent from SRI average and the company's rent rules (D32).
 - Gate: price outside company range.
 - AC: a unit can't be `LISTED` until every checklist field is filled and a price is approved or within range.
 

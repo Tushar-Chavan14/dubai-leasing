@@ -166,6 +166,10 @@ describe("find_available_units and propose_application", () => {
         asked = path;
         return [
           {
+            unitId: "01a15589-4d9e-7b5c-b273-1be27993e599",
+            company: "Silverline Properties",
+            category: "residential",
+            card: null,
             code: "JVC-0412",
             building: "B",
             community: "Jumeirah Village Circle",
@@ -268,9 +272,25 @@ describe("find_available_units by unit code, and the prompt per role", () => {
     expect(findAvailableUnits.input.safeParse({ unitCode: "JVC%" }).success).toBe(false);
   });
 
+  test("prompt names no hidden tool while TENANCY_OPS is off, and does when on", async () => {
+    const { systemPrompt } = await import("../src/prompt.ts");
+    const { copilotTools, toolsFor } = await import("../src/tools/index.ts");
+    const shown = new Set(toolsFor("leasing_manager", { tenancyOps: false }).map((t) => t.name));
+    const hidden = copilotTools.map((t) => t.name).filter((n) => !shown.has(n));
+    expect(hidden.length).toBeGreaterThan(0);
+    for (const role of ["leasing_officer", "leasing_manager", "finance", "admin"] as const) {
+      const u = { id: "u", email: "u@x", name: "U", role };
+      const off = systemPrompt(u, "2026-11-02", undefined, { tenancyOps: false });
+      const on = systemPrompt(u, "2026-11-02", undefined, { tenancyOps: true });
+      for (const n of hidden) expect(off).not.toContain(n);
+      expect(on).toContain("compute_renewal_cap");
+    }
+  });
+
   test("each role is told what it may prepare; nobody confirms in text", async () => {
     const { systemPrompt } = await import("../src/prompt.ts");
-    const as = (role: StaffUser["role"]) => systemPrompt({ id: "u", email: "u@x", name: "U", role }, "2026-11-02");
+    const as = (role: StaffUser["role"]) =>
+      systemPrompt({ id: "u", email: "u@x", name: "U", role }, "2026-11-02", undefined, { tenancyOps: true });
     for (const role of ["leasing_officer", "leasing_manager"] as const) {
       expect(as(role)).toContain("propose_application");
       expect(as(role)).toContain("don't ask them to confirm in text");

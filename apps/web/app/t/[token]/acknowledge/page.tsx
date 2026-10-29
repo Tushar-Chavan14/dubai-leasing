@@ -1,3 +1,5 @@
+import { notFound } from "next/navigation";
+import { TENANCY_OPS } from "../../../../lib/env";
 import { publicGet } from "../../../../lib/engine";
 import { longDate } from "../../../../lib/format";
 import { IconCheck } from "../../../../lib/icons";
@@ -13,6 +15,7 @@ interface AckView {
 
 /** One-click acknowledgement page. Opening it does nothing by itself; the button records it. */
 export default async function AcknowledgePage({ params }: { params: Promise<{ token: string }> }) {
+  if (!TENANCY_OPS) notFound();
   const { token } = await params;
   const v = await publicGet<AckView>(`/api/portal/${encodeURIComponent(token)}`);
   if (!v?.notice) {

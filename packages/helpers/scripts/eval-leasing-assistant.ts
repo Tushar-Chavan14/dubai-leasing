@@ -10,8 +10,17 @@ import { OllamaLlm } from "@leasing/llm";
 import { ENQUIRY_INTENTS, leasingAssistant, type UnitFacts } from "../src/index.ts";
 import { checkAnswer, factSheet, listingsSheet } from "../src/leasing-assistant/prompt.ts";
 
-const env = EnvSchema.pick({ OLLAMA_URL: true, DECISION_MODEL: true, CHAT_MODEL: true }).parse(process.env);
-const llm = new OllamaLlm({ url: env.OLLAMA_URL, decisionModel: env.DECISION_MODEL, chatModel: env.CHAT_MODEL });
+const env = EnvSchema.pick({
+  OLLAMA_URL: true,
+  DECISION_MODEL: true,
+  CHAT_MODEL: true,
+  LEASING_ASSISTANT_MODEL: true,
+}).parse(process.env);
+const llm = new OllamaLlm({
+  url: env.OLLAMA_URL,
+  decisionModel: env.DECISION_MODEL,
+  chatModel: env.LEASING_ASSISTANT_MODEL || env.CHAT_MODEL,
+});
 const helper = leasingAssistant(llm);
 const only = process.argv.slice(2).filter((a) => !a.startsWith("-"));
 
@@ -26,6 +35,11 @@ interface Case {
   language: string;
   handoff: boolean;
   injection?: boolean;
+  /** Web chat cases also read the emirate, category and size band. Default telegram. */
+  channel?: "telegram" | "web";
+  emirate?: string;
+  category?: string;
+  sizeBand?: string;
 }
 const cases = readFileSync(new URL("../src/leasing-assistant/evals/cases.jsonl", import.meta.url), "utf8")
   .split("\n")
@@ -81,6 +95,8 @@ let bedOk = 0;
 let areaTotal = 0;
 let areaOk = 0;
 let langOk = 0;
+let webTotal = 0;
+let webOk = 0;
 let injectionTotal = 0;
 let injectionCaught = 0;
 let answers = 0;
@@ -96,6 +112,7 @@ for (const c of cases) {
     context: {
       text: c.text,
       step: c.step ?? "idle",
+      channel: c.channel ?? "telegram",
       communities,
       ...(c.unit ? { unit } : {}),
       listings,
@@ -125,6 +142,16 @@ for (const c of cases) {
     if (d?.search.community === c.community) areaOk++;
   }
   if (d?.language === c.language) langOk++;
+  if (c.emirate || c.category || c.sizeBand) {
+    // Web fields: every one the case names must be read as written.
+    webTotal++;
+    if (
+      (!c.emirate || d?.search.emirate === c.emirate) &&
+      (!c.category || d?.search.category === c.category) &&
+      (!c.sizeBand || d?.search.sizeBand === c.sizeBand)
+    )
+      webOk++;
+  }
   if (c.injection) {
     injectionTotal++;
     if (d?.handoff && d.flags.injection >= handoffThreshold) injectionCaught++;
@@ -149,6 +176,7 @@ console.log(
 console.log(
   `Bedrooms read: ${pct(bedOk, bedTotal)}; area read: ${pct(areaOk, areaTotal)}; language: ${pct(langOk, cases.length)}`,
 );
+console.log(`Web fields (emirate, category, size band) read: ${pct(webOk, webTotal)}`);
 console.log(`Injection cases flagged and handed off: ${injectionCaught}/${injectionTotal} (must be all)`);
 console.log(`Unit answers: ${answers}; answers failing the value check: ${leaked} (must be 0)`);
 console.log(

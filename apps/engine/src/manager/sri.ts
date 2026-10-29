@@ -1,6 +1,6 @@
 import type { CalendarDate } from "@leasing/core";
 import { leases, sriAverages, sriOverrides, type Tx, units } from "@leasing/db";
-import { and, desc, eq, lte } from "drizzle-orm";
+import { and, desc, eq, isNotNull, lte } from "drizzle-orm";
 
 const bedroomsName = (n: number) => (n === 0 ? "studio" : `${n}-bed`);
 
@@ -37,24 +37,26 @@ export async function lookupSri(
     };
   }
   const [row] = await tx.db
-    .select({ community: units.community, bedrooms: units.bedrooms })
+    .select({ community: units.community, bedrooms: units.bedrooms, category: units.category })
     .from(leases)
     .innerJoin(units, eq(units.id, leases.unitId))
     .where(eq(leases.id, leaseId));
-  if (!row || row.bedrooms === null) return null;
+  if (!row || row.category !== "residential" || row.bedrooms === null) return null;
   const [avg] = await tx.db
     .select()
     .from(sriAverages)
     .where(
       and(
         eq(sriAverages.community, row.community),
+        eq(sriAverages.category, "residential"),
         eq(sriAverages.bedrooms, row.bedrooms),
+        isNotNull(sriAverages.avgAnnualRentFils),
         lte(sriAverages.effectiveFrom, today),
       ),
     )
     .orderBy(desc(sriAverages.effectiveFrom))
     .limit(1);
-  if (!avg) return null;
+  if (!avg || avg.avgAnnualRentFils === null) return null;
   return {
     avgAnnualRentFils: avg.avgAnnualRentFils,
     source: "table",

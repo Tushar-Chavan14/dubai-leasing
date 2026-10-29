@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { DEMO_PROPERTIES, luhnCheckDigit } from "@leasing/core";
+import { DEMO_COMPANY_LEGAL, DEMO_PROPERTIES, luhnCheckDigit } from "@leasing/core";
 import { sql } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
@@ -29,7 +29,9 @@ export async function bootstrap(db: MockDb): Promise<void> {
   await migrate(db, { migrationsFolder, migrationsSchema: "ejari_mock" });
 }
 
-const OWNER = "Fictional Holdings LLC";
+/** The registered owner of a demo unit: its company's legal name (D44), as the engine's demo seed writes it. */
+const ownerOf = (companySlug: string) => DEMO_COMPANY_LEGAL[companySlug]!.legalNameEn;
+const OWNER_BY_DLD = new Map(DEMO_PROPERTIES.map(([dld, , , company]) => [dld, ownerOf(company)]));
 
 /** Demo units: the same list the engine's demo seed builds its units from (all fictional). */
 const PROPERTIES = DEMO_PROPERTIES;
@@ -76,7 +78,12 @@ export async function seed(db: MockDb): Promise<void> {
   await db
     .insert(properties)
     .values(
-      PROPERTIES.map(([dldPropertyNo, unitNo, makaniNo]) => ({ dldPropertyNo, unitNo, makaniNo, ownerName: OWNER })),
+      PROPERTIES.map(([dldPropertyNo, unitNo, makaniNo, company]) => ({
+        dldPropertyNo,
+        unitNo,
+        makaniNo,
+        ownerName: ownerOf(company),
+      })),
     )
     .onConflictDoNothing();
   await db
@@ -99,7 +106,7 @@ export async function seed(db: MockDb): Promise<void> {
         dldPropertyNo,
         tenantIdNo: eid("1900", serial),
         tenantName,
-        landlordName: OWNER,
+        landlordName: OWNER_BY_DLD.get(dldPropertyNo)!,
         startOn: "2000-01-01",
         endOn: "2099-12-31",
         annualRentFils: 0,

@@ -26,9 +26,14 @@ export {
   rentFriendlyEmail,
   rentReminderEmail,
   staffMessageEmail,
+  applicantMessageEmail,
+  viewingReminderEmail,
+  noShowFollowupEmail,
+  documentsChaseEmail,
 } from "./mail/templates.ts";
 export type * from "./mail/types.ts";
 export { type PdfBlock, renderPdf } from "./pdf/render.ts";
+export { PdfLogoError, type PdfLogo, type PdfLook, renderStyledPdf, type StyledBlock } from "./pdf/styled.ts";
 export { appendSignatureRecord, type SignatureRecord } from "./pdf/signature.ts";
 export { type ImageType, LocalDiskStore, sniffImage } from "./storage/local.ts";
 export { stripImageMetadata } from "./storage/strip.ts";

@@ -15,6 +15,8 @@ export interface StaffUser {
  */
 export type Actor =
   | "system"
+  /** A named automatic job (a switch in Settings), e.g. `system:auto-release`, `system:auto-approve`. */
+  | `system:${string}`
   | "import"
   | "demo"
   | `user:${string}`

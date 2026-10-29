@@ -9,6 +9,8 @@ const card = {
   bedrooms: 1,
   bathrooms: 1,
   areaSqft: 800,
+  category: "residential",
+  subtype: null,
   furnished: false,
   rent: "AED 80,000",
   photoUrl: null,

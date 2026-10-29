@@ -53,16 +53,17 @@ tests pass.
     applicants, tenants and landlords goes by email through the `mail` adapter, which stores the
     message, attachment hashes and SMTP response as evidence. The 12-month repossession notice is
     never sent by email: it goes by notary or registered mail, handled by a person. Amendment
-    (D31): the public web chat, like Telegram, takes enquiries and books viewings only; tenants
-    act through emailed portal links. Everything outbound still goes by email.
+    (D31, D34, D36): the public web chat, like Telegram, takes enquiries and books viewings, and
+    may also create applications (Apply now), show a verified visitor's application stages, next
+    step and current offer rent and cheques read-only after an email code, and act through an AI
+    agent with tools. Documents still go only
+    through emailed links; tenants act through emailed portal links. Voice is only another way to type. Everything outbound still
+    goes by email.
 11. **The copilot only reads, drafts and proposes.** Copilot tools call the engine API as the
     logged-in user. No tool may approve a gate, send a message, change state, submit to Ejari,
     edit rules or policy, or open uploaded documents. Legal and money values in its answers
     come from rulebook tools. Tenant-written text reaching the copilot is untrusted data.
-    `propose` tools need the user's Confirm click. Three confirmed actions exist (decisions D25,
-    D26): an application (with its viewing invitation email), a task, and a pending approval
-    request (`formal_reminder`, `vacate_notice`), each created through the normal route, as the
-    user, only when that user clicks Confirm in the chat. `draft` tools save text the user opens
+    `propose` tools need the user's Confirm click. Seven confirmed actions exist (decisions D25, D26, D42): an application (with its viewing invitation email), a task, a pending approval request (`formal_reminder`, `vacate_notice`), a viewing invitation, a document request, a signing-link resend, and preparing a contract (it only prepares: the contract still waits at the `final_contract` gate). Each runs through the normal route, as the user, only when that user clicks Confirm in the chat. `draft` tools save text the user opens
     in the normal form and sends or posts themselves; the copilot never sends. The copilot's
     client can store a proposal or a draft but can never confirm, send or post one.
 
@@ -71,7 +72,7 @@ tests pass.
 ```
 apps/
   engine/          Manager worker + HTTP API (Hono). State machine, pg-boss jobs, helper runner.
-  web/             Next.js: staff app (approval inbox, lease views, copilot panel, demo console) + tenant portal (/t/...) + public site (/properties, /properties/[id], public chat at /chat and a chat launcher; no customer login).
+  web/             Next.js: staff app (Home with copilot, Workspace of records with activity log, units, settings incl. agent permissions and demo console) + tenant portal (/t/...) + public site (/customer/properties, /customer/properties/[id], public chat at /customer/chat with Apply now, status check and an AI agent, and a chat launcher; the old /properties and /chat URLs redirect; no customer login).
   telegram-bot/    grammY bot for incoming enquiries only (step 2). Posts events to engine API.
   ejari-mock/      Simulated Ejari service (Hono). Same contract as the future DLD adapter.
   mcp/             (phase 5) MCP server exposing the copilot tool registry to Claude, ChatGPT, etc.

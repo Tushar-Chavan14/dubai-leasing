@@ -8,21 +8,33 @@ import {
   addYears,
   type CalendarDate,
   defaultCompanyPolicy,
+  DEMO_COMPANIES,
+  DEMO_COMPANY_LEGAL,
+  DEMO_CONTRACT_RULES,
   DEMO_LISTED_UNITS,
+  DEMO_RENT_RULES,
+  DEMO_SRI,
   DEMO_MRN_1502_MAKANI,
   demoDldNo,
   loadEnv,
   luhnCheckDigit,
   newId,
+  type StaffUser,
 } from "@leasing/core";
 import {
+  actionLinks,
   applications,
+  companies,
+  contractSigners,
+  contracts,
+  contractRules,
   companyPolicy,
   createDatabase,
   type Database,
   leaseParties,
   leases,
   parties,
+  rentRules,
   sriAverages,
   staffUsers,
   units,
@@ -33,10 +45,14 @@ import { and, eq, isNull } from "drizzle-orm";
 import { createEngineClock } from "../clock.ts";
 import type { EngineContext, Scheduler } from "../context.ts";
 import { advance } from "../manager/advance.ts";
+import { requestApproval, decideApproval } from "../manager/approvals.ts";
+import { DEFAULT_ADDENDUM, finishContract, prepareContract, signContract } from "../manager/contracts.ts";
+import { receiveInbound, processInbound } from "../manager/inbound.ts";
 import { createLink } from "../manager/links.ts";
-import { bookViewing, createApplication, recordViewingOutcome } from "../manager/applications.ts";
+import { bookViewing, createApplication, recordReservation, recordViewingOutcome } from "../manager/applications.ts";
 import { appendEvent } from "../manager/events.ts";
 import { importLeasesCsv } from "../manager/import.ts";
+import { companyLandlord, updateCompanyLegal } from "../manager/company-legal.ts";
 import { syncRulebooks } from "../manager/rulebooks.ts";
 
 /**
@@ -50,19 +66,6 @@ const STAFF = [
   { email: "finance@demo.example", name: "Demo Finance", role: "finance" },
   { email: "admin@demo.example", name: "Demo Admin", role: "admin" },
 ] as const;
-
-/** [community, bedrooms, average annual rent in AED]. MRN-1204 at 85,000 is 15% below 100,000 → up to 5%. */
-const DEMO_SRI: [string, number, number][] = [
-  ["Dubai Marina", 0, 62_000],
-  ["Dubai Marina", 1, 100_000],
-  ["Dubai Marina", 2, 158_000],
-  ["Dubai Marina", 3, 215_000],
-  ["Jumeirah Village Circle", 0, 50_000],
-  ["Jumeirah Village Circle", 1, 74_000],
-  ["Jumeirah Village Circle", 2, 105_000],
-  ["Dubai Creek Harbour", 1, 112_000],
-  ["Dubai Creek Harbour", 2, 168_000],
-];
 
 const DESCRIPTIONS: Record<string, string> = {
   "MRN-1502":
@@ -122,7 +125,7 @@ export function demoLeasesCsv(today: CalendarDate): string {
   // Step 10 demo: ends in 40 days, inside the notice window (give notice from the demo console).
   const ending = leaseTerm(addDays(today, 40));
   const header =
-    "unit_code,building,community,unit_no,dld_property_no,makani_no,dewa_premise_no,bedrooms,area_sqft,furnished,landlord_name,landlord_email,tenant_name,tenant_email,tenant_phone,tenant_emirates_id,tenant_nationality,start_on,end_on,annual_rent_aed,cheques,deposit_aed,ejari_no";
+    "unit_code,building,community,unit_no,dld_property_no,makani_no,dewa_premise_no,bedrooms,area_sqft,furnished,tenant_name,tenant_email,tenant_phone,tenant_emirates_id,tenant_nationality,start_on,end_on,annual_rent_aed,cheques,deposit_aed,ejari_no";
   const rows = [
     [
       "MRN-1204",
@@ -135,8 +138,6 @@ export function demoLeasesCsv(today: CalendarDate): string {
       "1",
       "820",
       "no",
-      "Fictional Holdings LLC",
-      "landlord@demo.example",
       "Sara Example Khan",
       "sara.tenant@demo.example",
       "+971 50 000 0001",
@@ -160,8 +161,6 @@ export function demoLeasesCsv(today: CalendarDate): string {
       "2",
       "1250",
       "yes",
-      "Fictional Holdings LLC",
-      "landlord@demo.example",
       "Rami Sample Nasser",
       "rami.tenant@demo.example",
       "+971 50 000 0002",
@@ -185,8 +184,6 @@ export function demoLeasesCsv(today: CalendarDate): string {
       "0",
       "450",
       "no",
-      "Fictional Holdings LLC",
-      "landlord@demo.example",
       "Mina Test Varghese",
       "mina.tenant@demo.example",
       "+971 50 000 0003",
@@ -210,8 +207,6 @@ export function demoLeasesCsv(today: CalendarDate): string {
       "1",
       "760",
       "no",
-      "Fictional Holdings LLC",
-      "landlord@demo.example",
       "Noor Demo Haddad",
       "noor.tenant@demo.example",
       "+971 50 000 0004",
@@ -237,6 +232,26 @@ const noEjari: EngineContext["ejari"] = {
   certificate: unused,
 };
 
+async function demoCompanyIds(database: Database): Promise<Map<string, string>> {
+  const rows = await database.db.select({ id: companies.id, slug: companies.slug }).from(companies);
+  const bySlug = new Map(rows.map((r) => [r.slug, r.id]));
+  for (const c of DEMO_COMPANIES)
+    if (!bySlug.has(c.slug)) throw new Error("the demo companies are missing; run the seed first");
+  return bySlug;
+}
+
+/** Demo lease CSV rows split by company: the units of Silverline Properties and of Al Noor Family Holdings. */
+const AL_NOOR_LEASE_UNITS = new Set(["JVC-0310", "JLT-2205"]);
+function leasesCsvFor(today: CalendarDate, company: "silverline" | "al-noor-holdings"): string {
+  const [header, ...rows] = demoLeasesCsv(today).split("\n");
+  const mine = rows.filter((r) => AL_NOOR_LEASE_UNITS.has(r.split(",")[0]!) === (company === "al-noor-holdings"));
+  return [header!, ...mine].join("\n");
+}
+
+/** The unit code to company slug of the let and in-progress units. */
+const LET_UNIT_COMPANY = (code: string) =>
+  AL_NOOR_LEASE_UNITS.has(code) || code === "JVC-0412" ? "al-noor-holdings" : "silverline";
+
 export async function seedDemo(database: Database): Promise<void> {
   // Store the base version and load published ones, so seeded leases get the version in force.
   await syncRulebooks(database);
@@ -253,12 +268,15 @@ export async function seedDemo(database: Database): Promise<void> {
       return activeRulesVersion(clock.today()) ?? "dubai-2025-01";
     },
     demoMode: true,
+    // Same truthy parsing as core's env (`true` or `1`).
+    tenancyOps: ["true", "1"].includes((process.env.TENANCY_OPS ?? "").trim().toLowerCase()),
     mailer: { send: () => Promise.reject(new Error("the demo seed doesn't send email")) },
     documents: new LocalDiskStore(join(tmpdir(), "leasing-seed-documents")),
     uploads: new LocalDiskStore(join(tmpdir(), "leasing-seed-uploads")),
     ejari: noEjari,
     llm: new FakeLlm(() => new Error("the demo seed doesn't call models")),
     webUrl: "http://localhost:3000",
+    serverSecret: "demo-only-session-secret",
   };
   const today = clock.today();
 
@@ -277,15 +295,75 @@ export async function seedDemo(database: Database): Promise<void> {
     })
     .onConflictDoNothing({ target: companyPolicy.version });
 
+  // Three fictional companies, each with its own rent and contract rules.
+  await database.db
+    .insert(companies)
+    .values(DEMO_COMPANIES.map((c) => ({ id: newId(), ...c, createdBy: "demo" })))
+    .onConflictDoNothing({ target: companies.slug });
+  const companyIds = await demoCompanyIds(database);
+  const companyOf = (slug: string) => companyIds.get(slug)!;
+  // Each company is the landlord of its units (D44): full fictional legal and signatory details.
+  await withTx(database, async (tx) => {
+    for (const c of DEMO_COMPANIES) {
+      const legal = DEMO_COMPANY_LEGAL[c.slug]!;
+      const [row] = await tx.db
+        .select()
+        .from(companies)
+        .where(eq(companies.id, companyOf(c.slug)));
+      if (row?.signatoryName) continue;
+      await updateCompanyLegal(
+        ctx,
+        tx,
+        row!.id,
+        {
+          ...legal,
+          signatoryIdKind: "emirates_id",
+          signatoryIdNo: fictionalEid(Number(legal.signatoryEidSerial)),
+        },
+        "demo",
+      );
+    }
+  });
+  const [hasRule] = await database.db.select({ id: rentRules.id }).from(rentRules).limit(1);
+  if (!hasRule) {
+    await database.db.insert(rentRules).values(
+      DEMO_RENT_RULES.map((r) => ({
+        id: newId(),
+        companyId: companyOf(r.company),
+        category: r.category,
+        emirate: "dubai",
+        community: r.community ?? null,
+        minPctBp: r.minPctBp,
+        maxPctBp: r.maxPctBp,
+        minRentFils: r.minRentAed === undefined ? null : r.minRentAed * 100,
+        maxRentFils: r.maxRentAed === undefined ? null : r.maxRentAed * 100,
+        createdBy: "demo",
+      })),
+    );
+    await database.db.insert(contractRules).values(
+      DEMO_CONTRACT_RULES.map((r) => ({
+        id: newId(),
+        companyId: companyOf(r.company),
+        category: r.category,
+        tenures: r.tenures,
+        minCheques: r.minCheques,
+        maxCheques: r.maxCheques,
+        createdBy: "demo",
+      })),
+    );
+  }
+
   // Mock Smart Rental Index averages for the demo communities (annual, AED). Fictional values.
   await database.db
     .insert(sriAverages)
     .values(
-      DEMO_SRI.map(([community, bedrooms, aedValue]) => ({
+      DEMO_SRI.map((r) => ({
         id: newId(),
-        community,
-        bedrooms,
-        avgAnnualRentFils: aedValue * 100,
+        community: r.community,
+        category: r.category,
+        bedrooms: r.bedrooms,
+        avgAnnualRentFils: r.avgAnnualRentAed === undefined ? null : r.avgAnnualRentAed * 100,
+        avgAnnualRentPerSqftFils: r.avgAnnualRentPerSqftAed === undefined ? null : r.avgAnnualRentPerSqftAed * 100,
         source: "mock" as const,
         effectiveFrom: "2025-01-01" as CalendarDate,
         createdBy: "demo",
@@ -293,9 +371,11 @@ export async function seedDemo(database: Database): Promise<void> {
     )
     .onConflictDoNothing();
 
-  const results = await importLeasesCsv(ctx, demoLeasesCsv(today), "demo");
-  for (const r of results)
-    console.log(`  lease row ${r.row}: ${r.status} ${r.ref ?? ""} ${r.state ?? ""} ${r.reasons.join("; ")}`);
+  for (const slug of ["silverline", "al-noor-holdings"] as const) {
+    const results = await importLeasesCsv(ctx, leasesCsvFor(today, slug), "demo", companyOf(slug));
+    for (const r of results)
+      console.log(`  lease row ${r.row}: ${r.status} ${r.ref ?? ""} ${r.state ?? ""} ${r.reasons.join("; ")}`);
+  }
 
   // Listing details for the let units (the CSV import carries only lease columns).
   for (const [code, d] of Object.entries(LET_UNIT_DETAILS)) {
@@ -308,12 +388,8 @@ export async function seedDemo(database: Database): Promise<void> {
     { code: "MRN-1608", unitNo: "1608", bedrooms: 2, makaniNo: "1111144444", target: "READY" },
     { code: "JVC-0412", unitNo: "412", bedrooms: 1, makaniNo: "2222233333", target: "LISTED" },
   ] as const;
-  // The landlord on the imported leases owns the empty units too (fictional).
-  const [landlord] = await database.db
-    .select({ id: parties.id })
-    .from(parties)
-    .where(eq(parties.fullNameEn, "Fictional Holdings LLC"));
   let listedId: string | null = null;
+  const newlyListed = new Set<string>();
   for (const u of empty) {
     const id = newId();
     const inserted = await database.db
@@ -323,6 +399,7 @@ export async function seedDemo(database: Database): Promise<void> {
         code: u.code,
         building: u.code.startsWith("MRN") ? "Demo Marina Tower" : "Demo Circle Residence",
         community: u.code.startsWith("MRN") ? "Dubai Marina" : "Jumeirah Village Circle",
+        companyId: companyOf(LET_UNIT_COMPANY(u.code)),
         unitNo: u.unitNo,
         dldPropertyNo: demoDldNo(u.unitNo),
         makaniNo: u.makaniNo,
@@ -330,12 +407,11 @@ export async function seedDemo(database: Database): Promise<void> {
         areaSqft: u.bedrooms === 2 ? 1180 : 790,
         bedrooms: u.bedrooms,
         furnished: false,
-        askingRentFils: u.bedrooms === 2 ? 13_500_000 : 8_200_000,
+        askingRentFils: u.code === "MRN-1502" ? 10_000_000 : u.bedrooms === 2 ? 16_000_000 : 7_400_000,
         floor: Number(u.unitNo.slice(0, -2)) || 4,
         bathrooms: u.bedrooms + 1,
         parkingSpaces: 1,
         description: DESCRIPTIONS[u.code] ?? null,
-        landlordPartyId: landlord?.id ?? null,
       })
       .onConflictDoNothing({ target: units.code })
       .returning({ id: units.id });
@@ -359,6 +435,9 @@ export async function seedDemo(database: Database): Promise<void> {
         code: u.code,
         building: u.building,
         community: u.community,
+        companyId: companyOf(u.company),
+        category: u.category,
+        subtype: u.subtype,
         unitNo: u.unitNo,
         dldPropertyNo: demoDldNo(u.unitNo),
         makaniNo: u.makaniNo,
@@ -367,17 +446,17 @@ export async function seedDemo(database: Database): Promise<void> {
         bedrooms: u.bedrooms,
         furnished: u.furnished,
         askingRentFils: u.askingRentFils,
-        floor: Number(u.unitNo.slice(0, -2)) || 2,
-        bathrooms: Math.max(1, u.bedrooms),
+        floor: u.category === "retail" ? 0 : Number(u.unitNo.slice(0, -2)) || 2,
+        bathrooms: Math.max(1, u.bedrooms ?? 1),
         parkingSpaces: u.bedrooms === 0 ? 0 : 1,
         description: u.description,
-        landlordPartyId: landlord?.id ?? null,
       })
       .onConflictDoNothing({ target: units.code })
       .returning({ id: units.id });
     if (!inserted.length) continue;
     await advance(ctx, { kind: "unit", id }, "MARK_READY", { actor: "demo" });
     await advance(ctx, { kind: "unit", id }, "PUBLISH", { actor: "demo" });
+    newlyListed.add(u.code);
     console.log(`  unit ${u.code}: LISTED`);
   }
 
@@ -388,11 +467,12 @@ export async function seedDemo(database: Database): Promise<void> {
   const [existingLease] = readyUnit
     ? await database.db.select({ id: leases.id }).from(leases).where(eq(leases.unitId, readyUnit.id))
     : [];
-  if (readyUnit?.landlordPartyId && !existingLease) {
+  if (readyUnit && !existingLease) {
     const start = addDays(today, 21);
     const end = addDays(addYears(start, 1), -1);
     const rent = readyUnit.askingRentFils ?? 13_500_000;
     await withTx(database, async (tx) => {
+      const { party: landlord } = await companyLandlord(tx, readyUnit.companyId);
       const tenantId = newId();
       await tx.db.insert(parties).values({
         id: tenantId,
@@ -449,7 +529,7 @@ export async function seedDemo(database: Database): Promise<void> {
       });
       await tx.db.insert(leaseParties).values([
         { leaseId, partyId: tenantId, role: "tenant" },
-        { leaseId, partyId: readyUnit.landlordPartyId!, role: "landlord" },
+        { leaseId, partyId: landlord.id, role: "landlord" },
       ]);
       await appendEvent(tx, ctx, {
         entity: { kind: "lease", id: leaseId },
@@ -511,6 +591,198 @@ export async function seedDemo(database: Database): Promise<void> {
       `  application ${o.ref}: SCREENING with an open upload link (portal document-upload demo: open the link from the application page) (JVC-0412)`,
     );
   }
+
+  await seedWorkspaceStages(ctx, newlyListed);
+}
+
+type Stop = "viewing" | "offer_sent" | "offer_held" | "contract_sent" | "ejari_pending";
+
+/**
+ * One fictional applicant per remaining Workspace stage, all through the Manager. KYC rests on a
+ * `kyc_review` approval that the demo officer decides (the seed has no model to read documents).
+ * No email is sent: jobs are dropped, like the SCREENING demo above.
+ */
+async function seedWorkspaceStages(ctx: EngineContext, newlyListed: Set<string>) {
+  const { database, clock } = ctx;
+  const today = clock.today();
+  const quiet: EngineContext = { ...ctx, scheduler: { send: async () => null } };
+  const [officer] = await database.db.select().from(staffUsers).where(eq(staffUsers.email, "officer@demo.example"));
+  if (!officer) return;
+  const plan: { unit: string; name: string; email: string; serial: number; stop: Stop; note: string }[] = [
+    {
+      unit: "BBY-0903",
+      name: "Karim Example Saleh",
+      email: "karim.applicant@demo.example",
+      serial: 2000001,
+      stop: "viewing",
+      note: "VIEWING booked for tomorrow",
+    },
+    {
+      unit: "BBY-1710",
+      name: "Hana Sample Ibrahim",
+      email: "hana.applicant@demo.example",
+      serial: 2000002,
+      stop: "offer_sent",
+      note: "OFFER sent (waiting for the applicant)",
+    },
+    {
+      unit: "JVC-0221",
+      name: "Tariq Demo Mansoor",
+      email: "tariq.applicant@demo.example",
+      serial: 2000003,
+      stop: "offer_held",
+      note: "OFFER held (send it from the Workspace)",
+    },
+    {
+      unit: "ARR-0017",
+      name: "Leila Example Farouk",
+      email: "leila.applicant@demo.example",
+      serial: 2000004,
+      stop: "contract_sent",
+      note: "lease in CONTRACT, awaiting signatures",
+    },
+    {
+      unit: "MRN-0709",
+      name: "Yusuf Sample Karim",
+      email: "yusuf.applicant@demo.example",
+      serial: 2000005,
+      stop: "ejari_pending",
+      note: "lease in REGISTRATION, Ejari submission pending approval",
+    },
+  ];
+  for (const p of plan) {
+    if (!newlyListed.has(p.unit)) continue;
+    const [unit] = await database.db.select().from(units).where(eq(units.code, p.unit));
+    if (!unit) continue;
+    const a = await createApplication(
+      quiet,
+      {
+        unitId: unit.id,
+        nameEn: p.name,
+        email: p.email,
+        kind: "individual",
+        requestedMoveInOn: addDays(today, 30),
+      },
+      "demo",
+    );
+    await bookViewing(quiet, a.id, new Date(clock.now().getTime() + 86_400_000), "demo");
+    if (p.stop === "viewing") {
+      console.log(`  application ${a.ref}: ${p.note} (${p.unit})`);
+      continue;
+    }
+    await recordViewingOutcome(quiet, a.id, "attended", "demo seed", "demo");
+    await verifyKyc(quiet, officer, a, fictionalEid(p.serial), p.stop === "offer_held");
+    if (p.stop === "offer_sent" || p.stop === "offer_held") {
+      console.log(`  application ${a.ref}: ${p.note} (${p.unit})`);
+      continue;
+    }
+    await walkToContract(quiet, officer, a.id, p.stop === "ejari_pending");
+    console.log(`  application ${a.ref}: ${p.note} (${p.unit})`);
+  }
+}
+
+/** SCREENING → OFFER: the officer approves a KYC review for a fictional identity; the offer is made by the Manager. */
+async function verifyKyc(
+  ctx: EngineContext,
+  officer: StaffUser,
+  a: { id: string; partyId: string },
+  emiratesIdNo: string,
+  holdOffer: boolean,
+) {
+  const [party] = await ctx.database.db.select().from(parties).where(eq(parties.id, a.partyId));
+  const today = ctx.clock.today();
+  const proposal = {
+    applicationId: a.id,
+    helperRunId: "demo-seed",
+    identity: {
+      fullNameEn: party!.fullNameEn,
+      nationality: "Fictionland",
+      birthDate: "1900-01-01" as CalendarDate,
+      emiratesIdNo,
+      idExpiresOn: addYears(today, 5),
+      passportNo: null,
+      passportExpiresOn: null,
+      visaNo: null,
+      visaExpiresOn: null,
+      companyName: null,
+      tradeLicenceNo: null,
+      tradeLicenceExpiresOn: null,
+    },
+    flags: [
+      {
+        kind: "manual_review" as const,
+        message: "Demo seed: documents were not read by a model; fictional identity.",
+        docId: null,
+        blocking: false,
+      },
+    ],
+    documentIds: [],
+    applicantKind: "individual" as const,
+    policyVersion: null,
+  };
+  const { id } = await withTx(ctx.database, (tx) =>
+    requestApproval(ctx, tx, {
+      gate: "kyc_review",
+      entity: { kind: "application", id: a.id },
+      dedupeKey: `${a.id}:kyc_review:demo-seed`,
+      title: `KYC review: ${party!.fullNameEn} (demo seed)`,
+      proposal,
+      reasons: proposal.flags.map((f) => f.message),
+      sources: [],
+      rulesVersion: ctx.rulesVersion,
+      proposedBy: "demo",
+    }),
+  );
+  await decideApproval(ctx, id, officer, { decision: "approve" });
+  // The approval is decided by a person; KYC_VERIFIED then goes through the Manager like the approval route does.
+  await advance(ctx, { kind: "application", id: a.id }, "KYC_VERIFIED", {
+    actor: `user:${officer.id}`,
+    approvalId: id,
+    payload: proposal,
+    ...(holdOffer ? { offerEntry: { autopilot: { auto_send_offer: false } } } : {}),
+  });
+}
+
+/**
+ * OFFER → accepted → reservation → lease in CONTRACT → contract prepared and approved (sent to both
+ * signers) and, if asked, signed by both → REGISTRATION with the Ejari submission awaiting approval.
+ */
+async function walkToContract(ctx: EngineContext, officer: StaffUser, applicationId: string, signed: boolean) {
+  const { database, clock } = ctx;
+  const inbound = await withTx(database, (tx) =>
+    receiveInbound(ctx, tx, {
+      type: "OFFER_RESPONDED",
+      payload: { revision: 1, choice: "accept" },
+      channel: "staff",
+      actor: "demo",
+      entity: { kind: "application", id: applicationId },
+    }),
+  );
+  await processInbound(ctx, inbound.id);
+  await recordReservation(ctx, applicationId, { paidOn: clock.today(), reference: `DEMO-RES-${inbound.ref}` }, "demo");
+  const [lease] = await database.db.select().from(leases).where(eq(leases.applicationId, applicationId));
+  const prepared = await prepareContract(ctx, lease!.id, { addendum: DEFAULT_ADDENDUM, actor: "system" });
+  if (prepared.status !== "prepared") throw new Error(`demo seed: contract for ${lease!.ref} was not prepared`);
+  const [c] = await database.db.select().from(contracts).where(eq(contracts.leaseId, lease!.id));
+  await decideApproval(ctx, c!.approvalId!, officer, { decision: "approve" });
+  if (!signed) return;
+  // The signing links normally travel by email; the seed makes them itself and signs as each party.
+  const signers = await database.db.select().from(contractSigners).where(eq(contractSigners.contractId, c!.id));
+  for (const s of signers) {
+    const link = await withTx(database, async (tx) => {
+      const l = await createLink(ctx, tx, {
+        purpose: "sign",
+        entity: { kind: "lease", id: lease!.id },
+        partyId: s.partyId,
+        ttlDays: 7,
+      });
+      await tx.db.update(contractSigners).set({ linkId: l.id }).where(eq(contractSigners.id, s.id));
+      const [row] = await tx.db.select().from(actionLinks).where(eq(actionLinks.id, l.id));
+      return row!;
+    });
+    await signContract(ctx, link, { typedName: s.nameEn, consent: true }, { ip: null, userAgent: "demo seed" });
+  }
+  await finishContract(ctx, c!.id);
 }
 
 if (import.meta.main) {
@@ -528,7 +800,10 @@ if (import.meta.main) {
  * import's own duplicate check makes this safe to run twice.
  */
 export async function seedMissingDemoLeases(ctx: EngineContext) {
-  const results = await importLeasesCsv(ctx, demoLeasesCsv(ctx.clock.today()), "demo");
+  const companyIds = await demoCompanyIds(ctx.database);
+  const results = [];
+  for (const slug of ["silverline", "al-noor-holdings"] as const)
+    results.push(...(await importLeasesCsv(ctx, leasesCsvFor(ctx.clock.today(), slug), "demo", companyIds.get(slug)!)));
   for (const [code, d] of Object.entries(LET_UNIT_DETAILS)) {
     await ctx.database.db
       .update(units)

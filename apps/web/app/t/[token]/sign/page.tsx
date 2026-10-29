@@ -26,7 +26,8 @@ export default async function SignPage({ params }: { params: Promise<{ token: st
         <h1 className="portal-title">Your tenancy contract</h1>
         <p className="muted">
           Unit {f.unitNo}, {f.building}, {f.community}. Lease {v.leaseRef}, version {v.contract.version}. You sign as
-          the {v.role}.
+          the {v.role}
+          {v.signerCapacity ? `: ${v.signerName}, ${v.signerCapacity}` : ""}.
         </p>
       </div>
 
@@ -81,6 +82,20 @@ export default async function SignPage({ params }: { params: Promise<{ token: st
                 ) : null;
               })}
             </ul>
+            {(v.contract.addendum.companyClauses?.length ?? 0) > 0 && (
+              <>
+                <h3 className="section-title" style={{ margin: 0, fontSize: 14 }}>
+                  Additional terms (company)
+                </h3>
+                <ul className="reasons">
+                  {v.contract.addendum.companyClauses?.map((c) => (
+                    <li key={c.id}>
+                      <b>{c.title}.</b> {c.text}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
             {v.contract.addendum.freeText && (
               <blockquote className="tenant-text">{v.contract.addendum.freeText}</blockquote>
             )}

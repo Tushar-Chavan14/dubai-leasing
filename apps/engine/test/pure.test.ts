@@ -26,6 +26,7 @@ describe("parseCsv", () => {
 });
 
 describe("unit import row", () => {
+  const COMPANY = "0190e0a0-0000-7000-8000-000000000001";
   const good = {
     unit_code: "mrn-1204",
     building: "Marina Test Tower",
@@ -39,46 +40,52 @@ describe("unit import row", () => {
     landlord_email: "landlord@test.example",
   };
   test("good row → UnitFields", () => {
-    const r = parseUnitRow(good);
+    const r = parseUnitRow(good, COMPANY);
     expect(r).toMatchObject({
       ok: true,
       fields: {
         code: "MRN-1204",
-        kind: "residential",
+        category: "residential",
+        companyId: COMPANY,
+        subtype: null,
         makaniNo: "1234567890",
         bedrooms: 2,
         furnished: true,
         askingRentFils: 8_500_000,
         bathrooms: null,
       },
-      landlord: { name: "Test Landlord", email: "landlord@test.example" },
     });
   });
   test("asking_rent 'AED 85,000' → fils", () => {
     const row = UnitImportRow.parse({ ...good, asking_rent_aed: "AED 85,000" });
-    expect(toUnitFields(row).askingRentFils).toBe(8_500_000);
+    expect(toUnitFields(row, COMPANY).askingRentFils).toBe(8_500_000);
   });
   test("bad Makani is reported by CSV column", () => {
-    const r = parseUnitRow({ ...good, makani_no: "12345" });
+    const r = parseUnitRow({ ...good, makani_no: "12345" }, COMPANY);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reasons).toEqual(["makani_no: Makani numbers have 10 digits"]);
   });
-  test("landlord_email without landlord_name", () => {
-    const r = parseUnitRow({ ...good, landlord_name: "" });
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reasons[0]).toStartWith("landlord_email:");
+  test("company column: by name or slug, unknown → error, none and no default → error", () => {
+    const known = [
+      { id: "0190e0a0-0000-7000-8000-000000000002", name: "Silverline Properties", slug: "silverline", active: true },
+    ];
+    expect(parseUnitRow({ ...good, company: "silverline" }, null, known)).toMatchObject({
+      ok: true,
+      fields: { companyId: "0190e0a0-0000-7000-8000-000000000002" },
+    });
+    expect(parseUnitRow({ ...good, company: " SILVERLINE properties " }, null, known)).toMatchObject({ ok: true });
+    const unknown = parseUnitRow({ ...good, company: "Nobody" }, COMPANY, known);
+    expect(unknown.ok).toBe(false);
+    expect(parseUnitRow(good, null, known).ok).toBe(false);
+    expect(parseUnitRow(good, COMPANY, known)).toMatchObject({ ok: true, fields: { companyId: COMPANY } });
   });
   test("bad code and out-of-range bedrooms map to CSV columns", () => {
-    const r = parseUnitRow({ ...good, unit_code: "X", bedrooms: "11" });
+    const r = parseUnitRow({ ...good, unit_code: "X", bedrooms: "11" }, COMPANY);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reasons.map((x) => x.split(":")[0]).toSorted()).toEqual(["bedrooms", "unit_code"]);
   });
-  test("no landlord → null; non-number bedrooms → error", () => {
-    expect(parseUnitRow({ ...good, landlord_name: "", landlord_email: "" })).toMatchObject({
-      ok: true,
-      landlord: null,
-    });
-    expect(parseUnitRow({ ...good, bedrooms: "two" }).ok).toBe(false);
+  test("non-number bedrooms → error", () => {
+    expect(parseUnitRow({ ...good, bedrooms: "two" }, COMPANY).ok).toBe(false);
   });
 });
 

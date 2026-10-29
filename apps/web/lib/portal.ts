@@ -68,6 +68,8 @@ export interface SignPortalView {
   linkUsed: boolean;
   role: "tenant" | "landlord";
   signerName: string;
+  /** Landlord signer: "<title>, for and on behalf of <company>" (D44). */
+  signerCapacity: string | null;
   signedAt: string | null;
   leaseRef: string;
   canSign: boolean;
@@ -95,7 +97,11 @@ export interface SignPortalView {
       depositFils: number;
       rentFreeDays: number;
     };
-    addendum: { clauses: string[]; freeText: string | null };
+    addendum: {
+      clauses: string[];
+      freeText: string | null;
+      companyClauses?: { id: string; title: string; text: string }[];
+    };
   };
 }
 

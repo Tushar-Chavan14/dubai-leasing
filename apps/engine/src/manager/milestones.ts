@@ -19,13 +19,14 @@ import {
 import { and, asc, eq, inArray, isNull, like, lt, lte, notLike, or, type SQL, sql } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
 import { RenewalContext, RenewalData, renewalHelper } from "@leasing/helpers";
+import { fireTimed, TIMED_PREFIX, timedNotYet } from "./agent-switches.ts";
 import { advance } from "./advance.ts";
 import { handleApplicationMilestone } from "./applications.ts";
 import { requestApproval } from "./approvals.ts";
 import { appendEvent, getCompanyPolicy } from "./events.ts";
 import { runAndRecord } from "./helpers.ts";
 import { approvedUnsentNotice, enqueueNoticeSend, noticeSentForTerm } from "./outbound.ts";
-import { handlePaymentMilestone, isPaymentMilestone } from "./collections.ts";
+import { handlePaymentMilestone, isPaymentMilestone, scheduleTermPayments } from "./collections.ts";
 import { handleMoveOutMilestone, isMoveOutMilestone } from "./move-out.ts";
 import { lookupSri } from "./sri.ts";
 import type { RenewalNoticeProposal } from "./gate-rules.ts";
@@ -64,6 +65,24 @@ export const sameRentFallbackKey = (leaseId: string, leaseEnd: CalendarDate) =>
 const CHECKED_DAY_AFTER = "notice_deadline@%";
 const fireOn = (milestone: string, dueOn: CalendarDate) =>
   milestone.startsWith("notice_deadline@") ? addDays(dueOn, 1) : dueOn;
+/** Renewal-path milestone ids (`MilestoneId`), all keyed "<id>@<term end>". */
+const RENEWAL_MILESTONE_IDS = new Set<string>([
+  "landlord_intent",
+  "renewal_assess",
+  "notice_draft",
+  "notice_send",
+  "notice_deadline",
+  "lease_end",
+  "notice_ack_followup",
+]);
+/**
+ * Lease deadlines that belong to move-in through move-out (held while TENANCY_OPS is off):
+ * the renewal path, rent collections (reminder, overdue, follow-up, pay-by, late-rent eligibility)
+ * and the move-out date. An explicit allowlist on purpose: a new pre-move-in lease deadline
+ * (contract, Ejari, ...) must NOT match here, so add new tenancy kinds deliberately.
+ */
+export const isTenancyMilestone = (milestone: string): boolean =>
+  RENEWAL_MILESTONE_IDS.has(milestone.split("@")[0]!) || isPaymentMilestone(milestone) || isMoveOutMilestone(milestone);
 /** Deadlines that may fire today. */
 const dueBy = (today: CalendarDate) =>
   or(
@@ -82,6 +101,7 @@ const LEGAL_MILESTONES = new Set<MilestoneId>(["landlord_intent", "notice_draft"
  * mode each pending deadline also gets a pg-boss job at 00:00 Asia/Dubai on its due date.
  */
 export async function scheduleLeaseMilestones(ctx: EngineContext, tx: Tx, lease: LeaseRow): Promise<void> {
+  if (!ctx.tenancyOps) return;
   const today = ctx.clock.today();
   const rulebook = getRulebook(lease.rulesVersion);
   const legalDeadline = addDays(lease.endOn, -rulebook.renewalNoticeDays);
@@ -157,6 +177,46 @@ export async function addLeaseDeadline(
   return true;
 }
 
+/** Legal renewal milestones and the lease end: held deadlines of these raise an officer task. */
+const HELD_TASK_MILESTONES = new Set<string>([
+  "notice_draft",
+  "notice_send",
+  "notice_deadline",
+  "landlord_intent",
+  "lease_end",
+]);
+const MILESTONE_LABELS: Record<string, string> = {
+  notice_draft: "the renewal notice draft",
+  notice_send: "sending the renewal notice",
+  notice_deadline: "the renewal notice legal deadline",
+  landlord_intent: "the landlord's intent question",
+  lease_end: "the lease end date",
+};
+
+async function holdTenancyDeadline(ctx: EngineContext, tx: Tx, d: typeof deadlines.$inferSelect): Promise<void> {
+  const base = d.milestone.split("@")[0]!;
+  if (!HELD_TASK_MILESTONES.has(base)) return;
+  const [lease] = await tx.db.select().from(leases).where(eq(leases.id, d.entityId));
+  if (!lease) return;
+  const label = MILESTONE_LABELS[base] ?? base;
+  const created = await createTask(ctx, tx, lease.id, {
+    kind: "tenancy_ops_off",
+    title: `Tenancy operations are off: ${label} for lease ${lease.ref} is due`,
+    details: { milestone: d.milestone, dueOn: d.dueOn },
+    assigneeRole: "leasing_officer",
+    dueOn: d.dueOn,
+    dedupeKey: `${lease.id}:tenancy_off:${d.milestone}`,
+  });
+  if (!created) return;
+  await appendEvent(tx, ctx, {
+    entity: { kind: "lease", id: lease.id },
+    type: "MILESTONE_HELD",
+    actor: "system",
+    payload: { milestone: d.milestone, reason: "tenancy operations are switched off (TENANCY_OPS=false)" },
+    rulesVersion: d.rulesVersion,
+  });
+}
+
 export type FireResult = { fired: true; milestone: string; skipped?: string } | { fired: false; reason: string };
 
 /**
@@ -167,6 +227,20 @@ export type FireResult = { fired: true; milestone: string; skipped?: string } | 
 export async function fireDeadline(ctx: EngineContext, deadlineId: string): Promise<FireResult> {
   return withTx(ctx.database, async (tx) => {
     const today = ctx.clock.today();
+    // TENANCY_OPS off: a tenancy deadline (renewal, collections, move-out) is HELD, never skipped
+    // or failed: it stays pending and fires once the flag is on again. The legal ones also raise
+    // one officer task per lease and milestone, so a person knows the date is not being watched.
+    const [pending] = await tx.db
+      .select()
+      .from(deadlines)
+      .where(and(eq(deadlines.id, deadlineId), eq(deadlines.status, "pending"), dueBy(today)));
+    if (!pending) return { fired: false, reason: "not pending or not due" };
+    // The row stays pending until its exact instant: a later sweep fires it.
+    if (timedNotYet(ctx, pending)) return { fired: false, reason: "not yet: waits for its hour" };
+    if (pending.entityKind === "lease" && !ctx.tenancyOps && isTenancyMilestone(pending.milestone)) {
+      await holdTenancyDeadline(ctx, tx, pending);
+      return { fired: false, reason: "held: tenancy operations are switched off (TENANCY_OPS=false)" };
+    }
     const [d] = await tx.db
       .update(deadlines)
       .set({ status: "done", firedAt: ctx.clock.now() })
@@ -181,8 +255,9 @@ export async function fireDeadline(ctx: EngineContext, deadlineId: string): Prom
       payload: { milestone: d.milestone, dueOn: d.dueOn, deadlineId: d.id },
       rulesVersion: d.rulesVersion,
     });
-    const skipped =
-      d.entityKind === "lease" && isPaymentMilestone(d.milestone)
+    const skipped = d.milestone.startsWith(TIMED_PREFIX)
+      ? await fireTimed(ctx, tx, d)
+      : d.entityKind === "lease" && isPaymentMilestone(d.milestone)
         ? await handlePaymentMilestone(ctx, tx, d.entityId, d.milestone)
         : d.entityKind === "lease" && isMoveOutMilestone(d.milestone)
           ? await handleMoveOutMilestone(ctx, tx, d.entityId)
@@ -202,6 +277,36 @@ export async function fireDeadline(ctx: EngineContext, deadlineId: string): Prom
     });
     return { fired: true, milestone: d.milestone, skipped };
   });
+}
+
+/**
+ * Startup backfill for TENANCY_OPS: leases imported or activated while the flag was off have no
+ * renewal milestones or instalments. When the flag is on, schedule both for every ACTIVE lease
+ * without any lease deadline. Idempotent: deadlines are unique per lease and milestone, and a
+ * term that already has payments is left alone. Returns how many leases were filled in.
+ */
+export async function backfillTenancySchedules(ctx: EngineContext): Promise<number> {
+  if (!ctx.tenancyOps) return 0;
+  const candidates = await ctx.database.db
+    .select({ id: leases.id })
+    .from(leases)
+    .where(
+      and(
+        eq(leases.state, "ACTIVE"),
+        sql`not exists (select 1 from ${deadlines} where ${deadlines.entityKind} = 'lease' and ${deadlines.entityId} = ${leases.id})`,
+      ),
+    );
+  let filled = 0;
+  for (const { id } of candidates) {
+    await withTx(ctx.database, async (tx) => {
+      const [lease] = await tx.db.select().from(leases).where(eq(leases.id, id)).for("update");
+      if (!lease || lease.state !== "ACTIVE") return;
+      await scheduleLeaseMilestones(ctx, tx, lease);
+      await scheduleTermPayments(ctx, tx, lease, { assumePastPaid: true });
+    });
+    filled++;
+  }
+  return filled;
 }
 
 /** Fires every pending deadline due on or before today, oldest first. */
@@ -602,7 +707,7 @@ export async function createTask(
   leaseId: string,
   t: TaskInput,
   entityKind: "lease" | "application" | "conversation" = "lease",
-): Promise<void> {
+): Promise<boolean> {
   const [row] = await tx.db
     .insert(tasks)
     .values({
@@ -623,4 +728,5 @@ export async function createTask(
       payload: { taskId: row.id, kind: t.kind, title: t.title },
     });
   }
+  return !!row;
 }

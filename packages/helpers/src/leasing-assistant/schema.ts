@@ -1,4 +1,4 @@
-import { EnquiryFlow } from "@leasing/core";
+import { EnquiryFlow, PropertyCategory, SizeBand } from "@leasing/core";
 import { z } from "zod";
 
 export const ENQUIRY_INTENTS = [
@@ -32,6 +32,8 @@ export const LeasingAssistantContext = z.object({
   /** One message from the enquirer, untrusted. */
   text: z.string().min(1).max(1000),
   step: EnquiryFlow.shape.step,
+  /** The public web chat also searches commercial and retail units; Telegram stays residential. Default telegram. */
+  channel: z.enum(["telegram", "web"]).optional(),
   /** Communities with listed units (the `community` question's options). */
   communities: z.array(z.string().min(1).max(120)).max(25),
   /** The unit the enquirer picked, if any: a question about it is answered from its facts. */
@@ -59,6 +61,10 @@ export const LeasingAssistantData = z.object({
   search: z.object({
     bedrooms: z.number().int().min(0).max(4).optional(),
     community: z.string().optional(),
+    /** Web chat only. Code checks every value against what is bookable. */
+    emirate: z.enum(["dubai", "abu_dhabi", "sharjah"]).optional(),
+    category: PropertyCategory.optional(),
+    sizeBand: SizeBand.optional(),
   }),
   /** An officer should take the conversation. */
   handoff: z.boolean(),

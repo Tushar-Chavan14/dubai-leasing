@@ -125,6 +125,19 @@ const fmtViewing = new Intl.DateTimeFormat("en-GB", {
 /** A viewing appointment, e.g. "Sunday 1 November at 4:30 pm" (Dubai time). */
 export const viewingTime = (iso: string) => fmtViewing.format(new Date(iso));
 
+const fmtDubaiDay = new Intl.DateTimeFormat("en-CA", { ...tz, year: "numeric", month: "2-digit", day: "2-digit" });
+const fmtClock = new Intl.DateTimeFormat("en-GB", { ...tz, hour: "2-digit", minute: "2-digit", hour12: false });
+
+/** "Today, 14:05", "Yesterday", "3 days ago", then a date. `today` is the engine's Dubai calendar day. */
+export function relativeTime(today: string, iso: string): string {
+  const day = fmtDubaiDay.format(new Date(iso));
+  const n = today ? diffDays(day as CalendarDate, today as CalendarDate) : 99;
+  if (n === 0) return `Today, ${fmtClock.format(new Date(iso))}`;
+  if (n === 1) return "Yesterday";
+  if (n > 1 && n < 7) return `${n} days ago`;
+  return dateTime(iso);
+}
+
 /** Whole days from `today` to `d` (negative when overdue). */
 export const daysUntil = (today: string, d: string) => diffDays(today as CalendarDate, d as CalendarDate);
 
@@ -183,6 +196,10 @@ const EVENT_LABELS: Record<string, string> = {
   LEASE_CLOSED: "Lease closed",
   MILESTONE_FIRED: "Milestone reached",
   MILESTONE_SKIPPED: "Milestone skipped",
+  VIEWING_REQUESTED: "Viewing requested",
+  OFFER_HELD: "Offer ready to send",
+  OFFER_SENT: "Offer sent",
+  CONTRACT_PREP_HELD: "Contract ready to prepare",
   APPROVAL_REQUESTED: "Sent for approval",
   APPROVAL_DECIDED: "Approval decided",
   APPROVAL_CANCELLED: "Approval cancelled",
@@ -236,6 +253,7 @@ export const eventLabel = (t: string) => EVENT_LABELS[t] ?? humanise(t.toLowerCa
 
 export function actorLabel(actor: string): string {
   if (actor === "system") return "Engine";
+  if (actor.startsWith("system:")) return `Engine (${actor.slice(7).replace(/-/g, " ")})`;
   if (actor === "import") return "Import";
   if (actor === "demo") return "Demo data";
   if (actor.startsWith("user:")) return "Staff";

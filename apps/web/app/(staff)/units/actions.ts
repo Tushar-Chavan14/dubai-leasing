@@ -34,6 +34,18 @@ function toResult(r: EngineResult<unknown>): ActionResult {
   };
 }
 
+export interface PriceRangeView {
+  range: { min: number | null; max: number | null } | null;
+  sriLabel: string | null;
+  ruleId: string | null;
+}
+
+/** Allowed asking-rent range for the unit form's live line. Null when the engine can't say. */
+export async function priceRangeAction(body: Record<string, unknown>): Promise<PriceRangeView | null> {
+  const r = await engine<PriceRangeView>("/api/units/price-range", { method: "POST", body: JSON.stringify(body) });
+  return r.ok ? r.data : null;
+}
+
 export async function createUnitAction(payload: Record<string, unknown>): Promise<ActionResult> {
   const r = await engine<{ id: string }>("/api/units", { method: "POST", body: JSON.stringify(payload) });
   if (!r.ok) return toResult(r);

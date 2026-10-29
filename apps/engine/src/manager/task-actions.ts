@@ -1,4 +1,13 @@
-import { type Actor, addDays, addYears, type CalendarDate, newId, type StaffRole, type StaffUser } from "@leasing/core";
+import {
+  type Actor,
+  addDays,
+  addYears,
+  type CalendarDate,
+  newId,
+  propertyUsageFor,
+  type StaffRole,
+  type StaffUser,
+} from "@leasing/core";
 import { approvals, leases, tasks, type Tx, units, withTx } from "@leasing/db";
 import { getRulebook, repossessionNoticeDeadline } from "@leasing/rulebook";
 import { and, eq, like } from "drizzle-orm";
@@ -67,6 +76,9 @@ export async function createStaffTaskTx(
   return { taskId: row!.id };
 }
 
+/** Tasks closed by their own action (the send or prepare itself), never by "Mark done". */
+export const ACTION_TASK_KINDS: string[] = ["send_offer", "prepare_contract"];
+
 /** The assignee's role (or a leasing manager) marks a task done, with an optional note. */
 export async function completeTask(ctx: EngineContext, user: StaffUser, taskId: string, note: string | undefined) {
   return withTx(ctx.database, async (tx) => {
@@ -76,6 +88,8 @@ export async function completeTask(ctx: EngineContext, user: StaffUser, taskId: 
     if (user.role !== t.assigneeRole && user.role !== "leasing_manager")
       throw forbidden(`this task is for ${t.assigneeRole.replace("_", " ")}`);
     if (t.kind === "landlord_intent") throw conflict("record the landlord's answer instead", "use_landlord_answer");
+    if (ACTION_TASK_KINDS.includes(t.kind))
+      throw conflict("use the action on the record (Send offer or Prepare contract) instead", "use_the_action");
     await tx.db.update(tasks).set({ status: "done" }).where(eq(tasks.id, t.id));
     await appendEvent(tx, ctx, {
       entity: { kind: t.entityKind, id: t.entityId },
@@ -196,7 +210,7 @@ export async function proposeVacateNoticeTx(
     ground: input.ground,
     servedOn: input.servedOn as CalendarDate,
     deliveryMethod: input.deliveryMethod,
-    propertyKind: unit.kind,
+    propertyKind: propertyUsageFor(unit.category),
     ...(input.note ? { note: input.note } : {}),
   };
   const problems = vacateNoticeProblems(proposal, ctx.clock.today());

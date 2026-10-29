@@ -5,19 +5,24 @@ import {
   askingRentWithinRange,
   formatAed,
   newId,
+  type PriceRange,
+  PropertyCategory,
+  PropertySubtype,
+  SUBTYPES_BY_CATEGORY,
   type UnitEvent,
   unitChecklistMissing,
   unitMachine,
 } from "@leasing/core";
-import { approvals, leases, type Tx, unitPhotos, units, withTx } from "@leasing/db";
+import { approvals, companies, leases, type Tx, unitPhotos, units, withTx } from "@leasing/db";
 import { and, asc, eq, like, ne, or } from "drizzle-orm";
 import { z } from "zod";
 import type { EngineContext } from "../context.ts";
 import { conflict, notFound, unprocessable } from "../errors.ts";
 import { unitHasActiveEjari, unitHasContractedLease } from "./advance.ts";
 import { requestApproval } from "./approvals.ts";
-import { appendEvent, getCompanyPolicy, getCompanyPolicyVersion } from "./events.ts";
+import { appendEvent, getCompanyPolicyVersion } from "./events.ts";
 import { effectiveProposal, PriceProposal } from "./gate-rules.ts";
+import { priceRangeFor } from "./pricing.ts";
 
 type ApprovalRow = typeof approvals.$inferSelect;
 
@@ -31,7 +36,7 @@ const optText = (max: number) =>
 const optInt = (min: number, max: number) => z.number().int().min(min).max(max).nullable();
 
 /** Unit fields staff can enter. Checklist fields may be left empty while the unit is in PREP. */
-export const UnitFields = z.object({
+const UnitFieldsBase = z.object({
   code: z
     .string()
     .trim()
@@ -39,7 +44,10 @@ export const UnitFields = z.object({
     .regex(/^[A-Z0-9][A-Z0-9-]{1,23}$/, "letters, digits and dashes, e.g. MRN-1204"),
   building: z.string().trim().min(1).max(120),
   community: z.string().trim().min(1).max(120),
-  kind: z.enum(["residential", "commercial"]),
+  companyId: z.string().uuid(),
+  category: PropertyCategory,
+  subtype: PropertySubtype.nullable(),
+  emirate: z.literal("dubai").default("dubai"),
   unitNo: optText(20),
   floor: optInt(-5, 200),
   dldPropertyNo: optText(40),
@@ -69,12 +77,27 @@ export const UnitFields = z.object({
     .nullable()
     .optional(),
 });
+export const UnitFields = UnitFieldsBase.refine(
+  (u) => u.subtype === null || SUBTYPES_BY_CATEGORY[u.category].includes(u.subtype),
+  { message: "this type doesn't belong to the category", path: ["subtype"] },
+);
 export type UnitFields = z.infer<typeof UnitFields>;
-export const UnitUpdate = UnitFields.partial();
+export const UnitUpdate = UnitFieldsBase.partial();
 
 /** Changing these after a lease exists would break the match with Ejari and the contract. */
-/** `kind` too: usage is part of the Ejari record and sets the own-use lock length. */
-const IDENTITY_FIELDS = ["code", "unitNo", "dldPropertyNo", "makaniNo", "plotNo", "kind"] as const;
+/** `category` too: usage is part of the Ejari record and sets the own-use lock length. */
+const IDENTITY_FIELDS = ["code", "unitNo", "dldPropertyNo", "makaniNo", "plotNo", "category", "companyId"] as const;
+/** Anything that picks the rent rule, the SRI row or the band. A change voids a price approval. */
+const PRICE_INPUT_FIELDS = [
+  "companyId",
+  "category",
+  "subtype",
+  "community",
+  "emirate",
+  "areaSqft",
+  "askingRentFils",
+  "bedrooms",
+] as const;
 const CHECKLIST_FIELDS = [
   "dldPropertyNo",
   "unitNo",
@@ -87,13 +110,17 @@ const CHECKLIST_FIELDS = [
 const MAX_PHOTOS = 24;
 const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
 
+/** The company must exist and be active before a unit can belong to it. */
+async function companyProblem(tx: Tx, companyId: string): Promise<string | null> {
+  const [c] = await tx.db.select({ active: companies.active }).from(companies).where(eq(companies.id, companyId));
+  if (!c) return "company not found";
+  return c.active ? null : "company is inactive";
+}
+
 /**
- * Server-side options for creating a unit. Not part of `UnitFields`, so staff can't set an
- * arbitrary landlord party through POST /units.
+ * Server-side options for creating a unit. Not part of `UnitFields`.
  */
 export interface CreateUnitOptions {
-  /** Landlord party found or created by the caller (CSV import). */
-  landlordPartyId?: string | null;
   /** Where the unit came from; recorded in the UNIT_CREATED event payload. */
   source?: "import";
 }
@@ -112,10 +139,12 @@ export async function createUnitInTx(
 ) {
   const [clash] = await tx.db.select({ id: units.id }).from(units).where(eq(units.code, input.code));
   if (clash) throw conflict(`unit code ${input.code} is already used`, "duplicate_code");
+  const badCompany = await companyProblem(tx, input.companyId);
+  if (badCompany) throw unprocessable("unit can't be saved this way", [badCompany], "invalid_change");
   const id = newId();
   const [row] = await tx.db
     .insert(units)
-    .values({ id, ...input, landlordPartyId: opts.landlordPartyId ?? null, state: "PREP" })
+    .values({ id, ...input, state: "PREP" })
     .returning();
   await appendEvent(tx, ctx, {
     entity: { kind: "unit", id },
@@ -155,30 +184,46 @@ export async function updateUnit(ctx: EngineContext, id: string, patch: z.infer<
       const [clash] = await tx.db.select({ id: units.id }).from(units).where(eq(units.code, patch.code));
       if (clash) problems.push(`unit code ${patch.code} is already used`);
     }
+    if (patch.companyId !== undefined && patch.companyId !== unit.companyId) {
+      const badCompany = await companyProblem(tx, patch.companyId);
+      if (badCompany) throw unprocessable("unit can't be saved this way", [badCompany], "invalid_change");
+    }
     if (unit.state !== "PREP") {
+      const nextCategory = patch.category ?? unit.category;
       for (const k of CHECKLIST_FIELDS) {
+        if (k === "bedrooms" && nextCategory !== "residential") continue;
         if (keys.includes(k) && (patch[k] === null || patch[k] === ""))
           problems.push(`${k} is required once the unit is ${unit.state}`);
       }
+      if (keys.includes("category")) {
+        for (const m of unitChecklistMissing({ ...unit, ...patch } as typeof unit))
+          problems.push(`missing ${m}: required once the unit is ${unit.state}`);
+      }
     }
-    // The company range depends on rent and bedrooms, so a change to either voids a price approval.
-    const rentChanged = keys.includes("askingRentFils") || keys.includes("bedrooms");
-    if (rentChanged && (unit.state === "READY" || unit.state === "LISTED")) {
-      const policy = await getCompanyPolicy(tx, ctx.clock.today());
+    if (keys.includes("category") || keys.includes("subtype")) {
+      const next = { ...unit, ...patch } as typeof unit;
+      if (next.subtype !== null && !SUBTYPES_BY_CATEGORY[next.category].includes(next.subtype)) {
+        problems.push(`${next.subtype} doesn't belong to the ${next.category} category`);
+      }
+    }
+    // The allowed range depends on the company, type, area, rent and bedrooms: a change voids a price approval.
+    const priceInputsChanged = PRICE_INPUT_FIELDS.some((k) => keys.includes(k));
+    if (priceInputsChanged && (unit.state === "READY" || unit.state === "LISTED")) {
       const next = { ...unit, ...patch, priceApprovedAt: null } as typeof unit;
-      if (!askingRentWithinRange(next, policy)) {
+      const { range } = await priceRangeFor(tx, next, ctx.clock.today());
+      if (!askingRentWithinRange(next, range)) {
         problems.push(
-          "asking rent would be outside the company range: move the unit back to preparation and request approval",
+          "asking rent would be outside the allowed range: move the unit back to preparation and request approval",
         );
       }
     }
     if (problems.length) throw unprocessable("unit can't be changed this way", problems, "invalid_change");
 
-    if (rentChanged) await cancelPendingPriceApprovals(ctx, tx, id);
+    if (priceInputsChanged) await cancelPendingPriceApprovals(ctx, tx, id);
     const set = Object.fromEntries(changed) as Partial<typeof unit>;
     const [row] = await tx.db
       .update(units)
-      .set({ ...set, ...(rentChanged ? { priceApprovedAt: null } : {}), updatedAt: ctx.clock.now() })
+      .set({ ...set, ...(priceInputsChanged ? { priceApprovedAt: null } : {}), updatedAt: ctx.clock.now() })
       .where(eq(units.id, id))
       .returning();
     await appendEvent(tx, ctx, {
@@ -187,7 +232,7 @@ export async function updateUnit(ctx: EngineContext, id: string, patch: z.infer<
       actor,
       payload: {
         changed: Object.fromEntries(changed.map(([k, v]) => [k, { from: unit[k as keyof typeof unit], to: v }])),
-        ...(rentChanged && unit.priceApprovedAt ? { priceApprovalCleared: true } : {}),
+        ...(priceInputsChanged && unit.priceApprovedAt ? { priceApprovalCleared: true } : {}),
       },
       rulesVersion: ctx.rulesVersion,
     });
@@ -195,11 +240,11 @@ export async function updateUnit(ctx: EngineContext, id: string, patch: z.infer<
   });
 }
 
-/** A proposal for an old rent or bedroom count no longer applies once either changes. */
+/** A proposal made for old pricing inputs no longer applies once any of them changes. */
 async function cancelPendingPriceApprovals(ctx: EngineContext, tx: Tx, unitId: string) {
   const gone = await tx.db
     .update(approvals)
-    .set({ status: "cancelled", decidedAt: ctx.clock.now(), decisionNote: "asking rent or bedrooms changed" })
+    .set({ status: "cancelled", decidedAt: ctx.clock.now(), decisionNote: "pricing inputs changed" })
     .where(
       and(eq(approvals.entityId, unitId), eq(approvals.gate, "price_out_of_range"), eq(approvals.status, "pending")),
     )
@@ -215,20 +260,54 @@ async function cancelPendingPriceApprovals(ctx: EngineContext, tx: Tx, unitId: s
   }
 }
 
+/** "AED 95,000" for whole dirhams, with fils otherwise. */
+const aed = (fils: number) => formatAed(fils).replace(/\.00$/, "");
+
+/** The real limits of a range: a side with no limit is null, never the sentinel. */
+function limitsOf(r: PriceRange): { lo: number | null; hi: number | null } {
+  return {
+    lo: r.basis.aedMin === null && r.basis.bandMin === null ? null : r.min,
+    hi: r.basis.aedMax === null && r.basis.bandMax === null ? null : r.max,
+  };
+}
+
+/** The range as clients see it: a side with no limit is null, `basis` is kept as is. */
+export function exposeRange(r: PriceRange | null) {
+  if (!r) return null;
+  const { lo, hi } = limitsOf(r);
+  return { min: lo, max: hi, basis: r.basis };
+}
+
+function describeBand(r: PriceRange): string {
+  const { lo, hi } = limitsOf(r);
+  if (lo !== null && hi !== null) return `${aed(lo)} to ${aed(hi)}`;
+  if (lo !== null) return `${aed(lo)} upwards, no upper limit`;
+  if (hi !== null) return `up to ${aed(hi)}, no lower limit`;
+  return "no limits";
+}
+
 /** Puts an out-of-range asking rent in the inbox for a leasing manager. */
 export async function requestPriceApproval(ctx: EngineContext, id: string, actor: Actor) {
   return withTx(ctx.database, async (tx) => {
     const [unit] = await tx.db.select().from(units).where(eq(units.id, id)).for("update");
     if (!unit) throw notFound("unit");
-    if (unit.askingRentFils === null || unit.bedrooms === null) {
-      throw unprocessable("set the asking rent and bedrooms first", [], "invalid_change");
+    if (unit.askingRentFils === null || (unit.category === "residential" && unit.bedrooms === null)) {
+      throw unprocessable(
+        unit.category === "residential" ? "set the asking rent and bedrooms first" : "set the asking rent first",
+        [],
+        "invalid_change",
+      );
     }
-    const { version: policyVersion, values: policy } = await getCompanyPolicyVersion(tx, ctx.clock.today());
-    if (askingRentWithinRange(unit, policy))
-      throw conflict("asking rent is within the company range; no approval needed");
+    const { version: policyVersion } = await getCompanyPolicyVersion(tx, ctx.clock.today());
+    const { range, ruleId, sriId, sriLabel } = await priceRangeFor(tx, unit, ctx.clock.today());
+    if (askingRentWithinRange(unit, range))
+      throw conflict("asking rent is within the allowed range; no approval needed");
     if (unit.priceApprovedAt) throw conflict("this asking rent is already approved");
-    const range = policy.askingRentRangeFils[String(unit.bedrooms)] ?? null;
-    const base = `${unit.id}:price@${unit.bedrooms}:${unit.askingRentFils}`;
+    const [company] = await tx.db
+      .select({ name: companies.name })
+      .from(companies)
+      .where(eq(companies.id, unit.companyId));
+    const base = `${unit.id}:price@${unit.bedrooms ?? unit.category}:${unit.askingRentFils}`;
     const previous = await tx.db
       .select({ status: approvals.status })
       .from(approvals)
@@ -238,12 +317,16 @@ export async function requestPriceApproval(ctx: EngineContext, id: string, actor
     const proposal: PriceProposal = {
       unitId: unit.id,
       unitCode: unit.code,
+      category: unit.category,
       bedrooms: unit.bedrooms,
       askingRentFils: unit.askingRentFils,
-      rangeMinFils: range?.min ?? null,
-      rangeMaxFils: range?.max ?? null,
+      rangeMinFils: range ? limitsOf(range).lo : null,
+      rangeMaxFils: range ? limitsOf(range).hi : null,
+      ruleId,
+      sriId,
       policyVersion,
     };
+    const who = `rent rule for ${company?.name ?? "the company"}, ${unit.category}${sriLabel ? `, ${sriLabel}` : ""}`;
     return requestApproval(ctx, tx, {
       gate: "price_out_of_range",
       entity: { kind: "unit", id: unit.id },
@@ -252,24 +335,17 @@ export async function requestPriceApproval(ctx: EngineContext, id: string, actor
       proposal,
       reasons: [
         range
-          ? `${formatAed(unit.askingRentFils)} a year is outside the company range for ${unit.bedrooms === 0 ? "studios" : `${unit.bedrooms}-bed units`} (${formatAed(range.min)}–${formatAed(range.max)}).`
-          : `No company range is set for ${unit.bedrooms}-bed units.`,
+          ? `${aed(unit.askingRentFils)} a year is outside the allowed range ${describeBand(range)} (${who}).`
+          : `No allowed range applies to this unit: there is no rent rule, or its limits can't be worked out (${who}).`,
       ],
       sources: [
-        { kind: "field", label: "Asking rent", value: formatAed(unit.askingRentFils) },
-        ...(range
-          ? [
-              {
-                kind: "field" as const,
-                label: "Company range",
-                value: `${formatAed(range.min)} – ${formatAed(range.max)}`,
-              },
-            ]
-          : []),
+        { kind: "field", label: "Asking rent", value: aed(unit.askingRentFils) },
+        ...(range ? [{ kind: "field" as const, label: "Allowed range", value: describeBand(range) }] : []),
+        ...(sriLabel ? [{ kind: "field" as const, label: "Smart Rental Index", value: sriLabel }] : []),
         {
           kind: "field" as const,
-          label: "Company policy",
-          value: policyVersion === null ? "built-in defaults" : `version ${policyVersion}`,
+          label: "Rent rule",
+          value: ruleId === null ? "none" : `${company?.name ?? "company"}, ${unit.category}`,
         },
       ],
       proposedBy: actor,
@@ -282,8 +358,10 @@ export async function applyApprovedPrice(ctx: EngineContext, tx: Tx, approval: A
   const p = PriceProposal.parse(effectiveProposal(approval));
   const [unit] = await tx.db.select().from(units).where(eq(units.id, p.unitId)).for("update");
   if (!unit) throw notFound("unit");
-  if (unit.askingRentFils !== p.askingRentFils || unit.bedrooms !== p.bedrooms) {
-    throw conflict("the asking rent or bedrooms changed after this was proposed; reject it and request approval again");
+  if (unit.askingRentFils !== p.askingRentFils || unit.bedrooms !== p.bedrooms || unit.category !== p.category) {
+    throw conflict(
+      "the asking rent, bedrooms or category changed after this was proposed; reject it and request approval again",
+    );
   }
   await tx.db.update(units).set({ priceApprovedAt: ctx.clock.now() }).where(eq(units.id, unit.id));
   await appendEvent(tx, ctx, {
@@ -300,18 +378,19 @@ const STAFF_EVENTS: UnitEvent[] = ["MARK_READY", "PUBLISH", "WITHDRAW"];
 
 export async function unitActions(ctx: EngineContext, tx: Tx, unit: typeof units.$inferSelect) {
   const today = ctx.clock.today();
-  const policy = await getCompanyPolicy(tx, today);
+  const { range, ruleId, sriLabel } = await priceRangeFor(tx, unit, today);
   const guardCtx = {
     unit,
     today,
-    policy,
+    priceRange: range,
     hasActiveEjari: await unitHasActiveEjari(tx, unit.id),
     hasContractedLease: await unitHasContractedLease(tx, unit.id),
   };
   return {
     checklistMissing: unitChecklistMissing(unit),
-    priceInRange: askingRentWithinRange(unit, policy),
-    priceRange: unit.bedrooms === null ? null : (policy.askingRentRangeFils[String(unit.bedrooms)] ?? null),
+    priceInRange: askingRentWithinRange(unit, range),
+    priceRange: exposeRange(range),
+    priceBasis: { ruleId, sriLabel },
     actions: unitMachine.transitions
       .filter((t) => t.from === unit.state && STAFF_EVENTS.includes(t.event))
       .map((t) => {

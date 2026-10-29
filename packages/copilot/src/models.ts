@@ -26,10 +26,10 @@ export function ollamaCopilotModel(cfg: { url: string; model: string }): Copilot
   });
   return {
     name: cfg.model,
-    async respond(messages: BaseMessage[], tools: ToolSpec[] | null, onToken): Promise<ModelTurn> {
+    async respond(messages: BaseMessage[], tools: ToolSpec[] | null, onToken, signal): Promise<ModelTurn> {
       const runnable = tools?.length ? chat.bindTools(tools) : chat;
       let acc: AIMessageChunk | undefined;
-      for await (const chunk of await runnable.stream(messages)) {
+      for await (const chunk of await runnable.stream(messages, signal ? { signal } : {})) {
         const t = textOf(chunk.content);
         if (t) onToken(t);
         acc = acc ? acc.concat(chunk) : chunk;

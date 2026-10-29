@@ -1,3 +1,5 @@
+import { notFound } from "next/navigation";
+import { TENANCY_OPS } from "../../../../lib/env";
 import { publicGet } from "../../../../lib/engine";
 import { longDate } from "../../../../lib/format";
 import type { MoveOutPortalView } from "../../../../lib/portal";
@@ -5,6 +7,7 @@ import { InspectionBookingForm } from "../tenancy-forms";
 
 /** Step 10: the tenant books (or moves) the move-out inspection. */
 export default async function InspectionPage({ params }: { params: Promise<{ token: string }> }) {
+  if (!TENANCY_OPS) notFound();
   const { token } = await params;
   const v = await publicGet<MoveOutPortalView>(`/api/portal/${encodeURIComponent(token)}`);
   const b = v?.tenancy?.moveOut?.booking;

@@ -29,3 +29,6 @@ export * from "./leasing-assistant/index.ts";
 export { type FormalReminderInput, formalReminderNotice } from "./collections/formal-reminder.ts";
 export * from "./complaint-triage/index.ts";
 export * from "./exit-deposit/index.ts";
+export * from "./contract-template/index.ts";
+export * from "./contract-structure/index.ts";
+export * from "./customer-agent/index.ts";

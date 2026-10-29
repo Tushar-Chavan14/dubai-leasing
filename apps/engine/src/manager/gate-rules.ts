@@ -10,6 +10,7 @@ import {
   type GateId,
   isCalendarDate,
   OfferTerms,
+  PropertyCategory,
 } from "@leasing/core";
 import { KycFlag, KycIdentity, StatementItem } from "@leasing/helpers";
 import type { approvals } from "@leasing/db";
@@ -136,15 +137,18 @@ export const SafetyComplaintProposal = z.object({
 });
 export type SafetyComplaintProposal = z.infer<typeof SafetyComplaintProposal>;
 
-/** Asking rent outside the company range for the unit's bedroom count (policy, not law). */
+/** Asking rent outside the rulebook range (company rent rule and SRI). Old rows carry bedrooms only. */
 export const PriceProposal = z.object({
   unitId: z.string(),
   unitCode: z.string(),
-  bedrooms: z.number().int(),
+  category: PropertyCategory.default("residential"),
+  bedrooms: z.number().int().nullable(),
   askingRentFils: z.number().int().positive(),
-  rangeMinFils: z.number().int().nullable(),
-  rangeMaxFils: z.number().int().nullable(),
-  policyVersion: z.number().int().nullable(),
+  rangeMinFils: z.number().int().nullable().optional(),
+  rangeMaxFils: z.number().int().nullable().optional(),
+  ruleId: z.string().nullable().optional(),
+  sriId: z.string().nullable().optional(),
+  policyVersion: z.number().int().nullable().optional(),
 });
 export type PriceProposal = z.infer<typeof PriceProposal>;
 
@@ -161,6 +165,8 @@ export const KycReviewProposal = z.object({
   documentIds: z.array(z.string()),
   applicantKind: z.enum(["individual", "company"]).optional(),
   note: z.string().max(2000).optional(),
+  /** Company policy version in force when the review was opened (null = built-in defaults). */
+  policyVersion: z.number().int().nullable().optional(),
 });
 export type KycReviewProposal = z.infer<typeof KycReviewProposal>;
 
@@ -216,6 +222,8 @@ export const FinalContractProposal = z.object({
   addendum: Addendum,
   flags: z.array(AddendumFlag),
   reviewed: z.boolean(),
+  /** The company template the PDF was rendered in (shown as "Company template v<N>"); absent for the standard template. */
+  template: z.object({ id: z.string(), version: z.number().int().min(1), contentHash: z.string() }).optional(),
   note: z.string().max(2000).optional(),
 });
 export type FinalContractProposal = z.infer<typeof FinalContractProposal>;
@@ -381,6 +389,9 @@ const rules: Partial<Record<GateId, GateRule>> = {
     },
   },
 };
+
+/** Whether a gate's proposal has any editable field (otherwise an edit is refused and the person rejects). */
+export const isGateEditable = (gate: GateId): boolean => (rules[gate]?.editable.length ?? 0) > 0;
 
 /** Validates an approve/edit decision. Returns problems; empty means the decision may proceed. */
 export function checkDecision(

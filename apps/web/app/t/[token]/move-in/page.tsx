@@ -1,3 +1,5 @@
+import { notFound } from "next/navigation";
+import { TENANCY_OPS } from "../../../../lib/env";
 import { publicGet } from "../../../../lib/engine";
 import { MoveInAckForm } from "../tenancy-forms";
 
@@ -11,6 +13,7 @@ interface View {
 
 /** Step 7: the tenant confirms the move-in condition report (single-use link, policy days). */
 export default async function MoveInPage({ params }: { params: Promise<{ token: string }> }) {
+  if (!TENANCY_OPS) notFound();
   const { token } = await params;
   const v = await publicGet<View>(`/api/portal/${encodeURIComponent(token)}`);
   if (!v || v.purpose !== "move_in_ack" || !v.tenancy.moveIn) {

@@ -1,0 +1,1 @@
+ALTER TABLE "contract_signers" ADD COLUMN "capacity" text;

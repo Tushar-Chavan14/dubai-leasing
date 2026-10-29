@@ -20,7 +20,16 @@ import { importLeasesCsv, importUnitsCsv } from "../src/manager/import.ts";
 import { fireDeadline, sweepDueDeadlines } from "../src/manager/milestones.ts";
 import { sendRenewalNotice } from "../src/manager/outbound.ts";
 import { createDraft, publishRulebook, updateDraft } from "../src/manager/rulebooks.ts";
-import { addStaff, completeMoveInChecklist, freshDatabase, leaseCsv, noDb, testContext, unitCsv } from "./harness.ts";
+import {
+  addStaff,
+  completeMoveInChecklist,
+  freshDatabase,
+  leaseCsv,
+  noDb,
+  testContext,
+  unitCsv,
+  testCompany,
+} from "./harness.ts";
 
 // 08:00 Dubai on 2026-10-19.
 const START = "2026-10-19T04:00:00Z";
@@ -29,7 +38,12 @@ type Ctx = ReturnType<typeof testContext>["ctx"];
 
 /** One imported lease. One cheque by default (already due, so assumed paid): these tests are about renewal. */
 async function importOne(ctx: Ctx, row: Partial<Record<string, string>>) {
-  const [r] = await importLeasesCsv(ctx, leaseCsv([{ cheques: "1", ...row }]), "import");
+  const [r] = await importLeasesCsv(
+    ctx,
+    leaseCsv([{ cheques: "1", ...row }]),
+    "import",
+    await testCompany(ctx.database),
+  );
   if (!r?.leaseId) throw new Error(`import failed: ${JSON.stringify(r)}`);
   return r.leaseId;
 }
@@ -108,13 +122,14 @@ describe.skipIf(noDb)("manager (Postgres)", () => {
           { unit_code: "imp-2", kind: "commercial", virtual_tour_url: "https://tour.test.example/imp-2" },
         ]),
         "user:00000000-0000-7000-8000-000000000001",
+        await testCompany(ctx.database),
       );
       expect(rows.map((r) => [r.row, r.status, r.ref, r.state])).toEqual([
         [2, "imported", "IMP-1", "PREP"],
         [3, "imported", "IMP-2", "PREP"],
       ]);
       const all = await database.db.select().from(units);
-      expect(all.map((u) => [u.code, u.state, u.kind]).toSorted()).toEqual([
+      expect(all.map((u) => [u.code, u.state, u.category]).toSorted()).toEqual([
         ["IMP-1", "PREP", "residential"],
         ["IMP-2", "PREP", "commercial"],
       ]);
@@ -132,9 +147,9 @@ describe.skipIf(noDb)("manager (Postgres)", () => {
     test("re-import skips existing codes", async () => {
       const { ctx } = testContext(database, START);
       const csv = unitCsv([{ unit_code: "IMP-1" }, { unit_code: "IMP-1" }]);
-      const first = await importUnitsCsv(ctx, csv, "import");
+      const first = await importUnitsCsv(ctx, csv, "import", await testCompany(ctx.database));
       expect(first.map((r) => r.status)).toEqual(["imported", "skipped"]);
-      const again = await importUnitsCsv(ctx, csv, "import");
+      const again = await importUnitsCsv(ctx, csv, "import", await testCompany(ctx.database));
       expect(again.map((r) => r.status)).toEqual(["skipped", "skipped"]);
       expect(again[0]?.reasons).toEqual(["unit already exists — edit it in Units"]);
       expect(await database.db.select().from(units)).toHaveLength(1);
@@ -146,27 +161,24 @@ describe.skipIf(noDb)("manager (Postgres)", () => {
         ctx,
         unitCsv([{ unit_code: "IMP-1" }, { unit_code: "IMP-2", makani_no: "123" }, { unit_code: "IMP-3" }]),
         "import",
+        await testCompany(ctx.database),
       );
       expect(rows.map((r) => r.status)).toEqual(["imported", "error", "imported"]);
       expect(rows[1]?.reasons).toEqual(["makani_no: Makani numbers have 10 digits"]);
       expect(await database.db.select().from(units)).toHaveLength(2);
     });
 
-    test("landlord is linked and reused across rows", async () => {
+    test("the company is the landlord: no landlord party is created or stored on the unit", async () => {
       const { ctx } = testContext(database, START);
-      const landlord = { landlord_name: "Test Holdings LLC", landlord_email: "owner@test.example" };
       const rows = await importUnitsCsv(
         ctx,
-        unitCsv([{ unit_code: "IMP-1", ...landlord }, { unit_code: "IMP-2", ...landlord }, { unit_code: "IMP-3" }]),
+        unitCsv([{ unit_code: "IMP-1" }, { unit_code: "IMP-2" }]),
         "import",
+        await testCompany(ctx.database),
       );
-      expect(rows.map((r) => r.status)).toEqual(["imported", "imported", "imported"]);
-      const ps = await database.db.select().from(parties);
-      expect(ps).toHaveLength(1);
-      const byCode = Object.fromEntries(
-        (await database.db.select().from(units)).map((u) => [u.code, u.landlordPartyId]),
-      );
-      expect(byCode).toEqual({ "IMP-1": ps[0]!.id, "IMP-2": ps[0]!.id, "IMP-3": null });
+      expect(rows.map((r) => r.status)).toEqual(["imported", "imported"]);
+      expect((await database.db.select().from(parties)).map((p) => p.kind)).toEqual(["company"]);
+      expect((await database.db.select().from(units)).map((u) => u.landlordPartyId)).toEqual([null, null]);
     });
   });
 
@@ -186,6 +198,7 @@ describe.skipIf(noDb)("manager (Postgres)", () => {
           { unit_code: "H", start_on: "2026-06-01", end_on: "2027-05-31", tenant_emirates_id: "784-1990-1234567-0" }, // bad EID
         ]),
         "import",
+        await testCompany(ctx.database),
       );
       expect(rows.map((r) => [r.row, r.status, r.state ?? null])).toEqual([
         [2, "imported", "ACTIVE"],
@@ -206,8 +219,8 @@ describe.skipIf(noDb)("manager (Postgres)", () => {
     test("re-import skips rows already imported", async () => {
       const { ctx } = testContext(database, START);
       const csv = leaseCsv([{ unit_code: "A", start_on: "2026-06-01", end_on: "2027-05-31" }]);
-      await importLeasesCsv(ctx, csv, "import");
-      const again = await importLeasesCsv(ctx, csv, "import");
+      await importLeasesCsv(ctx, csv, "import", await testCompany(ctx.database));
+      const again = await importLeasesCsv(ctx, csv, "import", await testCompany(ctx.database));
       expect(again[0]?.status).toBe("skipped");
       expect(await database.db.select().from(leases)).toHaveLength(1);
       // 6 renewal milestones + reminder and overdue checks for the 2 instalments still ahead; none twice.
@@ -222,6 +235,7 @@ describe.skipIf(noDb)("manager (Postgres)", () => {
         ctx,
         leaseCsv([{ unit_code: "A", start_on: "2027-01-01", end_on: "2027-12-31", tenant_name: "Other" }]),
         "import",
+        await testCompany(ctx.database),
       );
       expect(r?.status).toBe("error");
     });
@@ -238,6 +252,7 @@ describe.skipIf(noDb)("manager (Postgres)", () => {
         ctx,
         leaseCsv([{ unit_code: "L", start_on: "2027-07-01", end_on: "2028-06-30", tenant_name: "New" }]),
         "import",
+        await testCompany(ctx.database),
       );
       expect(r?.status).toBe("error");
       expect(r?.reasons[0]).toContain("own-use lock");
@@ -252,6 +267,7 @@ describe.skipIf(noDb)("manager (Postgres)", () => {
         ctx,
         leaseCsv([{ unit_code: "P2", start_on: "2026-06-01", end_on: "2027-05-31", tenant_phone: "+971 50 123 4567" }]),
         "import",
+        await testCompany(ctx.database),
       );
       expect(r?.status).toBe("error");
       expect(r?.reasons.join(" ")).toContain("leases_ref_unique");
@@ -294,7 +310,12 @@ describe.skipIf(noDb)("manager (Postgres)", () => {
 
     test("import after T−90 warns and raises the same-rent fallback task", async () => {
       const { ctx } = testContext(database, START);
-      const [r] = await importLeasesCsv(ctx, leaseCsv([{ start_on: "2026-01-01", end_on: "2026-12-31" }]), "import");
+      const [r] = await importLeasesCsv(
+        ctx,
+        leaseCsv([{ start_on: "2026-01-01", end_on: "2026-12-31" }]),
+        "import",
+        await testCompany(ctx.database),
+      );
       expect(r?.reasons.join(" ")).toContain("notice deadline has passed");
       expect(await taskKinds(r!.leaseId!)).toContain("renewal_same_rent_fallback");
     });
@@ -461,6 +482,7 @@ describe.skipIf(noDb)("manager (Postgres)", () => {
       const { ctx } = testContext(database, START);
       const id = newId();
       await database.db.insert(units).values({
+        companyId: await testCompany(database),
         id,
         code: "RV",
         building: "b",

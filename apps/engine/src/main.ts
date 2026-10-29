@@ -3,13 +3,15 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HttpEjariClient, LocalDiskStore, NodemailerMailer, TelegramSender } from "@leasing/adapters";
 import { ollamaCopilotModel } from "@leasing/copilot";
-import { OllamaLlm } from "@leasing/llm";
+import { ModelGate, OllamaLlm } from "@leasing/llm";
 import { createDatabase } from "@leasing/db";
 import { activeRulesVersion } from "@leasing/rulebook";
 import { createApi } from "./api/app.ts";
 import { createEngineClock, EngineDemoClock } from "./clock.ts";
 import type { EngineContext } from "./context.ts";
+import { customerAgentModel } from "./customer-agent-model.ts";
 import { bossScheduler, createBoss, requestSweep, startWorkers } from "./jobs.ts";
+import { backfillTenancySchedules } from "./manager/milestones.ts";
 import { syncRulebooks } from "./manager/rulebooks.ts";
 
 const env = loadEnv();
@@ -57,6 +59,8 @@ const mailer = new NodemailerMailer({
 if (env.EJARI_MODE !== "mock") throw new Error("EJARI_MODE=live is not available yet; use mock");
 
 const sessionSecret = env.SESSION_SECRET ?? "demo-only-session-secret";
+// One GPU: interactive model calls go before background ones (decision in docs/architecture.md §5).
+const modelGate = new ModelGate(1);
 const ctx: EngineContext = {
   database,
   clock,
@@ -66,6 +70,7 @@ const ctx: EngineContext = {
     return activeRulesVersion(clock.today()) ?? env.RULES_VERSION;
   },
   demoMode: env.DEMO_MODE,
+  tenancyOps: env.TENANCY_OPS,
   mailer,
   documents: new LocalDiskStore(documentsRoot),
   uploads: new LocalDiskStore(uploadsRoot),
@@ -75,16 +80,63 @@ const ctx: EngineContext = {
     decisionModel: env.DECISION_MODEL,
     chatModel: env.CHAT_MODEL,
     visionModel: env.VISION_MODEL,
+    gate: modelGate,
+    priority: "interactive",
   }),
+  ...(env.LEASING_ASSISTANT_MODEL
+    ? {
+        leasingAssistantLlm: new OllamaLlm({
+          url: env.OLLAMA_URL,
+          decisionModel: env.DECISION_MODEL,
+          chatModel: env.LEASING_ASSISTANT_MODEL,
+          gate: modelGate,
+          priority: "interactive",
+        }),
+      }
+    : {}),
+  // Contract AI jobs are background work: they queue behind interactive calls and each call is time-limited.
+  ...(env.CONTRACT_AI_MODEL || env.CHAT_MODEL
+    ? {
+        contractAiLlm: new OllamaLlm({
+          url: env.OLLAMA_URL,
+          chatModel: env.CONTRACT_AI_MODEL || env.CHAT_MODEL,
+          visionModel: env.VISION_MODEL,
+          gate: modelGate,
+          priority: "background",
+          defaultTimeoutMs: env.BACKGROUND_MODEL_TIMEOUT_SECONDS * 1000,
+        }),
+      }
+    : {}),
+  kyc: { docTimeoutMs: env.KYC_DOC_TIMEOUT_SECONDS * 1000, stuckMinutes: env.KYC_STUCK_MINUTES },
   ...(env.COPILOT_MODEL || env.CHAT_MODEL
     ? { copilot: ollamaCopilotModel({ url: env.OLLAMA_URL, model: (env.COPILOT_MODEL || env.CHAT_MODEL)! }) }
     : {}),
+  // Web chat free text (D36): CUSTOMER_AGENT_MODEL, else CHAT_MODEL. Local Ollama only.
+  ...(env.CUSTOMER_AGENT_MODEL || env.CHAT_MODEL
+    ? {
+        customerAgent: customerAgentModel({
+          url: env.OLLAMA_URL,
+          model: (env.CUSTOMER_AGENT_MODEL || env.CHAT_MODEL)!,
+        }),
+      }
+    : {}),
+  customerAgentLimits: { maxConcurrent: env.CUSTOMER_AGENT_MAX_CONCURRENT },
+  voiceModel: env.VOICE_MODEL,
   webUrl: env.WEB_URL,
+  serverSecret: sessionSecret,
   // Officers' replies in handed-off Telegram enquiries (the bot app receives updates).
   ...(env.TELEGRAM_BOT_TOKEN ? { channel: new TelegramSender(env.TELEGRAM_BOT_TOKEN) } : {}),
 };
 
-await startWorkers(boss, ctx, { onSweep: () => demoClock?.refresh() ?? Promise.resolve() });
+await startWorkers(boss, ctx, {
+  onSweep: () => demoClock?.refresh() ?? Promise.resolve(),
+  backgroundModelTimeoutSeconds: env.BACKGROUND_MODEL_TIMEOUT_SECONDS,
+});
+// After startWorkers: it creates the queues the backfill sends deadline jobs to.
+if (ctx.tenancyOps) {
+  const filled = await backfillTenancySchedules(ctx);
+  if (filled) console.log(`TENANCY_OPS backfill: scheduled ${filled} active lease(s)`);
+}
 await requestSweep(boss);
 
 let sweepTimer: ReturnType<typeof setInterval> | undefined;

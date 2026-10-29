@@ -6,6 +6,8 @@
     "packages/*/*.ts",
     "apps/engine/src/**/*",
     "apps/engine/test/**/*",
+    "apps/web/test/**/*",
+    "apps/web/next.config.ts",
     "apps/telegram-bot/src/**/*",
     "apps/telegram-bot/test/**/*",
     "apps/ejari-mock/src/**/*",

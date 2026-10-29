@@ -19,7 +19,7 @@ import { eq } from "drizzle-orm";
 import { createApi } from "../src/api/app.ts";
 import { issueToken } from "../src/api/auth.ts";
 import { APPLICATION_MAIL_JOB, createApplication } from "../src/manager/applications.ts";
-import { addStaff, freshDatabase, noDb, testContext } from "./harness.ts";
+import { addStaff, freshDatabase, noDb, testContext, testCompany } from "./harness.ts";
 
 const START = "2026-11-02T04:00:00Z"; // Monday 08:00 Dubai → first free slot 12:00
 const SLOT = "2026-11-02T12:00:00+04:00";
@@ -39,6 +39,7 @@ async function setup(script?: ModelTurn[]) {
   await database.db.insert(parties).values({ id: landlordId, kind: "company", fullNameEn: "Fictional Holdings LLC" });
   const unitId = newId();
   await database.db.insert(units).values({
+    companyId: await testCompany(database),
     id: unitId,
     code: "JVC-0412",
     building: "Demo Circle Residence",
@@ -180,11 +181,11 @@ describe.skipIf(noDb)("copilot proposes, the user confirms (D25)", () => {
 
   test("only leasing officers and managers get the propose tool; the route refuses everyone else", async () => {
     const s = await setup();
-    expect(toolsFor("leasing_officer").map((t) => t.name)).toContain("propose_application");
-    expect(toolsFor("leasing_manager").map((t) => t.name)).toContain("propose_application");
-    expect(toolsFor("finance").map((t) => t.name)).not.toContain("propose_application");
-    expect(toolsFor("admin").map((t) => t.name)).not.toContain("propose_application");
-    expect(toolsFor("finance").map((t) => t.name)).toContain("find_available_units");
+    expect(toolsFor("leasing_officer", { tenancyOps: true }).map((t) => t.name)).toContain("propose_application");
+    expect(toolsFor("leasing_manager", { tenancyOps: true }).map((t) => t.name)).toContain("propose_application");
+    expect(toolsFor("finance", { tenancyOps: true }).map((t) => t.name)).not.toContain("propose_application");
+    expect(toolsFor("admin", { tenancyOps: true }).map((t) => t.name)).not.toContain("propose_application");
+    expect(toolsFor("finance", { tenancyOps: true }).map((t) => t.name)).toContain("find_available_units");
     expect((await s.propose(s.finance, await s.thread(s.finance))).status).toBe(403);
     expect((await s.propose(s.manager, await s.thread(s.manager))).status).toBe(201);
   });

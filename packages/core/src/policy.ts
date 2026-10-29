@@ -10,6 +10,246 @@ const DEFAULT_DEDUCTIONS = [
   { id: "floor_repair", label: "Floor damage repair", unit: "sqm" as const, priceFils: 12_000 },
 ];
 
+export const AutopilotStep = z.enum([
+  "chat_viewing_booking",
+  "apply_without_viewing",
+  "auto_kyc_verify",
+  "auto_send_offer",
+  "auto_send_counter",
+  "auto_prepare_contract",
+  // --- slice 4: more agent permissions (decision D37). None of them touches a locked gate. ---
+  "agent_free_text_book",
+  "agent_free_text_apply",
+  "viewing_reminder",
+  "no_show_followup",
+  "kyc_chase",
+  "ejari_draft_auto",
+  "sign_reminder",
+  "held_offer_auto_release",
+  "agent_sri_answers",
+  "agent_suggest_alternatives",
+  "contract_ai_auto_approve_valueless",
+  "copilot_proactive_drafts",
+  "quiet_hours",
+]);
+export type AutopilotStep = z.infer<typeof AutopilotStep>;
+
+export const DEFAULT_AUTOPILOT: Record<AutopilotStep, boolean> = {
+  chat_viewing_booking: true,
+  apply_without_viewing: false,
+  auto_kyc_verify: true,
+  auto_send_offer: true,
+  auto_send_counter: true,
+  auto_prepare_contract: true,
+  agent_free_text_book: true,
+  agent_free_text_apply: true,
+  viewing_reminder: true,
+  no_show_followup: false,
+  kyc_chase: true,
+  ejari_draft_auto: true,
+  sign_reminder: true,
+  held_offer_auto_release: false,
+  agent_sri_answers: true,
+  agent_suggest_alternatives: true,
+  contract_ai_auto_approve_valueless: false,
+  copilot_proactive_drafts: false,
+  quiet_hours: true,
+};
+
+/** Numbers stored next to the switches, each bounded (an out-of-range save is refused, never clamped). */
+export const AUTOPILOT_NUMBERS = {
+  viewing_reminder_hours: { label: "Remind before the viewing", unit: "hours", min: 1, max: 72, default: 24 },
+  kyc_chase_hours: { label: "Chase documents after", unit: "hours without an upload", min: 6, max: 336, default: 48 },
+  sign_reminder_days: { label: "Remind signers after", unit: "days", min: 1, max: 14, default: 3 },
+  held_offer_release_hours: { label: "Release a held offer after", unit: "hours", min: 1, max: 168, default: 24 },
+  quiet_hours_start: { label: "Quiet hours start", unit: "hour, Dubai time (0 to 23)", min: 0, max: 23, default: 22 },
+  quiet_hours_end: { label: "Quiet hours end", unit: "hour, Dubai time (0 to 23)", min: 0, max: 23, default: 8 },
+  agent_daily_action_cap: {
+    label: "Bookings and applications per chat per day",
+    unit: "actions",
+    min: 1,
+    max: 50,
+    default: 5,
+  },
+} as const;
+export type AutopilotNumber = keyof typeof AUTOPILOT_NUMBERS;
+export const AUTOPILOT_NUMBER_IDS = Object.keys(AUTOPILOT_NUMBERS) as AutopilotNumber[];
+
+export const DEFAULT_AUTOPILOT_NUMBERS: Record<AutopilotNumber, number> = Object.fromEntries(
+  AUTOPILOT_NUMBER_IDS.map((k) => [k, AUTOPILOT_NUMBERS[k].default]),
+) as Record<AutopilotNumber, number>;
+
+export const QUIET_HOURS_SAME = "Quiet hours must start and end at different hours.";
+
+/** What a save may contain: any of the switches and numbers; numbers keep their bounds. */
+export const AutopilotPatch = z
+  .object({
+    ...Object.fromEntries(AutopilotStep.options.map((k) => [k, z.boolean().optional()])),
+    ...Object.fromEntries(
+      AUTOPILOT_NUMBER_IDS.map((k) => [
+        k,
+        z.number().int().min(AUTOPILOT_NUMBERS[k].min).max(AUTOPILOT_NUMBERS[k].max).optional(),
+      ]),
+    ),
+  })
+  .strict() as z.ZodType<Partial<Record<AutopilotStep, boolean>> & Partial<Record<AutopilotNumber, number>>>;
+export type AutopilotPatch = z.infer<typeof AutopilotPatch>;
+
+export type AutopilotGroup = "Chat agent" | "Reminders" | "Offers and contracts" | "Copilot" | "Limits";
+export const AUTOPILOT_GROUPS: AutopilotGroup[] = [
+  "Chat agent",
+  "Reminders",
+  "Offers and contracts",
+  "Copilot",
+  "Limits",
+];
+
+/**
+ * Agent permissions shown to admins: label and what switching the step off does (spec §5).
+ * `numbers` are the bounded settings that belong to the step and are shown under its switch.
+ */
+export const AUTOPILOT_STEPS: {
+  id: AutopilotStep;
+  group: AutopilotGroup;
+  label: string;
+  offMeans: string;
+  numbers?: AutopilotNumber[];
+}[] = [
+  {
+    id: "chat_viewing_booking",
+    group: "Chat agent",
+    label: "Chat books viewings",
+    offMeans: "The chat takes details and an officer books the viewing.",
+  },
+  {
+    id: "agent_free_text_book",
+    group: "Chat agent",
+    label: "Book from typed messages",
+    offMeans: "The chat shows a time to tap and books only after the visitor taps it.",
+  },
+  {
+    id: "apply_without_viewing",
+    group: "Chat agent",
+    label: "Apply without a viewing",
+    offMeans: "A viewing is required before an application is created.",
+  },
+  {
+    id: "agent_free_text_apply",
+    group: "Chat agent",
+    label: "Apply from typed messages",
+    offMeans: "The chat shows an Apply button and applies only after the visitor taps it.",
+  },
+  {
+    id: "agent_sri_answers",
+    group: "Chat agent",
+    label: "Answer rent index questions",
+    offMeans: "The chat does not quote average rents for an area.",
+  },
+  {
+    id: "agent_suggest_alternatives",
+    group: "Chat agent",
+    label: "Suggest other units when one is taken",
+    offMeans: "The chat says the unit is gone and offers a normal search.",
+  },
+  {
+    id: "viewing_reminder",
+    group: "Reminders",
+    label: "Remind applicants before a viewing",
+    offMeans: "No reminder email goes out before a viewing.",
+    numbers: ["viewing_reminder_hours"],
+  },
+  {
+    id: "no_show_followup",
+    group: "Reminders",
+    label: "Follow up after a no-show",
+    offMeans: "No email goes to an applicant who missed the viewing.",
+  },
+  {
+    id: "kyc_chase",
+    group: "Reminders",
+    label: "Chase missing documents",
+    offMeans: "Nobody reminds the applicant to upload documents.",
+    numbers: ["kyc_chase_hours"],
+  },
+  {
+    id: "sign_reminder",
+    group: "Reminders",
+    label: "Remind signers",
+    offMeans: "Nobody reminds a signer who has not signed.",
+    numbers: ["sign_reminder_days"],
+  },
+  {
+    id: "quiet_hours",
+    group: "Reminders",
+    label: "Hold reminders during quiet hours",
+    offMeans: "Reminders go out at any hour.",
+    numbers: ["quiet_hours_start", "quiet_hours_end"],
+  },
+  {
+    id: "auto_kyc_verify",
+    group: "Offers and contracts",
+    label: "Verify clean KYC automatically",
+    offMeans: "Every KYC result waits for an officer to review it.",
+  },
+  {
+    id: "auto_send_offer",
+    group: "Offers and contracts",
+    label: "Send offers within limits",
+    offMeans: "Every offer waits for an officer to send it.",
+  },
+  {
+    id: "held_offer_auto_release",
+    group: "Offers and contracts",
+    label: "Release a held offer by itself",
+    offMeans: "A held offer waits until an officer sends it.",
+    numbers: ["held_offer_release_hours"],
+  },
+  {
+    id: "auto_send_counter",
+    group: "Offers and contracts",
+    label: "Answer counter-offers within limits",
+    offMeans: "Every counter-offer waits for an officer to send it.",
+  },
+  {
+    id: "auto_prepare_contract",
+    group: "Offers and contracts",
+    label: "Prepare the contract automatically",
+    offMeans: "An officer is asked to prepare the contract.",
+  },
+  {
+    id: "contract_ai_auto_approve_valueless",
+    group: "Offers and contracts",
+    label: "Approve clauses without amounts or dates",
+    offMeans: "An admin approves every clause read from a sample contract.",
+  },
+  {
+    id: "ejari_draft_auto",
+    group: "Offers and contracts",
+    label: "Draft the Ejari submission after signing",
+    offMeans: "An officer is asked to draft it. A person always approves the submission.",
+  },
+  {
+    id: "copilot_proactive_drafts",
+    group: "Copilot",
+    label: "Suggest reply drafts in the Workspace",
+    offMeans: "No Draft a reply button appears. Nothing is ever sent for you.",
+  },
+];
+
+/** The cap is a limit, not a switch: shown under its own heading. */
+export const AUTOPILOT_LIMIT_NUMBERS: AutopilotNumber[] = ["agent_daily_action_cap"];
+
+export const LOCKED_STEPS: { label: string; reason: string }[] = [
+  "Final contract",
+  "Ejari submission",
+  "Offer or price outside limits",
+  "Flagged KYC",
+  "Recording a reservation payment",
+].map((label) => ({ label, reason: "Required by law or company money rules. A person always decides." }));
+
+const autopilotNumber = (k: AutopilotNumber) =>
+  z.number().int().min(AUTOPILOT_NUMBERS[k].min).max(AUTOPILOT_NUMBERS[k].max).default(AUTOPILOT_NUMBERS[k].default);
+
 /**
  * Company limits (policy, not law). Stored versioned in `company_policy`, editable by Admin.
  * Defaults below are placeholders until the client confirms them (docs/specs.md §10).
@@ -124,6 +364,38 @@ export const CompanyPolicy = z.object({
   depositResponseDays: z.number().int().min(1).max(60).default(14),
   /** Below this vision-model confidence a photo comparison makes no suggestion. Set from evals. */
   exitVisionMinConfidence: z.number().min(0).max(1).default(0.6),
+  /** Agent permissions: which steps the agents may take without a person. */
+  autopilot: z
+    .object({
+      chat_viewing_booking: z.boolean(),
+      apply_without_viewing: z.boolean(),
+      auto_kyc_verify: z.boolean(),
+      auto_send_offer: z.boolean(),
+      auto_send_counter: z.boolean(),
+      auto_prepare_contract: z.boolean(),
+      // Added in slice 4: a policy stored before that has none of these, so each has its default.
+      agent_free_text_book: z.boolean().default(DEFAULT_AUTOPILOT.agent_free_text_book),
+      agent_free_text_apply: z.boolean().default(DEFAULT_AUTOPILOT.agent_free_text_apply),
+      viewing_reminder: z.boolean().default(DEFAULT_AUTOPILOT.viewing_reminder),
+      no_show_followup: z.boolean().default(DEFAULT_AUTOPILOT.no_show_followup),
+      kyc_chase: z.boolean().default(DEFAULT_AUTOPILOT.kyc_chase),
+      ejari_draft_auto: z.boolean().default(DEFAULT_AUTOPILOT.ejari_draft_auto),
+      sign_reminder: z.boolean().default(DEFAULT_AUTOPILOT.sign_reminder),
+      held_offer_auto_release: z.boolean().default(DEFAULT_AUTOPILOT.held_offer_auto_release),
+      agent_sri_answers: z.boolean().default(DEFAULT_AUTOPILOT.agent_sri_answers),
+      agent_suggest_alternatives: z.boolean().default(DEFAULT_AUTOPILOT.agent_suggest_alternatives),
+      contract_ai_auto_approve_valueless: z.boolean().default(DEFAULT_AUTOPILOT.contract_ai_auto_approve_valueless),
+      copilot_proactive_drafts: z.boolean().default(DEFAULT_AUTOPILOT.copilot_proactive_drafts),
+      quiet_hours: z.boolean().default(DEFAULT_AUTOPILOT.quiet_hours),
+      viewing_reminder_hours: autopilotNumber("viewing_reminder_hours"),
+      kyc_chase_hours: autopilotNumber("kyc_chase_hours"),
+      sign_reminder_days: autopilotNumber("sign_reminder_days"),
+      held_offer_release_hours: autopilotNumber("held_offer_release_hours"),
+      quiet_hours_start: autopilotNumber("quiet_hours_start"),
+      quiet_hours_end: autopilotNumber("quiet_hours_end"),
+      agent_daily_action_cap: autopilotNumber("agent_daily_action_cap"),
+    })
+    .default({ ...DEFAULT_AUTOPILOT, ...DEFAULT_AUTOPILOT_NUMBERS }),
 });
 export type CompanyPolicy = z.infer<typeof CompanyPolicy>;
 
@@ -180,4 +452,26 @@ export const defaultCompanyPolicy: CompanyPolicy = {
   inspectionBookingWindowDays: 7,
   depositResponseDays: 14,
   exitVisionMinConfidence: 0.6,
+  autopilot: { ...DEFAULT_AUTOPILOT, ...DEFAULT_AUTOPILOT_NUMBERS },
 };
+
+/**
+ * Quiet hours (Asia/Dubai wall clock, no DST). A reminder due inside the window is moved to the
+ * moment it ends. `start` > `end` wraps midnight (22 to 8); `start` = `end` is an empty window.
+ * Pure: the caller passes the Clock's instant.
+ */
+export function postponeOutOfQuietHours(at: Date, start: number, end: number): Date {
+  if (start === end) return at;
+  const dubai = new Date(at.getTime() + 4 * 3_600_000);
+  const hour = dubai.getUTCHours();
+  const inside = start < end ? hour >= start && hour < end : hour >= start || hour < end;
+  if (!inside) return at;
+  // Midnight (Dubai) of the day the window ends, then its end hour.
+  const dayStart = Date.UTC(dubai.getUTCFullYear(), dubai.getUTCMonth(), dubai.getUTCDate());
+  const endsNextDay = start > end && hour >= start;
+  return new Date(dayStart + (endsNextDay ? 86_400_000 : 0) + end * 3_600_000 - 4 * 3_600_000);
+}
+
+/** True when `at` falls inside the window. */
+export const inQuietHours = (at: Date, start: number, end: number) =>
+  postponeOutOfQuietHours(at, start, end).getTime() !== at.getTime();

@@ -15,8 +15,7 @@ import {
 } from "../manager/collections.ts";
 import { leaseComplaints, resolveComplaint, ticketBoard, updateTicket } from "../manager/complaints.ts";
 import { appendEvent, leaseRulesVersion } from "../manager/events.ts";
-import { addApprovalNote, approvalNotesFor, getOwnDraft, sendStaffEmail } from "../manager/staff-messages.ts";
-import { completeTask, createStaffTask, proposeVacateNotice, recordLandlordAnswer } from "../manager/task-actions.ts";
+import { proposeVacateNotice, recordLandlordAnswer } from "../manager/task-actions.ts";
 import {
   addConditionPhoto,
   completeMoveIn,
@@ -256,16 +255,6 @@ export function registerTenancyRoutes(api: Hono<AuthEnv>, ctx: EngineContext) {
   );
 
   // --- tasks, the landlord's answer, the 12-month notice ---
-  api.post("/tasks", async (c) => {
-    const user = c.get("user");
-    return c.json(await createStaffTask(ctx, `user:${user.id}`, user.role, await c.req.json()), 201);
-  });
-  api.post("/tasks/:id/done", async (c) => {
-    const { note } = z
-      .object({ note: z.string().trim().max(2000).optional() })
-      .parse(await c.req.json().catch(() => ({})));
-    return c.json(await completeTask(ctx, c.get("user"), uuid(c.req.param("id")), note));
-  });
   api.post("/tasks/:id/landlord-answer", async (c) =>
     c.json(await recordLandlordAnswer(ctx, c.get("user"), uuid(c.req.param("id")), await c.req.json())),
   );
@@ -275,20 +264,6 @@ export function registerTenancyRoutes(api: Hono<AuthEnv>, ctx: EngineContext) {
       await proposeVacateNotice(ctx, `user:${user.id}`, user.role, uuid(c.req.param("id")), await c.req.json()),
       201,
     );
-  });
-
-  // --- people's own text: email the tenant, notes on an approval, copilot drafts to prefill ---
-  api.post("/leases/:id/email", async (c) =>
-    c.json(await sendStaffEmail(ctx, c.get("user"), uuid(c.req.param("id")), await c.req.json())),
-  );
-  api.get("/approvals/:id/notes", async (c) => c.json(await approvalNotesFor(ctx, uuid(c.req.param("id")))));
-  api.post("/approvals/:id/notes", async (c) =>
-    c.json(await addApprovalNote(ctx, c.get("user"), uuid(c.req.param("id")), await c.req.json()), 201),
-  );
-  api.get("/copilot/drafts/:id", async (c) => {
-    const d = await getOwnDraft(ctx, c.get("user"), uuid(c.req.param("id")));
-    if (!d) throw notFound("draft");
-    return c.json(d);
   });
 
   // --- payments ---

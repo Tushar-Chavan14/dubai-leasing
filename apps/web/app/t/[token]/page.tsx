@@ -1,3 +1,4 @@
+import { TENANCY_OPS } from "../../../lib/env";
 import { formatAed } from "@leasing/core";
 import { redirect } from "next/navigation";
 import { publicGet } from "../../../lib/engine";
@@ -47,6 +48,15 @@ export default async function TenancyPage({ params }: { params: Promise<{ token:
   if ("kind" in view && view.kind === "application") return <ApplicationStatus v={view} token={token} />;
   if ("kind" in view && (view as { kind: string }).kind === "sign") redirect(`/t/${token}/sign`);
   const v = view as PortalView;
+  // Move-in through move-out is off: the renewal, payment, issue and move-out forms don't exist.
+  if (!TENANCY_OPS)
+    return (
+      <section className="panel panel-pad">
+        <p className="muted">
+          There&apos;s nothing for you to do here right now. Contact the leasing team with any question.
+        </p>
+      </section>
+    );
   const increase = v.notice && v.notice.proposedRentFils > v.notice.currentRentFils;
 
   return (

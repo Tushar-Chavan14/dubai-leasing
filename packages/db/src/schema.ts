@@ -17,6 +17,8 @@ import type {
   InboundType,
   LeaseState,
   OfferTerms,
+  PropertyCategory,
+  PropertySubtype,
   StaffRole,
   UnitState,
 } from "@leasing/core";
@@ -24,6 +26,7 @@ import { sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
+  check,
   date,
   index,
   integer,
@@ -34,6 +37,7 @@ import {
   smallint,
   text,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
@@ -84,36 +88,81 @@ export const parties = pgTable(
   (t) => [index("parties_email_idx").on(t.email), uniqueIndex("parties_emirates_id_uq").on(t.emiratesIdNo)],
 );
 
-export const units = pgTable("units", {
+export const companies = pgTable("companies", {
   id: id(),
-  /** Short code staff use, e.g. "MRN-1204". */
-  code: text("code").notNull().unique(),
-  building: text("building").notNull(),
-  community: text("community").notNull(),
-  kind: text("kind").$type<"residential" | "commercial">().notNull().default("residential"),
-  state: text("state").$type<UnitState>().notNull().default("PREP"),
-  dldPropertyNo: text("dld_property_no"),
-  unitNo: text("unit_no"),
-  makaniNo: text("makani_no"),
-  plotNo: text("plot_no"),
-  areaSqft: integer("area_sqft"),
-  bedrooms: smallint("bedrooms"),
-  furnished: boolean("furnished"),
-  dewaPremiseNo: text("dewa_premise_no"),
-  askingRentFils: fils("asking_rent_fils"),
-  priceApprovedAt: ts("price_approved_at"),
-  landlordPartyId: uuid("landlord_party_id").references(() => parties.id),
-  ownUseLockUntil: calDate("own_use_lock_until"),
-  /** Listing text shown to applicants. */
-  description: text("description"),
-  floor: smallint("floor"),
-  bathrooms: smallint("bathrooms"),
-  parkingSpaces: smallint("parking_spaces"),
-  /** Optional external virtual tour (https), shown on the applicant's property page. */
-  virtualTourUrl: text("virtual_tour_url"),
+  name: text("name").notNull(),
+  slug: text("slug").notNull().unique(),
+  kind: text("kind").$type<"developer" | "realty" | "owner">().notNull(),
+  tradeLicenceNo: text("trade_licence_no"),
+  email: text("email"),
+  /**
+   * The company's legal record as landlord (D44): a `parties` row of kind `company` (legal name EN/AR, email, phone,
+   * trade licence number and expiry). Lease parties, signing and Ejari read it like any other party. The fields a
+   * party row has no column for are below. Null until first needed (created on demand).
+   */
+  partyId: uuid("party_id")
+    .unique()
+    .references(() => parties.id),
+  tradeLicenceAuthority: text("trade_licence_authority"),
+  /** RERA ORN / developer number (optional). */
+  reraOrn: text("rera_orn"),
+  registeredAddress: text("registered_address"),
+  /** Payee name on post-dated cheques (optional). */
+  chequePayeeName: text("cheque_payee_name"),
+  /** Authorised signatory: signs contracts for the company. */
+  signatoryName: text("signatory_name"),
+  signatoryTitle: text("signatory_title"),
+  signatoryEmail: text("signatory_email"),
+  signatoryIdKind: text("signatory_id_kind").$type<"emirates_id" | "passport">(),
+  signatoryIdNo: text("signatory_id_no"),
+  signatoryIdExpiresOn: calDate("signatory_id_expires_on"),
+  active: boolean("active").notNull().default(true),
+  createdBy: text("created_by"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
+
+export const units = pgTable(
+  "units",
+  {
+    id: id(),
+    /** Short code staff use, e.g. "MRN-1204". */
+    code: text("code").notNull().unique(),
+    building: text("building").notNull(),
+    community: text("community").notNull(),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id),
+    category: text("category").$type<PropertyCategory>().notNull().default("residential"),
+    subtype: text("subtype").$type<PropertySubtype>(),
+    emirate: text("emirate").notNull().default("dubai"),
+    country: text("country").notNull().default("AE"),
+    state: text("state").$type<UnitState>().notNull().default("PREP"),
+    dldPropertyNo: text("dld_property_no"),
+    unitNo: text("unit_no"),
+    makaniNo: text("makani_no"),
+    plotNo: text("plot_no"),
+    areaSqft: integer("area_sqft"),
+    bedrooms: smallint("bedrooms"),
+    furnished: boolean("furnished"),
+    dewaPremiseNo: text("dewa_premise_no"),
+    askingRentFils: fils("asking_rent_fils"),
+    priceApprovedAt: ts("price_approved_at"),
+    /** @deprecated D44: the unit's landlord is its company (`companies.partyId`). Kept nullable and never read. */
+    landlordPartyId: uuid("landlord_party_id").references(() => parties.id),
+    ownUseLockUntil: calDate("own_use_lock_until"),
+    /** Listing text shown to applicants. */
+    description: text("description"),
+    floor: smallint("floor"),
+    bathrooms: smallint("bathrooms"),
+    parkingSpaces: smallint("parking_spaces"),
+    /** Optional external virtual tour (https), shown on the applicant's property page. */
+    virtualTourUrl: text("virtual_tour_url"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("units_company_idx").on(t.companyId)],
+);
 
 export const applications = pgTable(
   "applications",
@@ -587,6 +636,32 @@ export const messages = pgTable(
   ],
 );
 
+/**
+ * Email codes for the public web chat's status check (read-only, session-scoped; no accounts).
+ * The code is random (`crypto.randomInt`) and never stored: only an HMAC of it (key derived from
+ * SESSION_SECRET) is kept in `codeHash`. `attempts` counts wrong guesses; the session lasts while
+ * `verifiedAt` is recent and the conversation's contact email is unchanged.
+ */
+export const visitorVerifications = pgTable(
+  "visitor_verifications",
+  {
+    id: id(),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id),
+    email: text("email").notNull(),
+    codeHash: text("code_hash").notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    expiresAt: ts("expires_at").notNull(),
+    verifiedAt: ts("verified_at"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("visitor_verifications_conversation_idx").on(t.conversationId, t.createdAt),
+    index("visitor_verifications_email_idx").on(t.email, t.createdAt),
+  ],
+);
+
 export const helperRuns = pgTable(
   "helper_runs",
   {
@@ -633,14 +708,154 @@ export const sriAverages = pgTable(
   {
     id: id(),
     community: text("community").notNull(),
-    bedrooms: smallint("bedrooms").notNull(),
-    avgAnnualRentFils: fils("avg_annual_rent_fils").notNull(),
+    category: text("category").$type<PropertyCategory>().notNull().default("residential"),
+    bedrooms: smallint("bedrooms"),
+    avgAnnualRentPerSqftFils: fils("avg_annual_rent_per_sqft_fils"),
+    avgAnnualRentFils: fils("avg_annual_rent_fils"),
     source: text("source").$type<"mock" | "manual">().notNull(),
     effectiveFrom: calDate("effective_from").notNull(),
     createdBy: text("created_by").notNull(),
     createdAt: createdAt(),
   },
-  (t) => [uniqueIndex("sri_averages_uq").on(t.community, t.bedrooms, t.effectiveFrom)],
+  (t) => [
+    unique("sri_averages_uq").on(t.community, t.category, t.bedrooms, t.effectiveFrom).nullsNotDistinct(),
+    check("sri_averages_one_rent_ck", sql`(${t.avgAnnualRentPerSqftFils} IS NULL) <> (${t.avgAnnualRentFils} IS NULL)`),
+  ],
+);
+
+/** Asking-rent limits per company and property type (rows are immutable; replaced via supersedesId). */
+export const rentRules = pgTable(
+  "rent_rules",
+  {
+    id: id(),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id),
+    category: text("category").$type<PropertyCategory>().notNull(),
+    subtype: text("subtype").$type<PropertySubtype>(),
+    emirate: text("emirate").notNull(),
+    community: text("community"),
+    minPctBp: integer("min_pct_bp").notNull(),
+    maxPctBp: integer("max_pct_bp").notNull(),
+    minRentFils: fils("min_rent_fils"),
+    maxRentFils: fils("max_rent_fils"),
+    active: boolean("active").notNull().default(true),
+    supersedesId: uuid("supersedes_id"),
+    createdBy: text("created_by").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    check("rent_rules_pct_ck", sql`${t.minPctBp} <= ${t.maxPctBp}`),
+    index("rent_rules_company_idx").on(t.companyId, t.category, t.active),
+  ],
+);
+
+/** Contract structure per company and property type (rows are immutable; replaced via supersedesId). */
+export const contractRules = pgTable(
+  "contract_rules",
+  {
+    id: id(),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id),
+    category: text("category").$type<PropertyCategory>().notNull(),
+    subtype: text("subtype").$type<PropertySubtype>(),
+    tenures: text("tenures").array().$type<("annual" | "short_term")[]>().notNull(),
+    minCheques: smallint("min_cheques").notNull(),
+    maxCheques: smallint("max_cheques").notNull(),
+    clauseIds: text("clause_ids")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    sampleDocumentId: uuid("sample_document_id"),
+    /** An approved company template of the same company (checked by the manager); contracts of this rule render in it. */
+    templateId: uuid("template_id"),
+    active: boolean("active").notNull().default(true),
+    supersedesId: uuid("supersedes_id"),
+    createdBy: text("created_by").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    check(
+      "contract_rules_cheques_ck",
+      sql`1 <= ${t.minCheques} AND ${t.minCheques} <= ${t.maxCheques} AND ${t.maxCheques} <= 12`,
+    ),
+    index("contract_rules_company_idx").on(t.companyId, t.category, t.active),
+  ],
+);
+
+/** Clauses proposed from a company's sample contract. Only `approved` ones can reach a contract. */
+export const companyClauses = pgTable(
+  "company_clauses",
+  {
+    id: id(),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id),
+    /** The contract rule the sample was uploaded on (rules are replaced, so this may be an older row of the chain). */
+    contractRuleId: uuid("contract_rule_id"),
+    title: text("title").notNull(),
+    textEn: text("text_en").notNull(),
+    /** The words in the sample the clause was taken from (never shown to tenants). */
+    quote: text("quote"),
+    category: text("category").notNull(),
+    /** Set by code, never by the model: the text contains an amount, a number or a period. */
+    hasValues: boolean("has_values").notNull(),
+    status: text("status").$type<"proposed" | "approved" | "rejected">().notNull().default("proposed"),
+    sourceDocumentId: uuid("source_document_id").references(() => documents.id),
+    helperRunId: uuid("helper_run_id"),
+    approvedBy: text("approved_by"),
+    approvedAt: ts("approved_at"),
+    createdBy: text("created_by").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("company_clauses_company_idx").on(t.companyId, t.status),
+    index("company_clauses_doc_idx").on(t.sourceDocumentId),
+  ],
+);
+
+/**
+ * A company's contract template, read from its sample contract (slice 4): sections and fixed
+ * wording, blanks with field mappings, and the look. A new upload makes a new `version`.
+ * IMMUTABILITY: once `approved`, the row's sections, blanks, style and logo never change; the
+ * Manager (contract-templates, Task 3) enforces it and only moves `approved` to `retired`.
+ */
+export const companyContractTemplates = pgTable(
+  "company_contract_templates",
+  {
+    id: id(),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id),
+    sampleDocumentId: uuid("sample_document_id")
+      .notNull()
+      .references(() => documents.id),
+    status: text("status").$type<"proposed" | "approved" | "retired">().notNull().default("proposed"),
+    /** `TemplateSections` (packages/helpers contract-structure). */
+    sections: jsonb("sections").notNull(),
+    /** `TemplateBlank[]`, each with its proposed or confirmed contract-field mapping. */
+    blanks: jsonb("blanks").notNull(),
+    /** `TemplateStyle`. */
+    style: jsonb("style").notNull(),
+    /** The company's logo from the sample, in the content-addressed documents store. */
+    logoDocumentId: uuid("logo_document_id").references(() => documents.id),
+    /**
+     * The admin's review decisions (`TemplateReview`): dropped header, footer or logo, and the logo
+     * confirmation. Written only while `proposed`; frozen with the row on approval.
+     */
+    review: jsonb("review").notNull().default({}),
+    version: integer("version").notNull(),
+    helperRunId: uuid("helper_run_id"),
+    approvedBy: text("approved_by"),
+    approvedAt: ts("approved_at"),
+    createdBy: text("created_by").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("company_contract_templates_version_uq").on(t.companyId, t.version),
+    index("company_contract_templates_company_idx").on(t.companyId, t.status),
+  ],
 );
 
 /** A staff-entered SRI value for one lease (e.g. from the DLD calculator for that unit). */
@@ -669,7 +884,7 @@ export const outboundMessages = pgTable(
     entityKind: text("entity_kind").$type<EntityKind>().notNull(),
     entityId: uuid("entity_id").notNull(),
     purpose: text("purpose")
-      .$type<"notice" | "formal_reminder" | "reminder" | "offer" | "link" | "receipt">()
+      .$type<"notice" | "formal_reminder" | "reminder" | "offer" | "link" | "receipt" | "chat_code">()
       .notNull(),
     /** Idempotency key within the purpose, e.g. "renewal_notice@2027-03-29#2". */
     milestone: text("milestone").notNull(),
@@ -838,7 +1053,17 @@ export const copilotProposals = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => staffUsers.id),
-    kind: text("kind").$type<"create_application" | "create_task" | "request_approval">().notNull(),
+    kind: text("kind")
+      .$type<
+        | "create_application"
+        | "create_task"
+        | "request_approval"
+        | "viewing_invite"
+        | "request_documents"
+        | "resend_signing_link"
+        | "prepare_contract"
+      >()
+      .notNull(),
     /** What will be done on Confirm, validated when proposed and again on Confirm. */
     payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
     /** What the card shows (unit, applicant, viewing time as labels). */
@@ -870,10 +1095,12 @@ export const copilotDrafts = pgTable(
     kind: text("kind").$type<"email" | "approval_note" | "case_summary">().notNull(),
     leaseId: uuid("lease_id").references(() => leases.id),
     approvalId: uuid("approval_id").references(() => approvals.id),
+    /** An email draft to an applicant (D42); a lease email draft uses `leaseId`. */
+    applicationId: uuid("application_id").references(() => applications.id),
     subject: text("subject"),
     body: text("body").notNull(),
     /** Set when a person used it (sent the email / posted the note), or discarded it. */
-    status: text("status").$type<"draft" | "used" | "discarded">().notNull().default("draft"),
+    status: text("status").$type<"draft" | "sending" | "used" | "discarded">().notNull().default("draft"),
     createdAt: ts("created_at").notNull(),
   },
   (t) => [index("copilot_drafts_thread_idx").on(t.threadId, t.createdAt)],
@@ -945,6 +1172,8 @@ export const contractSigners = pgTable(
     role: text("role").$type<"tenant" | "landlord">().notNull(),
     /** The name the signer must type (typo-class match), from the contract fields. */
     nameEn: text("name_en").notNull(),
+    /** Landlord only (D44): "<title>, for and on behalf of <company legal name>". Shown on the signing page and the record. */
+    capacity: text("capacity"),
     email: text("email"),
     linkId: uuid("link_id"),
     outboundMessageId: uuid("outbound_message_id"),
@@ -989,4 +1218,19 @@ export const ejariSubmissions = pgTable(
     uniqueIndex("ejari_submissions_attempt_uq").on(t.approvalId, t.attempt),
     index("ejari_submissions_lease_idx").on(t.leaseId, t.createdAt),
   ],
+);
+
+/** A staff member's saved Workspace filter (stage, search text, "mine"). Private to that user. */
+export const savedViews = pgTable(
+  "saved_views",
+  {
+    id: id(),
+    staffUserId: uuid("staff_user_id")
+      .notNull()
+      .references(() => staffUsers.id),
+    name: text("name").notNull(),
+    filter: jsonb("filter").$type<{ stage?: string; q?: string; mine?: boolean }>().notNull().default({}),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("saved_views_user_name_uq").on(t.staffUserId, t.name)],
 );

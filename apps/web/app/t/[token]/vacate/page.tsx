@@ -1,9 +1,12 @@
+import { notFound } from "next/navigation";
+import { TENANCY_OPS } from "../../../../lib/env";
 import { publicGet } from "../../../../lib/engine";
 import type { MoveOutPortalView } from "../../../../lib/portal";
 import { VacateNoticeForm } from "../tenancy-forms";
 
 /** Step 10: the tenant gives notice to move out at the lease end (tenancy link). */
 export default async function VacatePage({ params }: { params: Promise<{ token: string }> }) {
+  if (!TENANCY_OPS) notFound();
   const { token } = await params;
   const v = await publicGet<MoveOutPortalView>(`/api/portal/${encodeURIComponent(token)}`);
   if (!v?.tenancy?.moveOut || v.purpose !== "tenancy") {

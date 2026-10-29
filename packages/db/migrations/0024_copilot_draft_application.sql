@@ -1,0 +1,2 @@
+ALTER TABLE "copilot_drafts" ADD COLUMN "application_id" uuid;--> statement-breakpoint
+ALTER TABLE "copilot_drafts" ADD CONSTRAINT "copilot_drafts_application_id_applications_id_fk" FOREIGN KEY ("application_id") REFERENCES "public"."applications"("id") ON DELETE no action ON UPDATE no action;

@@ -3,9 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FakeEjari, FakeMailer, LocalDiskStore } from "@leasing/adapters";
 import type { CopilotModel } from "@leasing/copilot";
+import type { AgentModel } from "@leasing/helpers";
 import { FakeLlm, type SystemOneResponse } from "@leasing/llm";
-import { FixedClock, newId, type StaffRole, type StaffUser } from "@leasing/core";
-import { createDatabase, type Database, runMigrations, staffUsers } from "@leasing/db";
+import { type CalendarDate, FixedClock, newId, type StaffRole, type StaffUser } from "@leasing/core";
+import { companies, createDatabase, type Database, parties, rentRules, runMigrations, staffUsers } from "@leasing/db";
+import { eq } from "drizzle-orm";
 import type { EngineContext, JobRequest, Scheduler } from "../src/context.ts";
 import { syncRulebooks } from "../src/manager/rulebooks.ts";
 import { activeRulesVersion } from "@leasing/rulebook";
@@ -52,7 +54,15 @@ export const agreeingDecision = (): SystemOneResponse => ({
 export function testContext(
   database: Database,
   startIso: string,
-  opts: { demoMode?: boolean; llm?: FakeLlm; demoRecipient?: string; copilot?: CopilotModel; ejari?: FakeEjari } = {},
+  opts: {
+    demoMode?: boolean;
+    tenancyOps?: boolean;
+    llm?: FakeLlm;
+    demoRecipient?: string;
+    copilot?: CopilotModel;
+    customerAgent?: AgentModel;
+    ejari?: FakeEjari;
+  } = {},
 ) {
   const clock = new FixedClock(new Date(startIso));
   const scheduler = new FakeScheduler();
@@ -68,13 +78,16 @@ export function testContext(
       return activeRulesVersion(clock.today()) ?? "dubai-2025-01";
     },
     demoMode: opts.demoMode ?? true,
+    tenancyOps: opts.tenancyOps ?? true,
     mailer,
     documents: new LocalDiskStore(mkdtempSync(join(tmpdir(), "leasing-docs-"))),
     uploads: new LocalDiskStore(mkdtempSync(join(tmpdir(), "leasing-uploads-"))),
     ejari,
     llm,
     webUrl: "http://portal.test",
+    serverSecret: "test-server-secret",
     ...(opts.copilot ? { copilot: opts.copilot } : {}),
+    ...(opts.customerAgent ? { customerAgent: opts.customerAgent } : {}),
   };
   return { ctx, clock, scheduler, mailer, llm, ejari };
 }
@@ -86,7 +99,7 @@ export async function addStaff(database: Database, role: StaffRole): Promise<Sta
 }
 
 const HEADER =
-  "unit_code,building,community,unit_no,dld_property_no,makani_no,dewa_premise_no,bedrooms,area_sqft,furnished,landlord_name,landlord_email,tenant_name,tenant_email,tenant_phone,tenant_emirates_id,tenant_nationality,start_on,end_on,annual_rent_aed,cheques,deposit_aed,ejari_no";
+  "unit_code,building,community,unit_no,dld_property_no,makani_no,dewa_premise_no,bedrooms,area_sqft,furnished,tenant_name,tenant_email,tenant_phone,tenant_emirates_id,tenant_nationality,start_on,end_on,annual_rent_aed,cheques,deposit_aed,ejari_no";
 
 export function leaseCsv(rows: Partial<Record<string, string>>[]): string {
   const keys = HEADER.split(",");
@@ -99,8 +112,6 @@ export function leaseCsv(rows: Partial<Record<string, string>>[]): string {
     bedrooms: "1",
     area_sqft: "800",
     furnished: "no",
-    landlord_name: "Test Landlord",
-    landlord_email: "landlord@test.example",
     tenant_name: "Test Tenant",
     tenant_email: "tenant@test.example",
     tenant_phone: "",
@@ -120,7 +131,7 @@ export function leaseCsv(rows: Partial<Record<string, string>>[]): string {
 }
 
 const UNIT_HEADER =
-  "unit_code,building,community,unit_no,kind,dld_property_no,makani_no,plot_no,dewa_premise_no,bedrooms,bathrooms,area_sqft,floor,parking_spaces,furnished,asking_rent_aed,description,virtual_tour_url,landlord_name,landlord_email";
+  "unit_code,building,community,unit_no,kind,category,subtype,emirate,dld_property_no,makani_no,plot_no,dewa_premise_no,bedrooms,bathrooms,area_sqft,floor,parking_spaces,furnished,asking_rent_aed,description,virtual_tour_url,company";
 
 /** Units import CSV; values containing commas must be passed already quoted. */
 export function unitCsv(rows: Partial<Record<string, string>>[]): string {
@@ -168,4 +179,79 @@ export async function completeMoveInChecklist(ctx: EngineContext, leaseId: strin
       });
     }
   });
+}
+
+/** Gives a company a legal party and full landlord and signatory details (fictional), as a contract needs (D44). */
+export async function completeLegalDetails(
+  database: Database,
+  companyId: string,
+  over: { legalName?: string; email?: string; signatoryEmail?: string } = {},
+): Promise<string> {
+  const [c] = await database.db.select().from(companies).where(eq(companies.id, companyId));
+  if (!c) throw new Error("company not found");
+  const partyId = c.partyId ?? newId();
+  if (!c.partyId) await database.db.insert(parties).values({ id: partyId, kind: "company", fullNameEn: c.name });
+  await database.db
+    .update(parties)
+    .set({
+      fullNameEn: over.legalName ?? `${c.name} L.L.C.`,
+      email: over.email ?? "legal@test-landlord.example",
+      phone: "+971 4 000 0000",
+      tradeLicenceNo: "TEST-TL-1",
+      tradeLicenceExpiresOn: "2099-12-31" as CalendarDate,
+    })
+    .where(eq(parties.id, partyId));
+  await database.db
+    .update(companies)
+    .set({
+      partyId,
+      tradeLicenceNo: "TEST-TL-1",
+      email: "legal@test-landlord.example",
+      tradeLicenceAuthority: "Test Authority",
+      registeredAddress: "1 Test Street, Dubai",
+      signatoryName: "Test Signatory",
+      signatoryTitle: "Director",
+      signatoryEmail: over.signatoryEmail ?? "signatory@test-landlord.example",
+      signatoryIdKind: "emirates_id",
+      signatoryIdNo: "784-1900-2000001-3",
+      signatoryIdExpiresOn: "2099-12-31" as CalendarDate,
+    })
+    .where(eq(companies.id, companyId));
+  return partyId;
+}
+
+/**
+ * A company for test units (`units.company_id` is required). By default it carries a wide
+ * rent rule per category (AED 1 to AED 150,000 a year for residential, AED 100 million otherwise), so a
+ * test unit's asking rent is in range unless the test pushes it out;
+ * pass `rules: false` for a company with no rent rule. Found by slug, so calling twice is safe.
+ */
+export async function testCompany(
+  database: Database,
+  opts: { slug?: string; name?: string; rules?: boolean } = {},
+): Promise<string> {
+  const slug = opts.slug ?? "test-co";
+  const [found] = await database.db.select({ id: companies.id }).from(companies).where(eq(companies.slug, slug));
+  if (found) return found.id;
+  const id = newId();
+  await database.db
+    .insert(companies)
+    .values({ id, slug, name: opts.name ?? "Test Company", kind: "developer", createdBy: "test" });
+  await completeLegalDetails(database, id);
+  if (opts.rules ?? true) {
+    for (const category of ["residential", "commercial", "retail"] as const) {
+      await database.db.insert(rentRules).values({
+        id: newId(),
+        companyId: id,
+        category,
+        emirate: "dubai",
+        minPctBp: -10_000,
+        maxPctBp: 10_000,
+        minRentFils: 100,
+        maxRentFils: category === "residential" ? 15_000_000 : 100_000_000_00,
+        createdBy: "test",
+      });
+    }
+  }
+  return id;
 }

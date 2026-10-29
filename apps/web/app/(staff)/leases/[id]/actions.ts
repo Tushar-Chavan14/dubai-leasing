@@ -79,6 +79,26 @@ export async function prepareContract(_prev: LeaseActionState, formData: FormDat
     : formError(r);
 }
 
+/** "Prepare contract again": same clauses, current rule and template; only while the approval is still pending. */
+export async function reprepareContract(_prev: LeaseActionState, formData: FormData): Promise<LeaseActionState> {
+  const id = String(formData.get("leaseId"));
+  const r = await engine<{ status: string; version?: number; reasons?: string[] }>(
+    `/api/leases/${id}/contract/reprepare`,
+    { method: "POST", body: "{}" },
+  );
+  revalidatePath(`/leases/${id}`);
+  revalidatePath("/", "layout");
+  if (r.status === 422 && r.error && "status" in (r.error as object)) {
+    const body = r.error as unknown as { reasons?: string[] };
+    return { error: "The contract can't be prepared yet.", reasons: body.reasons ?? [] };
+  }
+  return r.ok
+    ? {
+        ok: `Version ${r.data.version} prepared. The earlier approval was cancelled; the new one is in the approval inbox.`,
+      }
+    : formError(r);
+}
+
 export async function resendSignLink(_prev: LeaseActionState, formData: FormData): Promise<LeaseActionState> {
   const id = String(formData.get("leaseId"));
   const signerId = String(formData.get("signerId"));

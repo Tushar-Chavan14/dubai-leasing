@@ -26,8 +26,24 @@ export const EnvSchema = z.object({
   OLLAMA_URL: z.preprocess((v) => clean(v) ?? "http://localhost:11434", z.string().url()),
   CHAT_MODEL: optStr(),
   VISION_MODEL: optStr(),
+  /** Voice input (audio-capable, local Ollama only). */
+  VOICE_MODEL: z.preprocess(clean, z.string().default("gemma4:e4b")),
   DECISION_MODEL: optStr(),
   COPILOT_MODEL: optStr(),
+  /** Leasing assistant (enquiry answers). Empty = CHAT_MODEL. */
+  LEASING_ASSISTANT_MODEL: optStr(),
+  /** Contract AI (contract-template and contract-structure helpers). Empty = CHAT_MODEL. */
+  CONTRACT_AI_MODEL: optStr(),
+  /** Public web chat agent (tool calling, local only). Empty = CHAT_MODEL. */
+  CUSTOMER_AGENT_MODEL: optStr(),
+  /** Visitor messages the agent works on at once; more get a "busy" reply (in memory, per engine process). */
+  CUSTOMER_AGENT_MAX_CONCURRENT: int(2),
+  /** KYC: one document reading is cancelled after this long; it gets one retry, then a person is told. */
+  KYC_DOC_TIMEOUT_SECONDS: z.preprocess((v) => clean(v) ?? 120, z.coerce.number().int().min(5).max(900)),
+  /** KYC: a check still running after this long shows "didn't finish" with a retry button. */
+  KYC_STUCK_MINUTES: z.preprocess((v) => clean(v) ?? 10, z.coerce.number().int().min(1).max(240)),
+  /** Contract AI jobs (background) cancel one model call after this long so they can't hold the GPU. */
+  BACKGROUND_MODEL_TIMEOUT_SECONDS: z.preprocess((v) => clean(v) ?? 300, z.coerce.number().int().min(30).max(1800)),
 
   TELEGRAM_BOT_TOKEN: optStr(),
   TELEGRAM_MODE: z.preprocess((v) => clean(v) ?? "polling", z.enum(["polling", "webhook"])),
@@ -48,6 +64,8 @@ export const EnvSchema = z.object({
   WEB_URL: z.preprocess((v) => clean(v) ?? "http://localhost:3000", z.string().url()),
   TIMEZONE: z.preprocess((v) => clean(v) ?? "Asia/Dubai", z.literal("Asia/Dubai")),
   DEMO_MODE: bool(false),
+  /** Move-in through move-out (collections, complaints, renewal, move-out). Off: those routes, jobs and tools are hidden. */
+  TENANCY_OPS: bool(false),
   UPLOADS_DIR: z.preprocess((v) => clean(v) ?? "./data/uploads", z.string()),
   /** PDFs the system generates (notices, contracts). Not tenant uploads. */
   DOCUMENTS_DIR: z.preprocess((v) => clean(v) ?? "./data/documents", z.string()),

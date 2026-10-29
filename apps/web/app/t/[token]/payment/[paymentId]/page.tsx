@@ -1,3 +1,5 @@
+import { notFound } from "next/navigation";
+import { TENANCY_OPS } from "../../../../../lib/env";
 import { formatAed } from "@leasing/core";
 import { publicGet } from "../../../../../lib/engine";
 import { longDate } from "../../../../../lib/format";
@@ -15,6 +17,7 @@ interface View {
 
 /** Step 8: the tenant replies about one overdue or bounced payment. */
 export default async function PaymentPage({ params }: { params: Promise<{ token: string; paymentId: string }> }) {
+  if (!TENANCY_OPS) notFound();
   const { token, paymentId } = await params;
   const v = await publicGet<View>(`/api/portal/${encodeURIComponent(token)}`);
   const p = v?.tenancy.openPayments.find((x) => x.id === paymentId);

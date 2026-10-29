@@ -56,12 +56,14 @@ export const getLease: CopilotTool<typeof Input, typeof Output> = {
   name: "get_lease",
   kind: "read",
   description:
-    "Current state of one lease: term, rent, parties, pending deadlines, approvals, open tasks, renewal notice status and tenant replies. Use it to explain why a lease is waiting or what is next.",
+    "Current state of one lease: term, rent, parties, approvals and open tasks (and, when tenancy operations are on, pending deadlines, renewal notice status and tenant replies). Use it to explain why a lease is waiting or what is next.",
   input: Input,
   output: Output,
   roles: ALL_STAFF,
-  async run({ lease }, { engine }) {
+  async run({ lease }, { engine, tenancyOps }) {
     const l = await fetchLease(engine, lease);
+    // While TENANCY_OPS is off the copilot stays on the pipeline up to registration: no deadlines, renewal notice or tenant replies.
+    const tenancy = tenancyOps !== false;
     const notice = l.outbound.find((o) => o.purpose === "notice");
     return {
       leaseId: l.id,
@@ -76,7 +78,7 @@ export const getLease: CopilotTool<typeof Input, typeof Output> = {
       deposit: aed(l.depositFils),
       ejariNo: l.ejariNo,
       rulesVersion: l.rulesVersion,
-      pendingDeadlines: l.deadlines
+      pendingDeadlines: (tenancy ? l.deadlines : [])
         .filter((d) => d.status === "pending")
         .slice(0, 6)
         .map((d) => ({ milestone: milestoneName(d.milestone), dueOn: d.dueOn })),
@@ -101,10 +103,11 @@ export const getLease: CopilotTool<typeof Input, typeof Output> = {
           dueOn: t.dueOn,
           details: taskDetails(t.details),
         })),
-      renewalNotice: notice
-        ? { status: notice.status, sentOn: dubaiDay(notice.sentAt), acknowledgedOn: dubaiDay(notice.acknowledgedAt) }
-        : null,
-      tenantReplies: l.inbound.slice(0, 4).map((e) => ({
+      renewalNotice:
+        notice && tenancy
+          ? { status: notice.status, sentOn: dubaiDay(notice.sentAt), acknowledgedOn: dubaiDay(notice.acknowledgedAt) }
+          : null,
+      tenantReplies: (tenancy ? l.inbound : []).slice(0, 4).map((e) => ({
         ref: e.ref,
         type: e.type,
         choice: e.payload.choice ?? null,

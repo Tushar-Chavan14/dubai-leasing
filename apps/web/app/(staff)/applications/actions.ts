@@ -34,7 +34,7 @@ export async function createApplication(_prev: AppActionState, formData: FormDat
   const r = await engine<{ id: string }>("/api/applications", { method: "POST", body: JSON.stringify(body) });
   if (!r.ok) return formError(r);
   revalidatePath("/applications");
-  redirect(`/applications/${r.data.id}`);
+  redirect(`/work?kind=application&id=${r.data.id}`);
 }
 
 async function act(id: string, path: string, body: unknown, ok: string): Promise<AppActionState> {

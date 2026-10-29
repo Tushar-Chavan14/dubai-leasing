@@ -100,6 +100,22 @@ export async function emailTenant(_p: TaskActionState, f: FormData): Promise<Tas
   return { ok: "Sent. The email and the mail server's response are stored on the lease." };
 }
 
+export async function emailApplicant(_p: TaskActionState, f: FormData): Promise<TaskActionState> {
+  const applicationId = String(f.get("applicationId"));
+  const r = await engine(`/api/applications/${applicationId}/email`, {
+    method: "POST",
+    body: JSON.stringify({
+      subject: String(f.get("subject") ?? "").trim(),
+      body: String(f.get("body") ?? "").trim(),
+      draftId: text(f, "draftId"),
+    }),
+  });
+  if (!r.ok) return formError(r);
+  revalidatePath("/work");
+  revalidatePath("/", "layout");
+  return { ok: "Sent. The email and the mail server's response are stored on the application." };
+}
+
 export async function addApprovalNote(_p: TaskActionState, f: FormData): Promise<TaskActionState> {
   const approvalId = String(f.get("approvalId"));
   const r = await engine(`/api/approvals/${approvalId}/notes`, {
@@ -107,6 +123,6 @@ export async function addApprovalNote(_p: TaskActionState, f: FormData): Promise
     body: JSON.stringify({ body: String(f.get("body") ?? "").trim(), draftId: text(f, "draftId") }),
   });
   if (!r.ok) return formError(r);
-  revalidatePath(`/inbox/${approvalId}`);
+  revalidatePath("/work");
   return { ok: "Note added." };
 }

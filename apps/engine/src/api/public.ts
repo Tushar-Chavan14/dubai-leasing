@@ -1,13 +1,18 @@
 import type { LocalDiskStore } from "@leasing/adapters";
-import { type Actor, formatAed, newId, normalisePhone } from "@leasing/core";
-import { applications, parties, type Tx, unitPhotos, units, withTx } from "@leasing/db";
+import { type Actor, formatAed, newId, normalisePhone, SIZE_BAND_LIMITS } from "@leasing/core";
+import { type Tx, unitPhotos, units, withTx } from "@leasing/db";
 import { formatSlot } from "@leasing/helpers";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Hono } from "hono";
 import { z } from "zod";
 import type { EngineContext } from "../context.ts";
 import { conflict, DomainError, notFound } from "../errors.ts";
-import { createApplication } from "../manager/applications.ts";
+import {
+  createApplication,
+  MAX_OPEN_WEB_PER_EMAIL,
+  openApplicationsFor,
+  openWebApplicationsFor,
+} from "../manager/applications.ts";
 import { listedUnit, listedUnits, takenViewings } from "../manager/availability.ts";
 import { publicPhotoPath } from "../manager/enquiries.ts";
 import { getCompanyPolicy } from "../manager/events.ts";
@@ -24,10 +29,7 @@ import { clientIp, ipLimiter, secretGate } from "./secret-gate.ts";
 
 const MAX_READS_PER_IP = 3000;
 const MAX_ENQUIRIES_PER_IP = 10;
-/** Open web-form applications one email address may hold at once (across units). */
-const MAX_OPEN_PER_EMAIL = 3;
 const SLOTS_SHOWN = 8;
-const OPEN_STATES = ["ENQUIRY", "VIEWING", "SCREENING", "OFFER", "RESERVED"] as const;
 
 type UnitRow = typeof units.$inferSelect;
 
@@ -56,10 +58,23 @@ function summary(u: UnitRow) {
     bathrooms: u.bathrooms,
     areaSqft: u.areaSqft,
     furnished: u.furnished ?? false,
+    category: u.category,
+    subtype: u.subtype,
     rent: formatAed(fils),
     rentFils: fils,
   };
 }
+
+const ListQuery = z.object({
+  category: z.enum(["residential", "commercial", "retail", "all"]).default("residential"),
+  community: z.string().trim().min(1).max(120).optional(),
+  /** 0 is a studio; 4 means four or more (as the chat filter). */
+  bedrooms: z.coerce.number().int().min(0).max(4).optional(),
+  /** Floor-area band; only narrows commercial and retail units. */
+  size: z.enum(["small", "medium", "large"]).optional(),
+  /** Annual rent ceiling in whole AED. */
+  budget: z.coerce.number().int().min(1).max(999_999_999).optional(),
+});
 
 const EnquiryBody = z.object({
   unitId: z.uuid(),
@@ -92,8 +107,9 @@ export function registerPublicRoutes(
   const tooMany = (c: Parameters<typeof gate>[0]) =>
     c.json({ error: "Too many requests; try again later.", code: "rate_limited" }, 429);
 
-  const bookable = (tx: Tx, unitId: string) =>
-    getCompanyPolicy(tx, ctx.clock.today()).then((policy) => listedUnit(tx, unitId, policy));
+  // Listing pages and photos show every category; viewings through the form stay residential (slots, enquiries).
+  const bookable = (tx: Tx, unitId: string, anyCategory = false) =>
+    listedUnit(tx, ctx.clock.today(), unitId, anyCategory);
   const unitId = (raw: string) => {
     const id = z.uuid().safeParse(raw);
     if (!id.success) throw notFound("unit");
@@ -104,9 +120,36 @@ export function registerPublicRoutes(
     const denied = gate(c);
     if (denied) return denied;
     if (readLimited(clientIp(c))) return tooMany(c);
+    // Residential unless asked: `?category=all|commercial|retail` widens it (the web grid shows what the chat can show).
+    const q = ListQuery.parse({
+      category: c.req.query("category"),
+      community: c.req.query("community"),
+      bedrooms: c.req.query("bedrooms"),
+      size: c.req.query("size"),
+      budget: c.req.query("budget"),
+    });
+    const band = q.size ? SIZE_BAND_LIMITS[q.size] : undefined;
     const out = await withTx(ctx.database, async (tx) => {
-      const policy = await getCompanyPolicy(tx, ctx.clock.today());
-      const rows = await listedUnits(tx, {}, policy, 500);
+      const rows = (
+        await listedUnits(
+          tx,
+          ctx.clock.today(),
+          {
+            category: q.category,
+            community: q.community,
+            bedrooms: q.bedrooms,
+            maxRentFils: q.budget === undefined ? undefined : q.budget * 100,
+          },
+          500,
+        )
+      ).filter(
+        (u) =>
+          !band ||
+          u.category === "residential" ||
+          (u.areaSqft !== null &&
+            (band.min === undefined || u.areaSqft >= band.min) &&
+            (band.max === undefined || u.areaSqft <= band.max)),
+      );
       const photos = await photoIds(
         tx,
         rows.map((u) => u.id),
@@ -126,7 +169,7 @@ export function registerPublicRoutes(
     if (readLimited(clientIp(c))) return tooMany(c);
     const id = unitId(c.req.param("id"));
     const out = await withTx(ctx.database, async (tx) => {
-      const u = await bookable(tx, id);
+      const u = await bookable(tx, id, true);
       if (!u) return null;
       const photos = (await photoIds(tx, [u.id])).get(u.id) ?? [];
       return {
@@ -149,7 +192,7 @@ export function registerPublicRoutes(
     const id = unitId(c.req.param("id"));
     const photoId = z.uuid().safeParse(c.req.param("photoId"));
     const photo = await withTx(ctx.database, async (tx) => {
-      if (!photoId.success || !(await bookable(tx, id))) return null;
+      if (!photoId.success || !(await bookable(tx, id, true))) return null;
       const [p] = await tx.db
         .select({ path: unitPhotos.path, mime: unitPhotos.mime, sha256: unitPhotos.sha256 })
         .from(unitPhotos)
@@ -174,7 +217,7 @@ export function registerPublicRoutes(
     const id = unitId(c.req.param("id"));
     const slots = await withTx(ctx.database, async (tx) => {
       const policy = await getCompanyPolicy(tx, ctx.clock.today());
-      const u = await listedUnit(tx, id, policy);
+      const u = await listedUnit(tx, ctx.clock.today(), id);
       if (!u) return null;
       return freeViewingSlots(ctx.clock.now(), policy, await takenViewings(tx, u.id), SLOTS_SHOWN);
     });
@@ -195,16 +238,12 @@ export function registerPublicRoutes(
       // and the later one sees the earlier booking.
       await tx.db.select({ id: units.id }).from(units).where(eq(units.id, body.unitId)).for("update");
       const policy = await getCompanyPolicy(tx, ctx.clock.today());
-      if (!(await listedUnit(tx, body.unitId, policy)))
+      if (!(await listedUnit(tx, ctx.clock.today(), body.unitId)))
         throw conflict("This unit is no longer available to view.", "unit_not_bookable");
-      const open = await tx.db
-        .select({ unitId: applications.unitId, source: applications.source })
-        .from(applications)
-        .innerJoin(parties, eq(parties.id, applications.partyId))
-        .where(and(eq(parties.email, body.email), inArray(applications.state, [...OPEN_STATES])));
+      const open = await openApplicationsFor(tx, body.email);
       if (open.some((o) => o.unitId === body.unitId))
         throw conflict("You already have a viewing request for this unit.", "already_enquired");
-      if (open.filter((o) => o.source === "web_form").length >= MAX_OPEN_PER_EMAIL)
+      if ((await openWebApplicationsFor(tx, body.email)) >= MAX_OPEN_WEB_PER_EMAIL)
         throw new DomainError("Too many open viewing requests for this email address.", 429, "too_many_enquiries");
       const taken = await takenViewings(tx, body.unitId);
       const at = body.slot.getTime();

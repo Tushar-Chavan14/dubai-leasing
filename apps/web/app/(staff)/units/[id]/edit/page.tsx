@@ -5,11 +5,11 @@ import { PageHead } from "../../../../../components/ui";
 import { UnitForm } from "../../../../../components/unit-form";
 import { get } from "../../../../../lib/engine";
 import { IconWarning } from "../../../../../lib/icons";
-import type { CompanyPolicyView, UnitDetail, UnitRow } from "../../../../../lib/types";
+import type { CompanyRow, UnitDetail, UnitRow } from "../../../../../lib/types";
 
 export const metadata: Metadata = { title: "Edit unit" };
 
-const IDENTITY = ["code", "unitNo", "dldPropertyNo", "makaniNo", "plotNo"];
+const IDENTITY = ["code", "unitNo", "dldPropertyNo", "makaniNo", "plotNo", "category"];
 
 export default async function EditUnitPage({
   params,
@@ -20,9 +20,9 @@ export default async function EditUnitPage({
 }) {
   const { id } = await params;
   const { photos: photoFlag } = await searchParams;
-  const [unit, policy] = await Promise.all([
+  const [unit, companies] = await Promise.all([
     get<UnitDetail>(`/api/units/${id}`),
-    get<CompanyPolicyView>("/api/policy"),
+    get<CompanyRow[]>("/api/companies"),
   ]);
   if (!unit) notFound();
   const hasLease = unit.leases.some((l) => l.state !== "CLOSED");
@@ -45,8 +45,8 @@ export default async function EditUnitPage({
       {hasLease && (
         <div className="alert" style={{ marginBottom: 20 }}>
           <IconWarning size={16} />
-          This unit has a lease, so its code, unit number, DLD, Makani and plot numbers are fixed. They must keep
-          matching the contract and the Ejari registration.
+          This unit has a lease, so its code, category, unit number, DLD, Makani and plot numbers are fixed. They must
+          keep matching the contract and the Ejari registration.
         </div>
       )}
       <section className="form-section" style={{ borderTop: 0, paddingTop: 0 }}>
@@ -57,12 +57,7 @@ export default async function EditUnitPage({
         <PhotoManager unitId={id} photos={unit.photos} />
       </section>
       <div className="divider" />
-      <UnitForm
-        mode="edit"
-        unit={row}
-        ranges={policy?.askingRentRangeFils ?? {}}
-        lockedFields={hasLease ? IDENTITY : []}
-      />
+      <UnitForm mode="edit" unit={row} companies={companies ?? []} lockedFields={hasLease ? IDENTITY : []} />
     </>
   );
 }

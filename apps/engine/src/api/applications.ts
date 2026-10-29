@@ -24,8 +24,12 @@ import {
   recordViewingOutcome,
   rejectApplicant,
   requestDocuments,
+  sendHeldOffer,
+  applyWithoutViewing,
 } from "../manager/applications.ts";
 import { appendEvent } from "../manager/events.ts";
+import { kycCheckState, kycStuckMs } from "../manager/kyc-check.ts";
+import { retryKycCheck } from "../manager/kyc-retry.ts";
 import { entityEvents } from "./queries.ts";
 import { type AuthEnv, requireRole } from "./auth.ts";
 
@@ -110,6 +114,7 @@ export function registerApplicationRoutes(api: Hono<AuthEnv>, ctx: EngineContext
       entityEvents(db, "application", id),
     ]);
     const kyc = runs.find((r) => r.helper === "kyc");
+    const kycState = await kycCheckState(db, id, ctx.clock.now(), kycStuckMs(ctx));
     const [conversation] = await db
       .select({ id: conversations.id })
       .from(conversations)
@@ -157,6 +162,12 @@ export function registerApplicationRoutes(api: Hono<AuthEnv>, ctx: EngineContext
               reasons: (kyc.output as { reasons?: string[] } | null)?.reasons ?? [],
             }
           : null,
+        // Where the latest document check stands (running, stuck, failed or none), from the stored submission.
+        kycCheck: {
+          state: kycState.state,
+          inboundId: kycState.state === "none" ? null : kycState.inboundId,
+          reason: kycState.state === "stuck" || kycState.state === "failed" ? kycState.reason : null,
+        },
         helperRuns: runs.map((r) => ({ id: r.id, helper: r.helper, status: r.status, at: r.at })),
         approvals: aps,
         tasks: ts,
@@ -212,9 +223,27 @@ export function registerApplicationRoutes(api: Hono<AuthEnv>, ctx: EngineContext
     return c.json(await recordViewingOutcome(ctx, uuid(c.req.param("id")), b.outcome, b.note || null, actorOf(c)));
   });
 
+  /** Apply from an enquiry without a viewing. 409 `viewing_required` unless the policy toggle allows it. */
+  api.post("/applications/:id/events", async (c) => {
+    requireRole(c.get("user"), LEASING);
+    z.object({ event: z.literal("APPLIED") }).parse(await c.req.json());
+    return c.json(await applyWithoutViewing(ctx, uuid(c.req.param("id")), actorOf(c)));
+  });
+
   api.post("/applications/:id/request-documents", async (c) => {
     requireRole(c.get("user"), LEASING);
     return c.json(await requestDocuments(ctx, uuid(c.req.param("id")), actorOf(c)));
+  });
+
+  /** Runs a failed or stuck document check again. 409 while one is running or when there is none. */
+  api.post("/applications/:id/kyc/retry", async (c) => {
+    requireRole(c.get("user"), LEASING);
+    return c.json(await retryKycCheck(ctx, uuid(c.req.param("id")), actorOf(c)), 202);
+  });
+
+  api.post("/applications/:id/offer/send", async (c) => {
+    requireRole(c.get("user"), LEASING);
+    return c.json(await sendHeldOffer(ctx, uuid(c.req.param("id")), actorOf(c)));
   });
 
   api.post("/applications/:id/reservation", async (c) => {

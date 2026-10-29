@@ -24,7 +24,7 @@ import { z } from "zod";
 import type { EngineContext } from "../context.ts";
 import { conflict, DomainError, unprocessable } from "../errors.ts";
 import { effectiveProposal, RenewalNoticeProposal } from "../manager/gate-rules.ts";
-import { receiveInbound, termReplies } from "../manager/inbound.ts";
+import { receiveInbound, storeInboundWhileTenancyOff, termReplies } from "../manager/inbound.ts";
 import { addApplicationDocument, removeApplicationDocument, uploadedDocuments } from "../manager/applications.ts";
 import { contractPdf, signContract, signView } from "../manager/contracts.ts";
 import { openForReply } from "../manager/collections.ts";
@@ -132,6 +132,18 @@ async function moveOutView(ctx: EngineContext, tx: Tx, lease: typeof leases.$inf
       link.purpose === "deposit_response" && !link.usedAt && statement?.status === "sent" && lease.state === "MOVE_OUT",
   };
 }
+
+/** Inbound types of move-in through move-out; stored as needs-human, not processed, while TENANCY_OPS is off. */
+const TENANCY_OPS_INBOUND = new Set<string>([
+  "MOVE_IN_ACKNOWLEDGED",
+  "PAYMENT_REPLY",
+  "COMPLAINT_SUBMITTED",
+  "VACATE_NOTICE",
+  "INSPECTION_BOOKED",
+  "DEPOSIT_RESPONSE",
+  "RENEWAL_REPLY",
+  "NOTICE_ACKNOWLEDGED",
+]);
 
 export function registerPortalRoutes(app: Hono<AuthEnv>, ctx: EngineContext, mediaStore?: LocalDiskStore) {
   /** A photo of the unit behind an applicant's viewing/status link; never another unit's. */
@@ -293,6 +305,22 @@ export function registerPortalRoutes(app: Hono<AuthEnv>, ctx: EngineContext, med
   app.post("/api/inbound", async (c) => {
     const body = z.object({ token: z.string(), type: InboundType, payload: z.unknown() }).parse(await c.req.json());
     if (limited(body.token)) return c.json({ error: "Too many requests; try again in a minute." }, 429);
+    if (!ctx.tenancyOps && TENANCY_OPS_INBOUND.has(body.type)) {
+      // Kept as evidence and marked for a person; never processed while tenancy operations are off.
+      const stored = await withTx(ctx.database, async (tx) => {
+        const link = await resolveLink(tx, body.token, ctx.clock.now());
+        if (!link || link.entityKind !== "lease") throw unknownLink();
+        return storeInboundWhileTenancyOff(ctx, tx, {
+          type: body.type,
+          payload: body.payload,
+          channel: "portal",
+          actor: `tenant:${link.partyId ?? "unknown"}`,
+          entity: { kind: "lease", id: link.entityId },
+          linkId: link.id,
+        });
+      });
+      return c.json({ ref: stored.ref, duplicate: stored.duplicate }, stored.duplicate ? 200 : 202);
+    }
     const r = await withTx(ctx.database, async (tx) => {
       const link = await resolveLink(tx, body.token, ctx.clock.now());
       if (link?.entityKind === "application") {

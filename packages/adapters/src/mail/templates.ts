@@ -258,13 +258,16 @@ export interface ContractSignMail {
   signUrl: string;
   validDays: number;
   demo: boolean;
+  /** A reminder to someone who has not signed yet (a fresh link replaces the old one). */
+  reminder?: boolean;
 }
 
 /** The approved contract, attached as PDF, with a personal signing link. */
 export function contractSignEmail(d: ContractSignMail): Rendered {
-  const subject = `Tenancy contract to sign: ${d.unitLabel}`;
+  const subject = `${d.reminder ? "Reminder: tenancy" : "Tenancy"} contract to sign: ${d.unitLabel}`;
   const paras = [
     `Dear ${d.signerName},`,
+    ...(d.reminder ? ["This is a friendly reminder: we are still waiting for your signature."] : []),
     `The tenancy contract for ${d.unitLabel} (lease ${d.leaseRef}, version ${d.version}) is ready for your signature. A copy is attached.`,
     `Please read it, then sign through the personal link below by typing your full name. The link works once and stays valid for ${d.validDays} days.`,
     d.role === "tenant"
@@ -489,6 +492,25 @@ export function staffMessageEmail(d: StaffMessageMail): Rendered {
   };
 }
 
+export interface ApplicantMessageMail {
+  name: string;
+  subject: string;
+  /** Written (or edited) by a member of staff, who sent it. */
+  body: string;
+  demo: boolean;
+}
+
+/** A plain message from staff to an applicant (D42). No link: the applicant replies to the email. */
+export function applicantMessageEmail(d: ApplicantMessageMail): Rendered {
+  const paras = [`Dear ${d.name},`, ...d.body.split(/\n{2,}/)];
+  const foot = footer(d.demo);
+  return {
+    subject: d.subject,
+    text: [...paras, "", foot].join("\n"),
+    html: layout(d.subject, paras, [], foot),
+  };
+}
+
 // ---------------------------------------------------------------- move-out (phase 4)
 
 export interface MoveOutMail {
@@ -545,4 +567,81 @@ export function depositStatementEmail(d: DepositStatementMail): Rendered {
     text: [...paras, "", `Accept or dispute: ${d.respondUrl}`, "", foot].join("\n"),
     html: layout(subject, paras, actions, foot),
   };
+}
+
+export interface ViewingReminderMail {
+  applicantName: string;
+  unitLabel: string;
+  address: string;
+  viewingAt: Date;
+  propertyUrl: string;
+  statusUrl: string;
+  reference: string;
+  demo: boolean;
+}
+
+/** Reminder before a booked viewing. */
+export function viewingReminderEmail(d: ViewingReminderMail): Rendered {
+  const subject = `Reminder: your viewing of ${d.unitLabel}`;
+  const paras = [
+    `Dear ${d.applicantName},`,
+    `A reminder that your viewing of ${d.unitLabel} (reference ${d.reference}) is on ${formatDubaiDateTime(d.viewingAt)}.`,
+    `Address: ${d.address}.`,
+    "If you can no longer come, please let the leasing team know.",
+  ];
+  const actions = [
+    { label: "View the property online", url: d.propertyUrl },
+    { label: "View my application", url: d.statusUrl },
+  ];
+  const foot = footer(d.demo);
+  const text = [...paras, "", ...actions.map((a) => `${a.label}: ${a.url}`), "", foot].join("\n");
+  return { subject, text, html: layout(subject, paras, actions, foot) };
+}
+
+export interface NoShowFollowupMail {
+  applicantName: string;
+  unitLabel: string;
+  reference: string;
+  propertyUrl: string;
+  demo: boolean;
+}
+
+/** After a recorded no-show: no pressure, the way to ask for another viewing. */
+export function noShowFollowupEmail(d: NoShowFollowupMail): Rendered {
+  const subject = `We missed you: ${d.unitLabel}`;
+  const paras = [
+    `Dear ${d.applicantName},`,
+    `We were expecting you at the viewing of ${d.unitLabel} (reference ${d.reference}) and did not see you. These things happen.`,
+    "If you are still interested, the property is online below and you can ask for a new viewing time at any point.",
+  ];
+  const actions = [{ label: "View the property online", url: d.propertyUrl }];
+  const foot = footer(d.demo);
+  const text = [...paras, "", `${actions[0]!.label}: ${actions[0]!.url}`, "", foot].join("\n");
+  return { subject, text, html: layout(subject, paras, actions, foot) };
+}
+
+export interface DocumentsChaseMail {
+  applicantName: string;
+  unitLabel: string;
+  reference: string;
+  uploadUrl: string;
+  statusUrl: string;
+  demo: boolean;
+}
+
+/** Documents still missing: a reminder with a fresh upload link. */
+export function documentsChaseEmail(d: DocumentsChaseMail): Rendered {
+  const subject = `Reminder: upload your ID documents for ${d.unitLabel}`;
+  const paras = [
+    `Dear ${d.applicantName},`,
+    `We have not received your identity documents for ${d.unitLabel} (reference ${d.reference}) yet, and we cannot continue without them.`,
+    "Please use the personal upload link below. Don't send ID documents by email or chat.",
+  ];
+  const actions = [
+    { label: "Upload documents", url: d.uploadUrl },
+    { label: "View my application", url: d.statusUrl },
+  ];
+  const foot = footer(d.demo);
+  const text = [...paras, "", ...actions.map((a) => `${a.label}: ${a.url}`), "", foot].join("\n");
+  return { subject, text, html: layout(subject, paras, actions, foot) };
 }

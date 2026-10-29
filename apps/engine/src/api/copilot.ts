@@ -17,21 +17,33 @@ import { z } from "zod";
 import type { EngineContext } from "../context.ts";
 import { DomainError, notFound } from "../errors.ts";
 import {
+  ACTION_KINDS,
   cancelProposal,
   confirmProposal,
   getOwnProposal,
   proposalView,
+  proposeAction,
   proposeApplication,
   proposeOther,
   threadProposals,
 } from "../manager/copilot-proposals.ts";
+import { readVoiceBody, transcribeVoice } from "../manager/voice.ts";
+import { ipLimiter } from "./secret-gate.ts";
 import { createDraft, draftView, threadDrafts } from "../manager/staff-messages.ts";
 import type { AuthEnv } from "./auth.ts";
 
 /** The chat route passes the thread to the in-process client so a proposal lands in it. */
 export const COPILOT_THREAD_HEADER = "x-copilot-thread";
 /** Tools whose output names a proposal (shown as a Confirm card) or a draft (shown as a draft card). */
-const PROPOSE_TOOLS = new Set(["propose_application", "create_task", "propose_approval"]);
+const PROPOSE_TOOLS = new Set([
+  "propose_application",
+  "create_task",
+  "propose_approval",
+  "propose_viewing_invite",
+  "propose_request_documents",
+  "propose_resend_signing_link",
+  "propose_prepare_contract",
+]);
 const DRAFT_TOOLS = new Set(["draft_email", "draft_approval_note"]);
 
 const ChatRequest = z.object({
@@ -78,6 +90,18 @@ export function registerCopilotRoutes(api: Hono<AuthEnv>, ctx: EngineContext, ap
     const [a] = await db.select({ title: approvals.title }).from(approvals).where(eq(approvals.id, page.id));
     return a ? `"${a.title}"` : undefined;
   }
+
+  /** Staff voice to text: 60 per user per hour; the audio is read in memory and dropped. */
+  const voiceLimited = ipLimiter(60);
+  api.post("/voice/transcribe", async (c) => {
+    if (voiceLimited(c.get("user").id))
+      return c.json({ error: "Too many recordings; try again later.", code: "rate_limited" }, 429);
+    const read = await readVoiceBody(c.req.raw);
+    if ("error" in read) return c.json({ error: read.error, code: read.code }, read.status);
+    const bytes = read.bytes;
+    if (bytes.length === 0) return c.json({ ok: false, message: "I didn't catch that. Please try again." });
+    return c.json(await transcribeVoice(ctx, bytes));
+  });
 
   api.post("/copilot/chat", async (c) => {
     const user = c.get("user");
@@ -189,6 +213,7 @@ export function registerCopilotRoutes(api: Hono<AuthEnv>, ctx: EngineContext, ap
           ...(page ? { page } : {}),
           onEvent: send,
           onTool: storeTool,
+          tenancyOps: ctx.tenancyOps,
         });
         await stored;
         const latencyMs = Math.round(performance.now() - t0);
@@ -274,7 +299,10 @@ export function registerCopilotRoutes(api: Hono<AuthEnv>, ctx: EngineContext, ap
     const threadId = z.uuid().safeParse(c.req.header(COPILOT_THREAD_HEADER));
     if (!threadId.success) throw new DomainError("proposals are made from a copilot conversation", 400, "no_thread");
     const body = (await c.req.json()) as { kind?: string };
-    // No kind: an application (D25). Tasks and approval requests name theirs (D26).
+    // No kind: an application (D25). Tasks and approval requests name theirs (D26), and so do
+    // the four engine actions (D42).
+    if (ACTION_KINDS.includes(body.kind as (typeof ACTION_KINDS)[number]))
+      return c.json(await proposeAction(ctx, c.get("user"), threadId.data, body), 201);
     if (body.kind === "create_task" || body.kind === "request_approval")
       return c.json(await proposeOther(ctx, c.get("user"), threadId.data, body), 201);
     const { kind: _k, ...rest } = body as Record<string, unknown>;

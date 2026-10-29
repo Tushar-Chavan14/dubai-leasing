@@ -69,6 +69,7 @@ export async function scheduleTermPayments(
   lease: LeaseRow,
   opts: { assumePastPaid: boolean; actor?: Actor },
 ): Promise<void> {
+  if (!ctx.tenancyOps) return;
   const actor = opts.actor ?? "system";
   const today = ctx.clock.today();
   const existing = await tx.db.select().from(payments).where(eq(payments.leaseId, lease.id));

@@ -60,6 +60,8 @@ const ctx = (over: Partial<ContractContext> = {}): ContractContext => ({
     emiratesIdNo: null,
     tradeLicenceNo: "DEMO-TL-0001",
     email: "landlord@demo.example",
+    nationality: "Fictionland",
+    phone: "+971 4 000 0000",
   },
   unit: {
     id: "unit-1",

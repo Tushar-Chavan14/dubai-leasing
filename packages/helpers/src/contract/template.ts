@@ -1,5 +1,54 @@
-import { type Addendum, CONTRACT_CLAUSES, type ContractFields, formatAed } from "@leasing/core";
+import { type Addendum, CONTRACT_CLAUSES, type ContractClauseId, type ContractFields, formatAed } from "@leasing/core";
 import type { NoticeBlock, NoticeDocument } from "../renewal/notice.ts";
+
+/**
+ * Terms the product requires in every contract, whatever the template: the Ejari registration
+ * statement, the rule that rent changes only at renewal with notice given in time (no number here:
+ * the period comes from the rulebook, never from this text), and how the parties sign. A company
+ * template that lacks one gets it appended under "Additional terms required by law".
+ */
+export const REQUIRED_TERMS = {
+  rentChange:
+    "The rent above is fixed for the whole term. It can only change at renewal, with written notice given in time under Dubai law.",
+  ejari: "This contract is registered in Ejari after both parties sign.",
+  signatures:
+    "Each party signs this contract electronically through a personal link. The signature record is added as the last page of the signed copy.",
+} as const;
+
+/**
+ * The addendum as document blocks: standard clauses, approved company clauses (wording copied in by
+ * the Manager) and the parties' free text. Shared by the standard and the company-template contract.
+ */
+export function addendumBlocks(addendum: Addendum): NoticeBlock[] {
+  const blocks: NoticeBlock[] = [];
+  const chosen = addendum.clauses.flatMap((c) =>
+    Object.hasOwn(CONTRACT_CLAUSES, c)
+      ? [`${CONTRACT_CLAUSES[c as ContractClauseId].title}: ${CONTRACT_CLAUSES[c as ContractClauseId].text}`]
+      : [],
+  );
+  // Every `cc:` ref must come with its approved wording (the Manager copies it in); never print a guess.
+  const wording = new Map((addendum.companyClauses ?? []).map((c) => [`cc:${c.id}`, c]));
+  const company = addendum.clauses
+    .filter((c) => !Object.hasOwn(CONTRACT_CLAUSES, c))
+    .map((c) => {
+      const w = wording.get(c);
+      if (!w) throw new Error(`company clause ${c} has no wording in the addendum`);
+      return `${w.title}: ${w.text}`;
+    });
+  if (chosen.length || company.length || addendum.freeText) {
+    blocks.push({ kind: "heading", text: "Addendum" });
+    if (chosen.length) blocks.push({ kind: "list", items: chosen });
+    if (company.length) {
+      blocks.push({ kind: "para", text: "Additional terms (company)" });
+      blocks.push({ kind: "list", items: company });
+    }
+    if (addendum.freeText) {
+      blocks.push({ kind: "para", text: "Additional terms agreed by the parties:" });
+      for (const p of addendum.freeText.split(/\n{2,}/)) blocks.push({ kind: "para", text: p.trim() });
+    }
+  }
+  return blocks;
+}
 
 /**
  * The tenancy contract as a document (English demo template). Plain layout written for this
@@ -70,28 +119,20 @@ export function contractDocument(
     {
       kind: "list",
       items: [
-        "The rent above is fixed for the whole term. It can only change at renewal, with written notice given in time under Dubai law.",
+        REQUIRED_TERMS.rentChange,
         "The tenant pays the rent by the cheques listed above. A bounced cheque is handled under the law and the company's collection process.",
         "The security deposit is refunded at the end of the tenancy, less the cost of any damage beyond normal wear.",
         "The landlord keeps the unit fit to live in and does structural repairs and repairs to the building's main systems.",
         "The tenant uses the unit for the use stated above and keeps it in good condition.",
-        "This contract is registered in Ejari after both parties sign.",
+        REQUIRED_TERMS.ejari,
       ],
     },
   ];
-  const chosen = addendum.clauses.map((c) => `${CONTRACT_CLAUSES[c].title}: ${CONTRACT_CLAUSES[c].text}`);
-  if (chosen.length || addendum.freeText) {
-    blocks.push({ kind: "heading", text: "Addendum" });
-    if (chosen.length) blocks.push({ kind: "list", items: chosen });
-    if (addendum.freeText) {
-      blocks.push({ kind: "para", text: "Additional terms agreed by the parties:" });
-      for (const p of addendum.freeText.split(/\n{2,}/)) blocks.push({ kind: "para", text: p.trim() });
-    }
-  }
+  blocks.push(...addendumBlocks(addendum));
   blocks.push({ kind: "heading", text: "Signatures" });
   blocks.push({
     kind: "para",
-    text: "Each party signs this contract electronically through a personal link. The signature record is added as the last page of the signed copy.",
+    text: REQUIRED_TERMS.signatures,
   });
   blocks.push({
     kind: "small",

@@ -1,3 +1,5 @@
+import { notFound } from "next/navigation";
+import { TENANCY_OPS } from "../../../../lib/env";
 import { publicGet } from "../../../../lib/engine";
 import { ReportIssueForm } from "../tenancy-forms";
 
@@ -9,6 +11,7 @@ interface View {
 
 /** Step 8: report an issue with the home (triaged; "someone is at risk" goes to a person at once). */
 export default async function ReportPage({ params }: { params: Promise<{ token: string }> }) {
+  if (!TENANCY_OPS) notFound();
   const { token } = await params;
   const v = await publicGet<View>(`/api/portal/${encodeURIComponent(token)}`);
   if (!v || v.purpose !== "tenancy" || !v.tenancy.canReportIssue) {

@@ -464,3 +464,539 @@ web chat is public and works like the Telegram bot.
 - **Rule 10 amendment (AGENTS.md):** the public web chat, like Telegram, takes enquiries and
   books viewings only. Tenants act through emailed portal links. Everything outbound still goes
   by email.
+
+## D32 — Companies, property types and rent bands
+Product owner's choice (slice 1 of the contract AI redesign). A portfolio can hold several
+companies, each with its own units and its own pricing and contract limits.
+- **Companies.** New `companies` table (`name`, unique `slug`, `kind` developer, realty or owner,
+  trade licence no, email, `active`). Every unit belongs to one company (`units.company_id`, not
+  null). (Superseded by D44: the company is the landlord.)
+- **Category and subtype.** `units.kind` is now `units.category` (`residential`, `commercial`,
+  `retail`) plus an optional `subtype`. Units also carry `emirate` (default `dubai`) and `country`
+  (default `AE`). Retail counts as commercial usage for the Ejari payload, the contract and the
+  rulebook own-use lock (`propertyUsageFor`). The readiness checklist skips bedrooms for
+  commercial and retail units. Category is locked with the other identity fields.
+- **Rent rules replace the per-bedroom range.** `rent_rules` hold a band in basis points around the
+  Smart Rental Index average (for example -500 to +1000) and optional AED floor and ceiling.
+  `allowedAskingRange` in `packages/core` returns the intersection of the band and the AED bounds.
+  This is company policy, not law, so it is not in the rulebook.
+- **Choosing a rule.** The most specific active rule for the unit's company, category, emirate and
+  usage wins: community, then subtype, then category. No rule, or a rule that gives no bounds,
+  means no range, and then setting a price always opens `price_out_of_range` for a leasing manager
+  (fail closed). No SRI row means the AED bounds alone apply. Money is integer fils; rounding goes
+  toward the narrower range (minimum rounded up, maximum rounded down). The gate's reason cites
+  the rule, the SRI row and the computed band.
+- **Commercial and retail SRI.** `sri_averages` gain `category` and a per-sqft rate
+  (`avg_annual_rent_per_sqft_fils`); `bedrooms` is null for them. The base is the rate times the
+  unit's `areaSqft` (rounded). Exactly one of the per-unit and per-sqft averages is set. Without
+  an area, only the AED bounds apply. The SRI unique key is now
+  `(community, category, bedrooms, effective_from)`.
+- **Contract rules.** `contract_rules` (company, category, optional subtype) set the offer's
+  minimum and maximum cheques (1 to 12) through `applyContractRule`; with no matching rule the
+  `CompanyPolicy` limits apply as before. They also store `tenures` and `clause_ids`, but in slice
+  1 only the cheque limits are enforced: tenures are stored but not enforced, and units without a
+  contract rule use the company policy limits (the offer's out-of-limits reason says so).
+- **Rules are immutable.** A change inserts a new row with `supersedesId` and deactivates the old
+  one; a delete deactivates. Rows keep `created_by`, and the superseded chain is the history. Every company and rule write also appends a `lease_events`
+  row on a `company` entity (`COMPANY_CREATED`, `COMPANY_UPDATED`, `RENT_RULE_CREATED`,
+  `RENT_RULE_REPLACED`, `RENT_RULE_DEACTIVATED` and the `CONTRACT_RULE_*` equivalents) with the actor
+  and `rulesVersion`. Reads are open to staff; writes (companies,
+  rent rules, contract rules) are admin only.
+- **Import.** Unit and lease CSV imports need `?company=<slug>`; imported rows belong to that company.
+- **Deprecated.** `askingRentRangeFils` stays in the `CompanyPolicy` schema so stored policies still
+  parse, but nothing reads it. Use rent rules.
+- **Migration 0018.** Renames `units.kind` to `category`, adds the new tables and columns, and on an
+  install that already has units creates a "Default company" (fixed id
+  `00000000-0000-7000-8000-00000000c001`, slug `default`) and attaches every existing unit to it.
+  Installs with existing units therefore have no rent rules until an admin adds them, and every
+  price change opens the gate until then.
+- **Known limits.** A company's `active=false` does not affect pricing or listings yet. Dubai only:
+  `emirate` is stored, but only Dubai has a rulebook.
+
+## D33 — Agentic staff shell, agent permissions and the tenancy flag
+Product owner's choice (slice 2 of the contract AI redesign). Staff work from a Home and a
+Workspace; admins decide how much the agent does alone; the product ends at Ejari registration
+unless tenancy operations are switched on.
+- **Agent permissions.** `CompanyPolicy.autopilot` holds six booleans, defaults in
+  `DEFAULT_AUTOPILOT`: `chat_viewing_booking` on, `apply_without_viewing` off, `auto_kyc_verify`
+  on, `auto_send_offer` on, `auto_send_counter` on, `auto_prepare_contract` on. Admins change them
+  with `PUT /api/policy/autopilot` (Settings, Agent). Each save inserts a new `company_policy`
+  version (`createdBy` `user:<id>`). Saves are serialized with a transaction advisory lock so two
+  parallel saves give consecutive versions and keep both changes. A save that changes nothing
+  returns the current version and inserts nothing. Events cite the `policyVersion` they ran under.
+  Each change also appends `AUTOPILOT_CHANGED` (entity kind `company`, id = the new policy row) with
+  the user and, per toggle, `from` and `to`.
+- **Locked list (rule 3 unchanged).** Not toggles, shown read-only in Settings: final contract,
+  Ejari submission, an offer or price outside limits, flagged KYC, recording a reservation
+  payment. A toggle only decides whether a step inside the limits waits for a person; it never
+  removes a gate.
+- **Held steps.** With a toggle off the step stops and an officer task appears. Offer:
+  `OFFER_HELD {revision, policyVersion}` plus task `send_offer` (dedupe key per revision), for the
+  first offer (`auto_send_offer`) and for an in-limits counter (`auto_send_counter`). Whether an
+  offer is held is derived from the events (a held revision without `OFFER_SENT`). A manager-approved
+  out-of-limits revision still sends, because a person already decided. Contract:
+  `CONTRACT_PREP_HELD` plus the task "Prepare the contract"; `prepareContract` closes it. Chat
+  booking: `VIEWING_REQUESTED` plus the task "Confirm a viewing time", no invitation email.
+- **Send-offer route.** `POST /api/applications/:id/offer/send` (leasing officer or manager)
+  sends the held offer: `OFFER_SENT {revision, expiresOn, policyVersion}`, expiry = today plus
+  `offerValidDays`, the same mail key as an automatic send, task closed. `409 offer_not_held`
+  otherwise. The company limits are checked again at send (policy or asking rent may have changed
+  while held): outside them it answers `422 offer_out_of_limits` and opens an `offer_out_of_limits`
+  approval, as the counter path does. `completeTask` refuses `send_offer` and `prepare_contract`
+  (`409 use_the_action`); "Mark done" is not offered for them.
+- **KYC.** With `auto_kyc_verify` off, a clean run still opens a `kyc_review` approval, with a
+  non-blocking `manual_review` flag ("Automatic KYC verification is switched off."). Approving
+  carries `policyVersion` into `KYC_VERIFIED`.
+- **Apply without a viewing.** Enforced in `advanceApplication`: `APPLIED` from ENQUIRY is
+  refused with `409 viewing_required` unless `apply_without_viewing` is on, in which case the event
+  records `viewingSkipped` and `policyVersion`. VIEWING to SCREENING is unaffected. New route
+  `POST /api/applications/:id/events` (body `{event: "APPLIED"}` only, leasing roles; `409
+  wrong_state` unless the application is in ENQUIRY).
+- **Tenancy flag.** Env `TENANCY_OPS`, default `false`. Off hides everything from move-in to
+  disputes: the renewal, tenancy and tenancy demo routes are not registered; `scheduleLeaseMilestones`
+  and `scheduleTermPayments` do nothing; MOVE_IN is the end state of the product with the flag off
+  (nothing after it is scheduled or driven). Tenancy deadlines are **held, not skipped**: when the
+  sweep finds a due deadline that `isTenancyMilestone` matches (an allowlist: renewal ids, the
+  payment milestones and `move_out_date`; a new pre-move-in lease deadline must not match) it
+  releases it, leaving it `pending`, and returns `fired:false`, so turning the flag on later fires it.
+  For the legal renewal milestones (`notice_draft`, `notice_send`, `notice_deadline`,
+  `landlord_intent`) and `lease_end` it also creates one officer task per lease and milestone ("Tenancy
+  operations are off: <milestone> for lease <ref> is due", dedupe key `<leaseId>:tenancy_off:<milestone>`)
+  and appends `MILESTONE_HELD` the first time only. On startup with the flag **on**,
+  `backfillTenancySchedules` runs `scheduleLeaseMilestones` and `scheduleTermPayments` for ACTIVE
+  leases that have no lease deadlines (idempotent: unique keys, a term with payments is left alone).
+  `POST /api/inbound` with one of the eight tenancy types does not 404: the submission is stored
+  through `storeInboundWhileTenancyOff` as `stored_only` with `result.needsHuman`, an `INBOUND_RECEIVED`
+  event, no processing job, and an officer task "Tenant reply received while tenancy operations are
+  off". match); copilot tools `compute_renewal_cap`, `list_payments`, `list_tickets`, `get_case_pack`,
+  `summarise_case` and `propose_approval` (both its gates are tenancy gates) are dropped by
+  `toolsFor`, and `request_approval` proposals are refused; the tenant portal move-in, payment,
+  report, vacate, inspection, deposit and acknowledge pages return 404 and the lease portal home
+  shows a "nothing to do" panel; the Maintenance nav item is hidden. Application, contract, signing and Ejari
+  flows are unaffected. Generic staff routes (`POST /tasks`, `/tasks/:id/done`, approval notes,
+  copilot drafts, `POST /leases/:id/email`) moved out of the tenancy router into `api/staff-work.ts`,
+  and SRI and generated-document routes into `api/sri.ts` and `api/lease-documents.ts`, so they stay on.
+- **Navigation.** Home, Workspace (with a waiting badge), Units, Settings. Old URLs redirect
+  (temporary): `/inbox` to `/work?view=waiting`, `/inbox/:id` to `/work?approval=:id`,
+  `/applications/:id` to `/work?kind=application&id=:id`, `/leases/:id` to
+  `/work?kind=lease&id=:id`, `/conversations` to `/work?stage=Enquiry`, `/copilot` to `/`,
+  `/rules` to `/settings/rulebook`, `/sri` to `/settings/rent-index`, `/import` to
+  `/settings/import`, `/demo` to `/settings/demo`. Metrics has no nav item (`/metrics`).
+- **Home and Workspace.** Home: five tiles (viewings today, offers out, awaiting signature, Ejari
+  pending, waiting for you), the copilot, earlier conversations and "Agent did today"
+  (`GET /api/home`, at most 8 agent or system entries from today in Dubai). Workspace lists live
+  records by stage (`GET /api/records`, filters `view`, `q`, `stage`, `mine`) with a log per record
+  (`GET /api/records/:kind/:id/log`). The log merges four sources: events, approvals, emails and
+  tasks. One entry per approval and per task; the matching events are suppressed. Buttons come only
+  from the entry's `actions`, filtered per user with the same rules as the routes (an officer never
+  sees Approve on a manager gate; Edit only when the gate has editable fields). `waitingForYou`
+  on Home sums the same per-row item counts as `waitingForMe` on the list.
+- **Saved views.** `saved_views` table (migration 0019): per staff user, name 1 to 40 characters
+  unique per user, filter `{stage, q, mine}`. Routes `GET/POST /api/views`, `DELETE /api/views/:id`.
+- **Theme.** Light, dark or system switch in the staff top bar. A `leasing_theme` cookie sets
+  `data-theme` on `<html>` on the server, so there is no flash. Tokens are plain values on `:root`
+  with `light-dark()` versions inside `@supports`, so older browsers get light.
+- **Seeded stages.** The demo seed has applications at Enquiry, Viewing, Documents, Offer (sent
+  and held), Contract (prep held, awaiting signatures), Ejari pending and Registered. Reserved is
+  transient (the application converts in the same transaction), so that group is always empty and
+  the Workspace hides empty groups.
+- **Viewing outcome and next step.** A VIEWING application whose `viewingAt` has passed shows a
+  pending log entry with `record_viewing_outcome` (leasing roles only). In the Contract stage with the
+  contract sent, `nextStepFor` says "Waiting for the signers." Task kinds `send_offer`,
+  `prepare_contract`, `record_reservation` and `landlord_intent` never get "Mark done".
+- **Demo companies.** The seed has five companies; Sobha Realty and Modon Properties were added with
+  two or three fictional units each, rent and contract rules and SRI rows. Company names may be real
+  for pitch realism; all units, people, numbers and rules in the demo are fictional and do not
+  represent those companies.
+- **Known limits.** Registered demo leases have no Ejari certificate document. `getCompanyPolicyVersion`
+  orders by version, so a future-dated version would shadow a current one. A held `send_offer` task is
+  not closed if the application leaves OFFER another way. The in-limits counter is recognised by actor
+  `helper:offer`. Workspace and Home load unbounded sets (fine for a demo portfolio, not at scale).
+  The detail pane reuses the full-page components (their heading is an h2 when embedded); Edit opens the full form rather than
+  editing inline. The theme switch is in the staff app only (portal and public pages follow the cookie).
+  Inline approve, send offer and prepare contract were not click-tested in a browser.
+
+## D34 — Public customer section, chat search, Apply now and chat status check
+Amends D31. Product owner's choice (slice 3 of the contract AI redesign). The public chat grows
+from "enquiries and viewings" to search, applying and a read-only status check, still without
+accounts.
+- **Customer section.** The public pages live under `/customer`: `/customer/properties`
+  (server-rendered grid, chips are links that change the URL query), `/customer/properties/[id]`
+  and `/customer/chat` (full page), with a shared layout and nav. `/properties`,
+  `/properties/:id` and `/chat` redirect (307) to the new URLs. Cards link to the detail page and
+  to `/customer/chat?unit=<id>` ("Ask about this in chat"). The floating launcher is a link to
+  the chat page.
+- **Search steps and `filters`.** Web search asks emirate (Dubai open; Abu Dhabi and Sharjah are
+  disabled "Coming soon" buttons), area, category, then bedrooms (residential) or a size band
+  (commercial and retail), then an optional budget (chips built by code from the matching units'
+  asking rents, skipped when there is nothing to choose). Every web reply carries `filters`
+  (`ChatFilters`) beside `reply`, so the grid can follow the chat. Telegram stays residential-only
+  and sends no `filters`. `GET /public/units` takes `category`, `community`, `bedrooms`, `size`
+  and `budget` (Zod-validated).
+- **Apply now.** A unit card shows "Apply now" only when the `apply_without_viewing` toggle is on
+  (a forged `apply:<unitId>` is refused when it is off). The chat asks the name, then calls
+  `createApplication` (source `web_chat`) and `applyWithoutViewing`; the upload-link email goes
+  out as for a viewing booking. The unit must still be bookable, and the same email can't hold
+  two open applications on a unit.
+- **Company applicants.** For a commercial or retail unit the applicant is a `company` party:
+  the chat asks the company name (it becomes the party name, so KYC compares it with the trade
+  licence) and then a contact person, recorded in the `APPLIED_FROM_CHAT` event.
+- **One cap of 3.** Open applications per email are capped at 3 across the web form (`web_form`)
+  and the chat (`web_chat`), through one shared helper in `manager/applications.ts`. Telegram is
+  unchanged.
+- **Status check.** The visitor taps "Check my applications" (or asks in free text; D36). The
+  chat emails a 6-digit code (`crypto.randomInt`), valid 15 minutes, 5 attempts. Only
+  `HMAC(key, id + code)` is stored in `visitor_verifications`; the key derives from
+  `SESSION_SECRET`. The email job (`chat.code`) carries the code sealed with AES-256-GCM (key also
+  derived from `SESSION_SECRET`), and the queue deletes completed jobs after an hour, so no
+  plaintext code sits in the database or the queue. A typed code is stored as "(code entered)".
+  Limits: 3 codes per email per hour (advisory lock, so parallel chats can't race it) and 20 per
+  IP per hour. The reply before verification is always neutral ("If that email has applications,
+  we sent a code") whether or not the email has records; mail goes out only when the email has an
+  open application or a lease in the pipeline.
+- **Session.** A verified session is bound to the conversation and the email it holds, lasts 24
+  hours, and ends on "Change email". Another visitor cookie has no session.
+- **What is shown** (the product owner's decision): the five stages (Viewing, Documents, Offer,
+  Contract, Ejari) with done, current and todo, a next-step sentence, and for an offer or a
+  lease the annual rent and the number of cheques (formatted by code from stored values). At
+  most five items. Status details are returned in the response only; the stored message says
+  "Your applications are shown here".
+- **Re-send buttons.** In a verified session a record belonging to the session email can offer
+  "Send the upload link again", the offer link, the signing link or the Ejari certificate. Each
+  emails the existing link or document to the address on the record, never to one typed in the
+  chat, at most once per Dubai day (audit event plus a day-specific outbound milestone).
+- **Enumeration.** Without a verified status session, Apply now and booking never say whether an
+  email already has an open application or viewing, or when: one neutral reply ("If you
+  already asked about this property, check your email for the details we sent.", also in Arabic;
+  it promises no new email), on the code and agent paths
+  alike. Inside a verified session the specific replies stay. Nothing is re-sent in the neutral
+  case. A held offer (an `OFFER_HELD` revision with no `OFFER_SENT`) is not re-sent from the chat:
+  the reply is "Your offer is being prepared. We'll email it soon."
+- **Known limits.** The per-email limit can be used to exhaust a victim's codes: anyone who types
+  a victim's email can use up its 3 codes per hour, so the victim cannot get a code for the rest of
+  the hour (inherent to an unauthenticated start; the reply stays neutral). The per-IP limiter is
+  in memory: it resets on restart and is per process, so a multi-instance deployment needs a shared
+  limiter. `outbound_messages` keeps a `previewUrl` on dev SMTP (the Ethereal-style preview link),
+  which can show a code in clear: use dev SMTP only on a developer machine, never in hosted use. The demo falls back to a fixed `SESSION_SECRET`, so hosted
+  deployments must set it; rotating it invalidates codes in flight. Arabic copy needs native review.
+- **Rule 10 amendment (AGENTS.md):** the public web chat may also create applications (Apply now)
+  and show a verified visitor's stages read-only after an email code; with D36 it acts through an
+  AI agent with tools. Documents still go only through emailed links, and everything outbound
+  still goes by email.
+
+## D35 — Company clauses from sample contracts (Contract AI)
+Product owner's choice (slice 3). A company uploads a sample contract, a helper proposes clauses, an
+admin approves them, and a contract can include the approved wording.
+Slice 3 (Task 5 and 6) completes the decision.
+- **Helper `contract_template`** (`packages/helpers/src/contract-template`) reads a sample contract
+  (PDF or pasted text) and proposes clauses (title, text, category, verbatim quote). It touches no
+  disk (the engine passes `readFile`) and writes nothing. PDF text comes from `unpdf@1.9.1` (MIT,
+  new dependency; `pdf-lib@1.17.1` is a dev dependency for the test fixture). Caps: 10 MB, 60
+  pages, 120k characters, a 30 s parse timeout, page-by-page reading that stops at the character
+  cap, and `loadingTask.destroy()` afterwards. The document sits between per-call random nonce
+  delimiters (`<<<DOC_<nonce>_START/END>>>`) and delimiter-like text inside it is stripped.
+  Limit: the timeout does not cancel pdf.js work already running; a worker with a memory limit is
+  deferred.
+- **Quote guard.** A clause is kept only if its quote is found in the document (NFKC, soft
+  hyphen, zero-width and curly-quote normalisation, whitespace collapsed), is at least 20
+  characters and 4 words, and covers at least `min(40% of the clause text, 250)` characters.
+  Failures are dropped and counted in `droppedCount`, not failed through Zod, so one bad clause
+  doesn't turn the whole answer into `needs_human`. A clause is also dropped when its `text` has a
+  figure, period or date token (digits, number words up to twelve, day/week/month/year words,
+  month names, money words, `%`) that its `quote` does not contain: the model may not add a value.
+  The review screen and the approval detail label clauses in the `termination`, `payment` and
+  `subletting` categories "Confirm with legal".
+- **`hasValues` is code, not model.** A clause "has values" when code finds an amount (AED, dirham,
+  fils, `د.إ`), digits (also Arabic-Indic, Persian and fullwidth, `%`), a spelled-out number or
+  percentage, or a period or date word, in English or Arabic (Arabic-aware boundaries with the
+  common prefixes). A model-supplied flag is ignored.
+- **Review.** Proposals are stored as `company_clauses` (`proposed`) tied to the contract rule.
+  An admin approves, edits or rejects each one. A clause with `hasValues` (recomputed on edited
+  text) needs `confirmValues: true` (else 422 `confirm_values`). Every decision appends
+  `COMPANY_CLAUSE_APPROVED` or `COMPANY_CLAUSE_REJECTED` with the user as actor.
+- **Retry and stuck reads.** Reading runs in the `contract.template` job (singletonKey
+  `<documentId>:<attempt>`). Re-uploading the same file after `failed` or `needs_human`, or the
+  "Try again" route, re-queues it. A sample queued for more than 15 minutes is shown as `failed`.
+- **Scans go to a person.** Image-only PDFs are `needs_human` ("upload a text PDF or the clauses
+  as text"). No page renderer is wired (it needs a native canvas dependency), so the vision
+  fallback is not used.
+- **In the contract.** Rule `clauseIds` may hold standard ids and `cc:<uuid>` ids; the Manager
+  validates them (422 `bad_clause` for an unapproved, rejected, unknown or other-company id) and
+  copies the approved wording into `addendum.companyClauses`, overwriting anything the client
+  sent. The PDF prints it under "Additional terms (company)". The prepare form preselects from
+  the matching rule. The `final_contract` gate is unchanged. `Addendum.clauses` allows 20 entries.
+- **Not done:** company clause text is not run through the free-text conflict review (an admin
+  already approved it), so a conflict with a contract field is only caught by the approver.
+- **Evals.** Six fixtures: expected clauses found 12/18, quotes not in the document 0/16, clauses
+  from the injected line 0.
+
+- **Approved company clauses are immutable.** `decideClause` only touches `proposed` rows; an approved or
+  rejected clause is never edited again (a change means a new proposal). That is why a contract's
+  `inputHash` covers the records it is copied from but not the text of `cc:` clauses: the wording behind a
+  `cc:<uuid>` can't change between preparing a contract and approving it. The Manager copies the approved
+  wording into `addendum.companyClauses`, and the renderer throws if a `cc:` ref has none.
+- Company clause text appears only in the contract PDF ("Additional terms (company)"), never in the Ejari
+  payload. No amount, date or period in a clause is ever used as a contract value.
+
+## D36 — AI customer agent for the public web chat
+Amends D24 and D31 for the web channel only. Product owner's choice: free text in the web chat
+goes to an agent that can search, book, apply and check status, instead of a classifier with
+fixed replies. Telegram is unchanged (D24).
+- **Routing.** Buttons, callbacks, contact steps, a typed code, and a short typed answer at a
+  step that expects one (name, company, email) stay in code. Any other free text goes to a
+  LangGraph tool loop (`packages/helpers/src/customer-agent`, engine side in
+  `manager/customer-agent.ts`). With no model configured the old assistant path runs. Fixed
+  classifier replies remain only as the agent's error fallback and the `handoff` tool text.
+- **Tools.** `search_units`, `unit_details`, `viewing_slots`, `book_viewing`, `apply_now`
+  (offered only when the toggle is on), `my_status` (only when verified),
+  `start_status_check` (only when an email is known and not verified), `offer_choices` and
+  `handoff`. Zod in, code out. No tool takes an email, party, application or lease id. At most 6
+  tool calls per message, and the per-hour message cap applies before the model.
+- **Full actions with choice cards** (the product owner's decision). The agent may book a viewing
+  and apply, but a tool that commits or asks ends the turn with text written by code. Options
+  (slots, areas, units) are offered as a choice card: `offer_choices` values are validated, labels
+  are built by code, and the visitor's tap is `pick:<id>:<n>`.
+- **Identity only from the conversation.** The booking and application use the chat's contact
+  email and name. An email the visitor or the model supplies is ignored.
+- **Single-use picks.** Options live in `flow.choiceSet`; a pick resolves from stored state, and
+  the set is cleared as soon as one option is taken, so a forged, stale, foreign or repeated pick
+  says "no longer available". A slot must come from `viewing_slots` in the same message and is
+  re-checked under the unit lock.
+- **Value post-check (rule 1).** Every AED amount, date, time, weekday, phone, email or link in
+  the reply must appear in this turn's tool output (EN and AR, Arabic digits and separators,
+  Dhs/Dh/`د.إ`, bare yearly figures). It also covers percentages (`%`, `٪`, "percent",
+  "بالمئة"), bare figures of 1,000 or more, and "N days/weeks/months/years" phrases in English and
+  Arabic (digits, or spelled-out numbers up to twelve), each of which must appear in a tool result.
+  Claims or promises of an action that no tool did also fail.
+  A failure retries once, then sends a fixed reply.
+- **Deadline and cancel.** Each turn races a 60 s deadline (`customerAgentLimits.deadlineMs`) with
+  an `AbortSignal` to the model; tools that haven't started refuse once cancelled, and a tool
+  that needs the conversation lock re-checks `cancelled` inside its transaction before writing.
+  On timeout the run is recorded `needs_human` and the visitor gets the fixed error reply. Known
+  limit: a write already running when the deadline passes still commits, so the visitor can see
+  the error and still get the booking email.
+- **Concurrency.** An in-memory semaphore (`CUSTOMER_AGENT_MAX_CONCURRENT`, default 2) answers
+  "one moment, I'm busy" at once when full, recording nothing.
+- **Untrusted text.** Visitor text and unit descriptions are wrapped in `<untrusted>`. A name or
+  company typed at a step is saved only if it looks like a name (`plausibleName`,
+  `plausibleCompany`); otherwise the text goes to the agent and nothing is saved.
+- **`helper_runs`.** One row per turn with masked arguments and a result hash. `redacted()`
+  strips `nameEn` and `companyName` from the stored flow, masks emails (`a***@domain`) and never
+  stores status details. Unverified spans kept in the row are masked too (`maskPiiText`, emails).
+  A thrown model error is retried once inside the turn (not a timeout), then the run is
+  `needs_human`.
+- **Model.** `CUSTOMER_AGENT_MODEL`, else `CHAT_MODEL` (new optional variable; no existing tag
+  changed). Local Ollama only, asserted at startup. The agent needs tool calling.
+- **Evals** (23 cases, EN and AR, real Ollama, Task 7). `qwen3.5:9b`: tool choice 19/20, facts
+  3/3, reply shape 22/23, fixed fallbacks 0/23, p50 8.4 s, max 34.4 s, forbidden actions 0.
+  `gemma4:e4b`: tool choice 15/20, shape 18/23, fallbacks 2/23, p50 4.1 s, max 25.7 s, forbidden
+  actions 0. About twice as fast but misses cards, choice cards and a handoff, so `qwen3.5:9b`
+  stays the default until the prompt is tuned.
+- **Known limits.** Turns with a slot list or choice card take several model calls (up to about
+  35 s on the dev GPU). No streamed status lines: one pending bubble. The Arabic apply case
+  sometimes falls back to the fixed reply. The semaphore frees at the deadline while an orphaned
+  model call may still run. A "busy" reply marks the inbound message processed.
+- **Rule 10 amendment:** see D34.
+
+## D37 — Fourteen more agent switches (slice 4)
+
+- **Where.** In `CompanyPolicy.autopilot`, next to the six of D33: booleans plus seven bounded
+  whole numbers in the same versioned policy (saved with the advisory lock; every change audited as
+  `AUTOPILOT_CHANGED` with from and to). An out-of-bounds number is refused, never clamped. Policies
+  stored before this have no new keys and parse with the defaults.
+- **Defaults** keep today's behaviour or choose the safer option: reminders, chases, agent
+  switches and `ejari_draft_auto` on; `no_show_followup`, `held_offer_auto_release`,
+  `contract_ai_auto_approve_valueless` and `copilot_proactive_drafts` off.
+- **Reminders and chases** are queued with a `singletonKey`, moved out of quiet hours (Dubai, from
+  the Clock; in demo mode too: the exact `startAfter` is kept in the deadline and the sweep waits
+  for it), and re-check both their switch and the entity's state when they fire. They are all
+  pre-move-in steps, so `TENANCY_OPS` does not hold them.
+- **No gate is touched.** `ejari_draft_auto` only decides who drafts the submission; a person still
+  approves it. `held_offer_auto_release` sends through `sendHeldOffer`, which re-checks the limits and
+  asks a manager instead of sending an offer outside them. Auto-approval covers only clauses with no
+  amount, date or period (by code), outside termination, payment and subletting, and not about money
+  or exit in their wording; the actor is `system:auto-approve`.
+- **Chat agent.** Free-text book or apply off: the tool answers "needs a tap" and shows the choice
+  button; the tap runs the normal path. `area_rent_index` exists only while `agent_sri_answers` is
+  on and formats the figure by code. `agent_daily_action_cap` counts the agent's completed bookings
+  and applications per chat per Dubai day (`AGENT_ACTION` event).
+- **Copilot.** `copilot_proactive_drafts` shows "Draft a reply" in the Workspace on records that wait
+  for an applicant or signer. A click asks the copilot; for a lease it saves a draft through
+  `draft_email`; nothing is sent. Applications have no lease, so the copilot writes the text in chat.
+
+## D38 — Company contract templates (slice 4)
+- **Extraction.** An admin uploads a sample contract PDF. The `contract_structure` helper
+  (`packages/helpers/src/contract-structure`) reads it: code copies the wording verbatim into
+  sections, finds the blanks, and reads the look (page, margins, fonts, sizes, header, footer,
+  logo, accent colour) from the PDF. The model only proposes headings and which contract field
+  each blank means; code checks every id, heading and field name and the field's type.
+- **Look.** The company's look is reproduced with the standard PDF fonts. A header, footer or
+  logo that carries DLD, RERA or Ejari wording is never reused (rule 9): it blocks approval until
+  the admin drops it, and a sample with such marks never gives an accent colour.
+- **Approval rules.** A template is `proposed` until an admin approves it. Approval is refused
+  (422 with every reason) while a mapping is of the wrong type (a blank left empty is fine, D43), while flagged
+  header, footer or logo are not dropped, while a kept logo is not confirmed as the company's own,
+  while the text has characters the PDF fonts cannot print, and while any paragraph or heading
+  with a number, period, date or amount (`hasValues`) is not in `review.valuesConfirmed`.
+  Authority wording found in the title or body needs "Neutral reference, not branding" per
+  paragraph (`review.authorityBodyConfirmed`); header, footer and logo hits still block until
+  dropped. A paragraph about a rent change, or a notice with a number of days, only warns:
+  "Check against the required terms; confirm with legal". Confirmations are stored on the
+  template and in the `COMPANY_TEMPLATE_REVIEWED` audit event. The wording is never editable.
+- **Required terms always appended.** `REQUIRED_TERMS` (law section, addendum blocks) are added
+  by code to every contract, whatever the template says. A template never replaces them.
+- **WinAnsi limit.** The PDF fonts are standard (WinAnsi): Arabic or other text they cannot encode
+  blocks approval ("upload an English version"). No silent `?`.
+- **Re-pointed on approve.** Approving a version retires the previous approved one and, in the
+  same transaction, moves the company's active contract rules from retired templates to the new
+  one. An approved row never changes; a pending `final_contract` becomes stale if its template
+  key changes. A render with a missing value fails with the list of what is missing.
+- **Rules touched:** 1, 3 (final contract is still approved by a person), 9.
+
+## D39 — Voice input (slice 4)
+- **Model.** Speech to text is `VOICE_MODEL` (default `gemma4:e4b`), audio sent to local Ollama
+  only (rule 8). No cloud speech API.
+- **Caps.** `audio/webm` or `audio/ogg`, 2 MB (`VOICE_MAX_BYTES`), 30 s. A missing
+  `Content-Length` is refused (411); the body is read as a stream and cut off past the cap (413)
+  in the engine and in both web relay routes. Limits: 20 per IP per hour (public chat), 60 per
+  user per hour (staff).
+- **Nothing stored.** The audio lives in memory for one call: not on disk, not in the log, not in
+  `helper_runs`. Only the PII-masked transcript is returned.
+- **Transcript is untrusted input.** It fills the message box; the person reads, edits and sends
+  it as an ordinary message, so it goes through the same masking, Zod and prompt-injection
+  safeguards as typed text. The prompt tells the model never to obey the speech. Silence or low
+  confidence answers "try again" (English and Arabic).
+- **Speaking back.** Only the browser's local text-to-speech voices are used; a voice that is not
+  local is never used, so no text leaves the device or the server for synthesis.
+- **Rule 10:** voice is only another way to type; it opens no new channel.
+
+## D40 — Model choice per helper (slice 4)
+- `CHAT_MODEL` is `gemma4:e4b` (about 2 to 4 times faster, same scores on the extraction and
+  classification suites). Per-helper overrides: `COPILOT_MODEL`, `LEASING_ASSISTANT_MODEL`,
+  `CONTRACT_AI_MODEL`, `CUSTOMER_AGENT_MODEL`, `VOICE_MODEL`. `COPILOT_MODEL` and
+  `CUSTOMER_AGENT_MODEL` stay pinned to `qwen3.5:9b`: gemma misses tool calls by asking a
+  clarifying question, and one prompt pass did not close the gap.
+- Evals on 2026-10-28 (forbidden actions 0 on both models in every suite):
+
+| Suite | qwen3.5:9b | gemma4:e4b | Verdict |
+|---|---|---|---|
+| leasing-assistant (54) | intent 44/54, handoff recall 22/22, false handoffs 1/32, injections 7/7, p50 6.0 s | same scores, p50 6.9 s | gemma |
+| contract-template (6) | clauses 12/18, bad quotes 0, injected 0 | same | gemma |
+| contract-structure (4) | blanks 28/28, mapping 27/27, styles 37/37, 115 s on biggest PDF | same scores, 20 s | gemma |
+| customer-agent (23 / 26 cases) | tool 19/20, shape 22/23, fallbacks 0, p50 8.4 s | tool 14/21, shape 19/26, fallbacks 2/26, p50 4.6 s | pinned qwen |
+| copilot (77) | tool 59/69 (85.5%), facts 64/78, unverified 6/77, p50 26.7 s | tool 51/69 (73.9%), facts 60/78, unverified 4/77, p50 7.8 s | pinned qwen |
+| complaints (34) | route 29/34, safety 10/10, injections 4/4, ack check 0 failing | stopped at ct30, no summary | gemma (re-run to confirm) |
+| voice | no eval suite | none | `VOICE_MODEL` stays `gemma4:e4b` |
+
+- `KYC` (vision) was not run. Complaint acknowledgements follow `CHAT_MODEL`; re-run
+  `bun run eval -- complaints` on gemma before relying on it.
+
+## D41 — Staff copilot covers the Contract AI pipeline, with cards and choices
+- **Why.** Staff asked "how many applications are in viewing" and "how many enquiries" and the copilot
+  had no tool; its help text pitched lease management and renewals, which `TENANCY_OPS` hides (D33).
+- **Tools.** Six read tools: `pipeline_summary`, `list_records`, `get_record`, `contract_status`,
+  `list_companies`, `offer_choices`; `find_available_units` gains `company`, `category`, `sizeBand`.
+  `pipeline_summary` is computed by the same code as the Home tiles, so counts never disagree.
+  `list_deadlines` and `get_lease_timeline` join the `TENANCY_OPS` hide list; `get_lease` stays,
+  without tenancy fields.
+- **Rich replies.** Tools return `ui` (record and unit cards, one choice card) that the model never
+  sees; the stream carries it to the chat. Both chats now use one card and choice implementation
+  (`apps/web/components/chat-ui/`). Cards are not stored with the thread (no schema change).
+- **Guardrails unchanged (rule 11).** No new confirmed actions. A choice value must be an id a tool
+  returned in the same turn; tenant and applicant text never becomes a choice; a tap sends a normal
+  message or opens a page.
+- **Public agent.** Only polish: `search_units` returns `total` for count questions and moves onto
+  the shared components. `resolveCompany` is now shared between the two.
+
+## D42 — The copilot calls the engine API that exists for the task
+- **Why.** "Send a reminder for this viewing" got no tool call and an offer of a lease page an
+  application doesn't have; "list Silverline units" got a `category` the user never typed. The
+  user decided the copilot should use existing engine actions instead of saying "no tool".
+- **Reads.** `list_tasks`, `list_enquiries` and `get_enquiry` (visitor text `untrusted`, phone
+  numbers masked, no email returned), `get_unit` (the unit plus its SRI average and rent-rule range,
+  computed by the engine in `GET /api/copilot/unit`, rule 1) and `viewing_slots` (the slots logic
+  of the public chat, `GET /api/copilot/viewing-slots`). Slot `at` values are issued to
+  `offer_choices`.
+- **Drafts.** `draft_email` takes a lease (tenant) or an application (applicant). `copilot_drafts`
+  gains `application_id`; the staff form on the application record (`POST /api/applications/:id/email`,
+  evidence stored like a tenant email) sends it. The copilot still never sends.
+- **Four more Confirm-click proposals (rule 11 amended).** `propose_viewing_invite`
+  (`bookViewing`: an enquiry only; a booked viewing keeps its automatic reminder),
+  `propose_request_documents`, `propose_resend_signing_link`, `propose_prepare_contract` (runs
+  `prepareContract` with the contract rule's default clauses; it still ends at the locked
+  `final_contract` approval). Same flow as D25: a `copilot_proposals` row, single use, 30-minute expiry,
+  owner only, the user's click calls the same manager function the staff route calls, as
+  `copilot:<userId>`, with the same role checks and audit. No new quiet-hours or cap semantics.
+- **Prompt.** Never add a filter the user didn't state; use the proposal tool or name the button
+  with its link, never "I have no tool" when one exists.
+- **Chat UI (same change).** Both chats get one composer (`chat-ui/composer.tsx`) with code-driven
+  quick-action pills that stay above the input. Public pills are fixed buttons (`units`,
+  `chat:book`, `chat:apply`, `status:start`, `contact:change`); "Use a different email" ends the
+  verified session and restarts the email step, and touches no applicant record. "Talk to staff" is
+  not offered: the web chat never hands over (customer chat design). The stored status stand-in
+  line is no longer shown to the model, and a reply that repeats it is refused, so every status
+  question gets a fresh status.
+
+## D43 — Template blanks are mapped by AI and code, checked by people at `final_contract`
+- **Why.** Admins fixed many proposed mappings by hand (Landlord Nationality shown as Lease
+  reference) and a missing optional value (tenant phone, plot) failed the whole contract. The
+  user decided: no manual field selection, map by what the system holds, leave a blank empty when
+  unsure.
+- **Data sheet.** `key -> description + type`, generated from the records (lease terms, unit,
+  company, landlord and tenant party columns, application), plus `tenancyPeriod` and
+  `contractOn` (the day the contract is prepared, from the Clock).
+- **Mapping, once per template version.** Code label rules first (landlord/owner/lessor vs
+  tenant/lessee scoping from the label or nearest heading), then the chat model (Zod schema; the
+  key list is too long for a systemone choice, which takes at most 26 options) given only blank
+  labels, nearby words and key descriptions, never a value (rule 8: personal data and amounts in
+  the sample's own words are replaced by "[value]" first). Code validates the key and its type;
+  invalid answers are asked once more, then the blank is `leave_empty`. The model only chooses a
+  key; code copies the value verbatim (rule 1). Stored on the template, reused at every prepare;
+  "Re-suggest mappings" re-runs it on a proposed template. An approved template is immutable: a new
+  version (read the sample again) is needed to map it afresh.
+- **Rendering.** No value: an empty line, listed at the `final_contract` approval as "Left empty
+  for hand-filling", with each filled blank's source key. `CORE_FIELDS` (annual rent, start, end,
+  tenancy period, deposit, cheques, landlord name, tenant name, unit and property number, lease
+  reference, move-in date) block preparation when empty. Absent-by-nature keys print a neutral
+  word from code: `rentFreeDays` "0" (the record holds 0), `reservationFils` "None" (no reservation
+  on the application). Rule 3 is unchanged: a person checks the contract at the gate. Rules 1, 3
+  and 8 are touched, none relaxed.
+
+## D44 — The company is the landlord
+
+Developers and realty companies (Sobha, Danube, Silverline, Modon and so on) lease their own
+portfolio. Individual landlords are out of scope. This supersedes the D32 ruling that a company is
+not a landlord.
+
+- **Data: parties plus columns.** `companies.party_id` (unique FK) points to a `parties` row of kind
+  `company`: the company's legal record (legal name EN and AR, email, phone, trade licence number and
+  expiry). Created from the company name for every existing company by migration 0025, and on demand
+  for new ones. The fields a party has no column for (licence issuing authority, RERA ORN, registered
+  address, cheque payee, authorised signatory with ID kind, number and expiry) are columns on
+  `companies`. Why not all on `companies`: leases, signing, the Ejari payload and notices already read a
+  party, so nothing downstream changes shape, and the signatory's ID number stays out of `parties`
+  (whose Emirates ID column is unique and used for matching people).
+- **`units.landlord_party_id` is unused.** The column stays (nullable, deprecated) and nothing reads it.
+  The unit's landlord is its company's party. New leases (application and import) get that party as
+  `lease_parties.role = landlord`; the contract takes it from the unit's company at prepare time and
+  re-points an older lease's landlord row. Contracts already prepared or signed keep their stored PDF
+  and payload.
+- **Gate on preparing.** `prepareContract` is refused (422 `landlord_details_missing`) until the
+  legal name, trade licence number, issuing authority, an unexpired licence, address, email and the
+  signatory (name, title, email, ID number) are set: "Complete <company>'s legal details in Settings →
+  Companies". The landlord signer's email is the signatory's.
+- **Audit and PII.** `PUT /companies/:id/legal` is admin only. The `COMPANY_LEGAL_UPDATED` event holds the
+  actor and the changed field names, never values or ID numbers. The signatory's ID number is shown
+  masked to finance. Validation: licence and ID expiry in the future (Clock), email, Emirates ID format
+  `784-YYYY-NNNNNNN-N`.
+- **Units and import.** The unit form already requires a company. The units CSV has a `company` column
+  (name or slug); `?company=` is only the default; an unknown or inactive company is a row error. The
+  lease CSV's `landlord_name` and `landlord_email` are ignored.
+- **Data sheet.** New keys `landlordNameAr`, `landlordAddress`, `landlordTradeLicenceNo`,
+  `landlordTradeLicenceExpiresOn`, `landlordTradeLicenceAuthority`, `landlordReraOrn`, `chequePayeeName`,
+  `signatoryName`, `signatoryTitle`, `signatoryEmail`, `signatoryIdNo`, `signatoryIdExpiresOn`.
+  `landlordNameEn` stays core. The generic contract and the Ejari payload use the company's legal name
+  and trade licence number.
+- **Demo.** "Fictional Holdings LLC" is gone: each seeded company has fictional legal and signatory
+  details (`DEMO_COMPANY_LEGAL`), and the simulated Ejari registers each demo unit to its company's
+  legal name. Rules 1, 3, 4, 8 and 9 are untouched.

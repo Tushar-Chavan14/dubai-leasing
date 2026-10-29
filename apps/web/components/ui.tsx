@@ -84,13 +84,17 @@ export function PageHead({
   actions,
   back,
   badge,
+  embedded = false,
 }: {
   title: ReactNode;
   lede?: ReactNode;
   actions?: ReactNode;
   back?: { href: string; label: string };
   badge?: ReactNode;
+  /** Inside the Workspace pane, whose record header already holds the page's only h1. */
+  embedded?: boolean;
 }) {
+  const Heading = embedded ? "h2" : "h1";
   return (
     <>
       {back && (
@@ -102,7 +106,7 @@ export function PageHead({
       <header className="page-head">
         <div>
           <div className="title-row">
-            <h1>{title}</h1>
+            <Heading>{title}</Heading>
             {badge}
           </div>
           {lede && <p className="lede">{lede}</p>}

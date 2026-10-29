@@ -3,17 +3,22 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LocalDiskStore } from "@leasing/adapters";
-import { newId } from "@leasing/core";
+import { addDays, defaultCompanyPolicy, newId } from "@leasing/core";
 import {
   actionLinks,
   applications,
   approvals,
+  companyPolicy,
+  contractRules,
   contracts,
   type Database,
   deadlines,
   documents,
   leaseEvents,
+  outboundMessages,
   leaseParties,
+  helperRuns,
+  inboundEvents,
   leases,
   parties,
   tasks,
@@ -21,17 +26,33 @@ import {
   units,
 } from "@leasing/db";
 import { FakeLlm } from "@leasing/llm";
-import { and, eq } from "drizzle-orm";
+import { and, eq, like, notLike } from "drizzle-orm";
 import { createApi } from "../src/api/app.ts";
 import { issueToken } from "../src/api/auth.ts";
 import { advance } from "../src/manager/advance.ts";
-import { APPLICATION_MAIL_JOB, sendApplicationMail } from "../src/manager/applications.ts";
+import {
+  APPLICATION_MAIL_JOB,
+  autoReleaseHeldOffer,
+  createApplication,
+  HELD_OFFER_RELEASE_JOB,
+  sendApplicationMail,
+  sendHeldOffer,
+} from "../src/manager/applications.ts";
 import { decideApproval } from "../src/manager/approvals.ts";
 import { CONTRACT_PREPARE_JOB, DEFAULT_ADDENDUM, prepareContract } from "../src/manager/contracts.ts";
 import { INBOUND_JOB, processInbound } from "../src/manager/inbound.ts";
 import { sweepDueDeadlines } from "../src/manager/milestones.ts";
 import { UnitFields } from "../src/manager/units.ts";
-import { addStaff, agreeingDecision, freshDatabase, noDb, testContext } from "./harness.ts";
+import { isTimedAgentJob } from "../src/manager/agent-switches.ts";
+import {
+  addStaff,
+  agreeingDecision,
+  completeLegalDetails,
+  freshDatabase,
+  noDb,
+  testContext,
+  testCompany,
+} from "./harness.ts";
 
 const START = "2026-11-01T04:00:00Z"; // 08:00 Dubai
 const VIEWING_AT = "2026-11-01T16:30:00+04:00"; // same day, 16:30 Dubai
@@ -62,10 +83,12 @@ async function setup(front: () => unknown = () => priyaFront()) {
     prompt.includes("back of an identity card") ? priyaBack : front(),
   );
   const t = testContext(database, START, { llm });
-  const landlordId = newId();
-  await database.db.insert(parties).values({ id: landlordId, kind: "company", fullNameEn: "Fictional Holdings LLC" });
+  const landlordId = await completeLegalDetails(database, await testCompany(database), {
+    legalName: "Fictional Holdings LLC",
+  });
   const unitId = newId();
   await database.db.insert(units).values({
+    companyId: await testCompany(database),
     id: unitId,
     code: "JVC-0412",
     building: "Demo Circle Residence",
@@ -78,7 +101,6 @@ async function setup(front: () => unknown = () => priyaFront()) {
     state: "LISTED",
     askingRentFils: 7_400_000,
     priceApprovedAt: new Date("2026-10-01T08:00:00Z"),
-    landlordPartyId: landlordId,
   });
   const officer = await addStaff(database, "leasing_officer");
   const manager = await addStaff(database, "leasing_manager");
@@ -112,10 +134,12 @@ async function setup(front: () => unknown = () => priyaFront()) {
   const drain = async () => {
     while (done < t.scheduler.jobs.length) {
       const j = t.scheduler.jobs[done++]!;
+      if (isTimedAgentJob(j)) continue; // a reminder pg-boss would hold until its startAfter
       if (j.name === APPLICATION_MAIL_JOB) {
         await sendApplicationMail(t.ctx, String(j.data.applicationId), j.data.kind as never, Number(j.data.seq));
       }
-      if (j.name === INBOUND_JOB) await processInbound(t.ctx, String(j.data.inboundEventId));
+      if (j.name === INBOUND_JOB)
+        await processInbound(t.ctx, String(j.data.inboundEventId), Number(j.data.attempt ?? 1));
     }
   };
   const lastMail = () => t.mailer.sent.at(-1)!;
@@ -240,7 +264,10 @@ describe.skipIf(noDb)("applications: screening, KYC, offer, reservation (Postgre
       offer: { revision: number };
     };
     expect(view).toMatchObject({ canRespond: true, offer: { revision: 1 } });
-    const [dl] = await database.db.select().from(deadlines).where(eq(deadlines.entityId, id));
+    const [dl] = await database.db
+      .select()
+      .from(deadlines)
+      .where(and(eq(deadlines.entityId, id), notLike(deadlines.milestone, "timed:%")));
     expect(dl).toMatchObject({ milestone: "offer_expiry@1", dueOn: "2026-11-09", status: "pending" });
 
     // Counter within limits (more cheques) → revision 2, sent automatically.
@@ -357,6 +384,248 @@ describe.skipIf(noDb)("applications: screening, KYC, offer, reservation (Postgre
     expect(p?.emiratesIdNo).toBe("784-1991-4820193-4");
   });
 
+  const setAutopilot = async (patch: Partial<typeof defaultCompanyPolicy.autopilot>) => {
+    await database.db.insert(companyPolicy).values({
+      id: newId(),
+      version: 98,
+      effectiveFrom: "2000-01-01" as never,
+      values: { ...defaultCompanyPolicy, autopilot: { ...defaultCompanyPolicy.autopilot, ...patch } },
+      createdBy: "test",
+    });
+  };
+
+  test("auto_kyc_verify off: a clean KYC run opens a kyc_review; approving verifies", async () => {
+    await setAutopilot({ auto_kyc_verify: false });
+    const s = await setup();
+    const { id } = await toKyc(s);
+    expect((await appRow(id)).state).toBe("SCREENING");
+    const [ap] = await database.db.select().from(approvals).where(eq(approvals.entityId, id));
+    expect(ap).toMatchObject({ gate: "kyc_review", status: "pending", onApproveEvent: "KYC_VERIFIED" });
+    expect(ap!.reasons).toContain("Automatic KYC verification is switched off.");
+    expect(ap!.proposal).toMatchObject({ policyVersion: 98 });
+    await decideApproval(s.ctx, ap!.id, s.officer, { decision: "approve" });
+    expect((await appRow(id)).state).toBe("OFFER");
+    const [ev] = await database.db
+      .select()
+      .from(leaseEvents)
+      .where(and(eq(leaseEvents.entityId, id), eq(leaseEvents.type, "KYC_VERIFIED")));
+    expect(ev!.payload).toMatchObject({ policyVersion: 98 });
+  });
+
+  const offerMails = (s: S) => s.mailer.sent.filter((m) => /offer/i.test(m.subject));
+  const evs = async (id: string, type: string) =>
+    database.db
+      .select()
+      .from(leaseEvents)
+      .where(and(eq(leaseEvents.entityId, id), eq(leaseEvents.type, type)));
+
+  test("auto_send_offer off: revision 1 is held, then sent once from the send date", async () => {
+    await setAutopilot({ auto_send_offer: false });
+    const s = await setup();
+    const { id } = await toKyc(s);
+    await s.drain();
+    const a = await appRow(id);
+    expect(a.state).toBe("OFFER");
+    expect(a.offer?.revision).toBe(1);
+    expect(offerMails(s)).toHaveLength(0);
+    expect(
+      await database.db
+        .select()
+        .from(deadlines)
+        .where(and(eq(deadlines.entityId, id), notLike(deadlines.milestone, "timed:%"))),
+    ).toHaveLength(0);
+    expect((await evs(id, "OFFER_HELD"))[0]!.payload).toMatchObject({ revision: 1, policyVersion: 98 });
+    const [t] = await database.db.select().from(tasks).where(eq(tasks.entityId, id));
+    expect(t).toMatchObject({ title: "Send offer revision 1 (" + (a.ref ?? id.slice(0, 8)) + ")", status: "open" });
+
+    s.clock.advanceDays(3);
+    const r = await s.staff(s.officer, `/api/applications/${id}/offer/send`, "POST");
+    expect(r.status).toBe(200);
+    await s.drain();
+    expect(offerMails(s)).toHaveLength(1);
+    expect((await evs(id, "OFFER_SENT"))[0]!.payload).toMatchObject({ revision: 1, policyVersion: 98 });
+    const [dl] = await database.db
+      .select()
+      .from(deadlines)
+      .where(and(eq(deadlines.entityId, id), notLike(deadlines.milestone, "timed:%")));
+    expect(dl).toMatchObject({ milestone: "offer_expiry@1", status: "pending" });
+    const sentOn = s.clock.today();
+    const expiresOn = (await appRow(id)).offer!.expiresOn as string;
+    expect(expiresOn).toBe(addDays(sentOn, 7));
+    expect(dl!.dueOn).toBe(addDays(expiresOn as never, 1));
+    const [t2] = await database.db.select().from(tasks).where(eq(tasks.entityId, id));
+    expect(t2!.status).toBe("done");
+
+    const again = await s.staff(s.officer, `/api/applications/${id}/offer/send`, "POST");
+    expect(again.status).toBe(409);
+    expect(((await again.json()) as { code?: string }).code).toBe("offer_not_held");
+    await s.drain();
+    expect(offerMails(s)).toHaveLength(1);
+  });
+
+  test("held offer: Mark done is refused; sending re-checks the limits (422 offer_out_of_limits, approval opened)", async () => {
+    await setAutopilot({ auto_send_offer: false });
+    const s = await setup();
+    const { id } = await toKyc(s);
+    await s.drain();
+    const [t] = await database.db.select().from(tasks).where(eq(tasks.entityId, id));
+    expect(t!.kind).toBe("send_offer");
+    const done = await s.staff(s.officer, `/api/tasks/${t!.id}/done`, "POST", {});
+    expect(done.status).toBe(409);
+    expect(((await done.json()) as { code: string }).code).toBe("use_the_action");
+    // The approved asking rent rose while the offer was held: the offer is now below the limit.
+    await database.db.update(units).set({ askingRentFils: 99_000_000 }).where(eq(units.id, s.unitId));
+    const r = await s.staff(s.officer, `/api/applications/${id}/offer/send`, "POST");
+    expect(r.status).toBe(422);
+    expect(((await r.json()) as { code: string }).code).toBe("offer_out_of_limits");
+    await s.drain();
+    expect(offerMails(s)).toHaveLength(0);
+    expect(await evs(id, "OFFER_SENT")).toHaveLength(0);
+    const pending = (await database.db.select().from(approvals).where(eq(approvals.entityId, id))).filter(
+      (a) => a.gate === "offer_out_of_limits" && a.status === "pending",
+    );
+    expect(pending).toHaveLength(1);
+    expect((await database.db.select().from(tasks).where(eq(tasks.id, t!.id)))[0]!.status).toBe("open");
+  });
+
+  test("a stale offer-expiry deadline is inert once a held counter has replaced the revision", async () => {
+    await setAutopilot({ auto_send_counter: false });
+    const s = await setup();
+    const { id } = await toKyc(s);
+    await s.drain();
+    const offer1 = s.tokens(s.lastMail().text).offer!;
+    await s.portal("/api/inbound", "POST", {
+      token: offer1,
+      type: "OFFER_RESPONDED",
+      payload: { revision: 1, choice: "counter", counter: { cheques: 6 } },
+    });
+    await s.drain();
+    expect((await appRow(id)).offer).toMatchObject({ revision: 2 });
+    s.clock.advanceDays(30);
+    await sweepDueDeadlines(s.ctx);
+    const [dl1] = (await database.db.select().from(deadlines).where(eq(deadlines.entityId, id))).filter(
+      (d) => d.milestone === "offer_expiry@1",
+    );
+    expect(dl1!.status).toBe("skipped");
+    expect(dl1!.note).toContain("no longer open");
+    expect((await appRow(id)).state).toBe("OFFER");
+    expect((await evs(id, "OFFER_EXPIRED")).length).toBe(0);
+  });
+
+  test("hold then supersede: a held offer pushed to approval is replaced by the approved revision, never sent as revision 1", async () => {
+    await setAutopilot({ auto_send_offer: false });
+    const s = await setup();
+    const { id } = await toKyc(s);
+    await s.drain();
+    await database.db.update(units).set({ askingRentFils: 99_000_000 }).where(eq(units.id, s.unitId));
+    expect((await s.staff(s.officer, `/api/applications/${id}/offer/send`, "POST")).status).toBe(422);
+    const [ap] = (await database.db.select().from(approvals).where(eq(approvals.entityId, id))).filter(
+      (a) => a.gate === "offer_out_of_limits" && a.status === "pending",
+    );
+    await decideApproval(s.ctx, ap!.id, s.manager, { decision: "approve" });
+    await s.drain();
+    expect((await appRow(id)).offer!.revision).toBe(2);
+    expect(
+      (await evs(id, "OFFER_SENT")).filter((e) => (e.payload as { revision: number }).revision === 1),
+    ).toHaveLength(0);
+    const again = await s.staff(s.officer, `/api/applications/${id}/offer/send`, "POST");
+    expect([200, 409]).toContain(again.status);
+    if (again.status === 200)
+      expect((await evs(id, "OFFER_SENT")).every((e) => (e.payload as { revision: number }).revision === 2)).toBe(true);
+  });
+
+  test("POST /applications/:id/events: APPLIED only from ENQUIRY (409 wrong_state), leasing roles only (403)", async () => {
+    const s = await setup();
+    const { id } = await createWithViewing(s);
+    expect((await appRow(id)).state).toBe("VIEWING");
+    const r = await s.staff(s.officer, `/api/applications/${id}/events`, "POST", { event: "APPLIED" });
+    expect(r.status).toBe(409);
+    expect(((await r.json()) as { code: string }).code).toBe("wrong_state");
+    expect((await appRow(id)).state).toBe("VIEWING");
+    expect((await s.staff(s.finance, `/api/applications/${id}/events`, "POST", { event: "APPLIED" })).status).toBe(403);
+  });
+
+  test("auto_send_counter off: an in-limits counter is held, then sent", async () => {
+    await setAutopilot({ auto_send_counter: false });
+    const s = await setup();
+    const { id } = await toKyc(s);
+    await s.drain();
+    const offer1 = s.tokens(s.lastMail().text).offer!;
+    await s.portal("/api/inbound", "POST", {
+      token: offer1,
+      type: "OFFER_RESPONDED",
+      payload: { revision: 1, choice: "counter", counter: { cheques: 6 } },
+    });
+    await s.drain();
+    expect((await appRow(id)).offer).toMatchObject({ revision: 2, cheques: 6 });
+    expect(offerMails(s)).toHaveLength(1);
+    expect((await evs(id, "OFFER_HELD"))[0]!.payload).toMatchObject({ revision: 2, policyVersion: 98 });
+    const bad = await s.staff(s.manager, `/api/applications/${id}/offer/send`, "POST");
+    expect(bad.status).toBe(200);
+    await s.drain();
+    expect(offerMails(s)).toHaveLength(2);
+    expect(s.lastMail().subject).toContain("Revised offer");
+    expect((await evs(id, "OFFER_SENT"))[0]!.payload).toMatchObject({ revision: 2 });
+    expect((await s.staff(s.finance, `/api/applications/${id}/offer/send`, "POST")).status).toBe(403);
+  });
+
+  test("switching the toggle off after an offer went out changes nothing for it", async () => {
+    const s = await setup();
+    const { id } = await toKyc(s);
+    await s.drain();
+    expect(offerMails(s)).toHaveLength(1);
+    await setAutopilot({ auto_send_offer: false, auto_send_counter: false });
+    expect((await evs(id, "OFFER_HELD")).length).toBe(0);
+    const r = await s.staff(s.officer, `/api/applications/${id}/offer/send`, "POST");
+    expect(r.status).toBe(409);
+    expect(offerMails(s)).toHaveLength(1);
+  });
+
+  test("auto_kyc_verify on: KYC_VERIFIED records the policy version", async () => {
+    await setAutopilot({});
+    const s = await setup();
+    const { id } = await toKyc(s);
+    const ev = await database.db
+      .select()
+      .from(leaseEvents)
+      .where(and(eq(leaseEvents.entityId, id), eq(leaseEvents.type, "KYC_VERIFIED")));
+    expect(ev[0]!.payload).toMatchObject({ policyVersion: 98 });
+  });
+
+  test("auto_prepare_contract off: lease created, no job, CONTRACT_PREP_HELD and an officer task; manual prepare works", async () => {
+    await setAutopilot({ auto_prepare_contract: false });
+    const s = await setup();
+    const { id } = await toKyc(s);
+    await s.drain();
+    const offer1 = s.tokens(s.lastMail().text).offer!;
+    await s.portal("/api/inbound", "POST", {
+      token: offer1,
+      type: "OFFER_RESPONDED",
+      payload: { revision: 1, choice: "accept" },
+    });
+    await s.drain();
+    const res = await s.staff(s.officer, `/api/applications/${id}/reservation`, "POST", {
+      paidOn: "2026-11-01",
+      reference: "TRX-001",
+    });
+    expect(res.status).toBe(200);
+    const [lease] = await database.db.select().from(leases).where(eq(leases.applicationId, id));
+    expect(lease!.state).toBe("CONTRACT");
+    expect(s.scheduler.jobs.find((j) => j.name === CONTRACT_PREPARE_JOB)).toBeUndefined();
+    const held = await database.db
+      .select()
+      .from(leaseEvents)
+      .where(and(eq(leaseEvents.entityId, lease!.id), eq(leaseEvents.type, "CONTRACT_PREP_HELD")));
+    expect(held).toHaveLength(1);
+    expect(held[0]!.payload).toMatchObject({ policyVersion: 98 });
+    const [t] = await database.db.select().from(tasks).where(eq(tasks.entityId, lease!.id));
+    expect(t).toMatchObject({ title: "Prepare the contract", status: "open", assigneeRole: "leasing_officer" });
+    const r = await s.staff(s.officer, `/api/leases/${lease!.id}/contract/prepare`, "POST", DEFAULT_ADDENDUM);
+    expect(r.status).toBe(201);
+    const [t2] = await database.db.select().from(tasks).where(eq(tasks.id, t!.id));
+    expect(t2!.status).toBe("done");
+  });
+
   test("an expired ID can never be approved; the officer asks for new documents instead", async () => {
     const s = await setup(() => priyaFront("01/05/2026"));
     const { id } = await toKyc(s);
@@ -409,6 +678,55 @@ describe.skipIf(noDb)("applications: screening, KYC, offer, reservation (Postgre
         })
       ).status,
     ).toBe(409);
+  });
+
+  test("a cheque counter without a contract rule says the company default limits applied", async () => {
+    const s = await setup();
+    await database.db.insert(companyPolicy).values({
+      id: newId(),
+      version: 99,
+      effectiveFrom: "2000-01-01" as never,
+      values: { ...defaultCompanyPolicy, maxCheques: 4 },
+      createdBy: "test",
+    });
+    const { id } = await toKyc(s);
+    await s.drain();
+    const offer1 = s.tokens(s.lastMail().text).offer!;
+    await s.portal("/api/inbound", "POST", {
+      token: offer1,
+      type: "OFFER_RESPONDED",
+      payload: { revision: 1, choice: "counter", counter: { cheques: 6 } },
+    });
+    await s.drain();
+    const [ap] = await database.db.select().from(approvals).where(eq(approvals.entityId, id));
+    expect(ap).toMatchObject({ gate: "offer_out_of_limits" });
+    expect(JSON.stringify(ap)).toContain("company default limits; no contract rule for this unit");
+  });
+
+  test("offer cheque limits come from the company's contract rule", async () => {
+    const s = await setup();
+    await database.db.insert(contractRules).values({
+      id: newId(),
+      companyId: await testCompany(database),
+      category: "residential",
+      tenures: ["annual"],
+      minCheques: 1,
+      maxCheques: 2,
+      createdBy: "test",
+    });
+    const { id } = await toKyc(s);
+    await s.drain();
+    expect((await appRow(id)).offer?.cheques).toBe(2);
+    const offer1 = s.tokens(s.lastMail().text).offer!;
+    await s.portal("/api/inbound", "POST", {
+      token: offer1,
+      type: "OFFER_RESPONDED",
+      payload: { revision: 1, choice: "counter", counter: { cheques: 4 } },
+    });
+    await s.drain();
+    const [ap] = await database.db.select().from(approvals).where(eq(approvals.entityId, id));
+    expect(ap).toMatchObject({ gate: "offer_out_of_limits" });
+    expect(JSON.stringify(ap)).toContain("4 cheques is outside the allowed 1–2.");
   });
 
   test("an unanswered offer lapses the morning after its last day", async () => {
@@ -672,6 +990,44 @@ describe.skipIf(noDb)("applications: viewing invitation and outcome (Postgres)",
     expect(ev?.payload).toMatchObject({ viewingOutcome: "attended", note: "liked the view" });
   });
 
+  test("apply_without_viewing: off (default) refuses APPLIED from ENQUIRY with 409 viewing_required; on allows it and emails the upload link", async () => {
+    const s = await setup();
+    const mk = async (email: string) =>
+      (await createApplication(s.ctx, { unitId: s.unitId, nameEn: "Walk In", email, kind: "individual" }, "system")).id;
+    const off = await mk("walk1@demo.example");
+    const refused = await s.staff(s.officer, `/api/applications/${off}/events`, "POST", { event: "APPLIED" });
+    expect(refused.status).toBe(409);
+    expect(((await refused.json()) as { code: string }).code).toBe("viewing_required");
+    expect((await appRow(off)).state).toBe("ENQUIRY");
+
+    await database.db.insert(companyPolicy).values({
+      id: newId(),
+      version: 98,
+      effectiveFrom: "2000-01-01" as never,
+      values: {
+        ...defaultCompanyPolicy,
+        autopilot: { ...defaultCompanyPolicy.autopilot, apply_without_viewing: true },
+      },
+      createdBy: "test",
+    });
+    const ok = await s.staff(s.officer, `/api/applications/${off}/events`, "POST", { event: "APPLIED" });
+    expect(ok.status).toBe(200);
+    await s.drain();
+    expect((await appRow(off)).state).toBe("SCREENING");
+    expect(s.tokens(s.lastMail().text).upload).toBeDefined();
+    const [ev] = (await database.db.select().from(leaseEvents).where(eq(leaseEvents.entityId, off))).filter(
+      (e) => e.type === "APPLIED",
+    );
+    expect(ev?.payload).toMatchObject({ viewingSkipped: true, policyVersion: 98 });
+  });
+
+  test("apply_without_viewing off: VIEWING → SCREENING after an attended viewing is unaffected", async () => {
+    const s = await setup();
+    const { id } = await createWithViewing(s);
+    await attended(s, id);
+    expect((await appRow(id)).state).toBe("SCREENING");
+  });
+
   test("no-show after the viewing time closes the application; before it → 422", async () => {
     const s = await setup();
     const { id, mail } = await createWithViewing(s);
@@ -776,9 +1132,14 @@ describe.skipIf(noDb)("applications: viewing invitation and outcome (Postgres)",
       uploadedBy: "test",
     });
     const otherUnit = newId();
-    await database.db
-      .insert(units)
-      .values({ id: otherUnit, code: "JVC-0999", building: "Other", community: "JVC", state: "LISTED" });
+    await database.db.insert(units).values({
+      companyId: await testCompany(database),
+      id: otherUnit,
+      code: "JVC-0999",
+      building: "Other",
+      community: "JVC",
+      state: "LISTED",
+    });
     const otherPhotoId = newId();
     await database.db.insert(unitPhotos).values({
       id: otherPhotoId,
@@ -844,5 +1205,546 @@ describe("unit virtual tour link", () => {
     expect(tour("http://tour.example.test/x").success).toBe(false);
     expect(tour("javascript:alert(1)").success).toBe(false);
     expect(tour(`https://tour.example.test/${"a".repeat(480)}`).success).toBe(false);
+  });
+});
+
+describe.skipIf(noDb)("agent switches (D37): reminders, chases and held-offer release (Postgres)", () => {
+  const setAutopilot = async (patch: Record<string, unknown>) => {
+    await database.db.insert(companyPolicy).values({
+      id: newId(),
+      version: 98,
+      effectiveFrom: "2000-01-01" as never,
+      values: { ...defaultCompanyPolicy, autopilot: { ...defaultCompanyPolicy.autopilot, ...patch } },
+      createdBy: "test",
+    });
+  };
+  /** Real mode: timed jobs are pg-boss jobs with startAfter (demo mode routes them through deadlines). */
+  const setupReal = async () => {
+    const s = await setup();
+    s.ctx.demoMode = false;
+    return s;
+  };
+  const mailJobs = (s: S, kind: string) =>
+    s.scheduler.jobs.filter((j) => j.name === APPLICATION_MAIL_JOB && j.data.kind === kind);
+  const run = (s: S, j: (typeof s.scheduler.jobs)[number]) =>
+    sendApplicationMail(
+      s.ctx,
+      String(j.data.applicationId),
+      j.data.kind as never,
+      Number(j.data.seq),
+      j.data.variant as string | undefined,
+    );
+  const FAR_VIEWING = "2026-11-03T16:30:00+04:00"; // 12:30Z, two days out
+
+  for (const on of [true, false]) {
+    test(`viewing_reminder ${on ? "on" : "off"}: ${on ? "queued 24 h before, once, with a singletonKey" : "nothing is queued"}`, async () => {
+      database = await freshDatabase();
+      await setAutopilot({ viewing_reminder: on });
+      const s = await setupReal();
+      const { id } = await createWithViewing(s, { viewingAt: FAR_VIEWING });
+      const jobs = mailJobs(s, "viewing_reminder");
+      if (!on) {
+        expect(jobs).toHaveLength(0);
+        return;
+      }
+      expect(jobs).toHaveLength(1);
+      const j = jobs[0]!;
+      expect(j.startAfter?.toISOString()).toBe("2026-11-02T12:30:00.000Z");
+      expect(j.singletonKey).toBe(`${id}:viewing_reminder#1@${new Date(FAR_VIEWING).getTime()}`);
+      const before = s.mailer.sent.length;
+      expect((await run(s, j)).sent).toBe(true);
+      expect(s.lastMail().subject).toContain("Reminder: your viewing");
+      expect(s.mailer.sent.length).toBe(before + 1);
+      const [row] = await database.db
+        .select()
+        .from(outboundMessages)
+        .where(and(eq(outboundMessages.entityId, id), eq(outboundMessages.template, "application_viewing_reminder")));
+      expect(row).toMatchObject({ purpose: "reminder", status: "sent" });
+      // A second run (the job twice) sends nothing more.
+      expect((await run(s, j)).sent).toBe(false);
+      expect(s.mailer.sent.length).toBe(before + 1);
+    });
+  }
+
+  test("viewing_reminder: skipped when the viewing is already close, and when the application moved on", async () => {
+    database = await freshDatabase();
+    const s = await setupReal();
+    // VIEWING_AT is 8 hours away: a 24 h reminder is already in the past.
+    await createWithViewing(s);
+    expect(mailJobs(s, "viewing_reminder")).toHaveLength(0);
+    const far = await createWithViewing(s, { viewingAt: FAR_VIEWING, email: "other@demo.example" });
+    const j = mailJobs(s, "viewing_reminder")[0]!;
+    await database.db.update(applications).set({ state: "WITHDRAWN" }).where(eq(applications.id, far.id));
+    const before = s.mailer.sent.length;
+    expect((await run(s, j)).sent).toBe(false);
+    expect(s.mailer.sent.length).toBe(before);
+  });
+
+  for (const quiet of [true, false]) {
+    test(`quiet_hours ${quiet ? "on" : "off"}: a reminder due at 22:00 Dubai ${quiet ? "waits until 08:00" : "goes at 22:00"}`, async () => {
+      database = await freshDatabase();
+      await setAutopilot({ quiet_hours: quiet, viewing_reminder_hours: 12 });
+      const s = await setupReal();
+      await createWithViewing(s, { viewingAt: "2026-11-03T10:00:00+04:00" });
+      const j = mailJobs(s, "viewing_reminder")[0]!;
+      expect(j.startAfter?.toISOString()).toBe(quiet ? "2026-11-03T04:00:00.000Z" : "2026-11-02T18:00:00.000Z");
+      // The sender checks again: inside quiet hours it queues a later job instead of sending.
+      s.clock.set(new Date("2026-11-02T18:30:00Z"));
+      const jobsBefore = s.scheduler.jobs.length;
+      const r = await run(s, j);
+      expect(r.sent).toBe(!quiet);
+      if (quiet) {
+        const later = s.scheduler.jobs.slice(jobsBefore).find((x) => x.data.kind === "viewing_reminder");
+        expect(later?.startAfter?.toISOString()).toBe("2026-11-03T04:00:00.000Z");
+      }
+    });
+  }
+
+  for (const on of [true, false]) {
+    test(`no_show_followup ${on ? "on" : "off"}: a recorded no-show ${on ? "gets one friendly email" : "gets nothing"}`, async () => {
+      database = await freshDatabase();
+      await setAutopilot({ no_show_followup: on });
+      const s = await setupReal();
+      const { id } = await createWithViewing(s);
+      s.clock.set(new Date("2026-11-01T14:00:00Z")); // 18:00 Dubai, after the viewing
+      const r = await s.staff(s.officer, `/api/applications/${id}/viewing-outcome`, "POST", { outcome: "no_show" });
+      expect(r.status).toBe(200);
+      const jobs = mailJobs(s, "no_show");
+      if (!on) {
+        expect(jobs).toHaveLength(0);
+        return;
+      }
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]!.singletonKey).toBe(`${id}:no_show#1`);
+      expect((await run(s, jobs[0]!)).sent).toBe(true);
+      expect(s.lastMail().subject).toContain("We missed you");
+      expect((await run(s, jobs[0]!)).sent).toBe(false);
+    });
+  }
+
+  for (const on of [true, false]) {
+    test(`kyc_chase ${on ? "on" : "off"}: ${on ? "one reminder after 48 h without an upload" : "no reminder is queued"}`, async () => {
+      database = await freshDatabase();
+      await setAutopilot({ kyc_chase: on });
+      const s = await setupReal();
+      const { id } = await createWithViewing(s);
+      await attended(s, id);
+      const jobs = mailJobs(s, "docs_chase");
+      if (!on) {
+        expect(jobs).toHaveLength(0);
+        return;
+      }
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]!.startAfter?.toISOString()).toBe("2026-11-03T04:00:00.000Z");
+      expect(jobs[0]!.singletonKey).toBe(`${id}:docs_chase#1@1`);
+      s.clock.advanceDays(2);
+      expect((await run(s, jobs[0]!)).sent).toBe(true);
+      expect(s.lastMail().subject).toContain("Reminder: upload your ID documents");
+      expect(s.tokens(s.lastMail().text).upload).toBeDefined();
+    });
+  }
+
+  test("kyc_chase: the hours setting is used, and nothing is sent once documents were uploaded", async () => {
+    database = await freshDatabase();
+    await setAutopilot({ kyc_chase_hours: 24 });
+    const s = await setupReal();
+    const { id } = await createWithViewing(s);
+    await attended(s, id);
+    const j = mailJobs(s, "docs_chase")[0]!;
+    expect(j.startAfter?.toISOString()).toBe("2026-11-02T04:00:00.000Z");
+    const { upload } = s.tokens(s.lastMail().text);
+    expect((await s.upload(upload!, png("priya-eid-front.png"), "emirates_id", "front")).status).toBeLessThan(300);
+    const before = s.mailer.sent.length;
+    expect((await run(s, j)).sent).toBe(false);
+    expect(s.mailer.sent.length).toBe(before);
+  });
+
+  test("kyc_chase: a switch turned off after scheduling stops the reminder", async () => {
+    database = await freshDatabase();
+    const s = await setupReal();
+    const { id } = await createWithViewing(s);
+    await attended(s, id);
+    const j = mailJobs(s, "docs_chase")[0]!;
+    await setAutopilot({ kyc_chase: false });
+    expect((await run(s, j)).sent).toBe(false);
+    expect(
+      await database.db.select().from(outboundMessages).where(eq(outboundMessages.template, "application_docs_chase")),
+    ).toHaveLength(0);
+    expect(id).toBeDefined();
+  });
+
+  test("reminders do not depend on TENANCY_OPS (pre-move-in steps)", async () => {
+    database = await freshDatabase();
+    const s = await setupReal();
+    s.ctx.tenancyOps = false;
+    // Only tenancy deadlines (renewal, rent, move-out) are held by the flag; these run before move-in.
+    await createWithViewing(s, { viewingAt: FAR_VIEWING });
+    expect(mailJobs(s, "viewing_reminder")).toHaveLength(1);
+  });
+
+  const toHeld = async (autopilot: Record<string, unknown>) => {
+    database = await freshDatabase();
+    await setAutopilot({ auto_send_offer: false, ...autopilot });
+    const s = await setupReal();
+    const { id } = await toKyc(s);
+    await s.drain();
+    return { s, id };
+  };
+
+  test("held_offer_auto_release on: after N hours the held offer is sent by system:auto-release, once", async () => {
+    const { s, id } = await toHeld({ held_offer_auto_release: true, held_offer_release_hours: 6 });
+    const jobs = s.scheduler.jobs.filter((j) => j.name === HELD_OFFER_RELEASE_JOB);
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]!.singletonKey).toBe(`${id}:offer-release#1`);
+    expect(jobs[0]!.startAfter?.toISOString()).toBe("2026-11-01T10:00:00.000Z");
+    expect(s.mailer.sent.filter((m) => /offer/i.test(m.subject))).toHaveLength(0);
+    expect(await autoReleaseHeldOffer(s.ctx, id, 1)).toEqual({ released: true });
+    await s.drain();
+    expect(s.mailer.sent.filter((m) => /Your offer/i.test(m.subject))).toHaveLength(1);
+    const sent = await database.db
+      .select()
+      .from(leaseEvents)
+      .where(and(eq(leaseEvents.entityId, id), eq(leaseEvents.type, "OFFER_SENT")));
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.actor).toBe("system:auto-release");
+    // Twice is safe.
+    expect(await autoReleaseHeldOffer(s.ctx, id, 1)).toMatchObject({ released: false });
+    expect(s.mailer.sent.filter((m) => /Your offer/i.test(m.subject))).toHaveLength(1);
+  });
+
+  test("held_offer_auto_release off: nothing is scheduled and a direct run does nothing", async () => {
+    const { s, id } = await toHeld({ held_offer_auto_release: false });
+    expect(s.scheduler.jobs.filter((j) => j.name === HELD_OFFER_RELEASE_JOB)).toHaveLength(0);
+    expect(await autoReleaseHeldOffer(s.ctx, id, 1)).toEqual({ released: false, reason: "switch is off" });
+    await s.drain();
+    expect(s.mailer.sent.filter((m) => /Your offer/i.test(m.subject))).toHaveLength(0);
+  });
+
+  test("held_offer_auto_release: an offer now outside the limits is not sent; a manager is asked", async () => {
+    const { s, id } = await toHeld({ held_offer_auto_release: true });
+    await database.db.update(units).set({ askingRentFils: 99_000_000 }).where(eq(units.id, s.unitId));
+    const r = await autoReleaseHeldOffer(s.ctx, id, 1);
+    expect(r).toMatchObject({ released: false });
+    await s.drain();
+    expect(s.mailer.sent.filter((m) => /Your offer/i.test(m.subject))).toHaveLength(0);
+    const pending = (await database.db.select().from(approvals).where(eq(approvals.entityId, id))).filter(
+      (a) => a.gate === "offer_out_of_limits" && a.status === "pending",
+    );
+    expect(pending).toHaveLength(1);
+  });
+
+  test("held_offer_auto_release: an officer who sent it first wins, and quiet hours postpone the release", async () => {
+    const { s, id } = await toHeld({ held_offer_auto_release: true });
+    s.clock.set(new Date("2026-11-01T19:00:00Z")); // 23:00 Dubai
+    const before = s.scheduler.jobs.length;
+    expect(await autoReleaseHeldOffer(s.ctx, id, 1)).toEqual({ released: false, reason: "postponed: quiet hours" });
+    const again = s.scheduler.jobs.slice(before).find((j) => j.name === HELD_OFFER_RELEASE_JOB);
+    expect(again?.startAfter?.toISOString()).toBe("2026-11-02T04:00:00.000Z");
+    s.clock.set(new Date("2026-11-02T05:00:00Z"));
+    expect((await s.staff(s.officer, `/api/applications/${id}/offer/send`, "POST")).status).toBe(200);
+    expect(await autoReleaseHeldOffer(s.ctx, id, 1)).toEqual({ released: false, reason: "the offer is not held" });
+  });
+
+  test("demo mode: timed jobs are deadlines the sweep fires; an earlier clock fires nothing, a later one does", async () => {
+    database = await freshDatabase();
+    await setAutopilot({ viewing_reminder: true });
+    const s = await setup(); // demoMode is true
+    const { id } = await createWithViewing(s, { viewingAt: FAR_VIEWING });
+    // No pg-boss job with startAfter: a deadline row due on the Dubai date instead.
+    expect(mailJobs(s, "viewing_reminder")).toHaveLength(0);
+    const [d] = await database.db
+      .select()
+      .from(deadlines)
+      .where(and(eq(deadlines.entityId, id), like(deadlines.milestone, "timed:%")));
+    expect(d).toMatchObject({ dueOn: "2026-11-02", status: "pending" });
+    // A negative offset (a clock before the due date) fires nothing.
+    s.clock.set(new Date("2026-10-30T04:00:00Z"));
+    expect((await sweepDueDeadlines(s.ctx)).filter((f) => f.fired)).toHaveLength(0);
+    expect(mailJobs(s, "viewing_reminder")).toHaveLength(0);
+    // Fast-forward past the due date: the sweep queues the job, whose handler sends the email.
+    s.clock.set(new Date("2026-11-02T08:00:00Z")); // the Dubai date has come, the 12:30Z hour has not
+    expect((await sweepDueDeadlines(s.ctx)).filter((f) => f.fired)).toHaveLength(0);
+    s.clock.set(new Date("2026-11-02T12:31:00Z"));
+    expect((await sweepDueDeadlines(s.ctx)).filter((f) => f.fired)).toHaveLength(1);
+    const jobs = mailJobs(s, "viewing_reminder");
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]!.startAfter).toBeUndefined();
+    expect((await run(s, jobs[0]!)).sent).toBe(true);
+    expect(s.lastMail().subject).toContain("Reminder: your viewing");
+    // The sweep never fires it twice.
+    expect((await sweepDueDeadlines(s.ctx)).filter((f) => f.fired)).toHaveLength(0);
+  });
+
+  for (const quiet of [true, false]) {
+    test(`an hour-based reminder (12 h) behaves the same in demo and real mode (quiet hours ${quiet ? "on" : "off"})`, async () => {
+      const viewingAt = "2026-11-03T10:00:00+04:00";
+      const expected = quiet ? "2026-11-03T04:00:00.000Z" : "2026-11-02T18:00:00.000Z";
+      // Real mode: a job with startAfter.
+      database = await freshDatabase();
+      await setAutopilot({ quiet_hours: quiet, viewing_reminder_hours: 12 });
+      const real = await setupReal();
+      await createWithViewing(real, { viewingAt });
+      expect(mailJobs(real, "viewing_reminder")[0]!.startAfter?.toISOString()).toBe(expected);
+      // Demo mode: the same instant is stored in the deadline.
+      database = await freshDatabase();
+      await setAutopilot({ quiet_hours: quiet, viewing_reminder_hours: 12 });
+      const s = await setup();
+      const { id } = await createWithViewing(s, { viewingAt });
+      const [d] = await database.db
+        .select()
+        .from(deadlines)
+        .where(and(eq(deadlines.entityId, id), like(deadlines.milestone, "timed:%")));
+      expect(JSON.parse(d!.note!).startAfter).toBe(expected);
+      // The due date has come (Dubai date) but the hour has not: nothing fires, the row stays pending.
+      s.clock.set(new Date(new Date(expected).getTime() - 60_000));
+      s.clock.set(new Date(Math.max(s.clock.now().getTime(), new Date("2026-11-02T08:00:00Z").getTime())));
+      await sweepDueDeadlines(s.ctx);
+      if (new Date(expected).getTime() > s.clock.now().getTime()) {
+        expect(mailJobs(s, "viewing_reminder")).toHaveLength(0);
+        const [still] = await database.db.select().from(deadlines).where(eq(deadlines.id, d!.id));
+        expect(still!.status).toBe("pending");
+      }
+      s.clock.set(new Date(new Date(expected).getTime() + 60_000));
+      expect((await sweepDueDeadlines(s.ctx)).filter((f) => f.fired)).toHaveLength(1);
+      expect((await run(s, mailJobs(s, "viewing_reminder")[0]!)).sent).toBe(true);
+    });
+  }
+
+  test("demo mode: the held-offer release is a deadline too, and an off switch at firing time still stops it", async () => {
+    database = await freshDatabase();
+    await setAutopilot({ auto_send_offer: false, held_offer_auto_release: true, held_offer_release_hours: 24 });
+    const s = await setup();
+    const { id } = await toKyc(s);
+    await s.drain();
+    expect(s.scheduler.jobs.filter((j) => j.name === HELD_OFFER_RELEASE_JOB)).toHaveLength(0);
+    s.clock.advanceDays(2);
+    await sweepDueDeadlines(s.ctx);
+    const rel = s.scheduler.jobs.filter((j) => j.name === HELD_OFFER_RELEASE_JOB);
+    expect(rel).toHaveLength(1);
+    expect(await autoReleaseHeldOffer(s.ctx, id, Number(rel[0]!.data.revision))).toEqual({ released: true });
+  });
+
+  test("held_offer_auto_release: a newer held revision is never sent by the old job (checked under the lock)", async () => {
+    const { s, id } = await toHeld({ held_offer_auto_release: true });
+    // A newer revision is now the held one (a counter arrived between scheduling and firing).
+    await database.db
+      .update(applications)
+      .set({ offer: { ...(await appRow(id)).offer!, revision: 2 } })
+      .where(eq(applications.id, id));
+    await database.db.insert(leaseEvents).values({
+      id: newId(),
+      entityKind: "application",
+      entityId: id,
+      type: "OFFER_HELD",
+      actor: "system",
+      payload: { revision: 2 },
+      at: s.clock.now(),
+    });
+    expect(await autoReleaseHeldOffer(s.ctx, id, 1)).toMatchObject({ released: false });
+    // Even past the pre-check, the send itself refuses a revision the caller did not mean.
+    await expect(sendHeldOffer(s.ctx, id, "system:auto-release", 1)).rejects.toMatchObject({ code: "offer_not_held" });
+    expect(
+      await database.db
+        .select()
+        .from(leaseEvents)
+        .where(and(eq(leaseEvents.entityId, id), eq(leaseEvents.type, "OFFER_SENT"))),
+    ).toHaveLength(0);
+  });
+});
+
+describe.skipIf(noDb)("document check: step log, timeouts, retry (Postgres)", () => {
+  beforeEach(async () => {
+    database = await freshDatabase();
+  });
+
+  const logOf = async (s: S, user: { id: string }, id: string) =>
+    (await (await s.staff(user, `/api/records/application/${id}/log`)).json()) as {
+      text: string;
+      actions: string[];
+      pending: boolean;
+    }[];
+  const steps = async (id: string) =>
+    (await database.db.select().from(leaseEvents).where(eq(leaseEvents.entityId, id)))
+      .filter((e) => e.type.startsWith("KYC_") && e.type !== "KYC_VERIFIED")
+      .sort((a, b) => a.at.getTime() - b.at.getTime());
+
+  test("steps are written as audit events by helper:kyc, in words, with no ID numbers", async () => {
+    const s = await setup();
+    const { id } = await toKyc(s);
+    const evs = await steps(id);
+    expect(evs.map((e) => e.type)).toEqual([
+      "KYC_CHECK_STARTED",
+      "KYC_DOC_READ",
+      "KYC_DOC_READ",
+      "KYC_DECISION_STEP",
+      "KYC_CHECK_FINISHED",
+    ]);
+    expect(evs.every((e) => e.actor === "helper:kyc")).toBe(true);
+    expect(evs[0]!.payload).toMatchObject({ documents: 2, model: "fake-vision", attempt: 1 });
+    expect(JSON.stringify(evs.map((e) => e.payload))).not.toMatch(/784-1991|4820193|SPC4820193/);
+    const text = (await logOf(s, s.officer, id)).map((e) => e.text);
+    expect(text).toContain("Checking 2 documents with fake-vision.");
+    expect(text.some((t) => t.startsWith("Read the Emirates ID (front) (1 of 2)"))).toBe(true);
+    expect(text).toContain("Document check finished: nothing flagged.");
+  });
+
+  test("a stuck model call times out, is retried once, then needs_human with an officer task; nothing advances", async () => {
+    const s = await setup(() => new Promise(() => {}));
+    s.ctx.kyc = { docTimeoutMs: 25 };
+    const { id } = await toKyc(s);
+    expect(s.llm.visionCalls).toHaveLength(2); // the first document, twice; the second never starts
+    expect((await appRow(id)).state).toBe("SCREENING");
+    const [run] = await database.db.select().from(helperRuns).where(eq(helperRuns.entityId, id));
+    expect(run!.status).toBe("needs_human");
+    const [t] = await database.db
+      .select()
+      .from(tasks)
+      .where(and(eq(tasks.entityId, id), eq(tasks.kind, "kyc_check_failed")));
+    expect(t).toMatchObject({ status: "open", assigneeRole: "leasing_officer" });
+    expect(await database.db.select().from(approvals).where(eq(approvals.entityId, id))).toHaveLength(0);
+    const types = (await steps(id)).map((e) => e.type);
+    expect(types).toEqual(["KYC_CHECK_STARTED", "KYC_DOC_READ", "KYC_CHECK_FAILED"]);
+    const log = await logOf(s, s.officer, id);
+    const failed = log.find((e) => e.text.startsWith("Document check didn't finish:"));
+    expect(failed).toBeDefined();
+    expect(failed!.text).toContain("timed out twice");
+    expect(failed!.actions).toEqual(["retry_kyc"]);
+    // Finance can read the log but can't retry.
+    expect(
+      (await logOf(s, s.finance, id)).find((e) => e.text.startsWith("Document check didn't finish:"))!.actions,
+    ).toEqual([]);
+  });
+
+  test("retry: leasing roles only, audited, one job per attempt, refused while running, then it completes", async () => {
+    let hang = true;
+    const s = await setup(() => (hang ? new Promise(() => {}) : priyaFront()));
+    s.ctx.kyc = { docTimeoutMs: 25 };
+    const { id } = await toKyc(s);
+    const url = `/api/applications/${id}/kyc/retry`;
+    expect((await s.staff(s.finance, url, "POST", {})).status).toBe(403);
+    hang = false;
+    const jobsBefore = s.scheduler.jobs.length;
+    const ok = await s.staff(s.officer, url, "POST", {});
+    expect(ok.status).toBe(202);
+    expect(await ok.json()).toMatchObject({ queued: true, attempt: 2 });
+    const queued = s.scheduler.jobs.slice(jobsBefore);
+    expect(queued).toHaveLength(1);
+    expect(queued[0]).toMatchObject({ name: INBOUND_JOB, singletonKey: `${id}:kyc:2`, data: { attempt: 2 } });
+    // Running now: a second click is refused and queues nothing.
+    const again = await s.staff(s.manager, url, "POST", {});
+    expect(again.status).toBe(409);
+    expect(((await again.json()) as { code?: string }).code).toBe("check_running");
+    expect(s.scheduler.jobs.slice(jobsBefore)).toHaveLength(1);
+    const retryEvent = (await steps(id)).find((e) => e.type === "KYC_CHECK_RETRY_REQUESTED")!;
+    expect(retryEvent.actor).toBe(`user:${s.officer.id}`);
+    // The old task is closed; the run completes and the application moves on.
+    await s.drain();
+    expect((await appRow(id)).state).toBe("OFFER");
+    const kycTasks = await database.db
+      .select()
+      .from(tasks)
+      .where(and(eq(tasks.entityId, id), eq(tasks.kind, "kyc_check_failed")));
+    expect(kycTasks.map((t) => t.status)).toEqual(["cancelled"]);
+    // Nothing to retry any more.
+    expect((await s.staff(s.officer, url, "POST", {})).status).toBe(409);
+  });
+
+  const reopenInbound = (id: string) =>
+    database.db
+      .update(inboundEvents)
+      .set({ status: "received", result: null, processedAt: null })
+      .where(eq(inboundEvents.entityId, id));
+  const kycTasks = (id: string) =>
+    database.db
+      .select()
+      .from(tasks)
+      .where(and(eq(tasks.entityId, id), eq(tasks.kind, "kyc_check_failed")));
+  const policyWith = async (autopilot: Partial<typeof defaultCompanyPolicy.autopilot>) => {
+    await database.db.insert(companyPolicy).values({
+      id: newId(),
+      version: 98,
+      effectiveFrom: "2000-01-01" as never,
+      values: { ...defaultCompanyPolicy, autopilot: { ...defaultCompanyPolicy.autopilot, ...autopilot } },
+      createdBy: "test",
+    });
+  };
+
+  test("a later successful run closes the open kyc_check_failed task and moves on (auto verify)", async () => {
+    let hang = true;
+    const s = await setup(() => (hang ? new Promise(() => {}) : priyaFront()));
+    s.ctx.kyc = { docTimeoutMs: 25 };
+    const { id } = await toKyc(s);
+    expect((await kycTasks(id)).map((t) => t.status)).toEqual(["open"]);
+    hang = false;
+    // Not through the retry route (which cancels the task itself): a run that simply finishes later.
+    await reopenInbound(id);
+    const [ib] = await database.db.select().from(inboundEvents).where(eq(inboundEvents.entityId, id));
+    await processInbound(s.ctx, ib!.id, 2);
+    expect((await appRow(id)).state).toBe("OFFER");
+    expect((await kycTasks(id)).map((t) => t.status)).toEqual(["cancelled"]);
+  });
+
+  test("a later successful run with auto verify off still creates the kyc_review approval and closes the task", async () => {
+    await policyWith({ auto_kyc_verify: false });
+    let hang = true;
+    const s = await setup(() => (hang ? new Promise(() => {}) : priyaFront()));
+    s.ctx.kyc = { docTimeoutMs: 25 };
+    const { id } = await toKyc(s);
+    hang = false;
+    await reopenInbound(id);
+    const [ib] = await database.db.select().from(inboundEvents).where(eq(inboundEvents.entityId, id));
+    await processInbound(s.ctx, ib!.id, 2);
+    expect((await appRow(id)).state).toBe("SCREENING");
+    const aps = await database.db.select().from(approvals).where(eq(approvals.entityId, id));
+    expect(aps.map((a) => [a.gate, a.status])).toEqual([["kyc_review", "pending"]]);
+    expect((await kycTasks(id)).map((t) => t.status)).toEqual(["cancelled"]);
+  });
+
+  test("two concurrent runs of the same submission apply once", async () => {
+    await policyWith({ auto_kyc_verify: false });
+    const s = await setup();
+    const { id } = await toKyc(s);
+    await database.db.delete(approvals).where(eq(approvals.entityId, id));
+    await reopenInbound(id);
+    const [ib] = await database.db.select().from(inboundEvents).where(eq(inboundEvents.entityId, id));
+    const [a, b] = await Promise.all([processInbound(s.ctx, ib!.id, 2), processInbound(s.ctx, ib!.id, 3)]);
+    expect([a, b].filter((r) => (r as { done?: boolean }).done === true)).toHaveLength(1);
+    expect(await database.db.select().from(approvals).where(eq(approvals.entityId, id))).toHaveLength(1);
+  });
+
+  test("a model error that quotes an ID number is masked in the step log and the failure reason", async () => {
+    const s = await setup(() => {
+      throw new Error("could not read card 784-1991-4820193-4 for passport A1234567");
+    });
+    const { id } = await toKyc(s);
+    const payloads = JSON.stringify((await steps(id)).map((e) => e.payload));
+    expect(payloads).not.toMatch(/784-1991-4820193-4|4820193/);
+  });
+
+  test("stuck threshold comes from the Clock: running is quiet, past the threshold it shows retry", async () => {
+    const s = await setup();
+    const { id } = await createWithViewing(s, { requestedMoveInOn: "2026-12-01" });
+    await attended(s, id);
+    const { upload } = s.tokens(s.lastMail().text);
+    const doc = (await (await s.upload(upload!, png("priya-eid-front.png"), "emirates_id", "front")).json()) as {
+      id: string;
+    };
+    await s.portal("/api/inbound", "POST", {
+      token: upload,
+      type: "DOCS_UPLOADED",
+      payload: { documentIds: [doc.id] },
+    });
+    // Queued but never processed (the worker is stuck).
+    s.clock.set(new Date(new Date(START).getTime() + 9 * 60_000));
+    expect((await logOf(s, s.officer, id)).some((e) => e.text.startsWith("Document check didn't"))).toBe(false);
+    expect((await s.staff(s.officer, `/api/applications/${id}/kyc/retry`, "POST", {})).status).toBe(409);
+    s.clock.set(new Date(new Date(START).getTime() + 11 * 60_000));
+    const stuck = (await logOf(s, s.officer, id)).find((e) => e.text.startsWith("Document check didn't finish:"));
+    expect(stuck).toMatchObject({ actions: ["retry_kyc"], pending: true });
+    expect(stuck!.text).toContain("no result after 11 minutes");
+    const r = await s.staff(s.officer, `/api/applications/${id}/kyc/retry`, "POST", {});
+    expect(r.status).toBe(202);
+    // The retry restarts the clock.
+    expect((await logOf(s, s.officer, id)).some((e) => e.text.startsWith("Document check didn't"))).toBe(false);
   });
 });

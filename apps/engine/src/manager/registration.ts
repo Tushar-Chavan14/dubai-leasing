@@ -16,14 +16,16 @@ import {
   approvals,
   documents,
   ejariSubmissions,
+  leaseEvents,
   leaseParties,
   leases,
   parties,
+  tasks,
   type Tx,
   withTx,
 } from "@leasing/db";
 import { buildEjariPayload, RegistrationSchemas, registrationHelper } from "@leasing/helpers";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
 import { conflict, notFound, unprocessable } from "../errors.ts";
 import { advance } from "./advance.ts";
@@ -79,6 +81,11 @@ export async function proposeEjariSubmission(ctx: EngineContext, tx: Tx, lease: 
     payload: built.payload,
     payloadSha256: payloadHash(built.payload),
   };
+  // The officer task raised when `ejari_draft_auto` is off is done once the draft exists.
+  await tx.db
+    .update(tasks)
+    .set({ status: "done" })
+    .where(and(eq(tasks.dedupeKey, `${lease.id}:draft_ejari_submission`), eq(tasks.status, "open")));
   return requestApproval(ctx, tx, {
     gate: "ejari_submission",
     entity: { kind: "lease", id: lease.id },
@@ -304,6 +311,46 @@ async function recordIssued(
   }
   await queueLeaseMail(ctx, tx, { leaseId: sub.leaseId, kind: "ejari_issued", key: sub.id, seq: 1 });
   return { done: true as const, issued: true as const, ejariNo };
+}
+
+/**
+ * Re-sends the issued Ejari certificate email to the tenant's address on file (web chat status
+ * check), at most once per Dubai day: an audit event under the lease's lock, and a day-specific
+ * outbound milestone (the sequence number grows with each re-send).
+ */
+export async function resendEjariCertificate(
+  ctx: EngineContext,
+  leaseId: string,
+  actor: Actor,
+  inTx?: Tx,
+): Promise<"queued" | "already_today" | "not_now"> {
+  const run = async (tx: Tx): Promise<"queued" | "already_today" | "not_now"> => {
+    const [lease] = await tx.db.select().from(leases).where(eq(leases.id, leaseId)).for("update");
+    if (!lease) return "not_now";
+    const [sub] = await tx.db
+      .select()
+      .from(ejariSubmissions)
+      .where(and(eq(ejariSubmissions.leaseId, leaseId), eq(ejariSubmissions.status, "issued")))
+      .orderBy(desc(ejariSubmissions.attempt))
+      .limit(1);
+    if (!sub?.ejariNo) return "not_now";
+    const today = ctx.clock.today();
+    const prior = await tx.db
+      .select({ payload: leaseEvents.payload })
+      .from(leaseEvents)
+      .where(and(eq(leaseEvents.entityId, leaseId), eq(leaseEvents.type, "EJARI_CERTIFICATE_RESENT")));
+    if (prior.some((e) => (e.payload as { on?: string }).on === today)) return "already_today";
+    const seq = 2 + prior.length;
+    await appendEvent(tx, ctx, {
+      entity: { kind: "lease", id: leaseId },
+      type: "EJARI_CERTIFICATE_RESENT",
+      actor,
+      payload: { submissionId: sub.id, seq, on: today, via: "web_chat" },
+    });
+    await queueLeaseMail(ctx, tx, { leaseId, kind: "ejari_issued", key: sub.id, seq });
+    return "queued";
+  };
+  return inTx ? run(inTx) : withTx(ctx.database, run);
 }
 
 /** Verified spellings of the name fields: the KYC-verified tenant party and the landlord party. */

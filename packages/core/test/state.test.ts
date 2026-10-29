@@ -3,7 +3,6 @@ import {
   applicationMachine,
   calendarDate as d,
   canTransition,
-  defaultCompanyPolicy,
   findTransition,
   type LeaseGuardContext,
   leaseMachine,
@@ -12,6 +11,7 @@ import {
 } from "../src/index.ts";
 
 const readyUnit = {
+  category: "residential" as const,
   dldPropertyNo: "DLD-1001",
   unitNo: "1204",
   makaniNo: "1234567890",
@@ -27,7 +27,11 @@ const unitCtx = (
   over: Omit<Partial<UnitGuardContext>, "unit"> & { unit?: Partial<UnitGuardContext["unit"]> } = {},
 ): UnitGuardContext => ({
   today: d("2026-06-01"),
-  policy: defaultCompanyPolicy,
+  priceRange: {
+    min: 7_000_000,
+    max: 10_000_000,
+    basis: { sriFils: null, bandMin: null, bandMax: null, aedMin: 7_000_000, aedMax: 10_000_000 },
+  },
   hasActiveEjari: false,
   hasContractedLease: false,
   ...over,
@@ -87,6 +91,14 @@ describe("unit", () => {
   };
   test("PREP → READY when checklist complete and rent in range", () => {
     expect(guard("PREP", "MARK_READY")(unitCtx())).toEqual({ ok: true });
+  });
+  test("commercial unit without bedrooms passes the checklist", () => {
+    const r = guard("PREP", "MARK_READY")(unitCtx({ unit: { category: "commercial", bedrooms: null } }));
+    expect(r).toEqual({ ok: true });
+  });
+  test("residential unit without bedrooms fails it", () => {
+    const r = guard("PREP", "MARK_READY")(unitCtx({ unit: { bedrooms: null } }));
+    expect(r).toEqual({ ok: false, reasons: ["missing bedrooms"] });
   });
   test("PREP → READY refused with missing checklist fields", () => {
     const r = guard("PREP", "MARK_READY")(unitCtx({ unit: { makaniNo: null, dewaPremiseNo: "" } }));

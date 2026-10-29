@@ -8,7 +8,7 @@ import { AddendumReview, ContractContext, ContractData } from "./schema.ts";
 export { buildContractFields } from "./fields.ts";
 export { addendumReviewMessages } from "./prompt.ts";
 export { AddendumReview, ContractContext, ContractData } from "./schema.ts";
-export { contractDocument } from "./template.ts";
+export { addendumBlocks, contractDocument, REQUIRED_TERMS } from "./template.ts";
 
 export const ContractSchemas = { context: ContractContext, data: ContractData };
 

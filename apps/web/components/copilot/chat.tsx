@@ -1,8 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { MicButton, useReadAloud } from "../voice/voice-controls";
+import { useHasLocalVoice, useStored } from "../voice/use-voice";
 import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { IconCheck, IconSpark, IconWarning } from "../../lib/icons";
+import { CardRow } from "../chat-ui/cards";
+import { ChoiceCardView } from "../chat-ui/choice-card";
+import { Composer, VoiceMenu } from "../chat-ui/composer";
+import { STAFF_PILLS } from "../chat-ui/quick-actions.ts";
 import { roleLabel, shortDate } from "../../lib/format";
 import {
   type ChatMessage,
@@ -14,6 +20,12 @@ import {
 } from "./use-chat";
 
 const TOOL_LABEL: Record<string, string> = {
+  pipeline_summary: "Counted the pipeline",
+  list_records: "Listed records",
+  get_record: "Read a record",
+  contract_status: "Checked the contract and Ejari",
+  list_companies: "Listed companies",
+  offer_choices: "Offered choices",
   search_entities: "Searched units and leases",
   get_lease: "Read the lease",
   get_lease_timeline: "Read the timeline",
@@ -30,6 +42,15 @@ const TOOL_LABEL: Record<string, string> = {
   create_task: "Prepared a task for you to confirm",
   propose_approval: "Prepared an approval request for you to confirm",
   draft_email: "Drafted an email for you to review",
+  list_tasks: "Checked tasks",
+  list_enquiries: "Checked enquiries",
+  get_enquiry: "Read an enquiry",
+  get_unit: "Looked up the unit and its price limits",
+  viewing_slots: "Checked free viewing slots",
+  propose_viewing_invite: "Prepared a viewing invitation for you to confirm",
+  propose_request_documents: "Prepared a document request for you to confirm",
+  propose_resend_signing_link: "Prepared a signing-link resend for you to confirm",
+  propose_prepare_contract: "Prepared the contract preparation for you to confirm",
   draft_approval_note: "Drafted a note for you to review",
   get_case_pack: "Read the case pack",
   summarise_case: "Drafted a case summary for you to review",
@@ -47,20 +68,14 @@ const prepare = (text: string): Starter => ({ text, kind: "prepare" });
 const STARTERS: Record<PageRef["kind"] | "none", Starter[]> = {
   lease: [
     ask("Why is this lease waiting?"),
-    ask("How much can rent go up at renewal?"),
-    ask("Was the renewal notice sent and acknowledged?"),
-    ask("Any overdue or bounced rent on this lease?"),
-    ask("Any open complaints or maintenance tickets?"),
     ask("What happened on this lease so far?"),
+    ask("What is the contract and Ejari status?"),
     draft("Draft an email to the tenant about…"),
-    draft("Prepare an RDC case summary for this lease."),
     prepare("Create a task to…"),
-    prepare("Prepare a formal late-payment reminder for the overdue instalment."),
   ],
   unit: [
-    ask("What's the lease status for this unit?"),
-    ask("When does the current lease end?"),
     ask("Is this unit available for viewing, and at what rent?"),
+    ask("Which applications are on this unit?"),
     prepare("Book a viewing of this unit for…"),
   ],
   approval: [
@@ -70,14 +85,14 @@ const STARTERS: Record<PageRef["kind"] | "none", Starter[]> = {
     draft("Draft a note on this approval saying…"),
   ],
   none: [
-    ask("What's due this week?"),
+    ask("How many applications are in each stage?"),
+    ask("How many applications are in viewing?"),
+    ask("Show offers waiting on applicants"),
+    ask("Which contracts are waiting for a signature?"),
     ask("Which approvals are waiting?"),
-    ask("Which leases need attention this week?"),
     ask("Which units are available for viewing?"),
-    ask("Who has overdue rent?"),
-    ask("Which maintenance tickets are late?"),
-    ask("What does the rule say about the rent increase cap?"),
-    draft("Draft an email to the tenant of…"),
+    ask("What can you help me with?"),
+    draft("Draft an email to the applicant of…"),
     prepare("Book a viewing for a new applicant…"),
     prepare("Create a task to…"),
   ],
@@ -175,18 +190,32 @@ const FAILED_CODES = new Set([
   "already_sent",
   "vacate_invalid",
   "not_running",
+  "transition_not_allowed",
+  "wrong_state",
+  "no_open_signer",
+  "contract_not_prepared",
+  "stale",
 ]);
 
 const PROPOSAL_TITLE: Record<ProposalView["kind"], string> = {
   create_application: "New application",
   create_task: "New task",
   request_approval: "Approval request",
+  viewing_invite: "Viewing invitation",
+  request_documents: "Document request",
+  resend_signing_link: "Signing link",
+  prepare_contract: "Prepare contract",
 };
 
 const CONFIRM_NOTE: Record<ProposalView["kind"], string> = {
   create_application: "Confirming creates the application and emails the viewing invitation.",
   create_task: "Confirming adds the task to the lease.",
   request_approval: "Confirming sends it to the approver's inbox. Nothing reaches the tenant until it is approved.",
+  viewing_invite: "Confirming books the viewing and emails the applicant the invitation.",
+  request_documents: "Confirming emails the applicant a new upload link; the old link stops working.",
+  resend_signing_link: "Confirming emails the signer a new signing link; the old link stops working.",
+  prepare_contract:
+    "Confirming prepares the contract only. It then waits for a person to approve it in the inbox (final contract); nothing is sent.",
 };
 
 const GROUND: Record<string, string> = {
@@ -231,6 +260,53 @@ function ProposalFacts({ p }: { p: ProposalView }) {
       </dl>
     );
   }
+  if (p.kind === "viewing_invite" || p.kind === "request_documents") {
+    const s = p.summary;
+    return (
+      <dl>
+        <dt>Application</dt>
+        <dd className="ref">{s.applicationRef}</dd>
+        <dt>Applicant</dt>
+        <dd>
+          {s.applicant} · {s.unitCode}
+        </dd>
+        {p.kind === "viewing_invite" && (
+          <>
+            <dt>Viewing</dt>
+            <dd>{p.summary.viewingLabel} (Dubai)</dd>
+          </>
+        )}
+        <dt>Email</dt>
+        <dd>
+          {p.kind === "viewing_invite" ? "Invitation goes to the applicant" : "Upload link goes to the applicant"}
+        </dd>
+      </dl>
+    );
+  }
+  if (p.kind === "resend_signing_link" || p.kind === "prepare_contract") {
+    const s = p.summary;
+    return (
+      <dl>
+        <dt>Lease</dt>
+        <dd className="ref">
+          {s.leaseRef} · {s.unitCode}
+        </dd>
+        {p.kind === "resend_signing_link" ? (
+          <>
+            <dt>Signer</dt>
+            <dd>{p.kind === "resend_signing_link" && p.summary.signerName}</dd>
+            <dt>Email</dt>
+            <dd>New signing link goes to the {p.kind === "resend_signing_link" && p.summary.signerRole}</dd>
+          </>
+        ) : (
+          <>
+            <dt>Next</dt>
+            <dd>Prepared only: it still waits for a person to approve it (final contract gate). No email goes out.</dd>
+          </>
+        )}
+      </dl>
+    );
+  }
   const s = p.summary;
   return s.gate === "formal_reminder" ? (
     <dl>
@@ -261,7 +337,7 @@ function ProposalFacts({ p }: { p: ProposalView }) {
 
 const PROPOSAL_STATUS: Record<ProposalView["status"], string> = {
   pending: "Waiting for your confirmation",
-  confirmed: "Created",
+  confirmed: "Done",
   cancelled: "Cancelled",
   failed: "Couldn't be created",
   expired: "Expired: ask the copilot again",
@@ -318,10 +394,10 @@ function ProposalCard({ p, onChange }: { p: ProposalView; onChange: (v: Proposal
           </div>
         </>
       )}
-      {p.status === "confirmed" && p.result?.applicationId && (
+      {p.status === "confirmed" && p.kind === "create_application" && p.result?.applicationId && (
         <p className="cp-proposal-note">
           <IconCheck size={13} /> Application{" "}
-          <a className="link" href={`/applications/${p.result.applicationId}`}>
+          <a className="link" href={`/work?kind=application&id=${p.result.applicationId}`}>
             {p.result.ref ?? "created"}
           </a>
           ; the invitation is on its way.
@@ -335,11 +411,32 @@ function ProposalCard({ p, onChange }: { p: ProposalView; onChange: (v: Proposal
           </Link>
         </p>
       )}
-      {p.status === "confirmed" && p.result?.approvalId && (
+      {p.status === "confirmed" && p.kind === "request_approval" && p.result?.approvalId && (
         <p className="cp-proposal-note">
           <IconCheck size={13} /> Sent for approval.{" "}
-          <Link className="link" href={`/inbox/${p.result.approvalId}`}>
+          <Link className="link" href={`/work?approval=${p.result.approvalId}`}>
             Open in the inbox
+          </Link>
+        </p>
+      )}
+      {p.status === "confirmed" && p.result?.applicationId && p.kind !== "create_application" && (
+        <p className="cp-proposal-note">
+          <IconCheck size={13} /> Done; the email is on its way.{" "}
+          <a className="link" href={`/work?kind=application&id=${p.result.applicationId}`}>
+            Open the application
+          </a>
+        </p>
+      )}
+      {p.status === "confirmed" && p.kind === "resend_signing_link" && (
+        <p className="cp-proposal-note">
+          <IconCheck size={13} /> Done; the new signing link is on its way.
+        </p>
+      )}
+      {p.status === "confirmed" && p.kind === "prepare_contract" && p.result?.approvalId && (
+        <p className="cp-proposal-note">
+          <IconCheck size={13} /> Contract prepared. It still needs a person's approval:{" "}
+          <Link className="link" href={`/work?approval=${p.result.approvalId}`}>
+            open it in the inbox
           </Link>
         </p>
       )}
@@ -352,17 +449,19 @@ function ProposalCard({ p, onChange }: { p: ProposalView; onChange: (v: Proposal
 /** A draft the copilot wrote (D26). It opens in the normal form, where the user edits and sends it. */
 function DraftCard({ d }: { d: DraftView }) {
   const href =
-    d.kind === "email"
-      ? `/leases/${d.leaseId}?draft=${d.id}#email`
-      : d.kind === "case_summary"
-        ? `/leases/${d.leaseId}?draft=${d.id}#case`
-        : `/inbox/${d.approvalId}?draft=${d.id}#notes`;
+    d.kind === "email" && d.applicationId
+      ? `/work?kind=application&id=${d.applicationId}&draft=${d.id}#email`
+      : d.kind === "email"
+        ? `/work?kind=lease&id=${d.leaseId}&draft=${d.id}#email`
+        : d.kind === "case_summary"
+          ? `/work?kind=lease&id=${d.leaseId}&draft=${d.id}#case`
+          : `/work?approval=${d.approvalId}&draft=${d.id}#notes`;
   return (
     <div className="cp-proposal" data-status={d.status}>
       <div className="cp-proposal-head">
         <strong>
           {d.kind === "email"
-            ? `Draft email${d.leaseRef ? ` · ${d.leaseRef}` : ""}`
+            ? `Draft email${d.applicationRef ? ` to applicant · ${d.applicationRef}` : d.leaseRef ? ` · ${d.leaseRef}` : ""}`
             : d.kind === "case_summary"
               ? `Draft case summary${d.leaseRef ? ` · ${d.leaseRef}` : ""}`
               : "Draft approval note"}
@@ -392,7 +491,20 @@ function DraftCard({ d }: { d: DraftView }) {
   );
 }
 
-function Message({ m, onProposal }: { m: ChatMessage; onProposal: (v: ProposalView) => void }) {
+function Message({
+  m,
+  onProposal,
+  live,
+  onSend,
+  onOther,
+}: {
+  m: ChatMessage;
+  onProposal: (v: ProposalView) => void;
+  /** The latest answer, with nothing running: its choices can be tapped. */
+  live: boolean;
+  onSend: (text: string) => void;
+  onOther: () => void;
+}) {
   if (m.role === "user") return <div className="cp-msg cp-user">{m.content}</div>;
   return (
     <div className="cp-msg cp-assistant" data-status={m.status} aria-busy={m.status === "streaming"}>
@@ -408,6 +520,19 @@ function Message({ m, onProposal }: { m: ChatMessage; onProposal: (v: ProposalVi
       ) : (
         <p className="cp-thinking">{m.tools.length ? "Reading…" : "Thinking…"}</p>
       )}
+      {m.cards?.length ? <CardRow cards={m.cards} disabled={!live} onSend={onSend} /> : null}
+      {m.choices && m.status === "done" ? (
+        <ChoiceCardView
+          question={m.choices.question}
+          options={m.choices.options.map((o) => ({ key: o.value, label: o.label, href: o.href }))}
+          disabled={!live}
+          onPick={(o) => {
+            const say = m.choices?.options.find((x) => x.value === o.key)?.say;
+            if (say) onSend(say);
+          }}
+          onOther={onOther}
+        />
+      ) : null}
       {m.proposals?.map((p) => (
         <ProposalCard key={p.id} p={p} onChange={onProposal} />
       ))}
@@ -431,7 +556,15 @@ export function CopilotChat({
   initial,
   autoFocus,
   onThread,
+  heading,
+  suggestions,
+  ask,
 }: {
+  /** A question sent once when it arrives (for example the Workspace's "Draft a reply" button). */
+  ask?: { id: number; text: string } | undefined;
+  /** Home: a heading and ready-made questions replace the generic empty state. */
+  heading?: string;
+  suggestions?: string[];
   page?: PageRef | undefined;
   threadId?: string;
   initial?: ChatMessage[];
@@ -441,11 +574,32 @@ export function CopilotChat({
   const chat = useCopilotChat({ page, ...(threadId ? { threadId } : {}), ...(initial ? { initial } : {}) });
   const [draft, setDraft] = useState("");
   const input = useRef<HTMLTextAreaElement>(null);
+  const [auto, setAuto] = useStored("auto");
+  const [read, setRead] = useStored("read");
+  const canRead = useHasLocalVoice();
+  const lastMsg = chat.messages.at(-1);
+  useReadAloud(
+    read && canRead,
+    !chat.busy && lastMsg && lastMsg.role === "assistant" && lastMsg.content
+      ? { key: lastMsg.id, text: lastMsg.content }
+      : undefined,
+  );
+  /** A transcript lands in the field to edit and send; with auto-send it goes straight to the copilot. */
+  const heard = (text: string) => {
+    if (auto && !chat.busy) void chat.send(text);
+    else setDraft((d) => `${d ? `${d} ` : ""}${text}`.slice(0, 2000));
+  };
   const log = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (autoFocus) input.current?.focus();
   }, [autoFocus]);
+  const asked = useRef(0);
+  useEffect(() => {
+    if (!ask || ask.id === asked.current || chat.busy) return;
+    asked.current = ask.id;
+    void chat.send(ask.text);
+  }, [ask, chat]);
   // Follow the conversation as the answer streams in.
   const last = chat.messages.at(-1);
   const scrollKey = `${chat.messages.length}:${last?.content.length ?? 0}:${last?.tools.length ?? 0}`;
@@ -471,13 +625,35 @@ export function CopilotChat({
       <div className="cp-log" ref={log} role="log" aria-live="polite" aria-relevant="additions">
         {chat.messages.length === 0 ? (
           <div className="cp-empty">
-            <span className="cp-mark" aria-hidden="true">
-              <IconSpark size={20} />
-            </span>
-            <p>
-              Ask about leases, deadlines, approvals or the rules. Answers come from the system, with the rule version.
-            </p>
-            {(["ask", "draft", "prepare"] as const).map((kind) => {
+            {heading ? (
+              <h2 className="cp-heading">{heading}</h2>
+            ) : (
+              <>
+                <span className="cp-mark" aria-hidden="true">
+                  <IconSpark size={20} />
+                </span>
+                <p>
+                  Ask about the pipeline: enquiries, viewings, offers, contracts and Ejari registration. Answers come
+                  from the system.
+                </p>
+              </>
+            )}
+            {suggestions && suggestions.length > 0 && (
+              <div className="cp-starters">
+                {suggestions.map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    className="cp-starter"
+                    data-kind="ask"
+                    onClick={() => void chat.send(t)}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+            )}
+            {(suggestions ? [] : (["ask", "draft", "prepare"] as const)).map((kind) => {
               const list = STARTERS[page?.kind ?? "none"].filter((x) => x.kind === kind);
               return list.length ? (
                 <div key={kind} className="cp-starter-group">
@@ -508,10 +684,26 @@ export function CopilotChat({
             </p>
           </div>
         ) : (
-          chat.messages.map((m) => <Message key={m.id} m={m} onProposal={chat.updateProposal} />)
+          chat.messages.map((m, i) => (
+            <Message
+              key={m.id}
+              m={m}
+              onProposal={chat.updateProposal}
+              live={!chat.busy && i === chat.messages.length - 1}
+              onSend={(text) => void chat.send(text)}
+              onOther={() => input.current?.focus()}
+            />
+          ))
         )}
       </div>
-      <form className="cp-compose" onSubmit={submit}>
+      <Composer
+        pills={STAFF_PILLS}
+        pillsLabel="Quick questions"
+        pillsDisabled={chat.busy}
+        onPick={(p) => p.action.kind === "send" && void chat.send(p.action.text)}
+        onSubmit={submit}
+        className="cp-composer"
+      >
         <label htmlFor="cp-input" className="sr-only">
           Ask the copilot
         </label>
@@ -525,6 +717,8 @@ export function CopilotChat({
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={onKey}
         />
+        <MicButton endpoint="/api/voice/transcribe" onText={heard} disabled={chat.busy} />
+        <VoiceMenu auto={auto} setAuto={setAuto} read={read} setRead={setRead} canRead={canRead} />
         {chat.busy ? (
           <button type="button" className="btn small" onClick={chat.stop}>
             Stop
@@ -534,10 +728,10 @@ export function CopilotChat({
             Ask
           </button>
         )}
-      </form>
+      </Composer>
       <p className="cp-foot">
-        Reads, drafts text for you to send, and prepares applications, tasks and approval requests you confirm.
-        Approvals, sending and other changes happen in the app, by a person.
+        Reads the pipeline, drafts text for you to send, and prepares applications, tasks and approval requests you
+        confirm. Approvals, sending and other changes happen in the app, by a person.
         {chat.messages.length > 0 && !chat.busy && (
           <button type="button" className="cp-link" onClick={chat.reset}>
             New conversation

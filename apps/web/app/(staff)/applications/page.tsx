@@ -95,7 +95,7 @@ export default async function ApplicationsPage({ searchParams }: { searchParams:
                 {rows.map((r) => (
                   <tr key={r.id}>
                     <td>
-                      <Link href={`/applications/${r.id}`} className="row-title">
+                      <Link href={`/work?kind=application&id=${r.id}`} className="row-title">
                         {r.applicant}
                       </Link>
                       <div className="row-sub">

@@ -246,6 +246,23 @@ describe("KYC helper (scripted vision model)", () => {
     expect(llm.visionCalls).toHaveLength(3); // front twice, back once
   });
 
+  test("a model call that outlasts its time limit is retried once, then needs_human at once (rule 6)", async () => {
+    const llm = new FakeLlm(
+      () => new Error("unused"),
+      () => new Promise(() => {}),
+    );
+    const seen: string[] = [];
+    const helper = kycHelper(llm, async () => new Uint8Array([1]), {
+      timeoutMs: 20,
+      onStep: (st) => void seen.push(st.kind === "doc" ? `doc:${st.why}` : st.kind),
+    });
+    const r = await runHelper(helper, input(ctx({ documents })), KycSchemas, timer);
+    expect(r.result.status).toBe("needs_human");
+    expect(r.result.reasons[0]).toContain("timed out twice");
+    expect(llm.visionCalls).toHaveLength(2); // the second document never starts behind the stuck model
+    expect(seen).toEqual(["start", "doc:timeout", "result"]);
+  });
+
   test("a missing file is unreadable, not a crash", async () => {
     const llm = new FakeLlm(
       () => new Error("unused"),

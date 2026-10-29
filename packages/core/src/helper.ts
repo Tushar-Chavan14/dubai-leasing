@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /** Helper contract (docs/architecture.md §5). Helpers return data; only the Manager writes state. */
-export const EntityKind = z.enum(["unit", "application", "lease", "rulebook", "conversation"]);
+export const EntityKind = z.enum(["unit", "application", "lease", "rulebook", "conversation", "company"]);
 export type EntityKind = z.infer<typeof EntityKind>;
 
 export interface EntityRef {

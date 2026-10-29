@@ -41,6 +41,17 @@ const en = {
   badEmail: "That doesn't look like an email address. Please send it again, for example name@example.com.",
   booked: (when: string, where: string) =>
     `Your viewing is booked: ${when} at ${where}.\nWe've emailed you the details. From here on, everything (documents, offer, contract) happens by email.`,
+  viewingRequested: "Thanks. A leasing officer will confirm your viewing time by email.",
+  applyCta: "Apply now",
+  applyDone: "Done. We emailed you a link to upload your Emirates ID and passport.",
+  applyDoneCompany: "Done. We emailed you a link to upload your documents.",
+  alreadyApplied: "You already applied for this unit. Check your email for the upload link.",
+  alreadyViewing: "You already have a viewing booked for this unit. Check your email for the details.",
+  askCompanyName: "What is your company's name?",
+  badCompanyName: "Please send the company name (letters, digits, spaces, & - . ' only, up to 120 characters).",
+  askContactPerson: "Thanks. And the name of the contact person?",
+  tooManyApplications: "You have several open applications already. Please wait for an officer to follow up.",
+  applyUnavailable: "Applying online isn't available for this property right now. Please book a viewing instead.",
   alreadyBooked: (when: string) => `You already have a viewing of this home booked: ${when}.`,
   noBooking: "You have no viewing booked yet. Send /units to find a home.",
   myBooking: (when: string, where: string, ref: string) => `Your viewing: ${when} at ${where}. Reference ${ref}.`,
@@ -62,9 +73,66 @@ const en = {
   // Public web chat.
   autopilotCant:
     'I can help you find a home and book a viewing. For a problem in your home, use "Report an issue" in your My tenancy email.',
+  agentTapToBook: "To book this time, please tap it below. Nothing is booked until you do.",
+  agentTapToApply: "To apply for this home, please tap Apply below. Nothing is submitted until you do.",
+  agentDailyCap:
+    "I've reached the limit of bookings and applications I can make in this chat for today. Please try again tomorrow.",
   existingTenantWeb:
     "For your lease, payments or documents, please use the 'My tenancy' link in your latest email from us. I can help you find a home or book a viewing.",
   changeEmail: "Change email",
+  // Public web chat: status check (decision D34).
+  checkStatus: "Check my applications",
+  /** Web quick-action pills when no home is in focus yet. */
+  pillPickToBook: "Pick a home first, then I can book a viewing. ",
+  pillPickToApply: "Pick a home first, then you can apply. ",
+  statusCodeSent: (masked: string) =>
+    `If this email has applications, we sent a 6-digit code to ${masked}. It works for 15 minutes. Type it here.`,
+  statusCodeAsk: "Please type the 6-digit code from the email.",
+  statusCodeBad: 'That code did not work or has expired. Tap "Check my applications" to get a new one.',
+  statusIntro: (n: number) => (n === 1 ? "Here is your application:" : `Here are your ${n} applications:`),
+  statusNone: "We have no open applications for this email.",
+  statusShownStored: 'Your applications were shown here. Tap "Check my applications" to see them again.',
+  statusStage: (stage: string, nextStep: string) => `${stage}: ${nextStep}`,
+  statusOffer: (rent: string, cheques: number) =>
+    `Offer: ${rent} a year, ${cheques} cheque${cheques === 1 ? "" : "s"}.`,
+  statusRef: (ref: string, unit: string) => `${ref} (${unit})`,
+  stageName: (n: "Viewing" | "Documents" | "Offer" | "Contract" | "Ejari") =>
+    ({ Viewing: "Viewing", Documents: "Documents", Offer: "Offer", Contract: "Contract", Ejari: "Ejari" })[n],
+  nextStep: (
+    k:
+      | "enquiry"
+      | "viewing"
+      | "documents"
+      | "offer"
+      | "offerPrep"
+      | "reserved"
+      | "contract"
+      | "contractSigning"
+      | "ejari"
+      | "registered",
+  ) =>
+    ({
+      enquiry: "We are arranging your viewing. Watch your email for the time.",
+      viewing: "Your viewing is booked. We will follow up after it.",
+      documents: "We are checking your documents. If we need more, we will email you.",
+      offer: "We have sent you an offer. Please answer it using the link in your email.",
+      offerPrep: "We are preparing your offer.",
+      reserved: "Thank you for accepting. We are preparing your contract.",
+      contract: "Your contract is being prepared.",
+      contractSigning: "Your contract is ready to sign. Use the signing link in your email.",
+      ejari: "We are registering your tenancy with Ejari.",
+      registered: "Your tenancy is registered. Your Ejari certificate has been emailed to you.",
+    })[k],
+  actUpload: "Email me the upload link",
+  actOffer: "Email me the offer",
+  actSign: "Email me the signing link",
+  actEjari: "Email me the Ejari certificate",
+  actQueued: "Done. We emailed the link to the address on your application.",
+  actAlready: "We already emailed that today. Please check your inbox and spam folder.",
+  actPreparing: "Your offer is being prepared. We'll email it soon.",
+  alreadyOpenNeutral: "If you already asked about this property, check your email for the details we sent.",
+  actNotNow: "That is not available right now. Tap Check my applications to see the latest.",
+  statusNeedsVerify: "To see your applications, we first need to check your email.",
   askArea: "Which area would you like to live in?",
   anyArea: "Any area",
   askFurnished: "Do you want it furnished?",
@@ -73,6 +141,35 @@ const en = {
   furnishedAny: "Furnished: Any",
   findHome: "Find a home",
   findAnother: "Find another home",
+  // Public web chat: emirate, category, size and budget steps.
+  askEmirate: "Which emirate are you looking in?",
+  emirateDubai: "Dubai",
+  emirateAbuDhabi: "Abu Dhabi",
+  emirateSharjah: "Sharjah",
+  comingSoon: (label: string) => `${label} (Coming soon)`,
+  onlyDubai: "We only list homes in Dubai for now.",
+  askCategory: "What are you looking for?",
+  categoryResidential: "Residential",
+  categoryCommercial: "Commercial",
+  categoryRetail: "Retail",
+  askSize: "How much space do you need?",
+  sizeSmall: "Up to 1,000 sq ft",
+  sizeMedium: "1,000 to 3,000 sq ft",
+  sizeLarge: "Over 3,000 sq ft",
+  askBudget: "What is your yearly budget? You can skip this.",
+  budgetAny: "Any budget",
+  budgetUpTo: (aed: string) => `Up to AED ${aed}`,
+  // Public web chat agent (decision D36): fixed lines the agent never writes itself.
+  choiceExpired: "That choice is no longer available. Tell me what you'd like and I'll show the options again.",
+  agentUnsure:
+    "Sorry, I couldn't answer that reliably. Try asking in another way, or use the buttons below to browse homes.",
+  agentError: "Sorry, I couldn't process that just now. Please try again in a moment.",
+  agentBusy: "One moment, I'm busy with other visitors. Please try again in a minute.",
+  statusCodeSentChat: (masked: string) =>
+    `If ${masked} has applications with us, I've sent a 6-digit code there. It works for 15 minutes. Type it here and I'll show them.`,
+  statusCheckBusy: "You've asked for a few codes already. Please wait a little before asking for another.",
+  resultsProps: (n: number) =>
+    `Here ${n === 1 ? "is 1 property" : `are ${n} properties`} for rent that match. Tap one for details:`,
 } satisfies Copy;
 
 const ar: typeof en = {
@@ -109,6 +206,17 @@ const ar: typeof en = {
   badEmail: "يبدو أن هذا ليس عنوان بريد إلكتروني صحيحاً. يرجى إرساله مرة أخرى، مثلاً name@example.com.",
   booked: (when: string, where: string) =>
     `تم حجز موعد المعاينة: ${when} في ${where}.\nأرسلنا لك التفاصيل بالبريد الإلكتروني. من الآن فصاعداً، تتم كل الخطوات (المستندات، العرض، العقد) عبر البريد الإلكتروني.`,
+  viewingRequested: "شكراً لك. سيؤكد لك موظف التأجير موعد المعاينة عبر البريد الإلكتروني.",
+  applyCta: "قدّم الآن",
+  applyDone: "تم. أرسلنا لك رابطاً عبر البريد الإلكتروني لرفع الهوية الإماراتية وجواز السفر.",
+  applyDoneCompany: "تم. أرسلنا لك رابطاً عبر البريد الإلكتروني لرفع مستنداتك.",
+  alreadyApplied: "لقد قدّمت طلباً لهذه الوحدة بالفعل. تحقق من بريدك الإلكتروني لرابط الرفع.",
+  alreadyViewing: "لديك بالفعل موعد معاينة لهذه الوحدة. تحقق من بريدك الإلكتروني للتفاصيل.",
+  askCompanyName: "ما اسم شركتك؟",
+  badCompanyName: "يرجى إرسال اسم الشركة (حروف وأرقام ومسافات و & - . ' فقط، حتى 120 حرفاً).",
+  askContactPerson: "شكراً لك. وما اسم الشخص المسؤول عن التواصل؟",
+  tooManyApplications: "لديك عدة طلبات مفتوحة بالفعل. يرجى انتظار تواصل أحد الموظفين.",
+  applyUnavailable: "التقديم عبر الإنترنت غير متاح لهذا العقار حالياً. يرجى حجز معاينة بدلاً من ذلك.",
   alreadyBooked: (when: string) => `لديك بالفعل موعد معاينة لهذا المنزل: ${when}.`,
   noBooking: "لم تحجز أي معاينة بعد. أرسل /units للبحث عن منزل.",
   myBooking: (when: string, where: string, ref: string) => `موعد معاينتك: ${when} في ${where}. الرقم المرجعي ${ref}.`,
@@ -130,9 +238,62 @@ const ar: typeof en = {
   perYear: (rent: string) => `${rent} سنوياً`,
   autopilotCant:
     'يمكنني مساعدتك في العثور على منزل وحجز معاينة. لأي مشكلة في منزلك، استخدم "الإبلاغ عن مشكلة" في رسالة "إيجارك" الإلكترونية.',
+  agentTapToBook: "لحجز هذا الموعد، يرجى الضغط عليه أدناه. لن يتم أي حجز قبل ذلك.",
+  agentTapToApply: "للتقديم على هذا المنزل، يرجى الضغط على قدّم أدناه. لن يُرسل أي طلب قبل ذلك.",
+  agentDailyCap: "وصلت إلى الحد الأقصى للحجوزات والطلبات في هذه المحادثة لهذا اليوم. يرجى المحاولة غداً.",
   existingTenantWeb:
     'لعقدك أو دفعاتك أو مستنداتك، يرجى استخدام رابط "إيجارك" في آخر رسالة إلكترونية أرسلناها لك. يمكنني مساعدتك في العثور على منزل أو حجز معاينة.',
   changeEmail: "تغيير البريد الإلكتروني",
+  checkStatus: "تحقق من طلباتي",
+  pillPickToBook: "اختر منزلاً أولاً، ثم أحجز لك المعاينة. ",
+  pillPickToApply: "اختر منزلاً أولاً، ثم يمكنك التقديم. ",
+  statusCodeSent: (masked: string) =>
+    `إذا كان لهذا البريد طلبات، فقد أرسلنا رمزاً من 6 أرقام إلى ${masked}. يعمل لمدة 15 دقيقة. اكتبه هنا.`,
+  statusCodeAsk: "يرجى كتابة الرمز المكون من 6 أرقام من البريد الإلكتروني.",
+  statusCodeBad: 'الرمز غير صحيح أو انتهت صلاحيته. اضغط "تحقق من طلباتي" للحصول على رمز جديد.',
+  statusIntro: (n: number) => (n === 1 ? "هذا هو طلبك:" : `هذه طلباتك (${n}):`),
+  statusNone: "لا توجد طلبات مفتوحة لهذا البريد الإلكتروني.",
+  statusShownStored: 'عُرضت طلباتك هنا. اضغط "تحقق من طلباتي" لرؤيتها مرة أخرى.',
+  statusStage: (stage: string, nextStep: string) => `${stage}: ${nextStep}`,
+  statusOffer: (rent: string, cheques: number) => `العرض: ${rent} سنوياً، ${cheques} شيكات.`,
+  statusRef: (ref: string, unit: string) => `${ref} (${unit})`,
+  stageName: (n: "Viewing" | "Documents" | "Offer" | "Contract" | "Ejari") =>
+    ({ Viewing: "المعاينة", Documents: "المستندات", Offer: "العرض", Contract: "العقد", Ejari: "إيجاري" })[n],
+  nextStep: (
+    k:
+      | "enquiry"
+      | "viewing"
+      | "documents"
+      | "offer"
+      | "offerPrep"
+      | "reserved"
+      | "contract"
+      | "contractSigning"
+      | "ejari"
+      | "registered",
+  ) =>
+    ({
+      enquiry: "نرتب موعد معاينتك. ترقب بريدك الإلكتروني.",
+      viewing: "تم حجز معاينتك. سنتواصل معك بعدها.",
+      documents: "نراجع مستنداتك. إذا احتجنا المزيد سنراسلك.",
+      offer: "أرسلنا لك عرضاً. يرجى الرد عليه عبر الرابط في بريدك الإلكتروني.",
+      offerPrep: "نجهز عرضك.",
+      reserved: "شكراً لقبولك. نجهز عقدك.",
+      contract: "عقدك قيد الإعداد.",
+      contractSigning: "عقدك جاهز للتوقيع. استخدم رابط التوقيع في بريدك الإلكتروني.",
+      ejari: "نسجل عقد إيجارك في إيجاري.",
+      registered: "تم تسجيل عقد إيجارك. أرسلنا شهادة إيجاري إلى بريدك الإلكتروني.",
+    })[k],
+  actUpload: "أرسل لي رابط الرفع بالبريد",
+  actOffer: "أرسل لي العرض بالبريد",
+  actSign: "أرسل لي رابط التوقيع بالبريد",
+  actEjari: "أرسل لي شهادة إيجاري بالبريد",
+  actQueued: "تم. أرسلنا الرابط إلى البريد المسجل في طلبك.",
+  actAlready: "أرسلناه اليوم بالفعل. يرجى مراجعة بريدك الوارد والرسائل غير المرغوب فيها.",
+  actPreparing: "عرضك قيد الإعداد. سنرسله إليك عبر البريد الإلكتروني قريباً.",
+  alreadyOpenNeutral: "إذا سبق أن استفسرت عن هذا العقار، فتحقق من بريدك الإلكتروني للاطلاع على التفاصيل التي أرسلناها.",
+  actNotNow: "هذا غير متاح الآن. اضغط على تحقق من طلباتي لرؤية آخر المستجدات.",
+  statusNeedsVerify: "لعرض طلباتك، نحتاج أولاً إلى التحقق من بريدك الإلكتروني.",
   askArea: "في أي منطقة تفضل السكن؟",
   anyArea: "أي منطقة",
   askFurnished: "هل تريده مفروشاً؟",
@@ -141,6 +302,32 @@ const ar: typeof en = {
   furnishedAny: "مفروش: أي",
   findHome: "ابحث عن منزل",
   findAnother: "ابحث عن منزل آخر",
+  askEmirate: "في أي إمارة تبحث؟",
+  emirateDubai: "دبي",
+  emirateAbuDhabi: "أبوظبي",
+  emirateSharjah: "الشارقة",
+  comingSoon: (label: string) => `${label} (قريباً)`,
+  onlyDubai: "نعرض المنازل في دبي فقط حالياً.",
+  askCategory: "ما الذي تبحث عنه؟",
+  categoryResidential: "سكني",
+  categoryCommercial: "تجاري",
+  categoryRetail: "محلات تجزئة",
+  askSize: "ما المساحة التي تحتاجها؟",
+  sizeSmall: "حتى 1,000 قدم مربع",
+  sizeMedium: "من 1,000 إلى 3,000 قدم مربع",
+  sizeLarge: "أكثر من 3,000 قدم مربع",
+  askBudget: "ما ميزانيتك السنوية؟ يمكنك تخطي هذا السؤال.",
+  budgetAny: "أي ميزانية",
+  budgetUpTo: (aed: string) => `حتى ${aed} درهم`,
+  choiceExpired: "هذا الخيار لم يعد متاحاً. أخبرني بما تريده وسأعرض الخيارات مرة أخرى.",
+  agentUnsure: "عذراً، لم أتمكن من الإجابة بشكل موثوق. جرّب صياغة أخرى، أو استخدم الأزرار أدناه لتصفح المنازل.",
+  agentError: "عذراً، لم أتمكن من معالجة ذلك الآن. يرجى المحاولة بعد قليل.",
+  agentBusy: "لحظة من فضلك، أنا مشغول مع زوار آخرين. يرجى المحاولة بعد دقيقة.",
+  statusCodeSentChat: (masked: string) =>
+    `إذا كان لدى ${masked} طلبات لدينا، فقد أرسلت رمزاً من 6 أرقام إليه. يعمل لمدة 15 دقيقة. اكتبه هنا وسأعرضها لك.`,
+  statusCheckBusy: "لقد طلبت عدة رموز بالفعل. يرجى الانتظار قليلاً قبل طلب رمز آخر.",
+  resultsProps: (n: number) =>
+    `هذه ${n === 1 ? "وحدة واحدة متاحة" : `${n} وحدات متاحة`} للإيجار تطابق طلبك. اضغط على إحداها للتفاصيل:`,
 };
 
 export const enquiryCopy: Record<EnquiryLanguage, typeof en> = { en, ar };
@@ -157,3 +344,10 @@ export function formatSlot(at: Date, lang: EnquiryLanguage): string {
     hour12: true,
   }).format(at);
 }
+
+/**
+ * True for the stored stand-in line of a status panel ("Your applications were shown here…"). It is
+ * kept only so the chat history reads sensibly; it is never an answer to a new status question.
+ */
+export const isStatusStandIn = (text: string): boolean =>
+  text.trim() === enquiryCopy.en.statusShownStored || text.trim() === enquiryCopy.ar.statusShownStored;

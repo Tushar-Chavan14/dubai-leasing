@@ -1,6 +1,6 @@
 "use server";
 
-import type { ChannelReply } from "@leasing/core";
+import type { ChannelReply, ChatFilters } from "@leasing/core";
 import { ensureVisitorId, isUuid, publicEngine, visitorId } from "../../lib/public";
 
 export interface HistoryItem {
@@ -15,7 +15,7 @@ export type ChatInput =
   | { kind: "text"; text: string; clientMessageId: string }
   | { kind: "callback"; data: string; clientMessageId: string };
 
-export type SendResult = { ok: true; reply: ChannelReply | null } | { ok: false; error: string };
+export type SendResult = { ok: true; reply: ChannelReply | null; filters?: ChatFilters } | { ok: false; error: string };
 
 export async function sendChat(input: ChatInput): Promise<SendResult> {
   if (!isUuid(input.clientMessageId)) return { ok: false, error: "Something went wrong. Try again." };
@@ -30,11 +30,11 @@ export async function sendChat(input: ChatInput): Promise<SendResult> {
     input.kind === "text"
       ? { ...base, kind: "text" as const, text: input.text.slice(0, 1000) }
       : { ...base, kind: "callback" as const, data: input.data };
-  const r = await publicEngine<{ reply: ChannelReply | null }>("/channel/web/updates", {
+  const r = await publicEngine<{ reply: ChannelReply | null; filters?: ChatFilters }>("/channel/web/updates", {
     method: "POST",
     body: JSON.stringify(update),
   });
-  if (r.ok) return { ok: true, reply: r.data.reply };
+  if (r.ok) return { ok: true, reply: r.data.reply, ...(r.data.filters ? { filters: r.data.filters } : {}) };
   if (r.status === 429) return { ok: false, error: "You're sending messages quickly. Wait a moment and try again." };
   return { ok: false, error: "We couldn't send that. Try again." };
 }

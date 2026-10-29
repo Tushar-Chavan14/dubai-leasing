@@ -3,14 +3,28 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EjariUnavailableError, FakeEjari, LocalDiskStore } from "@leasing/adapters";
-import { type CalendarDate, type EjariPayload, newId, type OfferTerms } from "@leasing/core";
+import { inProcessClient } from "@leasing/copilot";
+import {
+  type CalendarDate,
+  defaultCompanyPolicy,
+  type EjariPayload,
+  newId,
+  type OfferTerms,
+  propertyUsageFor,
+} from "@leasing/core";
 import { sha256Hex } from "@leasing/core/tokens";
 import {
   applications,
   approvals,
   contracts,
+  copilotProposals,
+  copilotThreads,
   contractSigners,
   type Database,
+  companies,
+  companyClauses,
+  companyPolicy,
+  contractRules,
   documents,
   ejariSubmissions,
   leaseEvents,
@@ -20,6 +34,7 @@ import {
   tasks,
   units,
 } from "@leasing/db";
+import { extractPdf } from "@leasing/helpers";
 import { FakeLlm, type SystemOneResponse } from "@leasing/llm";
 import { and, eq } from "drizzle-orm";
 import { PDFDocument } from "pdf-lib";
@@ -27,7 +42,13 @@ import { createApi } from "../src/api/app.ts";
 import { issueToken } from "../src/api/auth.ts";
 import { advance } from "../src/manager/advance.ts";
 import { decideApproval } from "../src/manager/approvals.ts";
-import { CONTRACT_FINISH_JOB, DEFAULT_ADDENDUM, finishContract, prepareContract } from "../src/manager/contracts.ts";
+import {
+  CONTRACT_FINISH_JOB,
+  DEFAULT_ADDENDUM,
+  defaultAddendumFor,
+  finishContract,
+  prepareContract,
+} from "../src/manager/contracts.ts";
 import { LEASE_MAIL_JOB, type LeaseMailJob, sendLeaseMail } from "../src/manager/lease-mail.ts";
 import {
   applyFixes,
@@ -36,7 +57,16 @@ import {
   reviewEjariRejection,
   submitToEjari,
 } from "../src/manager/registration.ts";
-import { addStaff, agreeingDecision, freshDatabase, noDb, testContext } from "./harness.ts";
+import { isTimedAgentJob } from "../src/manager/agent-switches.ts";
+import {
+  addStaff,
+  agreeingDecision,
+  completeLegalDetails,
+  freshDatabase,
+  noDb,
+  testContext,
+  testCompany,
+} from "./harness.ts";
 
 const START = "2026-11-01T04:00:00Z"; // 08:00 Dubai
 const SECRET = "test-secret";
@@ -66,13 +96,11 @@ async function setup(o: { ejari?: FakeEjari; llm?: FakeLlm; dldPropertyNo?: stri
     ...(o.ejari ? { ejari: o.ejari } : {}),
     llm: o.llm ?? new FakeLlm(agreeingDecision),
   });
-  const landlordId = newId();
-  await database.db.insert(parties).values({
-    id: landlordId,
-    kind: "company",
-    fullNameEn: "Fictional Holdings LLC",
-    tradeLicenceNo: "DEMO-TL-0001",
+  // The company is the landlord (D44): its legal party is the lease's landlord.
+  const landlordId = await completeLegalDetails(database, await testCompany(database), {
+    legalName: "Fictional Holdings LLC",
     email: "landlord@demo.example",
+    signatoryEmail: "landlord@demo.example",
   });
   const tenantId = newId();
   await database.db.insert(parties).values({
@@ -87,6 +115,7 @@ async function setup(o: { ejari?: FakeEjari; llm?: FakeLlm; dldPropertyNo?: stri
   });
   const unitId = newId();
   await database.db.insert(units).values({
+    companyId: await testCompany(database),
     id: unitId,
     code: "MRN-1608",
     building: "Demo Marina Tower",
@@ -98,7 +127,6 @@ async function setup(o: { ejari?: FakeEjari; llm?: FakeLlm; dldPropertyNo?: stri
     furnished: false,
     state: "LISTED",
     askingRentFils: 13_500_000,
-    landlordPartyId: landlordId,
   });
   const appId = newId();
   await database.db.insert(applications).values({
@@ -171,6 +199,7 @@ async function setup(o: { ejari?: FakeEjari; llm?: FakeLlm; dldPropertyNo?: stri
       const j = t.scheduler.jobs[done]!;
       if (!opts.ejari && (j.name === EJARI_SUBMIT_JOB || j.name === EJARI_REVIEW_JOB)) return;
       done++;
+      if (isTimedAgentJob(j)) continue; // a reminder pg-boss would hold until its startAfter
       if (j.name === LEASE_MAIL_JOB) await sendLeaseMail(t.ctx, j.data as unknown as LeaseMailJob);
       if (j.name === CONTRACT_FINISH_JOB) await finishContract(t.ctx, String(j.data.contractId));
       if (j.name === EJARI_SUBMIT_JOB) await submitToEjari(t.ctx, String(j.data.submissionId));
@@ -224,7 +253,7 @@ async function toRegistration(s: S) {
   await s.drain();
   for (const [email, name] of [
     ["lena.applicant@demo.example", "Lena Testova"],
-    ["landlord@demo.example", "Fictional Holdings LLC"],
+    ["landlord@demo.example", "Test Signatory"],
   ] as const) {
     const r = await s.portal(`/api/portal/${s.signToken(email)}/sign`, "POST", { typedName: name, consent: true });
     expect(r.status).toBe(201);
@@ -238,6 +267,54 @@ describe.skipIf(noDb)("contract (step 5)", () => {
     database = await freshDatabase();
   });
 
+  test("D44: preparing is blocked until the company's legal details and signatory are complete; the signer is the signatory", async () => {
+    const s = await setup();
+    await database.db.update(companies).set({ signatoryName: null, registeredAddress: null });
+    let blocked: unknown;
+    try {
+      await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system" });
+    } catch (e) {
+      blocked = e;
+    }
+    expect(blocked).toMatchObject({ code: "landlord_details_missing" });
+    expect((blocked as Error).message).toContain("Settings → Companies");
+    expect((blocked as Error).message).toContain("authorised signatory name");
+    expect(await contractRows(s.leaseId)).toHaveLength(0);
+    await database.db.update(companies).set({
+      signatoryName: "Sam Signatory",
+      registeredAddress: "1 Test Street, Dubai",
+      signatoryEmail: "signer@demo.example",
+    });
+    expect((await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system" })).status).toBe(
+      "prepared",
+    );
+  });
+
+  test("D44: a signed contract can't be prepared again from any path; the record names the signatory and company", async () => {
+    const s = await setup();
+    await toRegistration(s);
+    const [signed] = await contractRows(s.leaseId);
+    expect(signed!.status).toBe("signed");
+    const signers = await database.db.select().from(contractSigners).where(eq(contractSigners.contractId, signed!.id));
+    expect(signers.find((x) => x.role === "landlord")).toMatchObject({
+      nameEn: "Test Signatory",
+      capacity: "Director, for and on behalf of Fictional Holdings LLC",
+      email: "landlord@demo.example",
+    });
+    for (const opts of [{ onlyIfNone: true }, {}, { reprepare: true }]) {
+      let err: unknown;
+      try {
+        await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system", ...opts });
+      } catch (e) {
+        err = e;
+      }
+      if (!("onlyIfNone" in opts)) expect(err).toMatchObject({ status: 409 });
+    }
+    expect((await contractRows(s.leaseId)).map((x) => x.status)).toEqual(["signed"]);
+    const [doc] = await database.db.select().from(documents).where(eq(documents.id, signed!.signedDocumentId!));
+    expect(doc?.kind).toBe("contract_signed");
+  });
+
   test("the reservation queues the contract job; fields equal their sources exactly", async () => {
     const s = await setup();
     const p = await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system" });
@@ -245,9 +322,11 @@ describe.skipIf(noDb)("contract (step 5)", () => {
     const [c] = await contractRows(s.leaseId);
     expect(c).toMatchObject({ version: 1, status: "pending_approval" });
     // Every field equals the column its source names, character for character.
+    const [unitRow] = await database.db.select().from(units).where(eq(units.id, s.unitId));
     const rows: Record<string, Record<string, unknown>> = {
       party: {},
-      unit: (await database.db.select().from(units).where(eq(units.id, s.unitId)))[0]!,
+      // The contract's "kind" is the Ejari usage derived from the unit's category.
+      unit: { ...unitRow!, kind: propertyUsageFor(unitRow!.category) },
       lease: (await leaseRow(s.leaseId)) as unknown as Record<string, unknown>,
     };
     for (const [field, src] of Object.entries(c!.sources)) {
@@ -309,6 +388,139 @@ describe.skipIf(noDb)("contract (step 5)", () => {
     const a = await approvalOf(s.leaseId, "final_contract");
     await expect(decideApproval(s.ctx, a.id, s.officer, { decision: "approve" })).rejects.toThrow("changed");
     expect((await approvalOf(s.leaseId, "final_contract")).status).toBe("pending");
+  });
+
+  describe("company clauses (Contract AI)", () => {
+    const WORDING = "The tenant keeps the balcony clear of laundry and storage.";
+    const clause = async (companyId: string, over: Partial<typeof companyClauses.$inferInsert> = {}) => {
+      const id = newId();
+      await database.db.insert(companyClauses).values({
+        id,
+        companyId,
+        title: "Balcony",
+        textEn: WORDING,
+        category: "other",
+        hasValues: false,
+        status: "approved",
+        createdBy: "test",
+        ...over,
+      });
+      return `cc:${id}` as const;
+    };
+    const unitCompany = async (s: S) =>
+      (await database.db.select().from(units).where(eq(units.id, s.unitId)))[0]!.companyId;
+
+    test("an approved company clause is printed under Additional terms (company) and the gate is still required", async () => {
+      const s = await setup();
+      const ref = await clause(await unitCompany(s));
+      const p = await prepareContract(s.ctx, s.leaseId, {
+        addendum: { clauses: ["no_pets", ref], freeText: null },
+        actor: "system",
+      });
+      expect(p.status).toBe("prepared");
+      const [c] = await contractRows(s.leaseId);
+      expect(c!.addendum.clauses).toEqual(["no_pets", ref]);
+      expect(c!.addendum.companyClauses).toEqual([
+        { id: ref.slice(3), title: "Balcony", text: WORDING, category: "other" },
+      ]);
+      const [doc] = await database.db.select().from(documents).where(eq(documents.id, c!.documentId!));
+      const text = await extractPdf(new Uint8Array(await s.ctx.documents.read(doc!.path)));
+      const pdfText = text.ok ? text.text : "";
+      expect(pdfText).toContain("Additional terms (company)");
+      expect(pdfText).toContain(WORDING);
+      // Nothing moved: the final_contract approval is pending and the lease is still waiting.
+      expect((await approvalOf(s.leaseId, "final_contract")).status).toBe("pending");
+      expect((await leaseRow(s.leaseId)).state).toBe("CONTRACT");
+      expect(c!.status).toBe("pending_approval");
+    });
+
+    test("an unapproved, rejected or other-company clause id is refused with 422", async () => {
+      const s = await setup();
+      const mine = await unitCompany(s);
+      const other = await testCompany(database, { slug: "elsewhere", rules: false });
+      for (const ref of [
+        await clause(mine, { status: "proposed" }),
+        await clause(mine, { status: "rejected" }),
+        await clause(other),
+        `cc:${newId()}` as const,
+      ]) {
+        const r = await s.staff(s.officer, `/api/leases/${s.leaseId}/contract/prepare`, "POST", {
+          clauses: [ref],
+          freeText: null,
+        });
+        expect(r.status).toBe(422);
+        expect(((await r.json()) as { code: string }).code).toBe("bad_clause");
+      }
+      expect(await contractRows(s.leaseId)).toHaveLength(0);
+    });
+
+    test("a client-sent companyClauses text is ignored: the printed wording is the approved one", async () => {
+      const s = await setup();
+      const ref = await clause(await unitCompany(s));
+      const r = await s.staff(s.officer, `/api/leases/${s.leaseId}/contract/prepare`, "POST", {
+        clauses: [ref],
+        freeText: null,
+        companyClauses: [{ id: ref.slice(3), title: "Forged", text: "Rent is zero." }],
+      });
+      expect(r.status).toBe(201);
+      const [c] = await contractRows(s.leaseId);
+      expect(c!.addendum.companyClauses).toEqual([
+        { id: ref.slice(3), title: "Balcony", text: WORDING, category: "other" },
+      ]);
+    });
+
+    test("the matching contract rule preselects its clauses (standard and approved company ones)", async () => {
+      const s = await setup();
+      const companyId = await unitCompany(s);
+      const ref = await clause(companyId);
+      const gone = await clause(companyId, { status: "rejected" });
+      await database.db.insert(contractRules).values({
+        id: newId(),
+        companyId,
+        category: "residential",
+        tenures: ["annual"],
+        minCheques: 1,
+        maxCheques: 4,
+        clauseIds: ["parking", ref, gone],
+        createdBy: "test",
+      });
+      const a = await defaultAddendumFor(s.ctx.database, s.leaseId);
+      expect(a.clauses).toEqual(["parking", ref]);
+      const view = (await (await s.staff(s.officer, `/api/leases/${s.leaseId}/contract`)).json()) as {
+        clauseOptions: { suggested: string[]; companyClauses: { ref: string }[] };
+      };
+      expect(view.clauseOptions.suggested).toEqual(["parking", ref]);
+      expect(view.clauseOptions.companyClauses.map((c) => c.ref)).toEqual([ref]);
+    });
+
+    test("the renderer refuses a cc: ref that has no wording", async () => {
+      const { contractDocument } = await import("@leasing/helpers");
+      const fields = {} as never;
+      expect(() =>
+        contractDocument(
+          {
+            ...(fields as object),
+            leaseRef: "X",
+            tenantNameEn: "T",
+            landlordNameEn: "L",
+            startOn: "2026-12-01",
+            endOn: "2027-11-30",
+            annualRentFils: 1,
+            depositFils: 0,
+            cheques: 1,
+            rentFreeDays: 0,
+            moveInOn: "2026-12-01",
+          } as never,
+          { clauses: [`cc:${newId()}`], freeText: null },
+          { version: 1, reference: "C-1", preparedOn: "2026-10-19" as CalendarDate, demo: true },
+        ),
+      ).toThrow("no wording");
+    });
+
+    test("without a matching rule the default clauses are used", async () => {
+      const s = await setup();
+      expect(await defaultAddendumFor(s.ctx.database, s.leaseId)).toEqual(DEFAULT_ADDENDUM);
+    });
   });
 
   test("final_contract can't be edited, and its preparer can't approve it", async () => {
@@ -377,6 +589,13 @@ describe.skipIf(noDb)("contract (step 5)", () => {
     expect((await leaseRow(s.leaseId)).state).toBe("CONTRACT");
 
     const landlordToken = s.signToken("landlord@demo.example")!;
+    // D44: the landlord signer is the company's authorised signatory and types their own name, not the company's.
+    const lview = (await (await s.portal(`/api/portal/${landlordToken}`)).json()) as Record<string, unknown>;
+    expect(lview).toMatchObject({
+      role: "landlord",
+      signerName: "Test Signatory",
+      signerCapacity: "Director, for and on behalf of Fictional Holdings LLC",
+    });
     expect(
       (
         await s.portal(`/api/portal/${landlordToken}/sign`, "POST", {
@@ -384,6 +603,10 @@ describe.skipIf(noDb)("contract (step 5)", () => {
           consent: true,
         })
       ).status,
+    ).toBe(422);
+    expect(
+      (await s.portal(`/api/portal/${landlordToken}/sign`, "POST", { typedName: "test  signatory", consent: true }))
+        .status,
     ).toBe(201);
     await s.drain();
     const [c] = await contractRows(s.leaseId);
@@ -785,5 +1008,241 @@ describe.skipIf(noDb)("end to end: contract → Ejari → move-in → rent → c
     expect(s.mailer.sent.at(-1)!.subject).toContain(`We received your report ${c!.ref}`);
     // Nothing on the lease moved on its own: it is still ACTIVE and a person decides what's next.
     expect((await leaseRow(s.leaseId)).state).toBe("ACTIVE");
+  });
+});
+
+describe.skipIf(noDb)("agent switches (D37): signing reminders and the Ejari draft (Postgres)", () => {
+  beforeEach(async () => {
+    database = await freshDatabase();
+  });
+  const setAutopilot = async (patch: Record<string, unknown>) => {
+    await database.db.insert(companyPolicy).values({
+      id: newId(),
+      version: 98,
+      effectiveFrom: "2000-01-01" as never,
+      values: { ...defaultCompanyPolicy, autopilot: { ...defaultCompanyPolicy.autopilot, ...patch } },
+      createdBy: "test",
+    });
+  };
+  const reminders = (s: S) =>
+    s.scheduler.jobs.filter((j) => j.name === LEASE_MAIL_JOB && j.data.kind === "sign_reminder");
+  const approveContract = async (s: S) => {
+    await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system" });
+    await decideApproval(s.ctx, (await approvalOf(s.leaseId, "final_contract")).id, s.officer, { decision: "approve" });
+    await s.drain();
+  };
+
+  test("sign_reminder on: one per signer after N days (singletonKey), a fresh link, nothing once signed", async () => {
+    await setAutopilot({ sign_reminder: true, sign_reminder_days: 2 });
+    const s = await setup();
+    s.ctx.demoMode = false; // real mode: a pg-boss job with startAfter
+    await approveContract(s);
+    const jobs = reminders(s);
+    expect(jobs).toHaveLength(2);
+    for (const j of jobs) {
+      expect(j.startAfter?.toISOString()).toBe("2026-11-03T04:00:00.000Z");
+      expect(j.singletonKey).toBe(`${s.leaseId}:sign_reminder:${j.data.key}#1`);
+    }
+    const oldToken = s.signToken("lena.applicant@demo.example")!;
+    const signers = await database.db.select().from(contractSigners);
+    const tenant = signers.find((x) => x.role === "tenant")!;
+    const job = jobs.find((j) => j.data.key === tenant.id)!;
+    const before = s.mailer.sent.length;
+    expect((await sendLeaseMail(s.ctx, job.data as unknown as LeaseMailJob)).sent).toBe(true);
+    const mail = s.mailer.sent.at(-1)!;
+    expect(mail.subject.startsWith("Reminder: tenancy contract to sign")).toBe(true);
+    expect(s.mailer.sent.length).toBe(before + 1);
+    expect(mail.attachments?.length).toBe(1);
+    // The reminder carries a fresh link; the old one stopped working.
+    const fresh = /\/t\/([A-Za-z0-9_-]{30,64})\/sign/.exec(mail.text)![1]!;
+    expect(fresh).not.toBe(oldToken);
+    expect((await s.portal(`/api/portal/${oldToken}`)).status).toBeGreaterThanOrEqual(400);
+    // Signed: the next reminder for that signer sends nothing.
+    expect(
+      (await s.portal(`/api/portal/${fresh}/sign`, "POST", { typedName: "Lena Testova", consent: true })).status,
+    ).toBe(201);
+    const other = jobs.find((j) => j !== job)!;
+    const n = s.mailer.sent.length;
+    expect((await sendLeaseMail(s.ctx, { ...(job.data as unknown as LeaseMailJob), seq: 5 })).sent).toBe(false);
+    expect(s.mailer.sent.length).toBe(n);
+    // The landlord has not signed: still reminded.
+    expect((await sendLeaseMail(s.ctx, other.data as unknown as LeaseMailJob)).sent).toBe(true);
+  });
+
+  test("sign_reminder off: nothing is queued, and a run after the switch was turned off sends nothing", async () => {
+    await setAutopilot({ sign_reminder: false });
+    const s = await setup();
+    await approveContract(s);
+    expect(reminders(s)).toHaveLength(0);
+    const signers = await database.db.select().from(contractSigners);
+    const n = s.mailer.sent.length;
+    const r = await sendLeaseMail(s.ctx, { leaseId: s.leaseId, kind: "sign_reminder", key: signers[0]!.id, seq: 1 });
+    expect(r.sent).toBe(false);
+    expect(s.mailer.sent.length).toBe(n);
+  });
+
+  test("ejari_draft_auto on: entering REGISTRATION drafts the submission, which still waits for a person", async () => {
+    await setAutopilot({ ejari_draft_auto: true });
+    const s = await setup();
+    await toRegistration(s);
+    const ej = await approvalOf(s.leaseId, "ejari_submission");
+    expect(ej).toMatchObject({ status: "pending", proposedBy: "system" });
+    expect(s.scheduler.jobs.some((j) => j.name === EJARI_SUBMIT_JOB)).toBe(false);
+    expect(await database.db.select().from(ejariSubmissions)).toHaveLength(0);
+  });
+
+  test("ejari_draft_auto off: an officer is asked to draft it; drafting still needs the same human approval", async () => {
+    await setAutopilot({ ejari_draft_auto: false });
+    const s = await setup();
+    await toRegistration(s);
+    expect(
+      await database.db
+        .select()
+        .from(approvals)
+        .where(and(eq(approvals.entityId, s.leaseId), eq(approvals.gate, "ejari_submission"))),
+    ).toHaveLength(0);
+    const [task] = await database.db
+      .select()
+      .from(tasks)
+      .where(eq(tasks.dedupeKey, `${s.leaseId}:draft_ejari_submission`));
+    expect(task).toMatchObject({ kind: "draft_ejari_submission", status: "open", assigneeRole: "leasing_officer" });
+    expect(s.scheduler.jobs.some((j) => j.name === EJARI_SUBMIT_JOB)).toBe(false);
+    // The officer drafts it (the existing route); the task is done and the gate is pending, not decided.
+    const r = await s.staff(s.officer, `/api/leases/${s.leaseId}/ejari/propose`, "POST");
+    expect([200, 201]).toContain(r.status);
+    const ej = await approvalOf(s.leaseId, "ejari_submission");
+    expect(ej.status).toBe("pending");
+    expect((await database.db.select().from(tasks).where(eq(tasks.id, task!.id)))[0]!.status).toBe("done");
+    expect(s.scheduler.jobs.some((j) => j.name === EJARI_SUBMIT_JOB)).toBe(false);
+  });
+
+  test("with every switch on, the human gates still stand: nothing is signed, approved or submitted by a switch", async () => {
+    const all = Object.fromEntries(
+      Object.keys(defaultCompanyPolicy.autopilot)
+        .filter((k) => typeof (defaultCompanyPolicy.autopilot as Record<string, unknown>)[k] === "boolean")
+        .map((k) => [k, true]),
+    );
+    await setAutopilot(all);
+    const s = await setup();
+    await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system" });
+    const fc = await approvalOf(s.leaseId, "final_contract");
+    expect(fc.status).toBe("pending");
+    await s.drain();
+    expect(s.mailer.sent.filter((m) => /contract to sign/i.test(m.subject))).toHaveLength(0);
+    await decideApproval(s.ctx, fc.id, s.officer, { decision: "approve" });
+    await s.drain();
+    for (const [email, name] of [
+      ["lena.applicant@demo.example", "Lena Testova"],
+      ["landlord@demo.example", "Test Signatory"],
+    ] as const) {
+      await s.portal(`/api/portal/${s.signToken(email)}/sign`, "POST", { typedName: name, consent: true });
+    }
+    await s.drain();
+    const ej = await approvalOf(s.leaseId, "ejari_submission");
+    expect(ej.status).toBe("pending");
+    expect(ej.decidedBy).toBeNull();
+    expect(await database.db.select().from(ejariSubmissions)).toHaveLength(0);
+  });
+});
+
+describe.skipIf(noDb)("copilot proposals on the contract (D42)", () => {
+  beforeEach(async () => {
+    database = await freshDatabase();
+  });
+
+  const propose = async (s: S, user: { id: string }, body: Record<string, unknown>) => {
+    const threadId = newId();
+    await database.db
+      .insert(copilotThreads)
+      .values({ id: threadId, userId: user.id, title: "t", createdAt: s.clock.now() });
+    const res = await s.app.request("/api/copilot/proposals", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${issueToken(SECRET, user.id, Date.now())}`,
+        "x-copilot-thread": threadId,
+      },
+      body: JSON.stringify(body),
+    });
+    return res;
+  };
+
+  test("prepare_contract: nothing is prepared until Confirm; Confirm prepares once and leaves final_contract pending", async () => {
+    const s = await setup();
+    const res = await propose(s, s.officer, { kind: "prepare_contract", leaseId: s.leaseId });
+    expect(res.status).toBe(201);
+    const p = (await res.json()) as { id: string; status: string; summary: { gate: string; emails: boolean } };
+    expect(p.status).toBe("pending");
+    expect(p.summary).toMatchObject({ gate: "final_contract", emails: false });
+    expect(await contractRows(s.leaseId)).toHaveLength(0);
+    const ok = await s.staff(s.officer, `/api/copilot/proposals/${p.id}/confirm`, "POST");
+    expect(ok.status).toBe(200);
+    const done = (await ok.json()) as { status: string; result: { approvalId: string } };
+    expect(done.status).toBe("confirmed");
+    expect(await contractRows(s.leaseId)).toHaveLength(1);
+    const fc = await approvalOf(s.leaseId, "final_contract");
+    expect(fc.status).toBe("pending");
+    expect(fc.id).toBe(done.result.approvalId);
+    expect(fc.proposedBy).toBe(`copilot:${s.officer.id}`);
+    // The contract is not sent: no signing mail until a person approves.
+    await s.drain();
+    expect(s.mailer.sent.filter((m) => /contract to sign/i.test(m.subject))).toHaveLength(0);
+    // Single use.
+    expect((await s.staff(s.officer, `/api/copilot/proposals/${p.id}/confirm`, "POST")).status).toBe(409);
+    expect(await contractRows(s.leaseId)).toHaveLength(1);
+    const events = await database.db.select().from(leaseEvents).where(eq(leaseEvents.entityId, s.leaseId));
+    expect(events.some((e) => e.type === "CONTRACT_PREPARED" && e.actor === `copilot:${s.officer.id}`)).toBe(true);
+    expect(events.some((e) => e.type === "COPILOT_PROPOSAL_CONFIRMED" && e.actor === `user:${s.officer.id}`)).toBe(
+      true,
+    );
+  });
+
+  test("prepare_contract: roles, cancel, expiry and the client can't confirm", async () => {
+    const s = await setup();
+    expect((await propose(s, s.finance, { kind: "prepare_contract", leaseId: s.leaseId })).status).toBe(403);
+    const p = (await (await propose(s, s.officer, { kind: "prepare_contract", leaseId: s.leaseId })).json()) as {
+      id: string;
+    };
+    // Another user can't confirm it; the copilot's own client can't reach confirm at all.
+    expect((await s.staff(s.manager, `/api/copilot/proposals/${p.id}/confirm`, "POST")).status).toBe(404);
+    const client = inProcessClient(s.app, issueToken(SECRET, s.officer.id, Date.now()));
+    await expect(client.propose(`/api/copilot/proposals/${p.id}/confirm`, {})).rejects.toThrow("invalid engine path");
+    expect((await s.staff(s.officer, `/api/copilot/proposals/${p.id}/cancel`, "POST")).status).toBe(200);
+    expect((await s.staff(s.officer, `/api/copilot/proposals/${p.id}/confirm`, "POST")).status).toBe(409);
+    const q = (await (await propose(s, s.officer, { kind: "prepare_contract", leaseId: s.leaseId })).json()) as {
+      id: string;
+    };
+    s.clock.set(new Date(s.clock.now().getTime() + 31 * 60_000));
+    expect((await s.staff(s.officer, `/api/copilot/proposals/${q.id}/confirm`, "POST")).status).toBe(409);
+    expect(await contractRows(s.leaseId)).toHaveLength(0);
+    // A lease that isn't waiting for a contract can't be proposed.
+    await database.db.update(leases).set({ state: "ACTIVE" }).where(eq(leases.id, s.leaseId));
+    expect((await propose(s, s.officer, { kind: "prepare_contract", leaseId: s.leaseId })).status).toBe(409);
+  });
+
+  test("resend_signing_link: Confirm re-sends the link as the user; finance is refused; the lease with nothing sent has no signer", async () => {
+    const s = await setup();
+    expect((await propose(s, s.officer, { kind: "resend_signing_link", leaseId: s.leaseId })).status).toBe(409);
+    await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system" });
+    const fc = await approvalOf(s.leaseId, "final_contract");
+    await decideApproval(s.ctx, fc.id, s.officer, { decision: "approve" });
+    await s.drain();
+    expect((await propose(s, s.finance, { kind: "resend_signing_link", leaseId: s.leaseId })).status).toBe(403);
+    const unclear = await propose(s, s.officer, { kind: "resend_signing_link", leaseId: s.leaseId });
+    expect(unclear.status).toBe(422);
+    const res = await propose(s, s.officer, { kind: "resend_signing_link", leaseId: s.leaseId, signer: "tenant" });
+    expect(res.status).toBe(201);
+    const p = (await res.json()) as { id: string; summary: { signerRole: string; emails: boolean } };
+    expect(p.summary).toMatchObject({ signerRole: "tenant", emails: true });
+    const before = s.mailer.sent.length;
+    expect((await s.staff(s.officer, `/api/copilot/proposals/${p.id}/confirm`, "POST")).status).toBe(200);
+    await s.drain();
+    expect(s.mailer.sent.length).toBe(before + 1);
+    const events = await database.db.select().from(leaseEvents).where(eq(leaseEvents.entityId, s.leaseId));
+    expect(events.some((e) => e.type === "SIGN_LINK_RESENT" && e.actor === `copilot:${s.officer.id}`)).toBe(true);
+    // Double confirm: refused, no second mail.
+    expect((await s.staff(s.officer, `/api/copilot/proposals/${p.id}/confirm`, "POST")).status).toBe(409);
+    const [row] = await database.db.select().from(copilotProposals).where(eq(copilotProposals.id, p.id));
+    expect(row!.status).toBe("confirmed");
   });
 });

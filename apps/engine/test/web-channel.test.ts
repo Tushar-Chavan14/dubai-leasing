@@ -7,7 +7,7 @@ import { conversations, type Database, parties, units } from "@leasing/db";
 import { FakeLlm, type SystemOneResponse } from "@leasing/llm";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { createApi } from "../src/api/app.ts";
-import { freshDatabase, noDb, testContext } from "./harness.ts";
+import { freshDatabase, noDb, testContext, testCompany } from "./harness.ts";
 
 const SECRET = "test-secret";
 const CHANNEL_SECRET = "w".repeat(40);
@@ -60,6 +60,7 @@ describe.skipIf(noDb)("web channel relay routes", () => {
     const landlord = newId();
     await database.db.insert(parties).values({ id: landlord, kind: "company", fullNameEn: "Fictional Holdings LLC" });
     await database.db.insert(units).values({
+      companyId: await testCompany(database),
       id: newId(),
       code: "JVC-0412",
       building: "Demo Residence",

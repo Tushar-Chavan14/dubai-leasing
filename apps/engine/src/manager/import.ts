@@ -1,5 +1,5 @@
 import { type Actor, addDays, type LeaseState, maskPiiText, newId, type UnitState } from "@leasing/core";
-import { leaseParties, leases, parties, type Tx, units, withTx } from "@leasing/db";
+import { companies, leaseParties, leases, parties, type Tx, units, withTx } from "@leasing/db";
 import { getRulebook, rulesVersionForTerm } from "@leasing/rulebook";
 import { and, eq, inArray, ne } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
@@ -9,6 +9,7 @@ import { parseCsv } from "../import/csv.ts";
 import { importedLeaseState, LeaseImportRow } from "../import/lease-row.ts";
 import { parseUnitRow } from "../import/unit-row.ts";
 import { DomainError } from "../errors.ts";
+import { companyLandlord } from "./company-legal.ts";
 import { appendEvent } from "./events.ts";
 import { createSameRentFallbackTask, scheduleLeaseMilestones } from "./milestones.ts";
 import { createUnitInTx } from "./units.ts";
@@ -39,7 +40,12 @@ const LIVE: LeaseState[] = ["CONTRACT", "REGISTRATION", "MOVE_IN", "ACTIVE", "RE
  * doesn't block the rest. Re-importing the same file skips rows already imported
  * (same unit + start date). Lease state comes from the dates (see `importedLeaseState`).
  */
-export async function importLeasesCsv(ctx: EngineContext, csv: string, actor: Actor): Promise<ImportRowResult[]> {
+export async function importLeasesCsv(
+  ctx: EngineContext,
+  csv: string,
+  actor: Actor,
+  companyId: string,
+): Promise<ImportRowResult[]> {
   let records: Record<string, string>[];
   try {
     records = parseCsv(csv);
@@ -59,7 +65,10 @@ export async function importLeasesCsv(ctx: EngineContext, csv: string, actor: Ac
       continue;
     }
     try {
-      results.push({ row, ...(await withTx(ctx.database, (tx) => importRow(ctx, tx, parsed.data, actor, row))) });
+      results.push({
+        row,
+        ...(await withTx(ctx.database, (tx) => importRow(ctx, tx, parsed.data, actor, row, companyId))),
+      });
     } catch (e) {
       results.push({ row, status: "error", reasons: [safeMessage(e)] });
     }
@@ -67,15 +76,22 @@ export async function importLeasesCsv(ctx: EngineContext, csv: string, actor: Ac
   return results;
 }
 
+const OTHER_COMPANY = "unit belongs to another company";
 const UNIT_EXISTS = "unit already exists — edit it in Units";
 
 /**
  * Imports units from CSV. Each row runs in its own transaction. Units are created through the
  * same path as the unit form (`createUnitInTx`): `UnitFields` validation, PREP state and a
  * UNIT_CREATED event with `source: "import"`. Existing codes are skipped, never overwritten.
- * The landlord, if named, is found or created as for the lease import.
+ * Each row names its company (name or slug); the company is the landlord (D44). Unknown company: row error.
  */
-export async function importUnitsCsv(ctx: EngineContext, csv: string, actor: Actor): Promise<UnitImportRowResult[]> {
+export async function importUnitsCsv(
+  ctx: EngineContext,
+  csv: string,
+  actor: Actor,
+  /** Default company for rows without a `company` value (the upload's `?company=`). */
+  defaultCompanyId: string | null,
+): Promise<UnitImportRowResult[]> {
   let records: Record<string, string>[];
   try {
     records = parseCsv(csv);
@@ -83,9 +99,12 @@ export async function importUnitsCsv(ctx: EngineContext, csv: string, actor: Act
     return [{ row: 0, status: "error", reasons: [(e as Error).message] }];
   }
   const results: UnitImportRowResult[] = [];
+  const known = await ctx.database.db
+    .select({ id: companies.id, name: companies.name, slug: companies.slug, active: companies.active })
+    .from(companies);
   for (const [i, record] of records.entries()) {
     const row = i + 2; // header is row 1
-    const parsed = parseUnitRow(record);
+    const parsed = parseUnitRow(record, defaultCompanyId, known);
     if (!parsed.ok) {
       results.push({
         row,
@@ -95,15 +114,18 @@ export async function importUnitsCsv(ctx: EngineContext, csv: string, actor: Act
       });
       continue;
     }
-    const { fields, landlord } = parsed;
+    const { fields } = parsed;
+    const companyId = fields.companyId;
     try {
       const result = await withTx(ctx.database, async (tx): Promise<Omit<UnitImportRowResult, "row">> => {
-        const [existing] = await tx.db.select({ id: units.id }).from(units).where(eq(units.code, fields.code));
+        const [existing] = await tx.db
+          .select({ id: units.id, companyId: units.companyId })
+          .from(units)
+          .where(eq(units.code, fields.code));
+        if (existing && existing.companyId !== companyId)
+          return { status: "error", ref: fields.code, reasons: [OTHER_COMPANY] };
         if (existing) return { status: "skipped", ref: fields.code, unitId: existing.id, reasons: [UNIT_EXISTS] };
-        const landlordPartyId = landlord
-          ? await findOrCreateParty(tx, { fullNameEn: landlord.name, email: landlord.email })
-          : null;
-        const unit = await createUnitInTx(ctx, tx, fields, actor, { landlordPartyId, source: "import" });
+        const unit = await createUnitInTx(ctx, tx, fields, actor, { source: "import" });
         return { status: "imported", ref: unit.code, unitId: unit.id, state: unit.state, reasons: [] };
       });
       results.push({ row, ...result });
@@ -137,6 +159,7 @@ async function importRow(
   r: LeaseImportRow,
   actor: Actor,
   rowNo: number,
+  companyId: string,
 ): Promise<Omit<ImportRowResult, "row">> {
   const today = ctx.clock.today();
   // The version in force when this term started (D23), not the import day.
@@ -148,7 +171,9 @@ async function importRow(
   // OCCUPIED when the lease turns ACTIVE.
   const unitState: UnitState = leaseState === "ACTIVE" || leaseState === "RENEWAL" ? "OCCUPIED" : "READY";
 
-  const landlordId = await findOrCreateParty(tx, { fullNameEn: r.landlord_name, email: r.landlord_email });
+  // The company is the landlord (D44); `landlord_name` / `landlord_email` columns in old files are ignored.
+  const { party: landlordParty } = await companyLandlord(tx, companyId);
+  const landlordId = landlordParty.id;
   const tenantId = await findOrCreateParty(tx, {
     fullNameEn: r.tenant_name,
     email: r.tenant_email,
@@ -159,6 +184,7 @@ async function importRow(
 
   let [unit] = await tx.db.select().from(units).where(eq(units.code, r.unit_code)).for("update");
   if (unit) {
+    if (unit.companyId !== companyId) return { status: "error", reasons: [OTHER_COMPANY] };
     const [dup] = await tx.db
       .select({ ref: leases.ref })
       .from(leases)
@@ -193,7 +219,6 @@ async function importRow(
         bedrooms: unit.bedrooms ?? r.bedrooms,
         areaSqft: unit.areaSqft ?? r.area_sqft ?? null,
         furnished: unit.furnished ?? r.furnished,
-        landlordPartyId: unit.landlordPartyId ?? landlordId,
         state: nextUnitState,
         updatedAt: ctx.clock.now(),
       })
@@ -216,6 +241,7 @@ async function importRow(
         code: r.unit_code,
         building: r.building,
         community: r.community,
+        companyId,
         unitNo: r.unit_no,
         dldPropertyNo: r.dld_property_no,
         makaniNo: r.makani_no,
@@ -223,7 +249,6 @@ async function importRow(
         bedrooms: r.bedrooms,
         areaSqft: r.area_sqft ?? null,
         furnished: r.furnished,
-        landlordPartyId: landlordId,
         state: unitState,
       })
       .returning();

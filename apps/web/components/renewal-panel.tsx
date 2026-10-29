@@ -114,7 +114,7 @@ export function RenewalPanel({
             const p = n.editedProposal ?? n.proposal;
             return (
               <li key={n.id}>
-                <Link href={`/inbox/${n.id}`} className="list-row">
+                <Link href={`/work?approval=${n.id}`} className="list-row">
                   <div>
                     <div className="title">{n.title}</div>
                     <div className="meta">

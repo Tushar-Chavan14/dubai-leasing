@@ -76,7 +76,7 @@ export function UnitActions({ unitId, actions, canEdit, needsPriceApproval, pend
               <IconWarning size={16} />
               <span>
                 Asking rent is waiting for a leasing manager.{" "}
-                <Link className="link" href={`/inbox/${pendingPriceApprovalId ?? priceState.id}`}>
+                <Link className="link" href={`/work?approval=${pendingPriceApprovalId ?? priceState.id}`}>
                   View the approval
                 </Link>
               </span>

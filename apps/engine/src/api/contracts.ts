@@ -1,10 +1,11 @@
 import { Addendum, maskPii, type StaffRole } from "@leasing/core";
-import { contracts, contractSigners, ejariSubmissions } from "@leasing/db";
+import { contracts, contractSigners, ejariSubmissions, leases, units } from "@leasing/db";
 import { asc, desc, eq } from "drizzle-orm";
 import type { Hono } from "hono";
 import { z } from "zod";
 import type { EngineContext } from "../context.ts";
-import { prepareContract, resendSignLink } from "../manager/contracts.ts";
+import { approvedClauses } from "../manager/clause-refs.ts";
+import { defaultAddendumFor, prepareContract, reprepareContract, resendSignLink } from "../manager/contracts.ts";
 import { reproposeEjariSubmission } from "../manager/registration.ts";
 import { type AuthEnv, requireRole } from "./auth.ts";
 
@@ -29,7 +30,25 @@ export async function leaseContractView(db: EngineContext["database"]["db"], lea
         .where(eq(contractSigners.contractId, cs[0]!.id))
         .orderBy(asc(contractSigners.role))
     : [];
+  // What the prepare form offers: the unit's company clauses that are approved, and what the
+  // matching contract rule preselects.
+  const [lu] = await db
+    .select({ companyId: units.companyId })
+    .from(leases)
+    .innerJoin(units, eq(units.id, leases.unitId))
+    .where(eq(leases.id, leaseId));
+  const approved = lu ? await approvedClauses({ db }, lu.companyId) : [];
+  const suggested = lu ? (await defaultAddendumFor({ db }, leaseId)).clauses : [];
   return {
+    clauseOptions: {
+      suggested,
+      companyClauses: approved.map((c) => ({
+        ref: `cc:${c.id}`,
+        title: c.title,
+        text: c.textEn,
+        hasValues: c.hasValues,
+      })),
+    },
     contracts: cs.map((c, i) =>
       maskPii({
         id: c.id,
@@ -97,6 +116,12 @@ export function registerContractRoutes(api: Hono<AuthEnv>, ctx: EngineContext) {
     requireRole(c.get("user"), LEASING);
     const addendum = Addendum.parse(await c.req.json());
     const r = await prepareContract(ctx, uuid(c.req.param("id")), { addendum, actor: actorOf(c) });
+    return c.json(r, r.status === "prepared" ? 201 : 422);
+  });
+
+  api.post("/leases/:id/contract/reprepare", async (c) => {
+    requireRole(c.get("user"), LEASING);
+    const r = await reprepareContract(ctx, uuid(c.req.param("id")), actorOf(c));
     return c.json(r, r.status === "prepared" ? 201 : 422);
   });
 

@@ -1,0 +1,28 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`contract rendered in the company template every blank is filled from contract fields, formatted by code; the PDF text layer is stable 1`] = `
+"RESIDENTIAL TENANCY AGREEMENT
+Made between Fictional Holdings LLC (Landlord) and LENA TESTOVA (Tenant).
+Article I Premises
+The premises are unit 1608 in Demo Marina Tower.
+Article II Term and Rent
+The term starts on 1 December 2026 and ends on 30 November 2027.
+The annual rent is AED 135,000, paid in 4 cheques.
+A security deposit of AED 6,750 is held.
+Article III Signatures
+Landlord
+Tenant
+Addendum
+- Minor maintenance: The tenant pays for minor repairs up to AED 500 per item caused by ordinary use. The landlord
+pays for structural repairs and for repairs to the building's main systems.
+- Subletting: The tenant may not sublet the unit or any part of it without the landlord's written consent.
+Article IV Additional terms required by law
+The rent above is fixed for the whole term. It can only change at renewal, with written notice given in time under Dubai
+law.
+This contract is registered in Ejari after both parties sign.
+Each party signs this contract electronically through a personal link. The signature record is added as the last page of the
+signed copy.
+Contract reference C-REF, version 1. Company template v1. Demo contract: all people and numbers in the demo are fictional.
+Fictional Realty Co. Tenancy
+Fictional Realty Co. Page 1 of 1"
+`;

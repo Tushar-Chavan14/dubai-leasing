@@ -3,20 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
-import {
-  IconArea,
-  IconBook,
-  IconBuilding,
-  IconChart,
-  IconChat,
-  IconChecklist,
-  IconHome,
-  IconInbox,
-  IconKey,
-  IconPeople,
-  IconSpark,
-  IconUpload,
-} from "../lib/icons";
+import { IconBook, IconBuilding, IconChecklist, IconHome, IconKey } from "../lib/icons";
 
 interface Item {
   href: string;
@@ -25,22 +12,14 @@ interface Item {
   count?: number;
 }
 
-export function Nav({ inboxCount }: { inboxCount: number }) {
+export function Nav({ waitingCount, maintenance = false }: { waitingCount: number; maintenance?: boolean }) {
   const path = usePathname();
   const items: Item[] = [
-    { href: "/", label: "Overview", icon: <IconHome size={17} /> },
-    { href: "/inbox", label: "Approvals", icon: <IconInbox size={17} />, count: inboxCount },
-    { href: "/conversations", label: "Enquiries", icon: <IconChat size={17} /> },
-    { href: "/applications", label: "Applicants", icon: <IconPeople size={17} /> },
-    { href: "/leases", label: "Leases", icon: <IconKey size={17} /> },
+    { href: "/", label: "Home", icon: <IconHome size={17} /> },
+    { href: "/work", label: "Workspace", icon: <IconChecklist size={17} />, count: waitingCount },
     { href: "/units", label: "Units", icon: <IconBuilding size={17} /> },
-    { href: "/tasks", label: "Tasks", icon: <IconChecklist size={17} /> },
-    { href: "/maintenance", label: "Maintenance", icon: <IconKey size={17} /> },
-    { href: "/metrics", label: "Metrics", icon: <IconChart size={17} /> },
-    { href: "/sri", label: "Rent index", icon: <IconArea size={17} /> },
-    { href: "/rules", label: "Rules", icon: <IconBook size={17} /> },
-    { href: "/copilot", label: "Copilot", icon: <IconSpark size={17} /> },
-    { href: "/import", label: "Import", icon: <IconUpload size={17} /> },
+    ...(maintenance ? [{ href: "/maintenance", label: "Maintenance", icon: <IconKey size={17} /> }] : []),
+    { href: "/settings", label: "Settings", icon: <IconBook size={17} /> },
   ];
   const isActive = (href: string) => (href === "/" ? path === "/" : path === href || path.startsWith(`${href}/`));
   return (

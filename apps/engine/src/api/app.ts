@@ -2,9 +2,10 @@ import type { LocalDiskStore } from "@leasing/adapters";
 import { leasingMetrics } from "../manager/metrics.ts";
 import { resetDemoData } from "../demo/reset-data.ts";
 import { seedMissingDemoLeases } from "../demo/seed.ts";
-import { ApprovalDecision, maskPiiText } from "@leasing/core";
-import { staffUsers, withTx } from "@leasing/db";
-import { asc, eq } from "drizzle-orm";
+import { ApprovalDecision, AutopilotPatch, maskPiiText, newId, QUIET_HOURS_SAME } from "@leasing/core";
+import { companies, companyPolicy, staffUsers, withTx } from "@leasing/db";
+import { asc, desc, eq, sql } from "drizzle-orm";
+
 import { type Context, Hono } from "hono";
 import { z } from "zod";
 import { unprocessable } from "../errors.ts";
@@ -12,7 +13,7 @@ import type { EngineDemoClock } from "../clock.ts";
 import type { EngineContext } from "../context.ts";
 import { DomainError, notFound } from "../errors.ts";
 import { decideApproval } from "../manager/approvals.ts";
-import { getCompanyPolicy } from "../manager/events.ts";
+import { appendEvent, getCompanyPolicy, getCompanyPolicyVersion } from "../manager/events.ts";
 import { importLeasesCsv, importUnitsCsv } from "../manager/import.ts";
 import { sweepDueDeadlines } from "../manager/milestones.ts";
 import { type AuthEnv, issueToken, requireRole, requireUser } from "./auth.ts";
@@ -24,22 +25,48 @@ import { registerTenancyDemoRoutes, registerTenancyRoutes } from "./tenancy.ts";
 import { leaseContractView, registerContractRoutes } from "./contracts.ts";
 import { registerCopilotRoutes } from "./copilot.ts";
 import { registerPortalRoutes } from "./portal.ts";
+import { registerPortfolioRoutes } from "./portfolio.ts";
+import { registerCopilotReadRoutes } from "./copilot-reads.ts";
 import { registerReadRoutes } from "./reads.ts";
 import { registerRenewalRoutes } from "./renewals.ts";
+import { registerStaffWorkRoutes } from "./staff-work.ts";
+import { registerSriRoutes } from "./sri.ts";
+import { registerLeaseDocumentRoutes } from "./lease-documents.ts";
 import { registerRulebookRoutes } from "./rulebooks.ts";
 import { registerUnitRoutes } from "./units.ts";
+import { registerWorkspaceRoutes } from "./workspace.ts";
+
+/** Advisory lock number that serializes autopilot saves. */
+const AUTOPILOT_LOCK = 7_301_001;
 
 /** POST /import/<kind>: admin or leasing manager; CSV body or {"csv": "..."}. */
 const importRoute = (
-  run: (csv: string, actor: `user:${string}`) => Promise<{ status: "imported" | "skipped" | "error" }[]>,
+  ctx: EngineContext,
+  run: (
+    csv: string,
+    actor: `user:${string}`,
+    companyId: string | null,
+  ) => Promise<{ status: "imported" | "skipped" | "error" }[]>,
+  /** Units import: each row names its `company`; `?company=` is only the default for rows without one (D44). */
+  opts: { companyOptional?: boolean } = {},
 ) =>
   async function handler(c: Context<AuthEnv>) {
     requireRole(c.get("user"), ["admin", "leasing_manager"]);
+    const slug = c.req.query("company");
+    if (!slug && !opts.companyOptional)
+      throw new DomainError("company is required: pass ?company=<slug>", 400, "company_required");
+    const [company] = slug
+      ? await ctx.database.db
+          .select({ id: companies.id, active: companies.active })
+          .from(companies)
+          .where(eq(companies.slug, slug))
+      : [null];
+    if (slug && (!company || !company.active)) throw notFound("company");
     const type = c.req.header("content-type") ?? "";
     const csv = type.includes("application/json")
       ? z.object({ csv: z.string().min(1).max(2_000_000) }).parse(await c.req.json()).csv
       : await c.req.text();
-    const rows = await run(csv, `user:${c.get("user").id}`);
+    const rows = await run(csv, `user:${c.get("user").id}`, company?.id ?? null);
     return c.json({
       imported: rows.filter((r) => r.status === "imported").length,
       skipped: rows.filter((r) => r.status === "skipped").length,
@@ -141,16 +168,71 @@ export function createApi(ctx: EngineContext, opts: ApiOptions) {
     return c.json({ ...l, ...(await leaseContractView(db, l.id)) });
   });
   registerUnitRoutes(api, ctx, opts.mediaStore);
-  registerRenewalRoutes(api, ctx);
+  // Always on: the rent index (pricing) and generated contract documents.
+  registerSriRoutes(api, ctx);
+  registerLeaseDocumentRoutes(api, ctx);
+  registerStaffWorkRoutes(api, ctx);
+  // Move-in through move-out: only with TENANCY_OPS.
+  if (ctx.tenancyOps) registerRenewalRoutes(api, ctx);
   registerReadRoutes(api, ctx);
+  registerWorkspaceRoutes(api, ctx);
+  registerCopilotReadRoutes(api, ctx);
   registerRulebookRoutes(api, ctx);
+  registerPortfolioRoutes(api, ctx);
   registerApplicationRoutes(api, ctx);
   registerContractRoutes(api, ctx);
   registerConversationRoutes(api, ctx);
-  registerTenancyRoutes(api, ctx);
+  if (ctx.tenancyOps) registerTenancyRoutes(api, ctx);
   // The copilot calls this same app in-process, as the user (architecture §8b).
   registerCopilotRoutes(api, ctx, app);
   api.get("/policy", async (c) => c.json(await withTx(ctx.database, (tx) => getCompanyPolicy(tx, ctx.clock.today()))));
+  api.put("/policy/autopilot", async (c) => {
+    requireRole(c.get("user"), ["admin"]);
+    const body = AutopilotPatch.parse(await c.req.json());
+    const userId = c.get("user").id;
+    const out = await withTx(ctx.database, async (tx) => {
+      // Saves serialize: each reads the newest version and merges on its values.
+      await tx.db.execute(sql`select pg_advisory_xact_lock(${AUTOPILOT_LOCK})`);
+      const [latest] = await tx.db
+        .select({ v: companyPolicy.version })
+        .from(companyPolicy)
+        .orderBy(desc(companyPolicy.version))
+        .limit(1);
+      const cur = await getCompanyPolicyVersion(tx, ctx.clock.today());
+      const values = { ...cur.values, autopilot: { ...cur.values.autopilot, ...body } };
+      if (values.autopilot.quiet_hours_start === values.autopilot.quiet_hours_end)
+        throw new DomainError(QUIET_HOURS_SAME, 400, "quiet_hours_same", ["quiet_hours_end: " + QUIET_HOURS_SAME]);
+      const before = cur.values.autopilot as Record<string, unknown>;
+      const changed = Object.entries(body).some(([k, v]) => v !== undefined && before[k] !== v);
+      if (!changed && cur.version !== null) return { version: cur.version, autopilot: cur.values.autopilot };
+      const version = (latest?.v ?? 0) + 1;
+      const policyId = newId();
+      await tx.db.insert(companyPolicy).values({
+        id: policyId,
+        version,
+        effectiveFrom: ctx.clock.today(),
+        values,
+        createdBy: `user:${userId}`,
+      });
+      // Audit (rule 4): who changed which toggle, from what to what. The policy is company-wide, so
+      // the entity is the new policy row (kind "company").
+      await appendEvent(tx, ctx, {
+        entity: { kind: "company", id: policyId },
+        type: "AUTOPILOT_CHANGED",
+        actor: `user:${userId}`,
+        payload: {
+          policyVersion: version,
+          previousVersion: cur.version,
+          changes: Object.entries(body)
+            .filter(([k, v]) => v !== undefined && before[k] !== v)
+            .map(([step, to]) => ({ step, from: before[step], to })),
+        },
+        rulesVersion: null,
+      });
+      return { version, autopilot: values.autopilot };
+    });
+    return c.json(out);
+  });
   api.get("/deadlines", async (c) => {
     const days = z.coerce.number().int().min(1).max(400).catch(60).parse(c.req.query("days"));
     return c.json(await q.upcomingDeadlines(db, ctx.clock.today(), days));
@@ -159,11 +241,13 @@ export function createApi(ctx: EngineContext, opts: ApiOptions) {
 
   api.post(
     "/import/leases",
-    importRoute((csv, actor) => importLeasesCsv(ctx, csv, actor)),
+    importRoute(ctx, (csv, actor, companyId) => importLeasesCsv(ctx, csv, actor, companyId!)),
   );
   api.post(
     "/import/units",
-    importRoute((csv, actor) => importUnitsCsv(ctx, csv, actor)),
+    importRoute(ctx, (csv, actor, companyId) => importUnitsCsv(ctx, csv, actor, companyId), {
+      companyOptional: true,
+    }),
   );
 
   if (ctx.demoMode && opts.demoClock) {
@@ -213,7 +297,7 @@ export function createApi(ctx: EngineContext, opts: ApiOptions) {
       const r = await resetDemoData(ctx.database, opts.ejariMockUrl ?? "http://localhost:4100");
       return c.json({ ok: true, today: ctx.clock.today(), ...r });
     });
-    registerTenancyDemoRoutes(api, ctx);
+    if (ctx.tenancyOps) registerTenancyDemoRoutes(api, ctx);
   }
 
   app.route("/api", api);

@@ -24,6 +24,9 @@ export const ContractFields = z.object({
   landlordNameEn: z.string().min(1),
   landlordIdNo: z.string().nullable(),
   landlordEmail: z.string().nullable(),
+  /** Optional so contracts stored before these existed still parse. */
+  landlordNationality: z.string().nullable().optional(),
+  landlordPhone: z.string().nullable().optional(),
   propertyUsage: z.enum(["residential", "commercial"]),
   building: z.string(),
   community: z.string(),
@@ -39,6 +42,8 @@ export const ContractFields = z.object({
   depositFils: z.number().int().min(0),
   rentFreeDays: z.number().int().min(0),
   moveInOn: calDate,
+  /** Date of the contract: today (Clock) when a company template is rendered; never stored on the contract. */
+  contractOn: calDate.nullable().optional(),
 });
 export type ContractFields = z.infer<typeof ContractFields>;
 export type ContractFieldName = keyof ContractFields;
@@ -82,10 +87,34 @@ export const CONTRACT_CLAUSES: Readonly<Record<ContractClauseId, { title: string
   },
 });
 
+/** A company clause chosen for the addendum: `cc:<uuid>` of an approved `company_clauses` row. */
+export const CompanyClauseRef = z.string().regex(/^cc:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+export type CompanyClauseRef = `cc:${string}`;
+export const companyClauseRef = (id: string): CompanyClauseRef => `cc:${id}`;
+export const isCompanyClauseRef = (v: string): v is CompanyClauseRef => CompanyClauseRef.safeParse(v).success;
+export const companyClauseIdOf = (ref: CompanyClauseRef): string => ref.slice(3);
+
+/** The wording of a company clause as printed, copied by the Manager from the approved row. */
+export const CompanyClauseText = z.object({
+  id: z.string(),
+  title: z.string(),
+  text: z.string(),
+  /** Clause category from the sample review; the approval screen flags the legal ones. */
+  category: z.string().optional(),
+});
+export type CompanyClauseText = z.infer<typeof CompanyClauseText>;
+
 export const Addendum = z.object({
-  clauses: z.array(ContractClauseId).max(10),
+  clauses: z
+    .array(z.union([ContractClauseId, CompanyClauseRef]) as z.ZodType<ContractClauseId | CompanyClauseRef>)
+    .max(20),
   /** Staff-written extra terms. Untrusted text: reviewed by a model for conflicts, shown to the approver. */
   freeText: z.string().trim().max(4000).nullable(),
+  /**
+   * Wording of the `cc:` clauses above, filled in by the Manager from approved rows when the contract
+   * is prepared (anything a client sends here is overwritten). Printed under "Additional terms (company)".
+   */
+  companyClauses: z.array(CompanyClauseText).max(20).optional(),
 });
 export type Addendum = z.infer<typeof Addendum>;
 

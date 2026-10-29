@@ -64,6 +64,8 @@ export function buildContractFields(
       l.kind === "company" ? l.tradeLicenceNo : l.emiratesIdNo,
     ),
     landlordEmail: from("landlordEmail", "party", l.id, "email", l.email),
+    landlordNationality: from("landlordNationality", "party", l.id, "nationality", l.nationality ?? null),
+    landlordPhone: from("landlordPhone", "party", l.id, "phone", l.phone ?? null),
     propertyUsage: from("propertyUsage", "unit", u.id, "kind", u.kind),
     building: from("building", "unit", u.id, "building", u.building),
     community: from("community", "unit", u.id, "community", u.community),

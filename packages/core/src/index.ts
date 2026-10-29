@@ -17,5 +17,6 @@ export * from "./names.ts";
 export * from "./offer.ts";
 export * from "./pii.ts";
 export * from "./policy.ts";
+export * from "./portfolio.ts";
 export * from "./roles.ts";
 export * from "./state/index.ts";

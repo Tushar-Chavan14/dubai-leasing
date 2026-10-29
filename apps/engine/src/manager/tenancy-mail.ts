@@ -26,6 +26,7 @@ import { formalReminderNotice, templateAck } from "@leasing/helpers";
 import { getRulebook } from "@leasing/rulebook";
 import { and, eq } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
+import { landlordNameForLease } from "./company-legal.ts";
 import { getCompanyPolicy } from "./events.ts";
 import type { FormalReminderProposal } from "./gate-rules.ts";
 import { createLink } from "./links.ts";
@@ -150,18 +151,14 @@ export async function composeTenancyMail(
     const [p] = await tx.db.select().from(payments).where(eq(payments.id, proposal.paymentId));
     // Paid since approval, or already sent: nothing to send.
     if (!p || (p.status !== "overdue" && p.status !== "bounced") || p.formalReminderSentOn) return null;
-    const [landlord] = await tx.db
-      .select({ party: parties })
-      .from(leaseParties)
-      .innerJoin(parties, eq(parties.id, leaseParties.partyId))
-      .where(and(eq(leaseParties.leaseId, lease.id), eq(leaseParties.role, "landlord")));
+    const landlordName = await landlordNameForLease(tx, lease.id);
     const r = getRulebook(lease.rulesVersion);
     const reference = `FR-${lease.ref.replace(/[^A-Za-z0-9]/g, "")}-${p.seq}`;
     const doc = formalReminderNotice({
       reference,
       issuedOn: ctx.clock.today(),
       tenantName: tenant.fullNameEn,
-      landlordName: landlord?.party.fullNameEn ?? "The landlord",
+      landlordName,
       unitLabel,
       leaseRef: lease.ref,
       ejariNo: lease.ejariNo,

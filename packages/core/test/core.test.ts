@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import {
   addDays,
+  AUTOPILOT_NUMBERS,
+  AUTOPILOT_STEPS,
+  AutopilotPatch,
+  AutopilotStep,
+  DEFAULT_AUTOPILOT,
+  DEFAULT_AUTOPILOT_NUMBERS,
+  LOCKED_STEPS,
+  postponeOutOfQuietHours,
   addMonths,
   aed,
   calendarDate as d,
@@ -173,6 +181,20 @@ describe("env", () => {
     expect(env.ENGINE_PORT).toBe(4000);
     expect(env.DEMO_MODE).toBe(true);
   });
+  test("per-helper chat models are optional and independent", () => {
+    const none = loadEnv(base);
+    expect(none.LEASING_ASSISTANT_MODEL).toBeUndefined();
+    expect(none.CONTRACT_AI_MODEL).toBeUndefined();
+    const set = loadEnv({
+      ...base,
+      CHAT_MODEL: "gemma4:e4b",
+      LEASING_ASSISTANT_MODEL: "qwen3.5:9b  # pinned",
+      CONTRACT_AI_MODEL: "",
+    });
+    expect(set.CHAT_MODEL).toBe("gemma4:e4b");
+    expect(set.LEASING_ASSISTANT_MODEL).toBe("qwen3.5:9b");
+    expect(set.CONTRACT_AI_MODEL).toBeUndefined();
+  });
   test("rejects a non-Dubai timezone", () => {
     expect(() => loadEnv({ ...base, TIMEZONE: "UTC" })).toThrow(/TIMEZONE/);
   });
@@ -216,5 +238,89 @@ describe("move-out forms (step 10)", () => {
     const ids = defaultCompanyPolicy.deductionPriceList.map((p) => p.id);
     expect(new Set(ids).size).toBe(ids.length);
     expect(CompanyPolicy.parse(defaultCompanyPolicy).deductionPriceList).toHaveLength(ids.length);
+  });
+});
+
+describe("company policy autopilot", () => {
+  test("older stored policy without autopilot parses with the defaults", () => {
+    const { autopilot: _drop, ...old } = defaultCompanyPolicy;
+    expect(CompanyPolicy.parse(old).autopilot).toEqual({ ...DEFAULT_AUTOPILOT, ...DEFAULT_AUTOPILOT_NUMBERS });
+  });
+  test("a policy stored with only the first six switches keeps them and fills the rest", () => {
+    const six = {
+      chat_viewing_booking: false,
+      apply_without_viewing: true,
+      auto_kyc_verify: false,
+      auto_send_offer: false,
+      auto_send_counter: true,
+      auto_prepare_contract: false,
+    };
+    const a = CompanyPolicy.parse({ ...defaultCompanyPolicy, autopilot: six }).autopilot;
+    expect(a.chat_viewing_booking).toBe(false);
+    expect(a.apply_without_viewing).toBe(true);
+    expect(a.viewing_reminder).toBe(true);
+    expect(a.held_offer_auto_release).toBe(false);
+    expect(a.kyc_chase_hours).toBe(48);
+    expect(a.agent_daily_action_cap).toBe(5);
+  });
+  test("defaults: the new switches start at today's behaviour or the safer option", () => {
+    const off = [
+      "no_show_followup",
+      "held_offer_auto_release",
+      "contract_ai_auto_approve_valueless",
+      "copilot_proactive_drafts",
+    ];
+    for (const id of off) expect(DEFAULT_AUTOPILOT[id as AutopilotStep]).toBe(false);
+    expect(DEFAULT_AUTOPILOT_NUMBERS).toMatchObject({
+      kyc_chase_hours: 48,
+      sign_reminder_days: 3,
+      held_offer_release_hours: 24,
+      quiet_hours_start: 22,
+      quiet_hours_end: 8,
+      agent_daily_action_cap: 5,
+    });
+  });
+  test("numbers are bounded: a save outside the bounds is refused", () => {
+    for (const [k, v] of Object.entries(AUTOPILOT_NUMBERS)) {
+      expect(AutopilotPatch.safeParse({ [k]: v.min }).success).toBe(true);
+      expect(AutopilotPatch.safeParse({ [k]: v.max }).success).toBe(true);
+      expect(AutopilotPatch.safeParse({ [k]: v.min - 1 }).success).toBe(false);
+      expect(AutopilotPatch.safeParse({ [k]: v.max + 1 }).success).toBe(false);
+    }
+    expect(AutopilotPatch.safeParse({ kyc_chase_hours: 1.5 }).success).toBe(false);
+    expect(AutopilotPatch.safeParse({ bogus: true }).success).toBe(false);
+  });
+  test("every step is listed once in a group, and none is a locked gate", () => {
+    const ids = AUTOPILOT_STEPS.map((s) => s.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids.toSorted()).toEqual(AutopilotStep.options.toSorted());
+    const locked = LOCKED_STEPS.map((l) => l.label.toLowerCase());
+    for (const s of AUTOPILOT_STEPS) {
+      expect(locked).not.toContain(s.label.toLowerCase());
+      expect(s.id).not.toMatch(/final_contract|ejari_submission|ejari_submit|submit|reservation|kyc_review/);
+    }
+    expect(LOCKED_STEPS.map((l) => l.label)).toEqual([
+      "Final contract",
+      "Ejari submission",
+      "Offer or price outside limits",
+      "Flagged KYC",
+      "Recording a reservation payment",
+    ]);
+  });
+});
+
+describe("quiet hours", () => {
+  // Dubai is UTC+4: 22:00 Dubai = 18:00 UTC.
+  const at = (iso: string) => new Date(iso);
+  test("outside the window nothing moves", () => {
+    expect(postponeOutOfQuietHours(at("2026-11-02T08:00:00Z"), 22, 8)).toEqual(at("2026-11-02T08:00:00Z"));
+  });
+  test("late evening moves to the next morning, early morning to the same morning", () => {
+    expect(postponeOutOfQuietHours(at("2026-11-02T19:30:00Z"), 22, 8)).toEqual(at("2026-11-03T04:00:00Z"));
+    expect(postponeOutOfQuietHours(at("2026-11-03T01:00:00Z"), 22, 8)).toEqual(at("2026-11-03T04:00:00Z"));
+  });
+  test("a window that does not wrap, and an empty one", () => {
+    expect(postponeOutOfQuietHours(at("2026-11-02T10:00:00Z"), 12, 15)).toEqual(at("2026-11-02T11:00:00Z"));
+    expect(postponeOutOfQuietHours(at("2026-11-02T19:30:00Z"), 5, 5)).toEqual(at("2026-11-02T19:30:00Z"));
   });
 });

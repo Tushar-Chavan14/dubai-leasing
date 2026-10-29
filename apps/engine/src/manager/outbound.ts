@@ -17,6 +17,7 @@ import { renewalNotice } from "@leasing/helpers";
 import { canSendRenewalNotice, getRulebook, noticeSentInTime } from "@leasing/rulebook";
 import { and, asc, desc, eq, inArray, isNull, like } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
+import { landlordNameForLease } from "./company-legal.ts";
 import { appendEvent, getCompanyPolicy } from "./events.ts";
 import { effectiveProposal, RenewalNoticeProposal } from "./gate-rules.ts";
 import { createLink } from "./links.ts";
@@ -236,7 +237,7 @@ export async function sendRenewalNotice(ctx: EngineContext, approvalId: string):
       .innerJoin(parties, eq(parties.id, leaseParties.partyId))
       .where(eq(leaseParties.leaseId, lease.id));
     const tenant = tenantRows.find((t) => t.role === "tenant")?.party;
-    const landlord = tenantRows.find((t) => t.role === "landlord")?.party;
+    const landlordName = await landlordNameForLease(tx, lease.id);
     const [unit] = await tx.db.select().from(units).where(eq(units.id, lease.unitId));
     if (!tenant?.email || !unit) {
       await createTask(ctx, tx, lease.id, {
@@ -255,7 +256,7 @@ export async function sendRenewalNotice(ctx: EngineContext, approvalId: string):
       reference,
       issuedOn: today,
       tenantName: tenant.fullNameEn,
-      landlordName: landlord?.fullNameEn ?? "The landlord",
+      landlordName,
       unit: {
         code: unit.code,
         building: unit.building,

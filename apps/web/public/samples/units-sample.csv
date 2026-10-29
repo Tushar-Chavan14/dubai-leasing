@@ -1,4 +1,4 @@
-unit_code,building,community,unit_no,kind,dld_property_no,makani_no,plot_no,dewa_premise_no,bedrooms,bathrooms,area_sqft,floor,parking_spaces,furnished,asking_rent_aed,description,virtual_tour_url,landlord_name,landlord_email
-SMP-0101,Sample Palm Residence,Sample Community,101,residential,SAMPLE-DLD-0101,1000000101,SAMPLE-PLOT-1,SAMPLE-DEWA-0101,0,1,450,1,0,yes,48000,Fictional studio for the import sample.,,Sample Landlord One,landlord.one@example.com
-SMP-0702,Sample Palm Residence,Sample Community,702,residential,SAMPLE-DLD-0702,1000000702,SAMPLE-PLOT-1,SAMPLE-DEWA-0702,2,2,1150,7,1,no,"95,000",Fictional two-bedroom with a balcony.,https://tour.example.com/smp-0702,Sample Landlord One,landlord.one@example.com
-SMP-G01,Sample Business Court,Sample Business Park,G01,commercial,,,,,,,900,0,2,no,,Fictional shop unit; details to follow.,,Sample Holdings LLC,
+unit_code,building,community,unit_no,kind,dld_property_no,makani_no,plot_no,dewa_premise_no,bedrooms,bathrooms,area_sqft,floor,parking_spaces,furnished,asking_rent_aed,description,virtual_tour_url,company
+SMP-0101,Sample Palm Residence,Sample Community,101,residential,SAMPLE-DLD-0101,1000000101,SAMPLE-PLOT-1,SAMPLE-DEWA-0101,0,1,450,1,0,yes,48000,Fictional studio for the import sample.,,Silverline Properties
+SMP-0702,Sample Palm Residence,Sample Community,702,residential,SAMPLE-DLD-0702,1000000702,SAMPLE-PLOT-1,SAMPLE-DEWA-0702,2,2,1150,7,1,no,"95,000",Fictional two-bedroom with a balcony.,https://tour.example.com/smp-0702,Silverline Properties
+SMP-G01,Sample Business Court,Sample Business Park,G01,commercial,,,,,,,900,0,2,no,,Fictional shop unit; details to follow.,,Silverline Properties

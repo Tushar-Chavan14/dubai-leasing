@@ -15,16 +15,22 @@ export async function POST(req: Request, ctx: { params: Promise<{ kind: string }
   const token = await sessionToken();
   if (!token) return Response.json({ error: "Sign in again to import." }, { status: 401 });
   const form = await req.formData();
+  const company = String(form.get("company") ?? "").trim();
+  if (!company && kind !== "units")
+    return Response.json({ error: "Choose the company these rows belong to." }, { status: 400 });
   const file = form.get("file");
   const pasted = String(form.get("csv") ?? "");
   const csv = file instanceof File && file.size > 0 ? await file.text() : pasted;
   if (!csv.trim()) return Response.json({ error: "Choose a CSV file or paste the rows." }, { status: 400 });
-  const res = await fetch(`${ENGINE_URL}/api/import/${kind}`, {
-    method: "POST",
-    cache: "no-store",
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: JSON.stringify({ csv }),
-  });
+  const res = await fetch(
+    `${ENGINE_URL}/api/import/${kind}${company ? `?company=${encodeURIComponent(company)}` : ""}`,
+    {
+      method: "POST",
+      cache: "no-store",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ csv }),
+    },
+  );
   const body = await res.json().catch(() => ({ error: `Engine returned ${res.status}` }));
   if (res.status === 403)
     return Response.json({ error: `Only admins and leasing managers can import ${kind}.` }, { status: 403 });

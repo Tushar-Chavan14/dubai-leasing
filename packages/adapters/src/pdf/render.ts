@@ -20,7 +20,7 @@ const MUTED = rgb(0.41, 0.44, 0.46);
 const LINE = rgb(0.85, 0.87, 0.85);
 
 /** Standard PDF fonts only cover WinAnsi; replace characters they can't draw. */
-const safe = (s: string) =>
+export const safe = (s: string) =>
   s
     .replace(/[−–—]/g, "-")
     .replace(/[‘’]/g, "'")

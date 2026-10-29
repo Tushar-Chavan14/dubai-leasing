@@ -1,6 +1,6 @@
 import { formatDubaiDateTime } from "@leasing/adapters";
-import { type CalendarDate, formatAed, maskPii } from "@leasing/core";
-import { helperRuns, leaseParties, leases, parties, units, withTx } from "@leasing/db";
+import { type CalendarDate, formatAed, maskPii, PropertyCategory, SIZE_BAND_LIMITS, SizeBand } from "@leasing/core";
+import { companies, helperRuns, leaseParties, leases, parties, units, withTx } from "@leasing/db";
 import { RenewalContext, renewalHelper } from "@leasing/helpers";
 import {
   activeRulesVersion,
@@ -15,7 +15,8 @@ import type { Hono } from "hono";
 import { z } from "zod";
 import type { EngineContext } from "../context.ts";
 import { notFound } from "../errors.ts";
-import { bookableUnitsWithSlots } from "../manager/availability.ts";
+import { bookableUnitsWithSlots, resolveCompany } from "../manager/availability.ts";
+import { unitCards } from "../manager/enquiries.ts";
 import { getCompanyPolicy } from "../manager/events.ts";
 import { lookupSri } from "../manager/sri.ts";
 import type { AuthEnv } from "./auth.ts";
@@ -41,18 +42,65 @@ export function registerReadRoutes(api: Hono<AuthEnv>, ctx: EngineContext) {
         community: z.string().trim().min(2).max(120).optional(),
         maxRentFils: z.coerce.number().int().positive().optional(),
         code: z.string().trim().min(2).max(40).optional(),
+        /** A company by name or slug (the same match as the public chat). */
+        company: z.string().trim().min(2).max(120).optional(),
+        /** Default is residential; `all` shows every category. */
+        category: z.union([PropertyCategory, z.literal("all")]).optional(),
+        sizeBand: SizeBand.optional(),
       })
       .parse(c.req.query());
     const now = ctx.clock.now();
-    const found = await withTx(ctx.database, async (tx) =>
-      bookableUnitsWithSlots(tx, now, await getCompanyPolicy(tx, ctx.clock.today()), q, { units: 10, slotsPerUnit: 6 }),
-    );
+    const today = ctx.clock.today();
+    const found = await withTx(ctx.database, async (tx) => {
+      let companyId: string | undefined;
+      if (q.company) {
+        const hit = await resolveCompany(tx, today, q.company);
+        if (!hit.ok)
+          throw notFound(
+            hit.reason === "ambiguous"
+              ? `company (several match: ${hit.names.join("; ")})`
+              : `company (companies with listings: ${hit.names.join("; ")})`,
+          );
+        companyId = hit.id;
+      }
+      const category = q.category ?? (q.sizeBand ? "commercial" : undefined);
+      const band = q.sizeBand && category !== "residential" ? SIZE_BAND_LIMITS[q.sizeBand] : undefined;
+      const policy = await getCompanyPolicy(tx, today);
+      const rows = await bookableUnitsWithSlots(
+        tx,
+        now,
+        today,
+        policy,
+        {
+          bedrooms: q.bedrooms,
+          community: q.community,
+          maxRentFils: q.maxRentFils,
+          code: q.code,
+          companyId,
+          category,
+          minAreaSqft: band?.min,
+          maxAreaSqft: band?.max,
+        },
+        { units: 10, slotsPerUnit: 6 },
+      );
+      const cards = await unitCards(
+        tx,
+        rows.map((r) => r.unit),
+        policy.autopilot.apply_without_viewing,
+      );
+      const names = new Map(
+        (await tx.db.select({ id: companies.id, name: companies.name }).from(companies)).map((k) => [k.id, k.name]),
+      );
+      return rows.map((r) => ({ ...r, card: cards.find((k) => k.unitId === r.unit.id) ?? null, names }));
+    });
     return c.json(
-      found.map(({ unit: u, slots }) => ({
+      found.map(({ unit: u, slots, card, names }) => ({
         unitId: u.id,
         code: u.code,
         building: u.building,
         community: u.community,
+        company: names.get(u.companyId) ?? null,
+        category: u.category,
         bedrooms: u.bedrooms,
         bathrooms: u.bathrooms,
         areaSqft: u.areaSqft,
@@ -60,6 +108,7 @@ export function registerReadRoutes(api: Hono<AuthEnv>, ctx: EngineContext) {
         askingRentFils: u.askingRentFils,
         askingRent: formatAed(u.askingRentFils ?? 0),
         nextViewingSlots: slots.map((at) => ({ at: dubaiIso(at), label: formatDubaiDateTime(at) })),
+        card,
       })),
     );
   });

@@ -65,7 +65,7 @@ export default async function MaintenancePage() {
                           })}
                           {late ? " (late)" : ""}
                         </span>
-                        <Link className="link" href={`/leases/${t.leaseId}`}>
+                        <Link className="link" href={`/work?kind=lease&id=${t.leaseId}`}>
                           {leaseRef}
                         </Link>
                         {complaintRef && <span>report {complaintRef}</span>}

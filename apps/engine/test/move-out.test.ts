@@ -32,7 +32,8 @@ import { sweepDueDeadlines } from "../src/manager/milestones.ts";
 import { ensureMoveInInspection } from "../src/manager/move-in.ts";
 import { EJARI_CANCEL_JOB, EXIT_COMPARE_JOB, runComparison } from "../src/manager/move-out.ts";
 import { addTenancyPhoto } from "../src/manager/tenancy-files.ts";
-import { addStaff, agreeingDecision, freshDatabase, leaseCsv, noDb, testContext } from "./harness.ts";
+import { isTimedAgentJob } from "../src/manager/agent-switches.ts";
+import { addStaff, agreeingDecision, freshDatabase, leaseCsv, noDb, testContext, testCompany } from "./harness.ts";
 
 const START = "2026-10-19T04:00:00Z"; // 2026-10-19, 08:00 Dubai
 const SECRET = "test-secret";
@@ -84,6 +85,7 @@ async function setup(opts: { ejari?: FakeEjari; vision?: () => unknown } = {}) {
   const drain = async () => {
     while (done < t.scheduler.jobs.length) {
       const j = t.scheduler.jobs[done++]!;
+      if (isTimedAgentJob(j)) continue; // a reminder pg-boss would hold until its startAfter
       if (j.name === LEASE_MAIL_JOB) await sendLeaseMail(t.ctx, j.data as unknown as LeaseMailJob);
       if (j.name === INBOUND_JOB) await processInbound(t.ctx, String(j.data.inboundEventId));
       if (j.name === EXIT_COMPARE_JOB)
@@ -93,7 +95,7 @@ async function setup(opts: { ejari?: FakeEjari; vision?: () => unknown } = {}) {
   };
   const importLease = async (row: Record<string, string>) => {
     const csv = leaseCsv([{ unit_code: "MO-1", start_on: "2026-01-01", end_on: "2026-11-05", bedrooms: "0", ...row }]);
-    const [r] = await importLeasesCsv(t.ctx, csv, "import");
+    const [r] = await importLeasesCsv(t.ctx, csv, "import", await testCompany(t.ctx.database));
     if (!r?.leaseId) throw new Error(JSON.stringify(r));
     return r.leaseId;
   };

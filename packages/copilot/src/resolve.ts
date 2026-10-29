@@ -33,3 +33,34 @@ export async function resolveLeaseId(engine: EngineClient, ref: string): Promise
       .join(", ")}. Ask which one.`,
   );
 }
+
+interface RecordHit {
+  kind: "application" | "lease";
+  id: string;
+  ref: string;
+  title: string;
+  unitCode: string;
+  stage: string;
+}
+
+/**
+ * Turns an application reference (A-7KQ2MX), unit code or applicant name into an application id.
+ * Several matches fail with the candidates so the model can ask the user.
+ */
+export async function resolveApplication(engine: EngineClient, ref: string): Promise<RecordHit> {
+  const q = ref.trim();
+  const found = await engine.get<{ rows: RecordHit[] }>(`/api/copilot/records?q=${encodeURIComponent(q)}&limit=20`);
+  const apps = found.rows.filter((r) => r.kind === "application");
+  const norm = q.toLowerCase();
+  const exact = apps.filter((r) => r.ref.toLowerCase() === norm || r.unitCode.toLowerCase() === norm);
+  const pick = exact.length === 1 ? exact[0] : apps.length === 1 ? apps[0] : undefined;
+  if (pick) return pick;
+  if (!apps.length) throw new EngineError(404, `no application found for "${q}"`);
+  throw new EngineError(
+    409,
+    `"${q}" matches several applications: ${apps
+      .slice(0, 5)
+      .map((r) => `${r.ref} (${r.unitCode})`)
+      .join(", ")}. Ask which one.`,
+  );
+}

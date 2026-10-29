@@ -16,7 +16,7 @@
 flowchart LR
   subgraph Ways_in[Ways in]
     TG[Telegram bot<br/>grammY, enquiries only]
-    WEB[Web app<br/>inbox, demo console]
+    WEB[Web app<br/>Home, Workspace, settings]
     COP[Staff copilot<br/>chat panel in staff app]
     MCP[MCP server<br/>phase 5]
   end
@@ -73,13 +73,18 @@ stateDiagram-v2
   LISTED --> PREP: withdraw
 ```
 
+Every unit belongs to a company and has a `category` (`residential`, `commercial`, `retail`) and
+an optional `subtype` (decision D32). The READY guard checks the asking rent against the rule
+band from `allowedAskingRange` (§4, Asking-rent rules), not a per-bedroom range, and the
+checklist skips bedrooms for commercial and retail units.
+
 ### Application (one per applicant per unit)
 
 ```mermaid
 stateDiagram-v2
   [*] --> ENQUIRY
   ENQUIRY --> VIEWING: slot booked
-  ENQUIRY --> SCREENING: applies (walk-in; not offered in the staff UI)
+  ENQUIRY --> SCREENING: applies (walk-in; only if autopilot.apply_without_viewing)
   VIEWING --> SCREENING: attended the viewing
   VIEWING --> WITHDRAWN: no-show
   SCREENING --> OFFER: KYC verified
@@ -89,6 +94,31 @@ stateDiagram-v2
   OFFER --> WITHDRAWN: declines / expires / withdraws
   RESERVED --> CONVERTED: lease created (CONTRACT)
 ```
+
+**More agent switches (D37).** `autopilot` also holds `agent_free_text_book`, `agent_free_text_apply`,
+`agent_sri_answers`, `agent_suggest_alternatives`, `viewing_reminder`, `no_show_followup`,
+`kyc_chase`, `sign_reminder`, `quiet_hours`, `held_offer_auto_release`,
+`contract_ai_auto_approve_valueless`, `ejari_draft_auto`, `copilot_proactive_drafts`, and the bounded
+numbers `viewing_reminder_hours` (1 to 72), `kyc_chase_hours` (6 to 336), `sign_reminder_days`
+(1 to 14), `held_offer_release_hours` (1 to 168), `quiet_hours_start` and `quiet_hours_end` (0 to 23,
+Dubai) and `agent_daily_action_cap` (1 to 50). Reminders are `application.mail` kinds
+`viewing_reminder`, `no_show` and `docs_chase` (singletonKey `<applicationId>:<kind>#<seq>@<variant>`)
+and `lease.mail` kind `sign_reminder` (`<leaseId>:sign_reminder:<signerId>#1`), queued with
+`startAfter` moved out of quiet hours; the sender re-reads the switch and the entity's state.
+`held_offer_auto_release` queues `offer.release` (`<applicationId>:offer-release#<revision>`) that
+calls `sendHeldOffer` as `system:auto-release` (limits re-checked). `ejari_draft_auto` off: entering
+REGISTRATION raises task `draft_ejari_submission` instead of drafting; the `ejari_submission` gate is
+unchanged. Auto-approved clauses are stored with `approvedBy = system:auto-approve`.
+The chat agent's daily cap counts `AGENT_ACTION` events per conversation per Dubai day.
+
+**Held steps and the ENQUIRY to SCREENING toggle (D33).** `CompanyPolicy.autopilot` can hold
+steps inside the limits; a person is asked through a task and the event is logged with the
+`policyVersion`. `APPLIED` from ENQUIRY needs `apply_without_viewing` (else `409 viewing_required`).
+`auto_send_offer` and `auto_send_counter` off: `OFFER_HELD` plus task `send_offer`; an officer sends
+with `POST /api/applications/:id/offer/send` (`OFFER_SENT`, expiry from that day). `auto_kyc_verify`
+off: a clean KYC run still opens `kyc_review` (flag `manual_review`). `auto_prepare_contract` off:
+`CONTRACT_PREP_HELD` plus task "Prepare the contract". Gates stay as listed below; toggles never
+remove one.
 
 **Phase 2a (as built), `apps/engine/src/manager/applications.ts`:**
 - **Viewing first.** Staff create an application with a required viewing time (`viewing_at`,
@@ -113,6 +143,18 @@ stateDiagram-v2
   the ID's English name becomes `full_name_en`; an Emirates ID already on another party moves the
   application to that party). Anything flagged → `kyc_review` approval (leasing officer, approving
   applies `KYC_VERIFIED`). A blocking flag (expired document) can't be approved.
+- **Document check visibility and failure.** The job runs the helper with no DB transaction open
+  and logs each step as an audit event by `helper:kyc` (`KYC_CHECK_STARTED` with document count and
+  model, `KYC_DOC_READ` per document with seconds, `KYC_DECISION_STEP`, `KYC_CHECK_FINISHED` or
+  `KYC_CHECK_FAILED`; no ID numbers, `maskPii` on every payload), so the record's activity log fills
+  in while the models work. Every vision call has its own limit (`KYC_DOC_TIMEOUT_SECONDS`, default
+  120); a timeout or model error is retried once, then the helper stops at once with `needs_human`
+  (rule 6): an officer task `kyc_check_failed`, no approval, nothing advances. A check still
+  `received` after `KYC_STUCK_MINUTES` (default 10, from Clock) or ended `needs_human` shows
+  "Document check didn't finish: <reason>" in the log with "Retry document check" (leasing roles,
+  `POST /api/applications/:id/kyc/retry`, audited `KYC_CHECK_RETRY_REQUESTED`, singletonKey
+  `<applicationId>:kyc:<attempt>`, refused with 409 `check_running` while one runs). The retry
+  reopens the same submission; the first run to finish applies it, the other finds it processed.
 - **Conditional gates are enforced in `advanceApplication`:** `KYC_VERIFIED` needs a clean KYC
   helper run or an approved `kyc_review`; `OFFER_REVISED` with terms outside company limits needs
   an approved `offer_out_of_limits`. Approvals are consumed like lease gates.
@@ -222,7 +264,7 @@ sequenceDiagram
 - **Prepare** (`prepareContract`; the reservation's `contract.prepare` job prepares only the
   first version and never supersedes one in progress; only a tenant verified through an
   application's KYC check can be contracted): the Contract helper copies every field from its record (the
-  KYC-verified tenant party, the landlord party, the unit, the lease terms and the accepted
+  KYC-verified tenant party, the landlord (the unit's company, D44: its legal party and signatory), the unit, the lease terms and the accepted
   offer) and keeps `{entity, id, column}` per field. Missing data (no DLD property number, KYC
   not verified, an ID expiring before the start) → `needs_human` and a task. The chat model
   reads only the staff-written free-text addendum and returns flags (`conflict`, `unclear`,
@@ -335,6 +377,28 @@ Notice text never hard-codes a legal value: the notice period in the PDF comes f
 Company limits (deposit %, cheques, rent-free days, refund threshold, price range) live in a
 separate `companyPolicy` table, editable by Admin, versioned the same way.
 
+### Asking-rent rules and contract rules (D32)
+
+Company policy, not law, so it lives in `packages/core/src/portfolio.ts` and the engine
+(`manager/pricing.ts`), not in the rulebook. `allowedAskingRange(unit, sri, rule)` returns
+`{min, max, basis}` or null:
+
+- Band = SRI average × (1 + min bp) … × (1 + max bp), intersected with the rule's optional AED
+  floor and ceiling. Commercial and retail use the per-sqft SRI rate × `areaSqft`; without an
+  area only the AED bounds apply. No SRI row: AED bounds only. No bounds at all: null, and any
+  price change opens `price_out_of_range` (fail closed).
+- Integer fils, rounded toward the narrower range.
+- `findRentRule` picks the most specific active rule for the unit's company, category, emirate
+  and usage: community, then subtype, then category.
+- `price_out_of_range` keeps its approver (leasing manager); its reason cites the rule, the SRI
+  row and the band as `sources`.
+- `contract_rules` set the offer's cheque limits (`applyContractRule` over `CompanyPolicy`);
+  tenures and clause ids are stored but not enforced yet. Retail maps to commercial usage
+  (`propertyUsageFor`) for Ejari, the contract and the own-use lock.
+- Rules are immutable: a change inserts a row with `supersedesId` and deactivates the old one.
+  API (`apps/engine/src/api/portfolio.ts`): `/api/companies`, `/api/rent-rules`,
+  `/api/contract-rules`; reads for staff, writes for admins. Imports need `?company=`.
+
 ## 5. Helpers
 
 ### Contract
@@ -367,6 +431,39 @@ export interface Helper<C, D> {
 The runner wraps every helper: validate input → run → validate output → on invalid retry once
 → else `needs_human`. It writes a `helper_runs` row (input hash, output, duration, model, tokens).
 
+### Contract template and customer agent (slice 3, D35, D36)
+
+- **`contract_template`** (`packages/helpers/src/contract-template`): reads a sample contract (PDF
+  through `unpdf@1.9.1`, or pasted text) and returns proposed clauses with a verbatim quote. The
+  helper gets bytes through a `readFile` dependency and never touches disk or the database. Caps:
+  10 MB, 60 pages, 120k characters, 30 s parse. Output is cut by a quote guard (the quote must be
+  in the document) and `hasValues` is set by code, never by the model. Scans end as `needs_human`.
+  The engine job `contract.template` stores the result as `company_clauses` (section 10); an
+  admin approves each one before a contract can use it.
+- **`customer_agent`** (`packages/helpers/src/customer-agent`): the web chat's free-text agent, a
+  LangGraph tool loop over nine tools (search, unit details, slots, book, apply, status, status
+  check, choice card, handoff). Tools are Zod-typed and call Manager functions through a backend
+  the engine supplies; none takes an identity. Replies are post-checked against the turn's tool
+  output (rule 1), and each turn has a 60 s deadline and a concurrency cap. Telegram does not use it.
+
+### Contract structure and voice (slice 4, D38, D39)
+- **`contract_structure`** (`packages/helpers/src/contract-structure`): reads a company's sample
+  contract into sections, blanks and a look. Code copies the wording, finds blanks and reads fonts,
+  margins, header, footer, logo and accent colour; the model (`CONTRACT_AI_MODEL`, else
+  `CHAT_MODEL`) only proposes headings and labels. Blank mapping (D43): a data sheet
+  (`datasheet.ts`) is generated from the records (lease, unit, company with its legal party and
+  signatory (D44), tenant party,
+  application; the tenant's identity is the KYC-verified one); once per template version, code
+  rules (`mapping.ts`: synonyms, landlord/tenant scoping) map a blank to a data key, then the model
+  picks a key or "none" from key descriptions only (no values), code checks type fit, anything else
+  is `leave_empty`. At prepare, code copies the value; a blank with no value prints as an empty
+  line, except core legal/money keys (rent, dates, deposit, cheques, parties, unit, period) which
+  block. `final_contract` lists each filled blank with its source key and what was left empty. Review
+  and approval are code (`render.ts`): wrong-type mappings, DLD or Ejari marks (header, footer, logo block
+  until dropped; body wording needs "Neutral reference, not branding"), values per paragraph
+  (`review.valuesConfirmed`), WinAnsi limit, required terms appended (D38).
+- **Voice** is speech to text only (`VOICE_MODEL`, local Ollama audio input), see section 8.
+
 ### Run loop
 
 ```mermaid
@@ -392,6 +489,10 @@ flowchart LR
 | Registration | rejection → payload field (`none` option, threshold from policy) | — | — | payload from the signed contract; one typo-class name fix from a KYC-verified source |
 | Collections | payment-reply and move-in comment class (`paymentReplyClassifier`, `moveInCommentClassifier`: complaint, hardship, dispute → a person) | — (every reminder is a fixed template) | — | instalment schedule (`paymentSchedule`), reminder chain, formal reminder proposal, eviction-eligible date from the lease's rulebook (D27) |
 | Complaint Triage | category, urgency 0–3, safety, legal threat, system instruction, language | 2–3 sentence acknowledgement from the category and urgency band only (never the tenant's text), post-checked; fixed EN/AR template on any doubt (D28) | — | routing (escalate / review / ticket), ticket due hours from policy |
+| Contract template (D35) | - | clause proposals from a sample contract (`CHAT_MODEL`; text only, the quote must appear in the document) | `VISION_MODEL` only if a page renderer is wired (not yet) | PDF text, caps, quote guard, `hasValues`, approval, `cc:` ids |
+| Contract structure (D38) | - | headings and blank-to-field proposals from a sample (`CONTRACT_AI_MODEL`, else `CHAT_MODEL`), validated by code | - | wording copy, blanks, look, mapping types, approval problems, render |
+| Voice (D39) | - | speech to text (`VOICE_MODEL`, default `gemma4:e4b`, local audio) | - | type, size and length caps, masking, nothing stored |
+| Customer agent (D36) | - | tool loop for web chat free text (`CUSTOMER_AGENT_MODEL`, else `CHAT_MODEL`; local Ollama, tool calling) | - | every tool body, identity, choice cards, value post-check, deadline, fixed fallbacks |
 | Renewal & Notice | reply class | — | — | cap, dates, template |
 | Exit & Deposit | — | — | photo differences per room, move-in vs move-out, price-list ids only, suggestions an officer confirms (`exit_compare`, D29) | statement: price list × quantity, capped at the deposit, refund, approval reasons (`exit_deposit`) |
 
@@ -399,8 +500,8 @@ flowchart LR
 
 ```ts
 export interface Llm {
-  chat(messages: ChatMessage[], opts?: { schema?: z.ZodTypeAny }): Promise<ChatResult>;
-  vision(images: Buffer[], prompt: string, schema: z.ZodTypeAny): Promise<unknown>;
+  chat(messages: ChatMessage[], opts?: { schema?: z.ZodTypeAny; timeoutMs?: number }): Promise<ChatResult>;
+  vision(images: Buffer[], prompt: string, schema: z.ZodTypeAny, opts?: { timeoutMs?: number }): Promise<unknown>;
   decide(state: SystemOneContent, questions: Record<string, SystemOneQuestion>): Promise<SystemOneResponse>;
 }
 ```
@@ -410,6 +511,11 @@ export interface Llm {
   for decisions. `chat` and `vision` refuse non-loopback hosts and `-cloud` model tags
   (`assertLocalModel`): contract and tenant text, like ID images, stay on the machine. The staff
   copilot uses `ChatOllama` (tool calling) separately.
+- `ModelGate` (one slot): every `OllamaLlm` on the engine shares it; queued `interactive` calls (KYC,
+  leasing assistant, decisions, voice) start before queued `background` ones (Contract AI jobs, which
+  also get `BACKGROUND_MODEL_TIMEOUT_SECONDS`, default 300, per call). It never cancels a running call.
+  The copilot and the customer agent use `ChatOllama` outside the gate. `vision` and `chat` take a
+  per-call `timeoutMs` that cancels the request (`ModelTimeoutError`).
 - Later: `ApiKeyLlm` for clients who bring their own provider key. Decision calls then fall back
   to a constrained chat call with an enum schema.
 - Model tags come from env (`CHAT_MODEL`, `VISION_MODEL`, `DECISION_MODEL`). Pin them.
@@ -519,6 +625,11 @@ Notes:
 - **Demo mode:** a sweep job runs every 30 s and every time the clock is fast-forwarded. It
   processes all `deadlines` rows with `due_on <= clock.today()` and `status = 'pending'`.
   In demo mode, deadlines are driven by the sweep, not by `startAfter`, so fast-forward works.
+- **`TENANCY_OPS` (D33, default false).** Off: lease milestones and term payments are not
+  scheduled, and the sweep (and fast-forward) marks a due lease deadline `skipped`
+  (`MILESTONE_SKIPPED`) when `isTenancyMilestone` matches it (allowlist in `manager/milestones.ts`:
+  renewal milestones, payment milestones, `move_out_date`). Application deadlines and contract or
+  Ejari steps are untouched. Tenancy routes and inbound types are not served.
 - `deadlines` table mirrors scheduled milestones for visibility in the UI and idempotency
   (`unique(entity_id, milestone)`). Milestone keys carry the term end
   (`renewal_assess@2027-03-29`) so a renewed term gets fresh rows (D17).
@@ -666,11 +777,22 @@ Three channels with fixed jobs:
 | Channel | Direction | Used for |
 |---|---|---|
 | Telegram bot (grammY) | Inbound + replies in the same chat | Enquiries and viewing booking (step 2) only |
-| Public web chat (`/chat`, D31) | Inbound + replies in the page, no login | Same as Telegram: enquiries and viewing booking only |
+| Public web chat (`/customer/chat`, D31, D34, D36) | Inbound + replies in the page, no login | Enquiries, viewings, Apply now and a read-only status check |
 | Email (Nodemailer, SMTP) | Outbound | Everything else: viewing confirmations, offers, contract and upload links, reminders, formal reminders, notices, receipts, deposit statements |
 
 Tenant actions after the enquiry stage happen in the tenant portal (§8a), reached by links in
 emails. No inbound email parsing in the MVP.
+
+### Voice input (D39)
+A microphone button in the public chat and the staff copilot records at most 30 s (`audio/webm`
+or `audio/ogg`, 2 MB). The web routes (`/api/public/voice`, `/api/voice/transcribe`) relay to the
+engine (`/channel/web/voice`, `/api/voice/transcribe`), refusing a missing `Content-Length` (411)
+and reading the body as a stream cut off past the cap (413). The engine sends the audio to
+`VOICE_MODEL` on local Ollama; the bytes stay in memory for the call and are never stored. The
+reply is the PII-masked transcript, which fills the message box: the person reads and sends it as
+typed text, so it is untrusted input like any message. Limits: 20 per IP per hour (public), 60 per
+user per hour (staff). Speaking back uses only the browser's local voices. Voice opens no new
+channel (rule 10).
 
 ### Telegram enquiry bot
 
@@ -756,10 +878,20 @@ and general questions only. No lease or application records, no uploads, no emai
   and forward the client IP in `X-Forwarded-For`; the browser never calls the engine. One
   conversation per visitor (`external_chat_id` = visitor id), status always `bot`.
 - **Flow.** As Telegram: contact first (email required, phone optional with Skip), a Change
-  email button always available, the name asked at booking. Search asks area, then bedrooms,
-  then furnished, then shows unit cards (rent = approved asking rent via `formatAed`). A booking
+  email button always available, the name asked at booking. Search asks emirate (Dubai open;
+  Abu Dhabi and Sharjah shown as "Coming soon", `disabled` buttons), area, category (residential,
+  commercial, retail), bedrooms (residential) or size band (up to 1,000, 1,000 to 3,000, over
+  3,000 sq ft), an optional budget (chips from the matching units' asking rents, rounded by code;
+  skipped when nothing to choose), then shows unit cards (rent = approved asking rent via
+  `formatAed`). Every chip is built from what is bookable. Free text is read by the decision
+  model (emirate, category, size band, area, bedrooms) and a budget by code; code validates every
+  value. Each web reply carries `filters` (`ChatFilters`) beside `reply` so the grid follows.
+  Telegram stays residential-only. A booking
   calls `createApplication(…, source "web_chat", viewingAt)`, actor `enquirer:<conversationId>`;
   the invitation goes by email. Stored text is masked.
+- **Booking toggle.** With `autopilot.chat_viewing_booking` off, a booking creates the application in
+  ENQUIRY with no viewing, logs `VIEWING_REQUESTED`, opens the task "Confirm a viewing time" and sends
+  no invitation; a repeat request for the same unit and email gets the same reply.
 - **Autopilot, no handoff.** Where Telegram creates an `enquiry_handoff` task and sets
   `handoff`, the web chat sends a fixed reply and changes nothing. `existing_tenant` (as the only
   reason) gets a fixed EN/AR reply pointing to the "My tenancy" link in the customer's latest
@@ -769,6 +901,18 @@ and general questions only. No lease or application records, no uploads, no emai
   `POST /channel/web/history` (3000 per IP per hour; optional `after`, last 100 messages).
   `POST /channel/telegram/updates` rejects non-telegram updates and the web route rejects
   non-web ones.
+- **Apply now and status check (D34).** `apply:<unitId>` (only with the `apply_without_viewing`
+  toggle on) asks the name (commercial and retail: company name, then contact person) and creates
+  an application with source `web_chat`. Open applications per email are capped at 3 across
+  `web_form` and `web_chat`. `status:start` emails a 6-digit code (HMAC stored in
+  `visitor_verifications`, code sealed in the job payload, 3 per email and 20 per IP per hour, 15
+  minutes, 5 attempts); the reply before verification is always neutral. A verified session (24 h,
+  bound to the conversation and the email) shows stages, next step, and current offer rent and
+  cheques; re-send buttons email the existing upload, offer, signing or Ejari links to the address
+  on the record, once per Dubai day.
+- **Agent routing (D36).** With a model configured, free text that is not a button, a contact
+  step or a short answer at a name step goes to the customer agent (section 5). Replies can carry
+  a choice card (`flow.choiceSet`, single-use picks). Telegram still uses D24.
 - **Public routes** (engine, secret-gated, per-IP limits per hour, in memory):
   `GET /public/units`, `/public/units/:id`, `/public/units/:id/photos/:photoId` and
   `/public/units/:id/slots` (3000 reads per IP; bookable units only, the same rule as the chat;
@@ -778,8 +922,9 @@ and general questions only. No lease or application records, no uploads, no emai
   slot must be a free grid slot (409 `viewing_slot_taken`); unit no longer bookable → 409
   `unit_not_bookable`; same email already open on that unit → 409; at most 3 open `web_form`
   applications per email (429). The invitation email goes out as for staff bookings.
-- **Web pages:** `/properties`, `/properties/[id]`, `/chat` (full page) and a floating chat
-  launcher on public pages. Units without a photo show a generated placeholder (no stock
+- **Web pages (D34):** `/customer/properties`, `/customer/properties/[id]` and `/customer/chat`
+  (full page) under one layout with a nav; `/properties`, `/properties/:id` and `/chat` redirect
+  (307). The chat launcher links to the chat page. Units without a photo show a generated placeholder (no stock
   images).
 - **Deployment requirement.** Per-IP limits trust `x-real-ip`, else the rightmost `x-forwarded-for` hop
   (added by our proxy; earlier hops are client-supplied): the web app must sit behind a reverse proxy that overwrites
@@ -926,7 +1071,7 @@ the Manager never calls it, and it never sits on the path of a state change.
 ### Where it runs
 
 ```
-apps/web (staff app)   chat panel on lease / unit / application / inbox pages + /copilot page
+apps/web (staff app)   chat on Home, panel (Ctrl+J) on Workspace / unit pages
         │  POST /api/copilot/chat (streamed), staff session cookie
 apps/engine            hosts the copilot graph; checks auth and role
         │
@@ -963,8 +1108,38 @@ staff UI.
 - The user's message is PII-masked before it reaches the model; stored messages, tool
   arguments and tool errors are masked too. Each tool call is stored as soon as it completes,
   so the audit keeps it even if the turn later fails.
-- Staff app: "Ask" button in the top bar (Ctrl+J) opens a slide-over chat that knows the page's
-  lease, unit or approval; `/copilot` lists your conversations. Unverified values are
+- Staff app (D33): the chat lives on Home (earlier conversations under a disclosure; `/copilot`
+  redirects there). The "Ask" button in the top bar (Ctrl+J) opens a slide-over chat that knows the
+  Workspace record or approval.
+- **Pipeline tools and rich replies (D41).** The copilot covers enquiry to Ejari and answers counts
+  and lists. Read tools: `pipeline_summary` (counts per stage, offer sent/held and contract
+  awaiting-signature splits, viewings today, waiting for you, open tasks; built by `pipelineSummary`
+  in `manager/workspace.ts` from the same rows and tile queries as Home, so the numbers match),
+  `list_records` (the Workspace rows with `company`, `category`, `mine`, `limit` <= 20 and a `total`),
+  `get_record` (header, last 10 log entries, the actions this user could take, described only),
+  `contract_status` (contract version and status, signers, company template version and clauses,
+  Ejari submission), `list_companies`, and `find_available_units` extended with `company`,
+  `category`, `sizeBand` (company matching is `resolveCompany` in `manager/availability.ts`, shared
+  with the public chat agent). New engine reads: `GET /api/copilot/{pipeline,companies,records,contract-status}`
+  (any staff role), all on the client allowlist. Applicant names are wrapped as untrusted for the model.
+- **Cards and choices.** A tool returns `ui: { cards?, choices? }` next to its data. `callTool` strips
+  `ui` before the model sees the result, and the graph streams `cards` (record cards link to
+  `/work?kind=…&id=…`; unit cards reuse the public `UnitCard` and link to `/units/<id>`) and
+  `choices` events; `done` is unchanged. Cards are shown live and not stored with the thread.
+  `offer_choices({ question, options: 2 to 4 of { label, value } })` accepts only values a tool
+  returned earlier in the same turn (refs, unit ids and codes, areas, company names; text wrapped as
+  untrusted never counts). A tap navigates (`href`) or sends the value back as the user's next
+  message (`say`, e.g. "Open A-7KQ2MX"). It is a `read` tool: a choice can't approve, send or change
+  state (rule 11 unchanged; no new confirmed actions). Both chats render cards and choices with the
+  shared components in `apps/web/components/chat-ui/`.
+- **Public chat agent.** Same guardrails; `search_units` also returns `total` (every matching
+  bookable unit, five are shown) so "how many properties in X" has a real count.
+- **Tool filtering (D33, D41).** `toolsFor(role, { tenancyOps })` drops `compute_renewal_cap`,
+  `list_deadlines`, `get_lease_timeline`,
+  `list_payments`, `list_tickets`, `get_case_pack`, `summarise_case` and `propose_approval` when
+  `TENANCY_OPS` is off (required argument, so it can't fail open). `get_lease` stays, without
+  deadlines, renewal notice and tenant replies. The engine also refuses a
+  `request_approval` proposal. Agent permissions never reach the copilot: it still can't approve. Unverified values are
   highlighted. `apps/mcp` (phase 5) imports the same `packages/copilot/tools` registry with its own
 `EngineClient`, so there is one set of tools and one set of safeguards.
 
@@ -984,9 +1159,9 @@ export interface CopilotTool<I extends z.ZodTypeAny, O extends z.ZodTypeAny> {
 
 | Kind | Examples | Effect | Needs UI confirmation |
 |---|---|---|---|
-| `read` | `search_entities`, `get_lease`, `get_lease_timeline`, `list_deadlines`, `list_approvals`, `get_helper_run`, `list_outbound_messages`, `explain_rule`, `compute_renewal_cap`, `find_available_units`, `get_case_pack` (leasing roles; the dispute case index, tenant text untrusted), `list_payments`, `list_tickets` | None | No |
-| `draft` | `draft_email` (leasing roles, finance), `draft_approval_note` (any staff), `summarise_case` (leasing roles; an RDC case summary built from `get_case_pack`, opened on the lease page with copy/download, never filed) | Saves a `copilot_drafts` row in the user's thread; the user opens it in the normal form, edits it and sends or posts it. The copilot never sends | No |
-| `propose` | `propose_application` (D25), `create_task` (leasing roles), `propose_approval` (gates `formal_reminder`: leasing roles and finance; `vacate_notice`: leasing roles) (D26) | Stores a proposal; on Confirm the normal engine route creates the application, the task or the pending approval, as the user | **Yes**: the user clicks Confirm in the chat |
+| `read` | `search_entities`, `get_lease`, `get_lease_timeline`, `list_deadlines`, `list_approvals`, `get_helper_run`, `list_outbound_messages`, `explain_rule`, `compute_renewal_cap`, `find_available_units`, `get_case_pack` (leasing roles; the dispute case index, tenant text untrusted), `list_payments`, `list_tickets`, `list_tasks`, `list_enquiries`, `get_enquiry` (visitor text untrusted), `get_unit` (SRI band and rent-rule range from the engine), `viewing_slots` | None | No |
+| `draft` | `draft_email` (leasing roles, finance; to a lease's tenant or an application's applicant, D42), `draft_approval_note` (any staff), `summarise_case` (leasing roles; an RDC case summary built from `get_case_pack`, opened on the lease page with copy/download, never filed) | Saves a `copilot_drafts` row in the user's thread; the user opens it in the normal form, edits it and sends or posts it. The copilot never sends | No |
+| `propose` | `propose_application` (D25), `propose_viewing_invite`, `propose_request_documents`, `propose_resend_signing_link`, `propose_prepare_contract` (leasing roles; D42: prepare only, the contract still waits at `final_contract`), `create_task` (leasing roles), `propose_approval` (gates `formal_reminder`: leasing roles and finance; `vacate_notice`: leasing roles) (D26) | Stores a proposal; on Confirm the normal engine route creates the application, the task or the pending approval, as the user | **Yes**: the user clicks Confirm in the chat |
 
 **Proposals and Confirm (phase 3, D25):** `propose_application` stores a `copilot_proposals`
 row (`thread_id`, `user_id`, `kind`, `payload`, `summary`, `status` pending | confirmed |
@@ -1135,6 +1310,10 @@ erDiagram
   parties ||--o{ conversations : in
 ```
 
+Staff app pages (D33): Home (`/`), Workspace (`/work`, records by stage with an activity log, saved
+views, a details pane), Units, Settings (tabs: Companies, Rent rules, Contracts, Rent index `/settings/rent-index`, Rulebook `/settings/rulebook`, Agent, Import, Demo), Metrics (`/metrics`, no nav item) and Maintenance (only
+with `TENANCY_OPS`). Old inbox, lease, application and conversation URLs redirect to Workspace.
+
 Units (staff app, `apps/engine/src/manager/units.ts`): staff create and edit units, including
 the readiness checklist fields, layout, description and asking rent. Identity fields (code, unit
 number, DLD, Makani, plot) are locked once the unit has a lease that isn't closed. Changing the
@@ -1146,7 +1325,7 @@ documents). The engine checks the image type from the file bytes (JPEG, PNG, Web
 ≤ 24 per unit) and strips EXIF (incl. GPS), XMP, IPTC and text metadata itself, so uploads that
 bypass the browser are clean too; the browser also resizes to 2400px before upload. Changing the
 asking rent or the bedroom count voids a price approval and cancels pending price proposals; a
-unit's `kind` is locked with the identity fields. Removing a photo deletes its file when no other
+unit's `category` is locked with the identity fields. Removing a photo deletes its file when no other
 unit uses it. The staff app serves photos through an authenticated proxy (`/media/units/...`).
 Applicants see a unit's photos only through their `viewing` or `application` link
 (`/api/portal/<token>/photos/<id>`, proxied by `/t/<token>/property/photos/<id>`); a photo of
@@ -1175,7 +1354,13 @@ Key columns:
 - `contract_signers`: `contract_id`, `party_id`, `role (tenant|landlord)` unique per contract, `name_en`, `email`, `link_id`, `outbound_message_id`, `signed_at`, `typed_name`, `ip`, `user_agent`, `inbound_event_id`
 - `ejari_submissions`: `lease_id`, `approval_id`, `attempt` (unique per approval), `payload jsonb`, `payload_sha256`, `status (queued|sending|issued|rejected|error)`, `tries`, `ejari_no`, `reasons jsonb`, `error`, `autofix jsonb`, `certificate_document_id`
 - `inbound_events`: `ref`, `type`, `entity_id`, `channel (portal|staff|telegram)`, `actor`, `link_id`, `dedupe_key` unique, `payload jsonb`, `received_at`, `processed_at`, `status (received|applied|stored_only|failed)`, `result jsonb`
-- `sri_averages`: `community`, `bedrooms`, `avg_annual_rent_fils`, `source (mock|manual)`, `effective_from`; `sri_overrides`: `lease_id`, `lease_end_on`, `avg_annual_rent_fils`, `reason`, `entered_by`
+- `companies` (D32): `name`, `slug` unique, `kind (developer|realty|owner)`, `trade_licence_no`, `email`, `active`, `created_by`
+- `units` (D32): `company_id` (not null), `category (residential|commercial|retail)` (was `kind`), `subtype`, `emirate` (default `dubai`), `country` (default `AE`)
+- `rent_rules` (D32): `company_id`, `category`, `subtype`, `emirate`, `community`, `min_pct_bp`, `max_pct_bp` (signed basis points vs SRI), `min_rent_fils`, `max_rent_fils`, `active`, `supersedes_id`, `created_by`; immutable, replaced by a new row
+- `contract_rules` (D32): `company_id`, `category`, `subtype`, `tenures`, `min_cheques`, `max_cheques` (1 to 12), `clause_ids`, `sample_document_id`, `active`, `supersedes_id`, `created_by`
+- `visitor_verifications` (D34, migration 0020): `conversation_id`, `email`, `code_hash` (HMAC, never the code), `attempts`, `expires_at`, `verified_at`, `created_at`; `outbound_messages.purpose` gains `chat_code`
+- `company_clauses` (D35, migration 0021): `company_id`, `contract_rule_id`, `title`, `text_en`, `quote`, `category`, `has_values` (set by code), `status (proposed|approved|rejected)`, `source_document_id`, `helper_run_id`, `approved_by`, `approved_at`, `created_by`; approved rows are never edited; contracts reference them as `cc:<uuid>` in `addendum.clauses`
+- `sri_averages`: `community`, `category`, `bedrooms` (null for commercial and retail), `avg_annual_rent_fils` or `avg_annual_rent_per_sqft_fils` (exactly one), `source (mock|manual)`, `effective_from`; `sri_overrides`: `lease_id`, `lease_end_on`, `avg_annual_rent_fils`, `reason`, `entered_by`
 - `rulebooks`: `version` unique, `emirate`, `status (draft|published)`, `based_on`, `effective_from` (date), `values jsonb` (`RulebookValues`), `reference_rules jsonb`, `created_by`, `published_by`, `published_at`; published rows immutable (trigger); see §4
 - `copilot_threads`: `user_id`, `context_entity` (kind + id the panel was opened on, nullable), `created_at`
 - `copilot_messages`: `thread_id`, `role (user|assistant|tool)`, `content`, `tool_name`, `tool_args jsonb`, `tool_result_sha256`, `unverified_values jsonb`, `model`, `latency_ms`, `at`

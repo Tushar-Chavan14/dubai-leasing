@@ -1,5 +1,5 @@
 import type { LocalDiskStore } from "@leasing/adapters";
-import type { StaffRole } from "@leasing/core";
+import { PropertyCategory, PropertySubtype, type StaffRole } from "@leasing/core";
 import { approvals, leaseParties, leases, parties, unitPhotos, units, withTx } from "@leasing/db";
 import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import type { Hono } from "hono";
@@ -17,15 +17,26 @@ import {
   setPhotoCaption,
   UnitFields,
   UnitUpdate,
+  exposeRange,
   unitActions,
   updateUnit,
 } from "../manager/units.ts";
 import { type AuthEnv, requireRole } from "./auth.ts";
 import { entityEvents } from "./queries.ts";
+import { priceRangeFor } from "../manager/pricing.ts";
+import { lookupCompanyLandlord } from "../manager/company-legal.ts";
 
 /** Units are managed by leasing staff and admins; finance can look but not change. */
 const EDITORS: StaffRole[] = ["admin", "leasing_manager", "leasing_officer"];
 
+const PriceRangeQuery = z.object({
+  companyId: z.string().uuid(),
+  category: PropertyCategory,
+  subtype: PropertySubtype.nullable(),
+  community: z.string().trim().min(1).max(120),
+  bedrooms: z.number().int().min(0).max(10).nullable(),
+  areaSqft: z.number().int().min(50).max(100_000).nullable(),
+});
 const actorOf = (c: { get(k: "user"): { id: string } }) => `user:${c.get("user").id}` as const;
 
 export function registerUnitRoutes(api: Hono<AuthEnv>, ctx: EngineContext, store: LocalDiskStore) {
@@ -101,8 +112,12 @@ export function registerUnitRoutes(api: Hono<AuthEnv>, ctx: EngineContext, store
               ),
             )
         : [];
+      // The unit's landlord is its company (D44): its legal name, with the company id for the link.
+      const { party } = await lookupCompanyLandlord(tx, unit.companyId);
+      const { landlordPartyId: _unused, ...unitRest } = unit;
       return {
-        ...unit,
+        ...unitRest,
+        landlord: { companyId: unit.companyId, name: party.fullNameEn },
         photos,
         leases: unitLeases.map((l) => ({ ...l, tenantName: tenants.find((t) => t.leaseId === l.id)?.name ?? null })),
         events,
@@ -114,6 +129,14 @@ export function registerUnitRoutes(api: Hono<AuthEnv>, ctx: EngineContext, store
     return c.json(result);
   });
 
+  /** Allowed asking-rent range for the unit form preview. Any signed-in staff. */
+  api.post("/units/price-range", async (c) => {
+    const b = PriceRangeQuery.parse(await c.req.json());
+    const out = await withTx(ctx.database, (tx) =>
+      priceRangeFor(tx, { ...b, emirate: "dubai", bedrooms: b.bedrooms, areaSqft: b.areaSqft }, ctx.clock.today()),
+    );
+    return c.json({ range: exposeRange(out.range), sriLabel: out.sriLabel, ruleId: out.ruleId });
+  });
   api.post("/units", async (c) => {
     requireRole(c.get("user"), EDITORS);
     const input = UnitFields.parse(await c.req.json());

@@ -4,7 +4,8 @@ import { Empty, PageHead, PlanPlaceholder, Status } from "../../../components/ui
 import { get } from "../../../lib/engine";
 import { aedShort, bedroomsLabel, stateLabel } from "../../../lib/format";
 import { IconArea, IconBed, IconBuilding, IconImage, IconPlus, IconUpload } from "../../../lib/icons";
-import type { Me, UnitRow } from "../../../lib/types";
+import { CATEGORIES } from "../../../lib/portfolio";
+import type { CompanyRow, Me, UnitRow } from "../../../lib/types";
 
 export const metadata: Metadata = { title: "Units" };
 
@@ -12,12 +13,32 @@ const STATES = ["all", "PREP", "READY", "LISTED", "OCCUPIED"] as const;
 const EDITORS = ["admin", "leasing_manager", "leasing_officer"];
 const IMPORTERS = ["admin", "leasing_manager"];
 
-export default async function UnitsPage({ searchParams }: { searchParams: Promise<{ state?: string }> }) {
-  const { state: raw } = await searchParams;
+export default async function UnitsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ state?: string; company?: string; category?: string }>;
+}) {
+  const { state: raw, company: companyRaw, category: categoryRaw } = await searchParams;
   const state = STATES.find((s) => s === raw) ?? "all";
-  const [units, me] = await Promise.all([get<UnitRow[]>("/api/units"), get<Me>("/api/me")]);
-  const all = units ?? [];
+  const [units, me, companies] = await Promise.all([
+    get<UnitRow[]>("/api/units"),
+    get<Me>("/api/me"),
+    get<CompanyRow[]>("/api/companies"),
+  ]);
+  const companyId = (companies ?? []).find((c) => c.id === companyRaw)?.id ?? "";
+  const category = CATEGORIES.find((c) => c.value === categoryRaw)?.value ?? "";
+  const scoped = (units ?? []).filter(
+    (u) => (!companyId || u.companyId === companyId) && (!category || u.category === category),
+  );
+  const all = scoped;
   const rows = state === "all" ? all : all.filter((u) => u.state === state);
+  const href = (st: string) => {
+    const q = new URLSearchParams();
+    if (st !== "all") q.set("state", st);
+    if (companyId) q.set("company", companyId);
+    if (category) q.set("category", category);
+    return q.size ? `/units?${q}` : "/units";
+  };
   const canEdit = !!me && EDITORS.includes(me.role);
   const canImport = !!me && IMPORTERS.includes(me.role);
 
@@ -30,7 +51,7 @@ export default async function UnitsPage({ searchParams }: { searchParams: Promis
           canEdit ? (
             <>
               {canImport && (
-                <Link href="/import?kind=units" className="btn">
+                <Link href="/settings/import?kind=units" className="btn">
                   <IconUpload size={16} />
                   Import units
                 </Link>
@@ -43,13 +64,37 @@ export default async function UnitsPage({ searchParams }: { searchParams: Promis
           ) : undefined
         }
       />
+      <form method="get" className="btn-row" style={{ alignItems: "end", marginBottom: 16 }}>
+        {state !== "all" && <input type="hidden" name="state" value={state} />}
+        <label className="field">
+          <span className="field-label">Company</span>
+          <select name="company" defaultValue={companyId}>
+            <option value="">All companies</option>
+            {(companies ?? []).map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span className="field-label">Category</span>
+          <select name="category" defaultValue={category}>
+            <option value="">All categories</option>
+            {CATEGORIES.map((c) => (
+              <option key={c.value} value={c.value}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button type="submit" className="btn">
+          Apply
+        </button>
+      </form>
       <nav className="tabs" aria-label="Filter units">
         {STATES.map((s) => (
-          <Link
-            key={s}
-            href={s === "all" ? "/units" : `/units?state=${s}`}
-            aria-current={s === state ? "page" : undefined}
-          >
+          <Link key={s} href={href(s)} aria-current={s === state ? "page" : undefined}>
             {s === "all" ? "All" : stateLabel(s)}
             <span className="n">{s === "all" ? all.length : all.filter((u) => u.state === s).length}</span>
           </Link>

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { CalendarDate } from "../dates.ts";
-import type { CompanyPolicy } from "../policy.ts";
+import { askingRentWithinRange, type PriceRange, type PropertyCategory } from "../portfolio.ts";
 import { allow, defineMachine, deny, type GuardResult } from "./machine.ts";
 
 export const UnitState = z.enum(["PREP", "READY", "LISTED", "OCCUPIED"]);
@@ -10,6 +10,7 @@ export const UnitEvent = z.enum(["MARK_READY", "PUBLISH", "WITHDRAW", "LEASE_ACT
 export type UnitEvent = z.infer<typeof UnitEvent>;
 
 export interface UnitSnapshot {
+  category: PropertyCategory;
   dldPropertyNo: string | null;
   unitNo: string | null;
   makaniNo: string | null;
@@ -25,7 +26,8 @@ export interface UnitSnapshot {
 export interface UnitGuardContext {
   unit: UnitSnapshot;
   today: CalendarDate;
-  policy: CompanyPolicy;
+  /** Allowed asking-rent range from the rulebook and SRI; null when none applies. */
+  priceRange: PriceRange | null;
   /** True while any lease on the unit still has an uncancelled Ejari registration. */
   hasActiveEjari: boolean;
   /** True while a lease on the unit is contracted but not yet active (CONTRACT, REGISTRATION, MOVE_IN). */
@@ -43,19 +45,15 @@ const CHECKLIST: [keyof UnitSnapshot, string][] = [
 ];
 
 export function unitChecklistMissing(unit: UnitSnapshot): string[] {
-  return CHECKLIST.filter(([k]) => unit[k] === null || unit[k] === "").map(([, label]) => label);
+  return CHECKLIST.filter(([k]) => k !== "bedrooms" || unit.category === "residential")
+    .filter(([k]) => unit[k] === null || unit[k] === "")
+    .map(([, label]) => label);
 }
 
-export function askingRentWithinRange(unit: UnitSnapshot, policy: CompanyPolicy): boolean {
-  if (unit.askingRentFils === null || unit.bedrooms === null) return false;
-  const range = policy.askingRentRangeFils[String(unit.bedrooms)];
-  return !!range && unit.askingRentFils >= range.min && unit.askingRentFils <= range.max;
-}
-
-function readyGuard({ unit, policy }: UnitGuardContext): GuardResult {
+function readyGuard({ unit, priceRange }: UnitGuardContext): GuardResult {
   const reasons = unitChecklistMissing(unit).map((m) => `missing ${m}`);
   if (unit.askingRentFils === null) reasons.push("asking rent not set");
-  else if (!unit.priceApprovedAt && !askingRentWithinRange(unit, policy)) {
+  else if (!unit.priceApprovedAt && !askingRentWithinRange(unit, priceRange)) {
     reasons.push("asking rent outside company range and not approved");
   }
   return reasons.length ? deny(...reasons) : allow;

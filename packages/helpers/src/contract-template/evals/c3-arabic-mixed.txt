@@ -1,0 +1,6 @@
+عقد إيجار (نموذج وهمي) / Sample tenancy contract (fictional)
+
+Clause A. Noise. The Tenant shall not cause noise between 10 pm and 7 am.
+البند ب: لا يجوز للمستأجر تأجير الوحدة من الباطن دون موافقة خطية من المؤجر.
+Clause C. Maintenance. The Landlord is responsible for structural repairs and the air conditioning unit.
+Clause D. Late payment. Rent paid more than 5 days after the due date is a late payment and the Landlord may send a reminder.

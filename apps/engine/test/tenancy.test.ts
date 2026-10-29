@@ -27,7 +27,8 @@ import { importLeasesCsv } from "../src/manager/import.ts";
 import { INBOUND_JOB, processInbound } from "../src/manager/inbound.ts";
 import { LEASE_MAIL_JOB, type LeaseMailJob, sendLeaseMail } from "../src/manager/lease-mail.ts";
 import { sweepDueDeadlines } from "../src/manager/milestones.ts";
-import { addStaff, freshDatabase, leaseCsv, noDb, testContext } from "./harness.ts";
+import { isTimedAgentJob } from "../src/manager/agent-switches.ts";
+import { addStaff, freshDatabase, leaseCsv, noDb, testContext, testCompany } from "./harness.ts";
 
 const START = "2026-10-19T04:00:00Z"; // 2026-10-19, 08:00 Dubai
 const SECRET = "test-secret";
@@ -113,12 +114,18 @@ async function setup(opts: { ack?: string; decide?: (state: string) => SystemOne
   const drain = async () => {
     while (done < t.scheduler.jobs.length) {
       const j = t.scheduler.jobs[done++]!;
+      if (isTimedAgentJob(j)) continue; // a reminder pg-boss would hold until its startAfter
       if (j.name === LEASE_MAIL_JOB) await sendLeaseMail(t.ctx, j.data as unknown as LeaseMailJob);
       if (j.name === INBOUND_JOB) await processInbound(t.ctx, String(j.data.inboundEventId));
     }
   };
   const importLease = async (row: Record<string, string>) => {
-    const [r] = await importLeasesCsv(t.ctx, leaseCsv([{ tenant_email: "tenant@test.example", ...row }]), "import");
+    const [r] = await importLeasesCsv(
+      t.ctx,
+      leaseCsv([{ tenant_email: "tenant@test.example", ...row }]),
+      "import",
+      await testCompany(t.ctx.database),
+    );
     if (!r?.leaseId) throw new Error(JSON.stringify(r));
     return r.leaseId;
   };

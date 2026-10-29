@@ -5,14 +5,22 @@ import { join } from "node:path";
 import { LocalDiskStore } from "@leasing/adapters";
 import { copilotTools, inProcessClient, type ModelTurn, ScriptedModel } from "@leasing/copilot";
 import type { StaffRole } from "@leasing/core";
-import { approvals, copilotMessages, type Database, helperRuns, leaseEvents, sriAverages } from "@leasing/db";
+import {
+  approvals,
+  conversations,
+  copilotMessages,
+  type Database,
+  helperRuns,
+  leaseEvents,
+  sriAverages,
+} from "@leasing/db";
 import { eq } from "drizzle-orm";
 import { createApi } from "../src/api/app.ts";
 import { issueToken } from "../src/api/auth.ts";
 import { importLeasesCsv } from "../src/manager/import.ts";
 import { createDraft, publishRulebook, updateDraft } from "../src/manager/rulebooks.ts";
 import { sweepDueDeadlines } from "../src/manager/milestones.ts";
-import { addStaff, freshDatabase, leaseCsv, noDb, testContext } from "./harness.ts";
+import { addStaff, freshDatabase, leaseCsv, noDb, testContext, testCompany } from "./harness.ts";
 
 const START = "2026-10-19T04:00:00Z";
 const SECRET = "test-secret";
@@ -36,6 +44,7 @@ async function setup(script?: ((i: number) => ModelTurn)[]) {
     t.ctx,
     leaseCsv([{ unit_code: "TST-0101", start_on: "2026-06-01", end_on: "2027-05-31", annual_rent_aed: "80000" }]),
     "import",
+    await testCompany(t.ctx.database),
   );
   const app = createApi(t.ctx, {
     sessionSecret: SECRET,
@@ -194,7 +203,21 @@ describe.skipIf(noDb)("staff copilot (Postgres, scripted model)", () => {
     clock.advanceDays(104); // T−4 months: helper runs and a notice exist
     await sweepDueDeadlines(ctx);
     const [run] = await database.db.select({ id: helperRuns.id }).from(helperRuns);
+    const convId = crypto.randomUUID();
+    await database.db.insert(conversations).values({
+      id: convId,
+      channel: "telegram",
+      externalChatId: "501",
+      externalUserId: "501",
+      language: "en",
+      createdAt: clock.now(),
+    });
     const args: Record<string, Record<string, unknown>> = {
+      list_tasks: { scope: "all" },
+      list_enquiries: {},
+      get_enquiry: { id: convId },
+      get_unit: { unit: "TST-0101" },
+      viewing_slots: { unitCode: "TST-0101" },
       search_entities: { query: "TST" },
       get_lease: { lease: "TST-0101" },
       get_lease_timeline: { lease: leaseId, limit: 5 },
@@ -208,6 +231,18 @@ describe.skipIf(noDb)("staff copilot (Postgres, scripted model)", () => {
       list_payments: { lease: "TST-0101" },
       list_tickets: { lease: "TST-0101" },
       get_case_pack: { lease: "TST-0101" },
+      pipeline_summary: {},
+      list_records: { stage: "Contract", limit: 5 },
+      get_record: { ref: "TST-0101" },
+      contract_status: { ref: "TST-0101" },
+      list_companies: {},
+      offer_choices: {
+        question: "Which one?",
+        options: [
+          { label: "One", value: "TST-0101" },
+          { label: "Two", value: "TST-0102" },
+        ],
+      },
     };
     // Read tools, for each role they are given to; the engine refuses the others (the case pack is
     // leasing staff only). Propose tools have their own role tests (copilot-proposals.test.ts).
@@ -217,7 +252,15 @@ describe.skipIf(noDb)("staff copilot (Postgres, scripted model)", () => {
       const u = await addStaff(database, role);
       const engine = inProcessClient(app, issueToken(SECRET, u.id, Date.now()));
       for (const tool of readTools) {
-        const run = tool.run(tool.input.parse(args[tool.name]), { engine, user: u, today: clock.today() });
+        const run = tool.run(tool.input.parse(args[tool.name]), {
+          engine,
+          user: u,
+          today: clock.today(),
+          issued: new Map([
+            ["TST-0101", null],
+            ["TST-0102", "/units/x"],
+          ]),
+        });
         if (!tool.roles.includes(role)) {
           await expect(run).rejects.toThrow();
           continue;
@@ -229,10 +272,12 @@ describe.skipIf(noDb)("staff copilot (Postgres, scripted model)", () => {
     // Without a valid session the same tools get nothing.
     const anon = inProcessClient(app, "not-a-token");
     await expect(
-      copilotTools[1]!.run(
-        { lease: leaseId },
-        { engine: anon, user: { id: "x", email: "x", name: "x", role: "admin" }, today: "2026-10-19" },
-      ),
+      copilotTools
+        .find((t) => t.name === "get_lease")!
+        .run(
+          { lease: leaseId },
+          { engine: anon, user: { id: "x", email: "x", name: "x", role: "admin" }, today: "2026-10-19" },
+        ),
     ).rejects.toThrow("unauthorised");
   });
 

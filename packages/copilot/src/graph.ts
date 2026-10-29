@@ -4,6 +4,7 @@ import { AIMessage, type BaseMessage, HumanMessage, SystemMessage, ToolMessage }
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import { z } from "zod";
 import { type PageContext, systemPrompt } from "./prompt.ts";
+import type { Choices, CopilotCard, ToolUi } from "./ui.ts";
 import { verifyAnswer } from "./verify.ts";
 import { toolsFor } from "./tools/index.ts";
 import type { CopilotTool, ToolContext } from "./types.ts";
@@ -24,7 +25,12 @@ export interface ModelTurn {
 /** The chat model behind the loop. `tools: null` means "answer now, no more tool calls". */
 export interface CopilotModel {
   name: string;
-  respond(messages: BaseMessage[], tools: ToolSpec[] | null, onToken: (text: string) => void): Promise<ModelTurn>;
+  respond(
+    messages: BaseMessage[],
+    tools: ToolSpec[] | null,
+    onToken: (text: string) => void,
+    signal?: AbortSignal,
+  ): Promise<ModelTurn>;
 }
 
 export type CopilotEvent =
@@ -32,7 +38,11 @@ export type CopilotEvent =
   | { type: "tool_result"; id: string; name: string; ok: boolean; error?: string }
   | { type: "token"; text: string }
   /** The text streamed so far was a preamble to tool calls, not the answer: clear it. */
-  | { type: "discard" };
+  | { type: "discard" }
+  /** Record or unit cards a tool produced; the client shows them under the answer. */
+  | { type: "cards"; cards: CopilotCard[] }
+  /** A tap-to-choose card; a tap only sends text or opens a page. */
+  | { type: "choices"; choices: Choices };
 
 export interface ToolRecord {
   id: string;
@@ -41,8 +51,10 @@ export interface ToolRecord {
   ok: boolean;
   /** What the model saw (masked JSON, or the error message). */
   content: string;
-  /** Parsed, masked output for the post-check (null on error). */
+  /** Parsed, masked output for the post-check, without `ui` (null on error). */
   output: unknown;
+  /** Cards and choices the tool produced for the client; the model never sees them. */
+  ui?: ToolUi;
   resultSha256: string;
 }
 
@@ -50,6 +62,8 @@ export interface CopilotTurn {
   answer: string;
   tools: ToolRecord[];
   model: string;
+  cards: CopilotCard[];
+  choices?: Choices;
 }
 
 export interface HistoryMessage {
@@ -101,17 +115,45 @@ async function callTool(
   }
   const out = tool.output.safeParse(raw);
   if (!out.success) return fail("the tool returned data in an unexpected shape; no data is available from it");
-  const masked = maskPii(out.data);
-  const content = JSON.stringify(masked);
+  const { ui, ...forModel } = maskPii(out.data) as Record<string, unknown> & { ui?: ToolUi };
+  const content = JSON.stringify(forModel);
   return {
     id: call.id,
     name: call.name,
     args: args.data as Record<string, unknown>,
     ok: true,
     content,
-    output: masked,
+    output: forModel,
+    ...(ui ? { ui } : {}),
     resultSha256: sha256(content),
   };
+}
+
+/**
+ * Values a tool returned this turn, with the page each opens: `offer_choices` accepts only these.
+ * Text wrapped as untrusted (written by tenants or applicants) is never issued.
+ */
+export function collectIssued(into: Map<string, string | null>, output: unknown, ui?: ToolUi) {
+  // Only identifier-like fields can become a choice (ids, refs, codes, areas, company names, stages).
+  // Person names and other free text never do, wrapped or not.
+  const KEYS = new Set(["ref", "unitId", "id", "code", "unitCode", "community", "company", "stage", "category", "at"]);
+  const walk = (v: unknown, key = "", parent = "") => {
+    if (typeof v === "string") {
+      const ok = KEYS.has(key) || (key === "name" && parent === "companies");
+      if (ok && v.length <= 80 && !v.includes("<untrusted>") && !into.has(v)) into.set(v, null);
+    } else if (Array.isArray(v)) v.forEach((x) => walk(x, key, parent));
+    else if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) walk(x, k, key || parent);
+  };
+  walk(output);
+  for (const c of ui?.cards ?? []) {
+    if (c.kind === "record") {
+      into.set(c.ref, c.href);
+      into.set(c.id, c.href);
+    } else {
+      into.set(c.card.unitId, c.href);
+      into.set(c.card.code, c.href);
+    }
+  }
 }
 
 /**
@@ -127,12 +169,18 @@ export async function runCopilotTurn(opts: {
   onEvent?: (e: CopilotEvent) => void;
   /** Called as each tool call completes, so the audit keeps it even if the turn later fails. */
   onTool?: (r: ToolRecord) => void;
+  /** TENANCY_OPS from the engine. */
+  tenancyOps: boolean;
 }): Promise<CopilotTurn> {
   const { model, ctx } = opts;
   const emit = opts.onEvent ?? (() => {});
-  const tools = toolsFor(ctx.user.role);
+  const tools = toolsFor(ctx.user.role, { tenancyOps: opts.tenancyOps });
   const specs = tools.map(toolSpec);
   const records: ToolRecord[] = [];
+  const issued = new Map<string, string | null>();
+  const toolCtx: ToolContext = { ...ctx, issued, tenancyOps: opts.tenancyOps };
+  const cards: CopilotCard[] = [];
+  let choices: Choices | undefined;
 
   const State = Annotation.Root({
     messages: Annotation<BaseMessage[]>({ reducer: (a, b) => a.concat(b), default: () => [] }),
@@ -164,7 +212,7 @@ export async function runCopilotTurn(opts: {
         nudged: true,
         messages: [
           new SystemMessage(
-            "Your draft stated amounts, dates or percentages without calling a tool. Call the right tool now (compute_renewal_cap, explain_rule, get_lease, list_deadlines…) and answer only from its result.",
+            "Your draft stated amounts, dates or percentages without calling a tool. Call the right tool now (pipeline_summary, list_records, get_record, explain_rule…) and answer only from its result.",
           ),
         ],
       };
@@ -194,7 +242,7 @@ export async function runCopilotTurn(opts: {
       emit({ type: "tool", id: call.id, name: call.name, args: call.args });
       const rec =
         i < budget
-          ? await callTool(tools, call, ctx)
+          ? await callTool(tools, call, toolCtx)
           : {
               id: call.id,
               name: call.name,
@@ -205,6 +253,17 @@ export async function runCopilotTurn(opts: {
               resultSha256: "",
             };
       records.push(rec);
+      if (rec.ok) {
+        collectIssued(issued, rec.output, rec.ui);
+        if (rec.ui?.cards?.length) {
+          cards.push(...rec.ui.cards);
+          emit({ type: "cards", cards: rec.ui.cards });
+        }
+        if (rec.ui?.choices) {
+          choices = rec.ui.choices;
+          emit({ type: "choices", choices });
+        }
+      }
       opts.onTool?.(rec);
       emit({ type: "tool_result", id: rec.id, name: rec.name, ok: rec.ok, ...(rec.ok ? {} : { error: rec.content }) });
       out.push(new ToolMessage({ content: rec.content, tool_call_id: call.id, name: call.name }));
@@ -229,12 +288,12 @@ export async function runCopilotTurn(opts: {
     .compile();
 
   const initial: BaseMessage[] = [
-    new SystemMessage(systemPrompt(ctx.user, ctx.today, opts.page)),
+    new SystemMessage(systemPrompt(ctx.user, ctx.today, opts.page, { tenancyOps: opts.tenancyOps })),
     ...(opts.history ?? []).map((m) => (m.role === "user" ? new HumanMessage(m.content) : new AIMessage(m.content))),
     new HumanMessage(opts.message),
   ];
   const final = await graph.invoke({ messages: initial }, { recursionLimit: MAX_TOOL_CALLS * 2 + 6 });
   const last = final.messages.at(-1);
   const answer = typeof last?.content === "string" ? last.content : "";
-  return { answer: answer.trim(), tools: records, model: model.name };
+  return { answer: answer.trim(), tools: records, model: model.name, cards, ...(choices ? { choices } : {}) };
 }

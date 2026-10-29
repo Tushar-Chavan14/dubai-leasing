@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
+import type { CopilotCardData, CopilotChoicesData } from "../chat-ui/cards";
 
 export interface ToolStep {
   id: string;
@@ -12,7 +13,15 @@ export interface ToolStep {
 interface ProposalBase {
   id: string;
   status: "pending" | "confirmed" | "cancelled" | "failed" | "expired";
-  result: { applicationId?: string; ref?: string; taskId?: string; approvalId?: string; error?: string } | null;
+  result: {
+    applicationId?: string;
+    ref?: string;
+    taskId?: string;
+    approvalId?: string;
+    leaseId?: string;
+    contractId?: string;
+    error?: string;
+  } | null;
   expiresAt: string;
   createdAt: string;
 }
@@ -31,6 +40,16 @@ export type ProposalView = ProposalBase &
           askingRent: string;
         };
       }
+    | {
+        kind: "viewing_invite";
+        summary: { applicationRef: string | null; applicant: string; unitCode: string; viewingLabel: string };
+      }
+    | { kind: "request_documents"; summary: { applicationRef: string | null; applicant: string; unitCode: string } }
+    | {
+        kind: "resend_signing_link";
+        summary: { leaseRef: string; unitCode: string; signerRole: string; signerName: string };
+      }
+    | { kind: "prepare_contract"; summary: { leaseRef: string; unitCode: string } }
     | {
         kind: "create_task";
         summary: { leaseRef: string; title: string; assigneeRole: string; dueOn: string | null };
@@ -63,6 +82,8 @@ export interface DraftView {
   kind: "email" | "approval_note" | "case_summary";
   leaseId: string | null;
   leaseRef: string | null;
+  applicationId: string | null;
+  applicationRef: string | null;
   approvalId: string | null;
   subject: string | null;
   body: string;
@@ -79,6 +100,10 @@ export interface ChatMessage {
   status: "streaming" | "done" | "error";
   proposals?: ProposalView[];
   drafts?: DraftView[];
+  /** Record and unit cards from this answer's tools (shown while the chat is open; not stored with the thread). */
+  cards?: CopilotCardData[];
+  /** A tap-to-choose card; a tap only sends text or opens a page. */
+  choices?: CopilotChoicesData;
 }
 
 export interface PageRef {
@@ -95,7 +120,9 @@ type StreamEvent =
   | { type: "done"; messageId: string; answer: string; unverified: string[] }
   | { type: "error"; error: string }
   | { type: "proposal"; proposal: ProposalView }
-  | { type: "draft"; draft: DraftView };
+  | { type: "draft"; draft: DraftView }
+  | { type: "cards"; cards: CopilotCardData[] }
+  | { type: "choices"; choices: CopilotChoicesData };
 
 let seq = 0;
 const localId = () => `m${Date.now().toString(36)}${(seq++).toString(36)}`;
@@ -190,6 +217,12 @@ export function useCopilotChat(opts: { page?: PageRef | undefined; threadId?: st
                 break;
               case "draft":
                 patchLast((m) => ({ ...m, drafts: [...(m.drafts ?? []), e.draft] }));
+                break;
+              case "cards":
+                patchLast((m) => ({ ...m, cards: [...(m.cards ?? []), ...e.cards].slice(0, 10) }));
+                break;
+              case "choices":
+                patchLast((m) => ({ ...m, choices: e.choices }));
                 break;
             }
           }

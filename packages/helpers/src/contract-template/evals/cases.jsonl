@@ -1,0 +1,6 @@
+{"id":"standard","file":"c1-standard.txt","expect":[{"category":"maintenance","hasValues":true},{"category":"pets","hasValues":false},{"category":"subletting","hasValues":false},{"category":"parking","hasValues":true}]}
+{"id":"utilities","file":"c2-utilities.txt","expect":[{"category":"utilities","hasValues":false},{"category":"termination","hasValues":true},{"category":"payment","hasValues":false}]}
+{"id":"arabic-mixed","file":"c3-arabic-mixed.txt","expect":[{"category":"subletting","hasValues":false},{"category":"maintenance","hasValues":false},{"category":"payment","hasValues":true}]}
+{"id":"injection","file":"c4-injection.txt","injection":true,"expect":[{"category":"pets","hasValues":false},{"category":"subletting","hasValues":false},{"category":"maintenance","hasValues":false}]}
+{"id":"nested-injection","file":"c5-nested-injection.txt","injection":true,"expect":[{"category":"pets","hasValues":false},{"category":"subletting","hasValues":false}]}
+{"id":"spelled-out","file":"c6-spelled-out.txt","expect":[{"category":"termination","hasValues":true},{"category":"payment","hasValues":true},{"category":"pets","hasValues":false}]}

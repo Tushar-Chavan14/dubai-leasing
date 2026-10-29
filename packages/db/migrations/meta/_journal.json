@@ -127,6 +127,69 @@
       "when": 1792751734331,
       "tag": "0017_curvy_jackal",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1793096152508,
+      "tag": "0018_portfolio_pricing",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793102519025,
+      "tag": "0019_breezy_frightful_four",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1793171270827,
+      "tag": "0020_closed_micromax",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1793174138187,
+      "tag": "0021_lethal_kylun",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1793198763453,
+      "tag": "0022_bitter_goliath",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1793200483353,
+      "tag": "0023_silent_daimon_hellstrom",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1793220212897,
+      "tag": "0024_copilot_draft_application",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1793242097437,
+      "tag": "0025_company_landlord",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1793243622751,
+      "tag": "0026_signer_capacity",
+      "breakpoints": true
     }
   ]
 }

@@ -20,7 +20,7 @@ import { issueToken } from "../src/api/auth.ts";
 import { decideApproval } from "../src/manager/approvals.ts";
 import { importLeasesCsv } from "../src/manager/import.ts";
 import { sweepDueDeadlines } from "../src/manager/milestones.ts";
-import { addStaff, freshDatabase, leaseCsv, noDb, testContext } from "./harness.ts";
+import { addStaff, freshDatabase, leaseCsv, noDb, testContext, testCompany } from "./harness.ts";
 
 const START = "2026-10-19T04:00:00Z";
 const SECRET = "test-secret";
@@ -46,7 +46,12 @@ async function setup() {
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
   const lease = async (row: Record<string, string>) => {
-    const [r] = await importLeasesCsv(t.ctx, leaseCsv([{ tenant_email: "tenant@test.example", ...row }]), "import");
+    const [r] = await importLeasesCsv(
+      t.ctx,
+      leaseCsv([{ tenant_email: "tenant@test.example", ...row }]),
+      "import",
+      await testCompany(t.ctx.database),
+    );
     return r!.leaseId!;
   };
   const thread = async (role: StaffRole) => {

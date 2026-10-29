@@ -1,5 +1,13 @@
 import { appendSignatureRecord, renderPdf } from "@leasing/adapters";
-import { type Actor, Addendum, compareNames, ContractSignature, newId } from "@leasing/core";
+import {
+  type Actor,
+  Addendum,
+  compareNames,
+  CONTRACT_CLAUSES,
+  ContractSignature,
+  newId,
+  propertyUsageFor,
+} from "@leasing/core";
 import { sha256Hex, shortRef } from "@leasing/core/tokens";
 import {
   actionLinks,
@@ -13,22 +21,42 @@ import {
   leaseParties,
   leases,
   parties,
+  tasks,
   type Tx,
   units,
   withTx,
 } from "@leasing/db";
-import { type ContractContext, ContractSchemas, contractDocument, contractHelper } from "@leasing/helpers";
+import {
+  type ContractContext,
+  ContractSchemas,
+  contractDocument,
+  contractHelper,
+  remapForData,
+  type Remapped,
+  sheetExtras,
+} from "@leasing/helpers";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
-import { conflict, notFound, unprocessable } from "../errors.ts";
+import { conflict, DomainError, notFound, unprocessable } from "../errors.ts";
 import { advance } from "./advance.ts";
+import { approvedClauses, resolveCompanyClauses } from "./clause-refs.ts";
+import {
+  approvedTemplateFor,
+  parseTemplate,
+  renderCompanyContract,
+  templateKey,
+  type TemplateRow,
+} from "./company-templates.ts";
 import { requestApproval } from "./approvals.ts";
-import { appendEvent } from "./events.ts";
+import { companyLandlord, landlordGapMessage, landlordGaps, landlordSigner } from "./company-legal.ts";
+import { appendEvent, getCompanyPolicy } from "./events.ts";
+import { sendTime } from "./agent-switches.ts";
 import type { FinalContractProposal } from "./gate-rules.ts";
 import { runAndRecord } from "./helpers.ts";
 import { queueLeaseMail } from "./lease-mail.ts";
 import type { LinkRow } from "./links.ts";
 import { createTask } from "./milestones.ts";
+import { matchContractRule } from "./pricing.ts";
 
 /**
  * Step 5 (architecture §3 Lease: CONTRACT). The Contract helper copies every field from its
@@ -44,6 +72,25 @@ export const DEFAULT_ADDENDUM: Addendum = { clauses: ["maintenance", "no_sublett
 
 type ContractRow = typeof contracts.$inferSelect;
 
+/**
+ * The addendum a contract starts with: the clauses of the unit's matching contract rule (standard
+ * ones, and approved company clauses that are still approved), else the default clauses.
+ */
+export async function defaultAddendumFor(tx: Pick<Tx, "db">, leaseId: string): Promise<Addendum> {
+  const [row] = await tx.db
+    .select({ unit: units })
+    .from(leases)
+    .innerJoin(units, eq(units.id, leases.unitId))
+    .where(eq(leases.id, leaseId));
+  const rule = row ? await matchContractRule(tx, row.unit) : null;
+  if (!row || !rule || rule.clauseIds.length === 0) return DEFAULT_ADDENDUM;
+  const approved = new Set((await approvedClauses(tx, row.unit.companyId)).map((c) => `cc:${c.id}`));
+  const clauses = rule.clauseIds.filter(
+    (c): c is Addendum["clauses"][number] => Object.hasOwn(CONTRACT_CLAUSES, c) || approved.has(c),
+  );
+  return { clauses, freeText: null };
+}
+
 /** The records a contract is copied from, as the helper receives them, and their hash. */
 export async function contractInputs(tx: Tx, leaseId: string) {
   const [lease] = await tx.db.select().from(leases).where(eq(leases.id, leaseId));
@@ -54,10 +101,11 @@ export async function contractInputs(tx: Tx, leaseId: string) {
     .innerJoin(parties, eq(parties.id, leaseParties.partyId))
     .where(eq(leaseParties.leaseId, leaseId));
   const tenant = people.find((p) => p.role === "tenant")?.party;
-  const landlord = people.find((p) => p.role === "landlord")?.party;
-  if (!tenant || !landlord) throw conflict("the lease needs a tenant and a landlord on record", "no_parties");
+  if (!tenant) throw conflict("the lease needs a tenant on record", "no_parties");
   const [unit] = await tx.db.select().from(units).where(eq(units.id, lease.unitId));
   if (!unit) throw notFound("unit");
+  // The landlord is the unit's company (D44): its legal party, never the party stored on the lease at creation.
+  const { company, party: landlord } = await companyLandlord(tx, unit.companyId);
   const [app] = lease.applicationId
     ? await tx.db.select().from(applications).where(eq(applications.id, lease.applicationId))
     : [];
@@ -101,10 +149,12 @@ export async function contractInputs(tx: Tx, leaseId: string) {
       emiratesIdNo: landlord.emiratesIdNo,
       tradeLicenceNo: landlord.tradeLicenceNo,
       email: landlord.email,
+      nationality: landlord.nationality,
+      phone: landlord.phone,
     },
     unit: {
       id: unit.id,
-      kind: unit.kind,
+      kind: propertyUsageFor(unit.category),
       building: unit.building,
       community: unit.community,
       dldPropertyNo: unit.dldPropertyNo,
@@ -114,7 +164,39 @@ export async function contractInputs(tx: Tx, leaseId: string) {
       bedrooms: unit.bedrooms,
     },
   };
-  return { lease, tenant, landlord, unit, context, inputHash: sha256Hex(JSON.stringify(context)) };
+  // The unit's contract rule may pin an approved company template. Its id, version and content hash are part of
+  // the hash, so a changed rule, template or version makes a pending `final_contract` approval stale. A rule whose
+  // template is no longer usable (retired, other company) gives a different hash too, and `prepareContract` refuses it.
+  const rule = await matchContractRule(tx, unit);
+  let template: TemplateRow | null = null;
+  let templateIssue: DomainError | null = null;
+  if (rule?.templateId) {
+    try {
+      template = await approvedTemplateFor(tx, unit.companyId, rule.templateId);
+    } catch (e) {
+      if (!(e instanceof DomainError)) throw e;
+      templateIssue = e;
+    }
+  }
+  // Data-sheet values beyond the contract fields (unit, company, party and offer columns): copied verbatim.
+  const extras = sheetExtras({ lease, unit, company, landlord, tenant, application: app });
+  const hashed = template
+    ? { ...context, template: templateKey(template), extras }
+    : templateIssue && rule
+      ? { ...context, template: { unavailable: rule.templateId } }
+      : context;
+  return {
+    lease,
+    tenant,
+    landlord,
+    company,
+    unit,
+    context,
+    template,
+    templateIssue,
+    extras,
+    inputHash: sha256Hex(JSON.stringify(hashed)),
+  };
 }
 
 export type PrepareResult =
@@ -129,9 +211,9 @@ export type PrepareResult =
 export async function prepareContract(
   ctx: EngineContext,
   leaseId: string,
-  input: { addendum: Addendum; actor: Actor; onlyIfNone?: boolean },
+  input: { addendum: Addendum; actor: Actor; onlyIfNone?: boolean; reprepare?: boolean },
 ): Promise<PrepareResult | { status: "exists"; contractId: string }> {
-  const addendum = Addendum.parse(input.addendum);
+  let addendum = Addendum.parse(input.addendum);
   if (input.onlyIfNone) {
     // The job prepares the first contract only; a re-run never supersedes a contract in progress.
     const [open] = await ctx.database.db
@@ -149,6 +231,25 @@ export async function prepareContract(
         "wrong_state",
       );
     }
+    await refuseIfSigned(tx, leaseId);
+    // `cc:` ids must be approved clauses of the unit's company; their approved wording is copied in
+    // here by code (anything sent as `companyClauses` is dropped).
+    if (i.templateIssue) throw i.templateIssue;
+    // Blocks, with a message staff can act on, until the company's legal details and signatory are complete (D44).
+    const gaps = landlordGaps(i.company, i.landlord, ctx.clock.today());
+    if (gaps.length) {
+      throw unprocessable(landlordGapMessage(i.company.name, gaps), gaps, "landlord_details_missing");
+    }
+    // Keep the lease's landlord row on the company's party (leases created before D44 pointed elsewhere).
+    await tx.db
+      .update(leaseParties)
+      .set({ partyId: i.landlord.id })
+      .where(and(eq(leaseParties.leaseId, leaseId), eq(leaseParties.role, "landlord")));
+    const companyClauses = await resolveCompanyClauses(tx, i.unit.companyId, addendum.clauses);
+    // Approved company clauses are immutable (decideClause only touches `proposed` rows), which is why the
+    // inputHash (records the contract is copied from) does not include their text.
+    addendum = { ...addendum, companyClauses };
+    if (!companyClauses.length) delete addendum.companyClauses;
     const { run, helperRunId } = await runAndRecord(
       ctx,
       tx,
@@ -170,9 +271,29 @@ export async function prepareContract(
       });
       return { ok: false as const, reasons: run.result.reasons, helperRunId };
     }
-    return { ok: true as const, data: run.result.data, helperRunId, inputHash: i.inputHash };
+    return {
+      ok: true as const,
+      data: run.result.data,
+      helperRunId,
+      inputHash: i.inputHash,
+      template: i.template,
+      extras: i.extras,
+    };
   });
   if (!pre.ok) return { status: "needs_human", reasons: pre.reasons, helperRunId: pre.helperRunId };
+
+  // Every preparation (the job after the offer, the copilot's confirmed proposal, "Prepare again"): the blank mapping
+  // of the approved template is refreshed against the data held now (code rules, then the model on keys and
+  // descriptions only). The template row is never edited; the mapping used is kept in the event payload. A model
+  // that is down leaves the stored mapping in place.
+  let remap: Remapped | null = null;
+  if (pre.template) {
+    const t = parseTemplate(pre.template);
+    remap = await remapForData(ctx.contractAiLlm ?? ctx.llm, t.sections, t.blanks, {
+      ...pre.extras,
+      ...pre.data.fields,
+    });
+  }
 
   return withTx(ctx.database, async (tx) => {
     const [locked] = await tx.db.select().from(leases).where(eq(leases.id, leaseId)).for("update");
@@ -191,17 +312,57 @@ export async function prepareContract(
       .orderBy(desc(contracts.version))
       .limit(1);
     const version = (last?.version ?? 0) + 1;
-    await supersedeOpenContracts(ctx, tx, leaseId, `replaced by version ${version}`);
+    await refuseIfSigned(tx, leaseId);
+    let supersededVersion: number | null = null;
+    if (input.reprepare) {
+      // Checked under the lease row lock: an approval or a send that landed first wins.
+      const held = await tx.db
+        .select({ c: contracts, approvalStatus: approvals.status })
+        .from(contracts)
+        .leftJoin(approvals, eq(approvals.id, contracts.approvalId))
+        .where(eq(contracts.leaseId, leaseId))
+        .for("update", { of: contracts });
+      if (held.some((r) => r.c.status === "sent" || r.c.status === "signed" || r.approvalStatus === "approved")) {
+        throw conflict(
+          "The contract was already approved or sent to the signers, so it can't be prepared again.",
+          "contract_already_approved",
+        );
+      }
+      supersededVersion = held.find((r) => r.c.status === "pending_approval")?.c.version ?? null;
+      if (supersededVersion === null) {
+        throw conflict("There is no contract waiting for approval to prepare again.", "no_pending_contract");
+      }
+    }
+    await supersedeOpenContracts(ctx, tx, leaseId, `replaced by version ${version}`, input.reprepare === true);
 
     const d = pre.data;
     const reference = shortRef("C");
-    const doc = contractDocument(d.fields, d.addendum, {
-      version,
-      reference,
-      preparedOn: ctx.clock.today(),
-      demo: ctx.demoMode,
-    });
-    const pdf = await renderPdf({ title: doc.title, subject: `${i.lease.ref} ${reference}` }, doc.blocks);
+    // In a company template when the unit's contract rule pins one (blanks filled from `d.fields` only; a value
+    // that is missing fails here with a 422 before anything is stored); else the standard demo template.
+    const subject = `${i.lease.ref} ${reference}`;
+    let pdf: Uint8Array;
+    let leftEmpty: string[] = [];
+    let filled: { label: string; key: string }[] = [];
+    if (i.template) {
+      ({ pdf, leftEmpty, filled } = await renderCompanyContract(ctx, tx, i.template, {
+        fields: d.fields,
+        addendum: d.addendum,
+        version,
+        reference,
+        subject,
+        extras: i.extras,
+        ...(remap ? { blanks: remap.blanks } : {}),
+      }));
+    } else {
+      const doc = contractDocument(d.fields, d.addendum, {
+        version,
+        reference,
+        preparedOn: ctx.clock.today(),
+        demo: ctx.demoMode,
+      });
+      pdf = await renderPdf({ title: doc.title, subject }, doc.blocks);
+    }
+    const templateRef = i.template ? templateKey(i.template) : null;
     const stored = await ctx.documents.put(pdf, "pdf");
     const documentId = newId();
     await tx.db.insert(documents).values({
@@ -244,6 +405,7 @@ export async function prepareContract(
       addendum: d.addendum,
       flags: d.flags,
       reviewed: d.reviewed,
+      ...(templateRef ? { template: templateRef } : {}),
     };
     const approval = await requestApproval(ctx, tx, {
       gate: "final_contract",
@@ -251,9 +413,28 @@ export async function prepareContract(
       dedupeKey: `${leaseId}:final_contract:v${version}`,
       title: `Final contract for ${i.lease.ref} (version ${version})`,
       proposal,
-      reasons: d.flags.length
-        ? d.flags.map((f) => `Addendum ${f.kind.replace("_", " ")}: "${f.quote}" (${f.reason})`)
-        : ["Every field is copied from its record. Check them against the sources and the PDF before approving."],
+      reasons: [
+        ...(templateRef ? [`Company template v${templateRef.version}`] : []),
+        ...(remap?.changes.length
+          ? [
+              `Blank mapping refreshed for the data held now (blank: stored -> now): ${remap.changes
+                .map((c) => `${c.label}: ${c.from} -> ${c.to} (${c.source})`)
+                .join("; ")}`,
+            ]
+          : []),
+        ...(remap?.modelUnavailable
+          ? [
+              "The mapping model was unavailable: the template's stored mapping was used for blanks it could not refresh.",
+            ]
+          : []),
+        ...(filled.length
+          ? [`Filled from the records (blank <- source): ${filled.map((f) => `${f.label} <- ${f.key}`).join("; ")}`]
+          : []),
+        ...(leftEmpty.length ? [`Left empty for hand-filling: ${leftEmpty.join(", ")}`] : []),
+        ...(d.flags.length
+          ? d.flags.map((f) => `Addendum ${f.kind.replace("_", " ")}: "${f.quote}" (${f.reason})`)
+          : ["Every field is copied from its record. Check them against the sources and the PDF before approving."]),
+      ],
       sources: [
         { kind: "document", documentId, label: `Contract PDF, version ${version}` },
         { kind: "helper_run", helperRunId: pre.helperRunId, label: "Contract helper run" },
@@ -274,19 +455,116 @@ export async function prepareContract(
         helperRunId: pre.helperRunId,
         approvalId: approval.id,
         addendumFlags: d.flags.length,
+        ...(templateRef
+          ? { templateId: templateRef.id, templateVersion: templateRef.version, templateHash: templateRef.contentHash }
+          : {}),
+        ...(remap && i.template
+          ? {
+              mappingRefresh: {
+                changes: remap.changes,
+                modelUnavailable: remap.modelUnavailable,
+                model: remap.model,
+                mappingUsed: Object.fromEntries(
+                  remap.blanks.filter((b) => b.role === "field").map((b) => [b.id, b.field]),
+                ),
+              },
+            }
+          : {}),
       },
       rulesVersion: i.lease.rulesVersion,
     });
+    if (supersededVersion !== null) {
+      await appendEvent(tx, ctx, {
+        entity: { kind: "lease", id: leaseId },
+        type: "CONTRACT_REPREPARED",
+        actor: input.actor,
+        payload: { supersededVersion, newVersion: version, contractId, approvalId: approval.id },
+        rulesVersion: i.lease.rulesVersion,
+      });
+    }
+    // The officer task raised when automatic preparation is off is done now.
+    await tx.db
+      .update(tasks)
+      .set({ status: "done" })
+      .where(and(eq(tasks.dedupeKey, `${leaseId}:prepare_contract`), eq(tasks.status, "open")));
     return { status: "prepared" as const, contractId, version, approvalId: approval.id };
   });
 }
 
+/**
+ * "Prepare contract again" (staff). Allowed only while the open contract still waits for its `final_contract`
+ * approval and nothing went to the signers. The pending approval is cancelled (CONTRACT_SUPERSEDED) and a new
+ * contract is rendered from the current rule and template, with the same addendum, and a new `final_contract`
+ * approval opens. Refused once a contract was approved, sent or signed. The gate is unchanged.
+ */
+export async function reprepareContract(ctx: EngineContext, leaseId: string, actor: Actor) {
+  const [latest] = await ctx.database.db
+    .select({ addendum: contracts.addendum })
+    .from(contracts)
+    .where(and(eq(contracts.leaseId, leaseId), eq(contracts.status, "pending_approval")))
+    .orderBy(desc(contracts.version))
+    .limit(1);
+  if (!latest) {
+    // Same answers as the locked check: an approved or sent contract refuses, otherwise nothing is pending.
+    const [done] = await ctx.database.db
+      .select({ id: contracts.id })
+      .from(contracts)
+      .where(and(eq(contracts.leaseId, leaseId), inArray(contracts.status, ["sent", "signed"])))
+      .limit(1);
+    if (done) {
+      throw conflict(
+        "The contract was already approved or sent to the signers, so it can't be prepared again.",
+        "contract_already_approved",
+      );
+    }
+    throw conflict("There is no contract waiting for approval to prepare again.", "no_pending_contract");
+  }
+  const old = latest.addendum as Addendum;
+  const addendum = Addendum.parse({ clauses: old.clauses, freeText: old.freeText ?? null });
+  return prepareContract(ctx, leaseId, { addendum, actor, reprepare: true });
+}
+
+/**
+ * Job path: a company template that can't be used (not approved any more, a blank with no value) is
+ * not retried forever; an officer gets a task that says why. Returns true when the failure was reported.
+ */
+export async function reportTemplateFailure(ctx: EngineContext, leaseId: string, e: unknown): Promise<boolean> {
+  if (!(e instanceof DomainError) || e.status !== 422 || !e.code.startsWith("template_")) return false;
+  await withTx(ctx.database, async (tx) => {
+    const [lease] = await tx.db.select({ ref: leases.ref }).from(leases).where(eq(leases.id, leaseId));
+    await createTask(ctx, tx, leaseId, {
+      kind: "contract_needs_person",
+      title: `Contract for ${lease?.ref ?? leaseId} can't be prepared: ${e.message}`,
+      details: { code: e.code, reasons: e.reasons },
+      assigneeRole: "leasing_officer",
+      dueOn: ctx.clock.today(),
+      dedupeKey: `${leaseId}:contract_needs_person:${e.code}:${sha256Hex(e.message)}`,
+    });
+  });
+  return true;
+}
+
 /** A new version replaces the open one: its approval is cancelled and its signing links stop working. */
-async function supersedeOpenContracts(ctx: EngineContext, tx: Tx, leaseId: string, note: string) {
+/** A signed contract is final: no path (job, staff, copilot confirm, re-prepare) may prepare or supersede past it. */
+async function refuseIfSigned(tx: Tx, leaseId: string) {
+  const [signed] = await tx.db
+    .select({ id: contracts.id })
+    .from(contracts)
+    .where(and(eq(contracts.leaseId, leaseId), eq(contracts.status, "signed")))
+    .limit(1);
+  if (signed) throw conflict("This contract is already signed, so it can't be prepared again.", "contract_signed");
+}
+
+async function supersedeOpenContracts(ctx: EngineContext, tx: Tx, leaseId: string, note: string, pendingOnly = false) {
   const open = await tx.db
     .select()
     .from(contracts)
-    .where(and(eq(contracts.leaseId, leaseId), inArray(contracts.status, ["pending_approval", "sent"])))
+    .where(
+      and(
+        eq(contracts.leaseId, leaseId),
+        inArray(contracts.status, pendingOnly ? ["pending_approval"] : ["pending_approval", "sent"]),
+      ),
+    )
     .for("update");
   for (const c of open) {
     await tx.db.update(contracts).set({ status: "superseded" }).where(eq(contracts.id, c.id));
@@ -358,9 +636,12 @@ export async function onContractDecided(
     throw unprocessable("The contract PDF on file is not the one that was prepared.", [], "stale");
   }
   await tx.db.update(contracts).set({ status: "sent", sentAt: ctx.clock.now() }).where(eq(contracts.id, c.id));
+  const landlordSign = landlordSigner(i.company, i.landlord);
+  if (!landlordSign) throw unprocessable("The company has no authorised signatory.", [], "landlord_details_missing");
   for (const [role, party, nameEn] of [
     ["tenant", i.tenant, c.fields.tenantNameEn],
-    ["landlord", i.landlord, c.fields.landlordNameEn],
+    // The authorised signatory signs for the company (D44) and types their own name.
+    ["landlord", i.landlord, landlordSign.name],
   ] as const) {
     const signerId = newId();
     await tx.db.insert(contractSigners).values({
@@ -369,10 +650,21 @@ export async function onContractDecided(
       partyId: party.id,
       role,
       nameEn,
-      email: party.email,
+      capacity: role === "landlord" ? landlordSign.capacity : null,
+      email: role === "landlord" ? landlordSign.email : party.email,
       createdAt: ctx.clock.now(),
     });
     await queueLeaseMail(ctx, tx, { leaseId: c.leaseId, kind: "sign", key: signerId, seq: 1 });
+    // `sign_reminder` (D37): N days later, if this signer still hasn't signed (the sender re-checks).
+    const a = (await getCompanyPolicy(tx, ctx.clock.today())).autopilot;
+    if (a.sign_reminder) {
+      await queueLeaseMail(
+        ctx,
+        tx,
+        { leaseId: c.leaseId, kind: "sign_reminder", key: signerId, seq: 1 },
+        sendTime(a, new Date(ctx.clock.now().getTime() + a.sign_reminder_days * 86_400_000)),
+      );
+    }
   }
   await appendEvent(tx, ctx, {
     entity: { kind: "lease", id: c.leaseId },
@@ -393,8 +685,16 @@ export async function contractPdf(ctx: EngineContext, tx: Tx, c: ContractRow, wh
 }
 
 /** Re-sends a signing link (a new one; the old one stops working). Staff action. */
-export async function resendSignLink(ctx: EngineContext, leaseId: string, signerId: string, actor: Actor) {
-  return withTx(ctx.database, async (tx) => {
+export async function resendSignLink(
+  ctx: EngineContext,
+  leaseId: string,
+  signerId: string,
+  actor: Actor,
+  /** Web chat status check: at most one re-send per signer per Dubai day. */
+  opts: { oncePerDay?: boolean } = {},
+  inTx?: Tx,
+) {
+  const run = async (tx: Tx) => {
     const [s] = await tx.db
       .select({ signer: contractSigners, contract: contracts })
       .from(contractSigners)
@@ -403,16 +703,32 @@ export async function resendSignLink(ctx: EngineContext, leaseId: string, signer
       .for("update");
     if (!s) throw notFound("signer");
     if (s.contract.status !== "sent" || s.signer.signedAt) throw conflict("This signer has nothing left to sign.");
+    const today = ctx.clock.today();
+    if (opts.oncePerDay) {
+      const prior = await tx.db
+        .select({ payload: leaseEvents.payload })
+        .from(leaseEvents)
+        .where(and(eq(leaseEvents.entityId, leaseId), eq(leaseEvents.type, "SIGN_LINK_RESENT")));
+      if (
+        prior.some(
+          (e) =>
+            (e.payload as { signerId?: string; on?: string }).signerId === signerId &&
+            (e.payload as { on?: string }).on === today,
+        )
+      )
+        return { queued: false, seq: 0, duplicate: true };
+    }
     const seq = await nextSignSeq(tx, leaseId, signerId);
     await queueLeaseMail(ctx, tx, { leaseId, kind: "sign", key: signerId, seq });
     await appendEvent(tx, ctx, {
       entity: { kind: "lease", id: leaseId },
       type: "SIGN_LINK_RESENT",
       actor,
-      payload: { contractId: s.contract.id, signerId, role: s.signer.role, seq },
+      payload: { contractId: s.contract.id, signerId, role: s.signer.role, seq, on: today },
     });
-    return { queued: true, seq };
-  });
+    return { queued: true, seq, duplicate: false };
+  };
+  return inTx ? run(inTx) : withTx(ctx.database, run);
 }
 
 async function nextSignSeq(tx: Tx, leaseId: string, signerId: string): Promise<number> {
@@ -439,6 +755,7 @@ export async function signView(tx: Tx, link: LinkRow) {
     linkUsed: !!link.usedAt,
     role: s.signer.role,
     signerName: s.signer.nameEn,
+    signerCapacity: s.signer.capacity,
     signedAt: s.signer.signedAt,
     contract: {
       version: s.contract.version,
@@ -582,6 +899,7 @@ export async function finishContract(ctx: EngineContext, contractId: string) {
         .map((s) => ({
           role: s.role,
           name: s.nameEn,
+          capacity: s.capacity,
           typedName: s.typedName ?? "",
           signedAt: s.signedAt!.toISOString(),
           email: s.email,

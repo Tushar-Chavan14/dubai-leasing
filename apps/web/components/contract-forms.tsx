@@ -5,6 +5,7 @@ import { useActionState } from "react";
 import {
   type LeaseActionState,
   prepareContract,
+  reprepareContract,
   proposeEjari,
   resendSignLink,
 } from "../app/(staff)/leases/[id]/actions";
@@ -43,11 +44,13 @@ export function PrepareContractForm({
   clauses,
   freeText,
   label,
+  companyClauses = [],
 }: {
   leaseId: string;
   clauses: string[];
   freeText: string | null;
   label: string;
+  companyClauses?: { ref: string; title: string; text: string; hasValues: boolean }[];
 }) {
   const [state, action, pending] = useActionState<LeaseActionState, FormData>(prepareContract, {});
   return (
@@ -65,6 +68,20 @@ export function PrepareContractForm({
           </label>
         ))}
       </fieldset>
+      {companyClauses.length > 0 && (
+        <fieldset className="choice-list">
+          <legend className="field-label">Company clauses</legend>
+          {companyClauses.map((c) => (
+            <label key={c.ref} className="choice">
+              <input type="checkbox" name="clause" value={c.ref} defaultChecked={clauses.includes(c.ref)} />
+              <span>
+                <b>{c.title}</b>
+                <small>{c.text}</small>
+              </span>
+            </label>
+          ))}
+        </fieldset>
+      )}
       <label className="field">
         <span className="field-label">
           Extra terms <em>(optional; checked by the review model for conflicts, never rewritten)</em>
@@ -105,6 +122,24 @@ export function ProposeEjariButton({ leaseId }: { leaseId: string }) {
           {pending ? "Proposing…" : "Propose the submission again"}
         </button>
       </div>
+      <Result s={state} />
+    </form>
+  );
+}
+
+/** Re-renders a contract that is still waiting for approval, from the current rule and company template. */
+export function ReprepareContractButton({ leaseId }: { leaseId: string }) {
+  const [state, action, pending] = useActionState<LeaseActionState, FormData>(reprepareContract, {});
+  return (
+    <form action={action} className="stack" style={{ gap: 6 }}>
+      <input type="hidden" name="leaseId" value={leaseId} />
+      <button type="submit" className="btn small" disabled={pending}>
+        {pending ? "Preparing…" : "Prepare contract again"}
+      </button>
+      <small className="muted">
+        Uses the company&rsquo;s current contract rule and template. The pending approval is cancelled and a new one
+        opens.
+      </small>
       <Result s={state} />
     </form>
   );

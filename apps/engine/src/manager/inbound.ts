@@ -168,13 +168,78 @@ export async function receiveInbound(ctx: EngineContext, tx: Tx, req: InboundReq
 }
 
 /**
+ * TENANCY_OPS off: a tenant's tenancy form is still kept (evidence, nothing is lost) but marked
+ * for a person (`stored_only`, result.needsHuman) and never processed: no job, no state change.
+ * One officer task tells the team that a reply arrived.
+ */
+export async function storeInboundWhileTenancyOff(
+  ctx: EngineContext,
+  tx: Tx,
+  req: InboundRequest & { entity: { kind: "lease"; id: string } },
+) {
+  const parsed = inboundPayloads[req.type].safeParse(req.payload ?? {});
+  if (!parsed.success) {
+    throw unprocessable(
+      "the form is incomplete",
+      parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`),
+      "invalid_payload",
+    );
+  }
+  const [lease] = await tx.db.select().from(leases).where(eq(leases.id, req.entity.id));
+  if (!lease) throw conflict("lease not found");
+  const dedupeKey = `tenancy_off:${lease.id}:${req.type}:${sha256Hex(JSON.stringify(parsed.data)).slice(0, 24)}`;
+  const id = newId();
+  const ref = shortRef("R");
+  const [row] = await tx.db
+    .insert(inboundEvents)
+    .values({
+      id,
+      ref,
+      type: req.type,
+      entityKind: "lease",
+      entityId: lease.id,
+      channel: req.channel,
+      actor: req.actor,
+      linkId: req.linkId ?? null,
+      dedupeKey,
+      payload: parsed.data as Record<string, unknown>,
+      status: "stored_only",
+      result: { needsHuman: true, reason: "tenancy operations are switched off (TENANCY_OPS=false)" },
+      receivedAt: ctx.clock.now(),
+      processedAt: ctx.clock.now(),
+    })
+    .onConflictDoNothing({ target: inboundEvents.dedupeKey })
+    .returning();
+  if (!row) {
+    const [prev] = await tx.db.select().from(inboundEvents).where(eq(inboundEvents.dedupeKey, dedupeKey));
+    return { ref: prev?.ref ?? "", duplicate: true, id: prev?.id ?? "" };
+  }
+  await appendEvent(tx, ctx, {
+    entity: { kind: "lease", id: lease.id },
+    type: "INBOUND_RECEIVED",
+    actor: req.actor,
+    payload: { inboundEventId: id, ref, type: req.type, channel: req.channel, needsHuman: true },
+    rulesVersion: lease.rulesVersion,
+  });
+  await createTask(ctx, tx, lease.id, {
+    kind: "tenancy_ops_off_inbound",
+    title: "Tenant reply received while tenancy operations are off",
+    details: { inboundEventId: id, ref, type: req.type },
+    assigneeRole: "leasing_officer",
+    dueOn: ctx.clock.today(),
+    dedupeKey: `tenancy_off_inbound:${id}`,
+  });
+  return { ref, duplicate: false, id };
+}
+
+/**
  * Processes one stored submission (pg-boss job). The comment, if any, is classified first in
  * its own transaction (model calls can be slow); then the submission is applied under a lock.
  * A submission that no longer fits the lease's state is kept but not applied, and a person is told.
  */
-export async function processInbound(ctx: EngineContext, inboundEventId: string) {
+export async function processInbound(ctx: EngineContext, inboundEventId: string, attempt = 1) {
   try {
-    return await processInboundOnce(ctx, inboundEventId);
+    return await processInboundOnce(ctx, inboundEventId, attempt);
   } catch (e) {
     // The job retries, but a person hears about it at the first failure (once per submission).
     const reason = maskPiiText(e instanceof Error ? e.message : String(e));
@@ -200,10 +265,10 @@ export async function processInbound(ctx: EngineContext, inboundEventId: string)
   }
 }
 
-async function processInboundOnce(ctx: EngineContext, inboundEventId: string) {
+async function processInboundOnce(ctx: EngineContext, inboundEventId: string, attempt: number) {
   const [ev] = await ctx.database.db.select().from(inboundEvents).where(eq(inboundEvents.id, inboundEventId));
   if (!ev || ev.status !== "received") return { done: false, reason: "not waiting" };
-  if (ev.entityKind === "application") return processApplicationInbound(ctx, ev);
+  if (ev.entityKind === "application") return processApplicationInbound(ctx, ev, attempt);
   if (isTenancyType(ev.type)) return processTenancyInbound(ctx, ev);
 
   let classification: { data: ReplyData | undefined; reasons: string[]; helperRunId: string; status: string } | null =

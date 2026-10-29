@@ -7,8 +7,8 @@ import { applications, type Database, leaseEvents, leases, parties, unitPhotos, 
 import { beforeEach, describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { createApi } from "../src/api/app.ts";
-import { APPLICATION_MAIL_JOB, sendApplicationMail } from "../src/manager/applications.ts";
-import { freshDatabase, noDb, testContext } from "./harness.ts";
+import { APPLICATION_MAIL_JOB, createApplication, sendApplicationMail } from "../src/manager/applications.ts";
+import { freshDatabase, noDb, testContext, testCompany } from "./harness.ts";
 
 const SECRET = "test-secret";
 const CHANNEL_SECRET = "p".repeat(40);
@@ -40,6 +40,7 @@ const post = (body: unknown, opts: { auth?: string | null; ip?: string } = {}) =
 async function addUnit(over: Partial<typeof units.$inferInsert> = {}) {
   const id = newId();
   await database.db.insert(units).values({
+    companyId: await testCompany(database),
     id,
     code: `U-${id.slice(-6)}`,
     building: "Demo Residence",
@@ -124,6 +125,43 @@ describe.skipIf(noDb)("public listings and enquiry routes", () => {
     expect((await get(`/public/units/${prep}`)).status).toBe(404);
     expect((await get(`/public/units/${contracted}/slots`)).status).toBe(404);
     expect((await get("/public/units/not-a-uuid")).status).toBe(404);
+  });
+
+  test("the category filter widens the list; commercial units show size and open as listings, not for the form", async () => {
+    const shop = await addUnit({ category: "retail", subtype: "shop", bedrooms: null, areaSqft: 650 });
+    const ids = async (q: string) =>
+      ((await (await get(`/public/units${q}`)).json()) as { id: string }[]).map((u) => u.id);
+    expect(await ids("")).not.toContain(shop);
+    expect(await ids("?category=retail")).toEqual([shop]);
+    expect(await ids("?category=commercial")).toEqual([]);
+    expect(await ids("?category=all")).toEqual(expect.arrayContaining([listed, shop]));
+    const row = ((await (await get("/public/units?category=retail")).json()) as Record<string, unknown>[])[0]!;
+    expect(row).toMatchObject({ category: "retail", subtype: "shop", areaSqft: 650 });
+    expect((await get("/public/units?category=villa")).status).toBe(400);
+    expect((await get(`/public/units/${shop}`)).status).toBe(200);
+    // Booking through the form stays residential-only.
+    expect((await get(`/public/units/${shop}/slots`)).status).toBe(404);
+    expect((await post(enquiry(shop, "2026-11-03T06:00:00Z"))).status).toBe(409);
+  });
+
+  test("the list narrows by community, bedrooms, size band and budget; bad values are 400", async () => {
+    const mk = (over: Partial<typeof units.$inferInsert>) => addUnit({ community: "Narrow Test Bay", ...over });
+    const studio = await mk({ bedrooms: 0, askingRentFils: 4_000_000 });
+    const two = await mk({ bedrooms: 2, askingRentFils: 9_000_000 });
+    const small = await mk({ category: "commercial", bedrooms: null, areaSqft: 800 });
+    const big = await mk({ category: "commercial", bedrooms: null, areaSqft: 5000 });
+    const ids = async (q: string) =>
+      ((await (await get(`/public/units?${q}`)).json()) as { id: string }[]).map((u) => u.id).toSorted();
+    const area = "community=Narrow%20Test%20Bay";
+    expect(await ids(`${area}&category=all`)).toEqual([studio, two, small, big].toSorted());
+    expect(await ids(`${area}&bedrooms=0`)).toEqual([studio]);
+    expect(await ids(`${area}&bedrooms=2`)).toEqual([two]);
+    expect(await ids(`${area}&budget=50000`)).toEqual([studio]);
+    expect(await ids(`${area}&category=commercial&size=small`)).toEqual([small]);
+    expect(await ids(`${area}&category=commercial&size=large`)).toEqual([big]);
+    expect(await ids("community=Nowhere")).toEqual([]);
+    for (const bad of ["bedrooms=9", "bedrooms=x", "size=huge", "budget=0", "budget=-5"])
+      expect((await get(`/public/units?${bad}`)).status).toBe(400);
   });
 
   test("unit detail has the extra facts; photos serve only for that bookable unit", async () => {
@@ -267,6 +305,26 @@ describe.skipIf(noDb)("public listings and enquiry routes", () => {
     expect(res.status).toBe(429);
     expect(((await res.json()) as { code: string }).code).toBe("too_many_enquiries");
     expect((await post(enquiry(ids[3]!, s!.at, { email: "someone-else@example.com" }))).status).toBe(201);
+  });
+
+  test("web-chat applications count toward the same three-open limit", async () => {
+    for (let i = 0; i < 3; i++) {
+      await createApplication(
+        t.ctx,
+        {
+          unitId: await addUnit(),
+          nameEn: "Sara Khan",
+          email: "chat@example.com",
+          kind: "individual",
+          source: "web_chat",
+        },
+        "system",
+      );
+    }
+    const [s] = await slotsOf(listed);
+    const res = await post(enquiry(listed, s!.at, { email: "chat@example.com" }));
+    expect(res.status).toBe(429);
+    expect(((await res.json()) as { code: string }).code).toBe("too_many_enquiries");
   });
 
   test("a call with no forwarded address is still limited (shared bucket)", async () => {

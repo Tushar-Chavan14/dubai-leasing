@@ -27,7 +27,7 @@ import { importLeasesCsv } from "../src/manager/import.ts";
 import { INBOUND_JOB, processInbound } from "../src/manager/inbound.ts";
 import { sweepDueDeadlines } from "../src/manager/milestones.ts";
 import { NOTICE_SEND_JOB, sendRenewalNotice } from "../src/manager/outbound.ts";
-import { addStaff, freshDatabase, leaseCsv, noDb, testContext } from "./harness.ts";
+import { addStaff, freshDatabase, leaseCsv, noDb, testContext, testCompany } from "./harness.ts";
 
 const START = "2026-10-19T04:00:00Z"; // 08:00 Dubai
 const SECRET = "test-secret";
@@ -51,6 +51,7 @@ async function setup(opts: { sri?: number | null; llm?: FakeLlm; demoRecipient?:
     t.ctx,
     leaseCsv([{ start_on: "2026-06-01", end_on: "2027-05-31", annual_rent_aed: "80000" }]),
     "import",
+    await testCompany(t.ctx.database),
   );
   const leaseId = r!.leaseId!;
   const manager = await addStaff(database, "leasing_manager");
@@ -505,6 +506,23 @@ describe.skipIf(noDb)("renewal notice pipeline (Postgres)", () => {
     const other = await addStaff(database, "leasing_manager");
     await expect(decideApproval(ctx, next.id, other, { decision: "approve" })).resolves.toMatchObject({
       status: "approved",
+    });
+  });
+
+  test("PUT /api/sri upserts: the same community, bedrooms and day updates the row instead of failing", async () => {
+    const { manager, staff } = await setup({ sri: null });
+    const put = (avg: number) =>
+      staff(manager, "/api/sri", "PUT", { community: "Upsert Heights", bedrooms: 2, avgAnnualRentFils: avg });
+    expect((await put(9_000_000)).status).toBe(200);
+    const second = await put(9_500_000);
+    expect(second.status).toBe(200);
+    const rows = await database.db.select().from(sriAverages).where(eq(sriAverages.community, "Upsert Heights"));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      category: "residential",
+      bedrooms: 2,
+      avgAnnualRentFils: 9_500_000,
+      source: "manual",
     });
   });
 });

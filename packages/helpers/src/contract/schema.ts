@@ -43,6 +43,8 @@ export const ContractContext = z.object({
     emiratesIdNo: z.string().nullable(),
     tradeLicenceNo: z.string().nullable(),
     email: z.string().nullable(),
+    nationality: z.string().nullable().optional(),
+    phone: z.string().nullable().optional(),
   }),
   unit: z.object({
     id: z.string(),

@@ -5,7 +5,14 @@ export interface SignatureRecord {
   reference: string;
   /** SHA-256 of the approved PDF every signer was shown. */
   documentSha256: string;
-  signers: { role: string; name: string; typedName: string; signedAt: string; email: string | null }[];
+  signers: {
+    role: string;
+    name: string;
+    capacity?: string | null;
+    typedName: string;
+    signedAt: string;
+    email: string | null;
+  }[];
   demo: boolean;
 }
 
@@ -38,6 +45,7 @@ export async function appendSignatureRecord(original: Uint8Array, r: SignatureRe
   y -= 10;
   for (const s of r.signers) {
     line(`${s.role === "tenant" ? "Tenant" : s.role === "landlord" ? "Landlord" : s.role}: ${s.name}`, { bold: true });
+    if (s.capacity) line(s.capacity);
     line(`Typed name: ${s.typedName}`);
     line(`Signed at: ${s.signedAt} (UTC)`);
     if (s.email) line(`Signing link sent to: ${s.email}`, { color: muted });

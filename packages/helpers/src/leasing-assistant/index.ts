@@ -1,5 +1,5 @@
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
-import type { Helper } from "@leasing/core";
+import { type Helper, PropertyCategory, SizeBand } from "@leasing/core";
 import type { Llm, SystemOneAnswer } from "@leasing/llm";
 import {
   answerMessages,
@@ -17,7 +17,7 @@ import {
   type LeasingAssistantData,
 } from "./schema.ts";
 
-export { enquiryCopy, formatSlot } from "./copy.ts";
+export { enquiryCopy, formatSlot, isStatusStandIn } from "./copy.ts";
 export { checkAnswer, enquiryQuestions, enquiryState, factSheet, listingsSheet } from "./prompt.ts";
 export * from "./schema.ts";
 
@@ -73,8 +73,18 @@ export function leasingAssistant(llm: Llm): Helper<LeasingAssistantContext, Leas
     const language = as(r.answers.language, "choice").choice;
     const bedrooms = as(r.answers.bedrooms, "choice").choice;
     const community = c.communities.length ? as(r.answers.community, "choice").choice : "none";
+    const web = c.channel === "web";
+    // Optional: a model answer that is missing or outside the options reads as "none"; code validates the value later.
+    const pick = (key: string) => {
+      const a = r.answers[key];
+      return a?.type === "choice" ? a.choice : "none";
+    };
+    const emirate = web ? pick("emirate") : "none";
+    const category = web ? pick("category") : "none";
+    const sizeBand = web ? pick("size_band") : "none";
     const flags = {
-      commercial: as(r.answers.commercial, "noul").noul,
+      // The web chat searches business units too, so "commercial" is no reason to hand over there.
+      commercial: web ? 0 : as(r.answers.commercial, "noul").noul,
       vip: as(r.answers.vip, "noul").noul,
       complaint: as(r.answers.complaint, "noul").noul,
       injection: as(r.answers.system_instruction, "noul").noul,
@@ -109,6 +119,9 @@ export function leasingAssistant(llm: Llm): Helper<LeasingAssistantContext, Leas
         search: {
           ...(bedroomsN !== undefined && Number.isInteger(bedroomsN) ? { bedrooms: bedroomsN } : {}),
           ...(community !== "none" && c.communities.includes(community) ? { community } : {}),
+          ...(emirate === "dubai" || emirate === "abu_dhabi" || emirate === "sharjah" ? { emirate } : {}),
+          ...(PropertyCategory.safeParse(category).success ? { category: category as PropertyCategory } : {}),
+          ...(SizeBand.safeParse(sizeBand).success ? { sizeBand: sizeBand as SizeBand } : {}),
         },
         handoff: reasons.length > 0,
       },

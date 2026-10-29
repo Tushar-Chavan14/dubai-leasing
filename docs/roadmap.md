@@ -127,3 +127,34 @@ D30 slices 1 and 2 (accounts, login, records, uploads) were built, then replaced
 - [x] Public chat (D31): contact first, change email, `leasing_visitor` cookie, web-server relay with `CHANNEL_SECRET`, `/chat` and a floating launcher
 - [x] Public `/properties` and `/properties/[id]` with a self-service enquiry form (`source "web_form"`, free grid slot, per-IP and per-email limits)
 - [x] More demo units (7 listed (6 new plus JVC-0412), several communities) and an Ejari mock registry derived from the shared demo unit list
+
+## Phase 7 — Contract AI
+
+- [x] Slice 1: Portfolio and pricing rules (D32): companies, unit category and subtype, rent rules as a band around the SRI, contract rules for cheque limits, company-aware import, new demo seed
+- [x] Slice 2: Agentic staff shell (new nav, Home, Workspace, agent permissions in `CompanyPolicy.autopilot`, `TENANCY_OPS` flag) (D33): held steps with officer tasks, saved views, theme switch, tenancy operations off by default
+- [x] Slice 3: Customer agent and Contract AI (customer section `/customer/*`, chat search, Apply now, chat status check (D34), `contract-template` helper and company clauses (D35), AI customer agent (D36))
+  Evals (local models, Task 7): leasing-assistant 54 cases (la47-la54 new): intent 44/54 (81.5%), handoff recall 22/22,
+  false handoffs 1/32, injections 7/7, unit answers failing value check 0, p50 6.0 s, max 25.8 s.
+  contract-template (6 fixtures): expected clauses 12/18, quotes not in document 0/16, clauses from injected line 0; misses are
+  utilities (0 clauses), nested-injection and spelled-out pets.
+  customer-agent (23 cases, 3 new status-abuse c21-c23), qwen3.5:9b: tool choice 19/20, facts 3/3, shape 22/23, fallbacks 0,
+  p50 8.4 s, max 34.4 s, forbidden actions 0 (c22 "status of application A-4821" calls start_status_check: sends a code to the visitor's own email, no data shown).
+  customer-agent, CUSTOMER_AGENT_MODEL=gemma4:e4b: tool choice 15/20, facts 3/3, shape 18/23, fallbacks 2/23, p50 4.1 s, max 25.7 s,
+  forbidden actions 0. About 2x faster but misses cards, choice cards and a handoff; keep qwen3.5:9b until prompt is tuned for it.
+- [x] Slice 4: company contract templates (D38), voice (D39), fourteen more agent switches (D37), model choice per helper (D40); compliance-review fixes done (template wording values and authority confirmations, voice body cap, demo timed reminders)
+- [x] Slice 4, Task 5: chat models moved to `gemma4:e4b` (`CHAT_MODEL` in `.env.example`), per-helper overrides `COPILOT_MODEL`, `LEASING_ASSISTANT_MODEL`, `CONTRACT_AI_MODEL`, `CUSTOMER_AGENT_MODEL`, `VOICE_MODEL`. Evals on 2026-10-28 (qwen3.5:9b ran 94% on CPU here, so only the copilot, contract-structure and complaints qwen runs are fresh):
+
+  | Suite | qwen3.5:9b | gemma4:e4b | Verdict |
+  |---|---|---|---|
+  | leasing-assistant (54) | intent 44/54, handoff recall 22/22, false handoffs 1/32, injections 7/7, p50 6.0 s (reused, slice 3) | same scores, p50 6.9 s | gemma |
+  | contract-template (6) | clauses 12/18, bad quotes 0, injected 0 (reused, slice 3) | same | gemma |
+  | contract-structure (4) | blanks 28/28, mapping 27/27, styles 37/37, 115 s on the biggest PDF | same scores, 20 s | gemma |
+  | customer-agent (qwen 23 cases from slice 3, reused; gemma 26 cases) | tool 19/20, shape 22/23, fallbacks 0, p50 8.4 s | tool 14/21, shape 19/26, fallbacks 2/26, p50 4.6 s; tuned: 13/21, 18/26 | pinned qwen |
+  | copilot (77) | tool 59/69 (85.5%), facts 64/78, unverified 6/77, p50 26.7 s | tool 51/69 (73.9%), facts 60/78, unverified 4/77, p50 7.8 s; tuned: 52/69 (75.4%), 59/78, 3/77, 7.4 s | pinned qwen |
+  | complaints (34) | route 29/34, safety 10/10, injections 4/4, ack check 0 failing (fails the 85% urgency limit on qwen too) | stopped at ct30 of 34, no summary; safety and ack results not confirmed | gemma (see note) |
+  | voice | no eval suite | none | `VOICE_MODEL` stays `gemma4:e4b` |
+
+  Forbidden actions: 0 on both models in every suite. Gemma misses by asking a clarifying question instead of calling the tool (search, viewing_slots, search_entities). One prompt pass (rule 8 in the customer agent prompt, a "call the tool first" line in the copilot prompt) did not close the gap, so `COPILOT_MODEL` and `CUSTOMER_AGENT_MODEL` are pinned to `qwen3.5:9b` in `.env.example`. `KYC` (vision) was not run. The complaint acknowledgements follow `CHAT_MODEL`; re-run `bun run eval -- complaints` on gemma to confirm before relying on it.
+- [x] Copilot optimisation (D41): pipeline tools (`pipeline_summary`, `list_records`, `get_record`, `contract_status`, `list_companies`, `offer_choices`), record and unit cards and choice cards shared with the public chat, prompt scoped to the Contract AI pipeline; nine new eval cases (c78 to c86)
+- [x] Copilot calls the engine API that exists (D42): `list_tasks`, `list_enquiries`, `get_enquiry`, `get_unit`, `viewing_slots`, `draft_email` to applicants, four Confirm-click proposals; shared composer with quick-action pills in both chats; email reset and fresh status in the public chat; ten new eval cases (c88 c97)
+- Open: native Arabic review of new copy; faster customer agent model; scanned PDF reading

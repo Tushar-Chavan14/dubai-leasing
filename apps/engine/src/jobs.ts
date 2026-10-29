@@ -1,14 +1,30 @@
+import { withTx } from "@leasing/db";
 import { PgBoss } from "pg-boss";
 import type { EngineContext, Scheduler } from "./context.ts";
-import { APPLICATION_MAIL_JOB, type ApplicationMailKind, sendApplicationMail } from "./manager/applications.ts";
+import {
+  APPLICATION_MAIL_JOB,
+  type ApplicationMailKind,
+  autoReleaseHeldOffer,
+  HELD_OFFER_RELEASE_JOB,
+  sendApplicationMail,
+} from "./manager/applications.ts";
 import {
   CONTRACT_FINISH_JOB,
   CONTRACT_PREPARE_JOB,
-  DEFAULT_ADDENDUM,
+  defaultAddendumFor,
   finishContract,
   prepareContract,
+  reportTemplateFailure,
 } from "./manager/contracts.ts";
+import {
+  CONTRACT_STRUCTURE_JOB,
+  CONTRACT_TEMPLATE_JOB,
+  contractJobExpireSeconds,
+  runContractStructure,
+  runContractTemplateJob,
+} from "./manager/contract-templates.ts";
 import { INBOUND_JOB, processInbound } from "./manager/inbound.ts";
+import { CHAT_CODE_JOB, sendChatCode } from "./manager/web-chat-status.ts";
 import { LEASE_MAIL_JOB, type LeaseMailJob, sendLeaseMail } from "./manager/lease-mail.ts";
 import { cancelEjari } from "./manager/deposit.ts";
 import { DEADLINE_JOB, fireDeadline, sweepDueDeadlines } from "./manager/milestones.ts";
@@ -37,7 +53,7 @@ export function bossScheduler(boss: PgBoss): Scheduler {
 export async function startWorkers(
   boss: PgBoss,
   ctx: EngineContext,
-  opts: { onSweep?: () => Promise<void> } = {},
+  opts: { onSweep?: () => Promise<void>; backgroundModelTimeoutSeconds?: number } = {},
 ): Promise<void> {
   // `exclusive`: at most one queued or active job per singletonKey.
   await boss.createQueue(DEADLINE_JOB, { policy: "exclusive", retryLimit: 5, retryBackoff: true });
@@ -52,8 +68,36 @@ export async function startWorkers(
     retryBackoff: true,
   });
 
+  // Completed code jobs are deleted after an hour (the payload holds the code sealed, not readable).
+  // A held offer nobody sent after N hours (switch `held_offer_auto_release`); the send re-checks the limits.
+  await boss.createQueue(HELD_OFFER_RELEASE_JOB, {
+    policy: "exclusive",
+    retryLimit: 3,
+    retryDelay: 60,
+    retryBackoff: true,
+  });
+  await boss.createQueue(CHAT_CODE_JOB, {
+    policy: "exclusive",
+    retryLimit: 3,
+    retryDelay: 30,
+    retryBackoff: true,
+    deleteAfterSeconds: 3600,
+  });
   await boss.createQueue(LEASE_MAIL_JOB, { policy: "exclusive", retryLimit: 4, retryDelay: 60, retryBackoff: true });
   await boss.createQueue(CONTRACT_PREPARE_JOB, { policy: "exclusive", retryLimit: 2, retryDelay: 30 });
+  // The local chat model reads a sample contract; one attempt more if it is busy (a read error is stored as a status).
+  // Its pg-boss expiry is longer than the code's own deadline and the model timeout, so the clear reason is stored first.
+  const modelTimeout = opts.backgroundModelTimeoutSeconds ?? 300;
+  await boss.createQueue(CONTRACT_TEMPLATE_JOB, {
+    policy: "exclusive",
+    retryLimit: 1,
+    retryDelay: 60,
+    expireInSeconds: contractJobExpireSeconds(modelTimeout),
+  });
+  // createQueue keeps an existing queue's settings; make an older install pick the new expiry up too.
+  await boss.updateQueue(CONTRACT_TEMPLATE_JOB, { expireInSeconds: contractJobExpireSeconds(modelTimeout) });
+  // Same local model reading the same sample: structure, blanks and look (slice 4).
+  await boss.createQueue(CONTRACT_STRUCTURE_JOB, { policy: "exclusive", retryLimit: 1, retryDelay: 60 });
   await boss.createQueue(CONTRACT_FINISH_JOB, {
     policy: "exclusive",
     retryLimit: 4,
@@ -73,18 +117,37 @@ export async function startWorkers(
   await boss.work<{ approvalId: string }>(NOTICE_SEND_JOB, async (jobs) => {
     for (const job of jobs) await sendRenewalNotice(ctx, job.data.approvalId);
   });
-  await boss.work<{ applicationId: string; kind: ApplicationMailKind; seq: number }>(
+  await boss.work<{ applicationId: string; kind: ApplicationMailKind; seq: number; variant?: string }>(
     APPLICATION_MAIL_JOB,
     async (jobs) => {
-      for (const job of jobs) await sendApplicationMail(ctx, job.data.applicationId, job.data.kind, job.data.seq);
+      for (const job of jobs)
+        await sendApplicationMail(ctx, job.data.applicationId, job.data.kind, job.data.seq, job.data.variant);
     },
   );
+  await boss.work<{ applicationId: string; revision: number }>(HELD_OFFER_RELEASE_JOB, async (jobs) => {
+    for (const job of jobs) await autoReleaseHeldOffer(ctx, job.data.applicationId, job.data.revision);
+  });
+  await boss.work<{ verificationId: string; sealed: string }>(CHAT_CODE_JOB, async (jobs) => {
+    for (const job of jobs) await sendChatCode(ctx, job.data.verificationId, job.data.sealed);
+  });
   await boss.work<LeaseMailJob>(LEASE_MAIL_JOB, async (jobs) => {
     for (const job of jobs) await sendLeaseMail(ctx, job.data);
   });
   await boss.work<{ leaseId: string }>(CONTRACT_PREPARE_JOB, async (jobs) => {
-    for (const job of jobs)
-      await prepareContract(ctx, job.data.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system", onlyIfNone: true });
+    for (const job of jobs) {
+      const addendum = await withTx(ctx.database, (tx) => defaultAddendumFor(tx, job.data.leaseId));
+      try {
+        await prepareContract(ctx, job.data.leaseId, { addendum, actor: "system", onlyIfNone: true });
+      } catch (e) {
+        if (!(await reportTemplateFailure(ctx, job.data.leaseId, e))) throw e;
+      }
+    }
+  });
+  await boss.work<{ documentId: string }>(CONTRACT_TEMPLATE_JOB, async (jobs) => {
+    for (const job of jobs) await runContractTemplateJob(ctx, job.data.documentId, modelTimeout);
+  });
+  await boss.work<{ documentId: string; force?: boolean }>(CONTRACT_STRUCTURE_JOB, async (jobs) => {
+    for (const job of jobs) await runContractStructure(ctx, job.data.documentId, job.data.force === true);
   });
   await boss.work<{ contractId: string }>(CONTRACT_FINISH_JOB, async (jobs) => {
     for (const job of jobs) await finishContract(ctx, job.data.contractId);
@@ -101,8 +164,8 @@ export async function startWorkers(
   await boss.work<{ leaseId: string }>(EJARI_CANCEL_JOB, async (jobs) => {
     for (const job of jobs) await cancelEjari(ctx, job.data.leaseId);
   });
-  await boss.work<{ inboundEventId: string }>(INBOUND_JOB, async (jobs) => {
-    for (const job of jobs) await processInbound(ctx, job.data.inboundEventId);
+  await boss.work<{ inboundEventId: string; attempt?: number }>(INBOUND_JOB, async (jobs) => {
+    for (const job of jobs) await processInbound(ctx, job.data.inboundEventId, job.data.attempt ?? 1);
   });
   await boss.work(SWEEP_JOB, async () => {
     await opts.onSweep?.();

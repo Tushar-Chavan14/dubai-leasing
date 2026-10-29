@@ -124,6 +124,7 @@ export const readKeyOf = (kind: DocKind, side: string): ReadKey =>
 export const FlagKind = z.enum([
   "missing_document",
   "unreadable",
+  "manual_review",
   "wrong_document",
   "low_confidence",
   "invalid_id_number",

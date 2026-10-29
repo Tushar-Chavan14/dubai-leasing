@@ -7,6 +7,7 @@ import { PageHead, Status } from "../../../../components/ui";
 import { get } from "../../../../lib/engine";
 import { actorLabel, aedShort, bedroomsLabel, dateTime, eventLabel, longDate, shortDate } from "../../../../lib/format";
 import { IconCheck, IconCircle } from "../../../../lib/icons";
+import { CATEGORIES, subtypeLabel } from "../../../../lib/portfolio";
 import type { Me, UnitDetail } from "../../../../lib/types";
 
 export const metadata: Metadata = { title: "Unit" };
@@ -27,6 +28,14 @@ const CHECKLIST: { key: string; label: string; ok: (u: UnitDetail) => boolean }[
   { key: "photos", label: "At least one photo (recommended)", ok: (u) => u.photos.length > 0 },
 ];
 const EDITORS = ["admin", "leasing_manager", "leasing_officer"];
+
+/** A null side is no limit: "AED 95,000 to 110,000", "AED 95,000 or more", "up to AED 110,000". */
+function rangeLabel({ min, max }: { min: number | null; max: number | null }): string {
+  if (min !== null && max !== null) return `${aedShort(min)} to ${aedShort(max).replace("AED ", "")}`;
+  if (min !== null) return `${aedShort(min)} or more`;
+  if (max !== null) return `up to ${aedShort(max)}`;
+  return "no limits";
+}
 
 export default async function UnitPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -80,6 +89,10 @@ export default async function UnitPage({ params }: { params: Promise<{ id: strin
             </h2>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 24 }}>
               <dl className="facts">
+                <dt>Landlord</dt>
+                <dd>
+                  <Link href={`/settings/companies/${u.landlord.companyId}`}>{u.landlord.name}</Link>
+                </dd>
                 <dt>Layout</dt>
                 <dd>
                   {bedroomsLabel(u.bedrooms)}
@@ -91,8 +104,10 @@ export default async function UnitPage({ params }: { params: Promise<{ id: strin
                 <dd>{u.furnished === null ? "Not decided" : u.furnished ? "Furnished" : "Unfurnished"}</dd>
                 <dt>Parking</dt>
                 <dd>{u.parkingSpaces ?? "—"}</dd>
-                <dt>Use</dt>
-                <dd>{u.kind === "commercial" ? "Commercial" : "Residential"}</dd>
+                <dt>Category</dt>
+                <dd>{CATEGORIES.find((c) => c.value === u.category)?.label ?? u.category}</dd>
+                <dt>Type</dt>
+                <dd>{u.subtype ? subtypeLabel(u.subtype) : "Not set"}</dd>
               </dl>
               <dl className="facts">
                 <dt>Unit number</dt>
@@ -124,7 +139,7 @@ export default async function UnitPage({ params }: { params: Promise<{ id: strin
               <ul className="list" style={{ marginTop: 6 }}>
                 {u.leases.map((l) => (
                   <li key={l.id}>
-                    <Link href={`/leases/${l.id}`} className="list-row">
+                    <Link href={`/work?kind=lease&id=${l.id}`} className="list-row">
                       <div>
                         <div className="title">{l.tenantName ?? "Tenant"}</div>
                         <div className="meta">
@@ -177,13 +192,17 @@ export default async function UnitPage({ params }: { params: Promise<{ id: strin
                 : u.priceApprovedAt
                   ? "Approved by a leasing manager."
                   : u.priceInRange
-                    ? `Within the company range${u.priceRange ? ` (${aedShort(u.priceRange.min)}–${aedShort(u.priceRange.max).replace("AED ", "")})` : ""}.`
-                    : "Outside the company range; needs a manager's approval."}
+                    ? `Within the allowed range${u.priceRange ? ` (${rangeLabel(u.priceRange)})` : ""}.`
+                    : u.priceRange
+                      ? `Outside the allowed range (${rangeLabel(u.priceRange)}); needs a manager's approval.`
+                      : u.priceBasis?.ruleId
+                        ? "The rule gives no allowed range for this unit yet (no rent index row and no AED limits); setting a price needs a manager's approval."
+                        : "No rule covers this unit yet; setting a price needs a manager's approval."}
             </p>
             {live && (
               <p style={{ marginTop: 12, fontSize: 14 }}>
                 Let on lease{" "}
-                <Link className="link" href={`/leases/${live.id}`}>
+                <Link className="link" href={`/work?kind=lease&id=${live.id}`}>
                   {live.ref}
                 </Link>{" "}
                 until {longDate(live.endOn)}.
