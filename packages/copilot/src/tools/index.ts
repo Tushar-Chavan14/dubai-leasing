@@ -34,6 +34,11 @@ import { proposeRequestDocuments } from "./propose-request-documents.ts";
 import { proposeResendSigningLink } from "./propose-resend-signing-link.ts";
 import { proposeViewingInvite } from "./propose-viewing-invite.ts";
 import { viewingSlots } from "./viewing-slots.ts";
+import { addContractClause } from "./add-contract-clause.ts";
+import { getCompanySettings } from "./get-company-settings.ts";
+import { saveContractRule } from "./save-contract-rule.ts";
+import { saveRentRule } from "./save-rent-rule.ts";
+import { saveSriValue } from "./save-sri-value.ts";
 
 /**
  * The copilot tool registry (architecture §8b). The engine's chat endpoint and, later, the MCP
@@ -46,6 +51,7 @@ export const copilotTools: readonly CopilotTool[] = [
   getRecord,
   contractStatus,
   listCompanies,
+  getCompanySettings,
   listTasks,
   listEnquiries,
   getEnquiry,
@@ -69,6 +75,10 @@ export const copilotTools: readonly CopilotTool[] = [
   proposeRequestDocuments,
   proposeResendSigningLink,
   proposePrepareContract,
+  addContractClause,
+  saveRentRule,
+  saveContractRule,
+  saveSriValue,
   createTaskTool,
   proposeApproval,
   draftEmail,

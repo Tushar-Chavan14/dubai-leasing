@@ -3,11 +3,15 @@ import { formatAed, maskPii } from "@leasing/core";
 import {
   applications,
   companies,
+  companyClauses,
   companyContractTemplates,
+  contractRules,
   contracts,
   contractSigners,
   ejariSubmissions,
   leases,
+  rentRules,
+  sriAverages,
   type Tx,
   units,
   withTx,
@@ -238,4 +242,62 @@ export async function viewingSlotsFor(
       slots: slots.map((at) => ({ at: dubaiIso(at), label: formatDubaiDateTime(at) })),
     };
   });
+}
+
+/**
+ * A company's contract and rent settings for the copilot (D45): active rent rules, contract rules, approved
+ * clauses (inside the template or additional) and the Smart Rental Index values. Read only.
+ */
+export async function companySettings(ctx: EngineContext, companyId: string) {
+  const db = ctx.database.db;
+  const [rent, contract, clauses, sri] = await Promise.all([
+    db
+      .select()
+      .from(rentRules)
+      .where(and(eq(rentRules.companyId, companyId), eq(rentRules.active, true))),
+    db
+      .select()
+      .from(contractRules)
+      .where(and(eq(contractRules.companyId, companyId), eq(contractRules.active, true))),
+    db
+      .select()
+      .from(companyClauses)
+      .where(and(eq(companyClauses.companyId, companyId), eq(companyClauses.status, "approved"))),
+    db.select().from(sriAverages).orderBy(asc(sriAverages.community), asc(sriAverages.bedrooms)),
+  ]);
+  return {
+    rentRules: rent.map((r) => ({
+      id: r.id,
+      category: r.category,
+      subtype: r.subtype,
+      community: r.community,
+      minPctBp: r.minPctBp,
+      maxPctBp: r.maxPctBp,
+      minRentFils: r.minRentFils,
+      maxRentFils: r.maxRentFils,
+    })),
+    contractRules: contract.map((r) => ({
+      id: r.id,
+      category: r.category,
+      subtype: r.subtype,
+      tenures: r.tenures,
+      minCheques: r.minCheques,
+      maxCheques: r.maxCheques,
+      clauseIds: r.clauseIds,
+      templateId: r.templateId,
+    })),
+    clauses: clauses.map((c) => ({
+      ref: `cc:${c.id}`,
+      title: c.title,
+      text: c.textEn,
+      inTemplate: c.inTemplateId !== null,
+    })),
+    sri: sri.map((r) => ({
+      community: r.community,
+      category: r.category,
+      bedrooms: r.bedrooms,
+      avgAnnualRentFils: r.avgAnnualRentFils,
+      effectiveFrom: r.effectiveFrom,
+    })),
+  };
 }

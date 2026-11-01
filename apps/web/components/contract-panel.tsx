@@ -175,12 +175,15 @@ export function ContractPanel({
   contracts,
   canAct,
   options,
+  prepareNeeded = null,
 }: {
   leaseId: string;
   state: string;
   contracts: ContractRow[];
   canAct: boolean;
   options?: ClauseOptions | undefined;
+  /** Set by the engine only when the automatic preparation failed or the contract config changed since. */
+  prepareNeeded?: "failed" | "rejected" | "not_prepared" | "rules_changed" | null;
 }) {
   const current = contracts[0];
   const older = contracts.slice(1);
@@ -350,8 +353,8 @@ export function ContractPanel({
             </details>
           )}
 
-          {canAct && state === "CONTRACT" && current.status === "pending_approval" && (
-            <ReprepareContractButton leaseId={leaseId} />
+          {canAct && state === "CONTRACT" && prepareNeeded && (
+            <ReprepareContractButton leaseId={leaseId} reason={prepareNeeded} clauses={options?.suggested ?? []} />
           )}
 
           {canAct && state === "CONTRACT" && current.status !== "signed" && (

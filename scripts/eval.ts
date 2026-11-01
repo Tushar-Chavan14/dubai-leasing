@@ -9,6 +9,7 @@
  *   contract-template  sample contract PDF/text → addendum clauses with exact quotes (chat model)
  *   contract-structure sample contract PDF → sections, blanks with field mappings, look (chat model + code)
  *   leasing-assistant  Telegram enquiries: intent, flags, handoff (decision model) + unit answers (chat model)
+ *   contract-agent  contract agent: clause choice, flags and term checks (chat model with tools)
  *   copilot  staff copilot (chat model; uses TEST_DATABASE_URL, which it drops)
  * Without a name, runs them all. Exits non-zero if any eval fails its hard limits.
  */
@@ -23,6 +24,7 @@ const runs: Record<string, string[]> = {
   complaints: ["packages/helpers/scripts/eval-complaints.ts"],
   "contract-template": ["packages/helpers/scripts/eval-contract-template.ts"],
   "contract-structure": ["packages/helpers/scripts/eval-contract-structure.ts"],
+  "contract-agent": ["apps/engine/src/evals/contract-agent.ts"],
   copilot: ["apps/engine/src/evals/copilot.ts"],
   "customer-agent": ["apps/engine/src/evals/customer-agent.ts"],
 };

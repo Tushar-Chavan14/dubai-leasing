@@ -11,6 +11,7 @@ import {
   companyClauses,
   companyContractTemplates,
   contractRules,
+  contractSigners,
   contracts,
   type Database,
   documents,
@@ -34,6 +35,7 @@ import {
 import { FakeLlm } from "@leasing/llm";
 import { and, eq } from "drizzle-orm";
 import { createApi } from "../src/api/app.ts";
+import { backfillTemplateClauseLinks } from "../src/manager/company-templates.ts";
 import { issueToken } from "../src/api/auth.ts";
 import { decideApproval } from "../src/manager/approvals.ts";
 import { DEFAULT_ADDENDUM, prepareContract } from "../src/manager/contracts.ts";
@@ -278,8 +280,13 @@ async function setup() {
     });
     return id;
   };
+  /** D47 "Approve all" for the company of the template (its sample is the latest one), with the one tick. */
+  const approveSample = async (id: string, body: Record<string, unknown> = { checked: true }, user = admin) => {
+    const [row] = await database.db.select().from(companyContractTemplates).where(eq(companyContractTemplates.id, id));
+    return as(user)(`/companies/${row!.companyId}/sample/approve`, "POST", body);
+  };
   const approve = async (id: string) => {
-    const r = await api(`/contract-templates/${id}/approve`, "POST");
+    const r = await approveSample(id);
     expect(r.status).toBe(200);
   };
   const rule = async (templateId: string | null, cid = companyId) => {
@@ -308,6 +315,7 @@ async function setup() {
     unitId,
     propose,
     approve,
+    approveSample,
     rule,
     versions,
   };
@@ -327,6 +335,87 @@ const pdfText = async (s: S, documentId: string) => {
 describe.skipIf(noDb)("company template review and approval", () => {
   beforeEach(async () => {
     database = await freshDatabase();
+  });
+
+  describe("one-step approval with the template's clauses", () => {
+    const proposedClause = async (s: S, templateId: string, quote: string, companyId = s.companyId) => {
+      const row = await templateRow(templateId);
+      const id = newId();
+      await database.db.insert(companyClauses).values({
+        id,
+        companyId,
+        title: "Clause",
+        textEn: quote,
+        quote,
+        category: "other",
+        hasValues: false,
+        status: "proposed",
+        sourceDocumentId: row.sampleDocumentId,
+        createdBy: "helper:contract_template",
+      });
+      return id;
+    };
+    const clauseRow = async (id: string) =>
+      (await database.db.select().from(companyClauses).where(eq(companyClauses.id, id)))[0]!;
+
+    test("Approve all approves every clause, linked to the paragraph it was read from (D47)", async () => {
+      const s = await setup();
+      const id = await s.propose();
+      const c = await proposedClause(s, id, "The term starts on 1 December 2026 and ends on 30 November 2027.");
+      await s.approve(id);
+      const row = await clauseRow(c);
+      expect(row).toMatchObject({ status: "approved", inTemplateId: id });
+      expect(row.templateParagraphKey).not.toBeNull();
+      // The clause wording is now the paragraph's, with its blanks as [labels].
+      expect(row.textEn).toContain("[Start date]");
+    });
+
+    test("an unticked clause is approved but stays out of the sample's rule", async () => {
+      const s = await setup();
+      const id = await s.propose();
+      const ruleId = (await s.rule(null)).body.id;
+      const sampleId = (await templateRow(id)).sampleDocumentId;
+      await database.db
+        .update(documents)
+        .set({ extracted: { companyId: s.companyId, status: "done", ruleId } })
+        .where(eq(documents.id, sampleId));
+      const kept = await proposedClause(s, id, "The term starts on 1 December 2026 and ends on 30 November 2027.");
+      const out = await proposedClause(s, id, "A security deposit of AED 6,750 is held.");
+      const r = await s.approveSample(id, { ruleClauseIds: [kept], checked: true });
+      expect(r.status).toBe(200);
+      expect((await clauseRow(kept)).status).toBe("approved");
+      expect((await clauseRow(out)).status).toBe("approved");
+      const [active] = await database.db
+        .select()
+        .from(contractRules)
+        .where(and(eq(contractRules.companyId, s.companyId), eq(contractRules.active, true)));
+      expect(active!.clauseIds).toEqual([`cc:${kept}`]);
+    });
+
+    test("a clause with amounts needs the one 'I checked' tick", async () => {
+      const s = await setup();
+      const id = await s.propose();
+      const priced = await proposedClause(s, id, "A security deposit of AED 6,750 is held.");
+      await database.db.update(companyClauses).set({ hasValues: true }).where(eq(companyClauses.id, priced));
+      const r = await s.approveSample(id, {});
+      expect(r.status).toBe(422);
+      expect(((await r.json()) as { code: string }).code).toBe("confirm_checked");
+      expect((await s.approveSample(id, { checked: true })).status).toBe(200);
+      expect((await clauseRow(priced)).status).toBe("approved");
+    });
+
+    test("a clause id from another sample is refused and nothing changes", async () => {
+      const s = await setup();
+      const id = await s.propose();
+      const other = await s.propose();
+      const foreign = await proposedClause(s, other, "The premises are unit 1204 in Demo Tower.");
+      // The latest sample is `other`; a clause from `id`'s sample can't be ticked into its rule.
+      const mine = await proposedClause(s, id, "The term starts on 1 December 2026 and ends on 30 November 2027.");
+      const r = await s.approveSample(other, { ruleClauseIds: [mine], checked: true });
+      expect(r.status).toBe(422);
+      expect((await templateRow(other)).status).toBe("proposed");
+      expect((await clauseRow(foreign)).status).toBe("proposed");
+    });
   });
 
   test("a blank left empty (or unmapped) does not block approval; mappings can't be edited by hand", async () => {
@@ -361,7 +450,7 @@ describe.skipIf(noDb)("company template review and approval", () => {
     expect(((await again.json()) as { code: string }).code).toBe("template_immutable");
   });
 
-  test("wording with values and body authority marks block approval until confirmed per paragraph", async () => {
+  test("wording with values or DLD/RERA words needs only the one tick, not a confirmation per line (D47)", async () => {
     const s = await setup();
     const sections: TemplateSections = {
       ...SECTIONS,
@@ -371,31 +460,14 @@ describe.skipIf(noDb)("company template review and approval", () => {
       ],
     };
     const id = await s.propose({ sections, unconfirmed: true });
-    const r = await s.api(`/contract-templates/${id}/approve`, "POST");
+    const r = await s.approveSample(id, {});
     expect(r.status).toBe(422);
-    const reasons = ((await r.json()) as { reasons: string[] }).reasons.join(" ");
-    expect(reasons).toContain("Confirm the numbers, periods, dates or amounts");
-    expect(reasons).toContain("neutral reference, not branding");
-    const keys = templateParagraphs(sections)
-      .filter((p) => p.values)
-      .map((p) => p.key);
-    const unknown = await s.api(`/contract-templates/${id}`, "PATCH", {
-      valuesConfirmed: { ...Object.fromEntries(keys.map((k) => [k, true])), nope: true },
-      authorityBodyConfirmed: { "s9:0": true },
-    });
-    expect(unknown.status).toBe(200);
-    const view = (await unknown.json()) as { review: { valuesConfirmed: string[] }; problems: string[] };
-    expect(view.review.valuesConfirmed).not.toContain("nope");
-    expect(view.problems).toEqual([]);
+    expect(((await r.json()) as { code: string }).code).toBe("confirm_checked");
     await s.approve(id);
-    const [ev] = await database.db
-      .select()
-      .from(leaseEvents)
-      .where(and(eq(leaseEvents.type, "COMPANY_TEMPLATE_REVIEWED"), eq(leaseEvents.entityId, s.companyId)));
-    expect((ev!.payload as { review: { valuesConfirmed: string[] } }).review.valuesConfirmed.length).toBe(keys.length);
+    expect((await templateRow(id)).review).toMatchObject({ checked: true });
   });
 
-  test("wording with a person's ID, phone or amount from the sample can't be approved until it is dropped", async () => {
+  test("wording with a person's ID, phone or amount from the sample is left out automatically", async () => {
     const s = await setup();
     const sections: TemplateSections = {
       ...SECTIONS,
@@ -412,17 +484,11 @@ describe.skipIf(noDb)("company template review and approval", () => {
       ),
     };
     const id = await s.propose({ sections });
-    const r = await s.api(`/contract-templates/${id}/approve`, "POST");
-    expect(r.status).toBe(422);
-    const body = (await r.json()) as { reasons: string[] };
-    expect(body.reasons.join(" ")).toContain("contains an Emirates ID number");
-    // Confirming it as wording is not possible: the block stays.
-    await s.api(`/contract-templates/${id}`, "PATCH", { valuesConfirmed: { "s1:1": true } });
-    expect((await s.api(`/contract-templates/${id}/approve`, "POST")).status).toBe(422);
-    // "Drop this line": the paragraph is not printed and no longer blocks.
-    expect((await s.api(`/contract-templates/${id}`, "PATCH", { droppedParagraphs: { "s1:1": true } })).status).toBe(
-      200,
-    );
+    // D47: code leaves the line out on its own and says so; nothing to tick per line.
+    const panel = (await (await s.api(`/companies/${s.companyId}/contract-template`)).json()) as {
+      templates: { id: string; changes: string[] }[];
+    };
+    expect(panel.templates.find((t) => t.id === id)!.changes.join(" ")).toContain("Emirates ID");
     await s.approve(id);
     expect((await s.rule(id)).status).toBe(201);
     await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system" });
@@ -432,17 +498,16 @@ describe.skipIf(noDb)("company template review and approval", () => {
     expect(text).not.toMatch(/Ahmed|784-1980|\+971/);
   });
 
-  test("a wrong-type mapping already stored (tampered row) still blocks approval", async () => {
+  test("a wrong-type mapping already stored (tampered row) doesn't block: the blank prints empty", async () => {
     const s = await setup();
     const blanks = goodBlanks();
     blanks[4] = { ...blank("b5", "Start date", "annualRentFils", "The term starts on "), fieldType: "money_fils" };
     const id = await s.propose({ blanks });
-    const r = await s.api(`/contract-templates/${id}/approve`, "POST");
-    expect(r.status).toBe(422);
-    expect(((await r.json()) as { reasons: string[] }).reasons.join(" ")).toContain("asks for date");
+    await s.approve(id);
+    expect((await templateRow(id)).status).toBe("approved");
   });
 
-  test("authority marks block approval until the header, footer and logo are dropped", async () => {
+  test("a header, footer or logo with authority marks is removed automatically", async () => {
     const s = await setup();
     const style: TemplateStyle = {
       ...STYLE,
@@ -452,16 +517,7 @@ describe.skipIf(noDb)("company template review and approval", () => {
       flags: { authorityMarks: true, areas: ["header", "footer", "logo_area"] },
     };
     const id = await s.propose({ style, logo: true });
-    const first = await s.api(`/contract-templates/${id}/approve`, "POST");
-    expect(first.status).toBe(422);
-    const reasons = ((await first.json()) as { reasons: string[] }).reasons.join(" ");
-    expect(reasons).toContain("header");
-    expect(reasons).toContain("footer");
-    expect(reasons).toContain("logo");
-    // Confirming the logo is not enough when the sample's logo area carries DLD or Ejari marks.
-    await s.api(`/contract-templates/${id}`, "PATCH", { dropHeader: true, dropFooter: true, logoConfirmed: true });
-    expect((await s.api(`/contract-templates/${id}/approve`, "POST")).status).toBe(422);
-    await s.api(`/contract-templates/${id}`, "PATCH", { dropLogo: true });
+    // D47: the marked header, footer and logo are removed by code, never kept.
     await s.approve(id);
     // The look in use has no header, footer or logo and the neutral accent colour.
     const view = (await (await s.api(`/companies/${s.companyId}/contract-template`)).json()) as {
@@ -472,13 +528,12 @@ describe.skipIf(noDb)("company template review and approval", () => {
     expect(view.templates[0]!.effective).toEqual({ header: null, footer: null, accentColour: null, hasLogo: false });
   });
 
-  test("a kept logo needs the 'our company's logo' confirmation", async () => {
+  test("a kept logo needs the one tick (it covers 'our company's logo')", async () => {
     const s = await setup();
     const id = await s.propose({ logo: true });
-    const r = await s.api(`/contract-templates/${id}/approve`, "POST");
+    const r = await s.approveSample(id, {});
     expect(r.status).toBe(422);
-    expect(((await r.json()) as { reasons: string[] }).reasons.join(" ")).toContain("company's own");
-    await s.api(`/contract-templates/${id}`, "PATCH", { logoConfirmed: true });
+    expect(((await r.json()) as { code: string }).code).toBe("confirm_checked");
     await s.approve(id);
     const logo = await s.api(`/contract-templates/${id}/logo`);
     expect(logo.status).toBe(200);
@@ -488,14 +543,14 @@ describe.skipIf(noDb)("company template review and approval", () => {
   test("approval is admin only; an approved template is immutable; a new version retires the old one", async () => {
     const s = await setup();
     const v1 = await s.propose();
-    expect((await s.as(s.officer)(`/contract-templates/${v1}/approve`, "POST")).status).toBe(403);
+    expect((await s.approveSample(v1, { checked: true }, s.officer)).status).toBe(403);
     expect((await s.as(s.officer)(`/contract-templates/${v1}`, "PATCH", { dropHeader: true })).status).toBe(403);
     await s.approve(v1);
     // Immutable.
     const edit = await s.api(`/contract-templates/${v1}`, "PATCH", { dropHeader: true });
     expect(edit.status).toBe(409);
     expect(((await edit.json()) as { code: string }).code).toBe("template_immutable");
-    expect((await s.api(`/contract-templates/${v1}/approve`, "POST")).status).toBe(409);
+    expect((await s.approveSample(v1)).status).toBe(409);
     const v2 = await s.propose();
     await s.approve(v2);
     expect((await templateRow(v1)).status).toBe("retired");
@@ -703,6 +758,171 @@ describe.skipIf(noDb)("contract rendered in the company template", () => {
     expect(b).toEqual(a);
   });
 
+  test("D47: a linked paragraph prints the clause's current wording, only when the clause is in the rule", async () => {
+    const s = await setup();
+    const id = await s.propose();
+    const sampleId = (await templateRow(id)).sampleDocumentId;
+    const clauseId = newId();
+    await database.db.insert(companyClauses).values({
+      id: clauseId,
+      companyId: s.companyId,
+      title: "Deposit",
+      textEn: "A security deposit of AED 6,750 is held.",
+      quote: "A security deposit of AED 6,750 is held.",
+      category: "payment",
+      hasValues: true,
+      status: "proposed",
+      sourceDocumentId: sampleId,
+      createdBy: "helper:contract_template",
+    });
+    await s.approve(id);
+    const preview = async () => {
+      const x = await extractPdf(
+        new Uint8Array(await (await s.api(`/contract-templates/${id}/preview`)).arrayBuffer()),
+      );
+      return x.ok ? x.text.replace(/\s+/g, " ") : "";
+    };
+    expect(await preview()).toContain("A security deposit of «Security deposit (AED)» is held.");
+    // Edited: the paragraph prints the new wording, the [label] still filled from the records.
+    const edit = await s.api(`/company-clauses/${clauseId}`, "PATCH", {
+      text: "The landlord holds a refundable deposit of [Security deposit].",
+    });
+    expect(edit.status).toBe(200);
+    const edited = await preview();
+    expect(edited).toContain("The landlord holds a refundable deposit of «Security deposit (AED)».");
+    expect(edited).not.toContain("A security deposit of");
+    // A rule without the clause: the contract leaves the paragraph out; with it, it prints.
+    expect((await s.rule(id)).status).toBe(201);
+    await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system" });
+    const [c1] = await contractRows(s.leaseId);
+    expect(await pdfText(s, c1!.documentId!)).not.toContain("refundable deposit");
+    // Removed: the paragraph is gone from previews too.
+    expect((await s.api(`/company-clauses/${clauseId}`, "DELETE")).status).toBe(200);
+    expect(await preview()).not.toContain("refundable deposit");
+  });
+
+  test("D47: a contract prints a linked clause in the rule in its template place, never again as an extra term", async () => {
+    const s = await setup();
+    const id = await s.propose();
+    const sampleId = (await templateRow(id)).sampleDocumentId;
+    const clauseId = newId();
+    await database.db.insert(companyClauses).values({
+      id: clauseId,
+      companyId: s.companyId,
+      title: "Deposit",
+      textEn: "A security deposit of AED 6,750 is held.",
+      quote: "A security deposit of AED 6,750 is held.",
+      category: "payment",
+      hasValues: true,
+      status: "proposed",
+      sourceDocumentId: sampleId,
+      createdBy: "helper:contract_template",
+    });
+    await s.approve(id);
+    const r = await s.api("/contract-rules", "POST", {
+      companyId: s.companyId,
+      category: "residential",
+      tenures: ["annual"],
+      minCheques: 1,
+      maxCheques: 12,
+      clauseIds: [`cc:${clauseId}`],
+      templateId: id,
+    });
+    expect(r.status).toBe(201);
+    await prepareContract(s.ctx, s.leaseId, {
+      addendum: { clauses: [`cc:${clauseId}`], freeText: null },
+      actor: "system",
+    });
+    const [c] = await contractRows(s.leaseId);
+    const text = (await pdfText(s, c!.documentId!)).replace(/\s+/g, " ");
+    expect(text).toContain("A security deposit of");
+    expect(text).not.toContain("Deposit: A security deposit");
+  });
+
+  test("D47 backfill: a clause approved into an older template is linked and joins the template's rules", async () => {
+    const s = await setup();
+    const id = await pinned(s);
+    const sampleId = (await templateRow(id)).sampleDocumentId;
+    const clauseId = newId();
+    await database.db.insert(companyClauses).values({
+      id: clauseId,
+      companyId: s.companyId,
+      title: "Deposit",
+      textEn: "A deposit is held.",
+      quote: "A security deposit of AED 6,750 is held.",
+      category: "payment",
+      hasValues: true,
+      status: "approved",
+      inTemplateId: id,
+      sourceDocumentId: sampleId,
+      createdBy: "helper:contract_template",
+    });
+    expect(await backfillTemplateClauseLinks(s.ctx)).toBe(1);
+    expect(await backfillTemplateClauseLinks(s.ctx)).toBe(0);
+    const [active] = await database.db
+      .select()
+      .from(contractRules)
+      .where(and(eq(contractRules.companyId, s.companyId), eq(contractRules.active, true)));
+    expect(active!.clauseIds).toContain(`cc:${clauseId}`);
+    await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system" });
+    const [c] = await contractRows(s.leaseId);
+    expect((await pdfText(s, c!.documentId!)).replace(/\s+/g, " ")).toContain("A security deposit of");
+  });
+
+  test("D47: on an older template, a clause from a sample-values line is rejected at Approve all, not approved", async () => {
+    const s = await setup();
+    const sections: TemplateSections = {
+      ...SECTIONS,
+      items: SECTIONS.items.map((it) =>
+        it.id === "s1"
+          ? { ...it, paragraphs: [...it.paragraphs, "Owner phone +971 50 123 4567 for all notices."] }
+          : it,
+      ),
+    };
+    // Stored without code's review, as templates read before D47 were.
+    const id = await s.propose({ sections });
+    const sampleId = (await templateRow(id)).sampleDocumentId;
+    const clauseId = newId();
+    await database.db.insert(companyClauses).values({
+      id: clauseId,
+      companyId: s.companyId,
+      title: "Notices",
+      textEn: "Owner phone +971 50 123 4567 for all notices.",
+      quote: "Owner phone +971 50 123 4567 for all notices.",
+      category: "other",
+      hasValues: true,
+      status: "proposed",
+      sourceDocumentId: sampleId,
+      createdBy: "helper:contract_template",
+    });
+    await s.approve(id);
+    const [row] = await database.db.select().from(companyClauses).where(eq(companyClauses.id, clauseId));
+    expect(row!.status).toBe("rejected");
+  });
+
+  test("D47: editing a linked clause refuses a [field] its paragraph doesn't have", async () => {
+    const s = await setup();
+    const id = await s.propose();
+    const sampleId = (await templateRow(id)).sampleDocumentId;
+    const clauseId = newId();
+    await database.db.insert(companyClauses).values({
+      id: clauseId,
+      companyId: s.companyId,
+      title: "Deposit",
+      textEn: "A security deposit of AED 6,750 is held.",
+      quote: "A security deposit of AED 6,750 is held.",
+      category: "payment",
+      hasValues: true,
+      status: "proposed",
+      sourceDocumentId: sampleId,
+      createdBy: "helper:contract_template",
+    });
+    await s.approve(id);
+    const bad = await s.api(`/company-clauses/${clauseId}`, "PATCH", { text: "A deposit of [Annual rent] is held." });
+    expect(bad.status).toBe(422);
+    expect(((await bad.json()) as { code: string }).code).toBe("unknown_field");
+  });
+
   test("company clauses are appended after the template sections", async () => {
     const s = await setup();
     await pinned(s);
@@ -809,7 +1029,7 @@ describe.skipIf(noDb)("contract rendered in the company template", () => {
     expect(order(final)).toEqual(marks.slice(0, 4));
   });
 
-  test("prepare again supersedes the pending approval; refused after approval or sending", async () => {
+  test("prepare again supersedes the pending approval or an unsigned sent contract; refused once anyone signed", async () => {
     const s = await setup();
     await pinned(s);
     await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system" });
@@ -824,19 +1044,39 @@ describe.skipIf(noDb)("contract rendered in the company template", () => {
     const rep = ev.filter((e) => e.type === "CONTRACT_REPREPARED");
     expect(rep).toHaveLength(1);
     expect(rep[0]!.payload).toMatchObject({ supersededVersion: 1, newVersion: 2 });
-    // Approved (and so sent): refused.
-    await decideApproval(s.ctx, rows[1]!.approvalId!, await addStaff(database, "leasing_officer"), {
-      decision: "approve",
-    });
+    // Approved and sent, nobody signed yet: prepare again replaces it and its signing links stop working.
+    const approver = await addStaff(database, "leasing_officer");
+    await decideApproval(s.ctx, rows[1]!.approvalId!, approver, { decision: "approve" });
     expect((await contractRows(s.leaseId))[1]!.status).toBe("sent");
+    const fromSent = await s.as(s.officer)(`/leases/${s.leaseId}/contract/reprepare`, "POST");
+    expect(fromSent.status).toBe(201);
+    const after = await contractRows(s.leaseId);
+    expect(after.map((c) => c.status)).toEqual(["superseded", "superseded", "pending_approval"]);
+    const v2Signers = await database.db
+      .select()
+      .from(contractSigners)
+      .where(eq(contractSigners.contractId, after[1]!.id));
+    const links = await database.db.select().from(actionLinks);
+    for (const sg of v2Signers) {
+      const link = links.find((l) => l.id === sg.linkId);
+      if (link) expect(link.expiresAt.getTime()).toBeLessThanOrEqual(s.ctx.clock.now().getTime());
+    }
+    // Once someone has signed: refused, nothing changes.
+    await decideApproval(s.ctx, after[2]!.approvalId!, approver, { decision: "approve" });
+    const [v3] = (await contractRows(s.leaseId)).slice(-1);
+    expect(v3!.status).toBe("sent");
+    await database.db
+      .update(contractSigners)
+      .set({ signedAt: s.ctx.clock.now() })
+      .where(and(eq(contractSigners.contractId, v3!.id), eq(contractSigners.role, "tenant")));
     const linksBefore = await database.db.select().from(actionLinks);
     const again = await s.as(s.officer)(`/leases/${s.leaseId}/contract/reprepare`, "POST");
     expect(again.status).toBe(409);
     expect(((await again.json()) as { code?: string }).code).toBe("contract_already_approved");
-    expect((await contractRows(s.leaseId)).map((c) => c.status)).toEqual(["superseded", "sent"]);
+    expect((await contractRows(s.leaseId)).map((c) => c.status)).toEqual(["superseded", "superseded", "sent"]);
     expect(await database.db.select().from(actionLinks)).toEqual(linksBefore);
     const ev2 = await database.db.select().from(leaseEvents).where(eq(leaseEvents.entityId, s.leaseId));
-    expect(ev2.filter((e) => e.type === "CONTRACT_REPREPARED")).toHaveLength(1);
+    expect(ev2.filter((e) => e.type === "CONTRACT_REPREPARED")).toHaveLength(2);
   });
 
   describe("prepare again re-maps blanks against the data held now", () => {
@@ -937,7 +1177,7 @@ describe.skipIf(noDb)("contract rendered in the company template", () => {
         items: [{ ...SECTIONS.items[0]!, paragraphs: [`${arabic} {{b1}} {{b2}}`] }, ...SECTIONS.items.slice(1)],
       },
     });
-    const r = await s.api(`/contract-templates/${bad}/approve`, "POST");
+    const r = await s.approveSample(bad);
     expect(r.status).toBe(422);
     expect(((await r.json()) as { reasons: string[] }).reasons.join(" ")).toContain("can't print");
     await pinned(s);

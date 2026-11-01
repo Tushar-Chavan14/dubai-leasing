@@ -3695,6 +3695,102 @@ tr[data-current="true"] td {
   margin-top: 12px;
   font-size: 13.5px;
 }
+.co-split {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+@media (max-width: 860px) {
+  .co-split {
+    grid-template-columns: 1fr;
+  }
+}
+.co-list {
+  position: sticky;
+  top: 84px;
+  padding: 8px;
+  background: var(--surface);
+  border-radius: var(--r-m);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.co-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+.co-row {
+  display: grid;
+  gap: 2px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  color: var(--ink);
+  font-size: 14px;
+  transition: background var(--fast) var(--ease);
+}
+.co-row:hover {
+  background: var(--surface-3);
+}
+.co-row[aria-current="true"] {
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.co-row:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+}
+.co-row-name {
+  font-weight: 600;
+}
+.co-row-meta {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.co-empty {
+  margin: 0;
+  padding: 12px 8px;
+  font-size: 13.5px;
+}
+.co-body {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.co-body-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.co-body-head h2 {
+  margin: 0;
+}
+.clause-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.clause-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.clause-item:first-child {
+  border-top: 0;
+}
+.clause-item > div {
+  flex: 1 1 360px;
+}
+.clause-item > form.rule-form {
+  flex: 1 1 100%;
+}
 .rule-form {
   display: grid;
   gap: 16px;
@@ -4821,4 +4917,22 @@ p.wk-err {
 .tpl-steps li[data-state="current"] {
   color: var(--ink);
   font-weight: 500;
+}
+.kyc-fields {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.kyc-field {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--r-m);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.check-col {
+  display: grid;
+  gap: 6px;
 }

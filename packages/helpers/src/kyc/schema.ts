@@ -1,4 +1,4 @@
-import { isCalendarDate } from "@leasing/core";
+import { FormField, isCalendarDate, KycRules } from "@leasing/core";
 import { z } from "zod";
 
 export const DocKind = z.enum(["emirates_id", "passport", "visa", "trade_licence"]);
@@ -18,6 +18,11 @@ export const KycContext = z.object({
     .array(z.object({ docId: z.string(), kind: DocKind, side: z.enum(["front", "back", "page"]) }))
     .min(1)
     .max(10),
+  /** The company's KYC rules and document form (D46). Absent: the built-in checks only (older applications). */
+  rules: KycRules.optional(),
+  form: z.array(FormField).optional(),
+  /** What the applicant typed in the form (untrusted text). */
+  answers: z.record(z.string(), z.string()).optional(),
 });
 export type KycContext = z.infer<typeof KycContext>;
 
@@ -137,6 +142,8 @@ export const FlagKind = z.enum([
   "expires_too_soon",
   "name_mismatch",
   "applicant_name_mismatch",
+  /** A company KYC rule (D46) failed; never blocking, a person decides. */
+  "company_rule",
   /** Set by the Manager, not the helper: this Emirates ID already belongs to another party. */
   "id_on_file",
 ]);

@@ -275,10 +275,14 @@ describe("find_available_units by unit code, and the prompt per role", () => {
   test("prompt names no hidden tool while TENANCY_OPS is off, and does when on", async () => {
     const { systemPrompt } = await import("../src/prompt.ts");
     const { copilotTools, toolsFor } = await import("../src/tools/index.ts");
-    const shown = new Set(toolsFor("leasing_manager", { tenancyOps: false }).map((t) => t.name));
-    const hidden = copilotTools.map((t) => t.name).filter((n) => !shown.has(n));
-    expect(hidden.length).toBeGreaterThan(0);
+    expect(copilotTools.length).toBeGreaterThan(0);
     for (const role of ["leasing_officer", "leasing_manager", "finance", "admin"] as const) {
+      // Tools this role gets only with TENANCY_OPS on.
+      const offTools = new Set(toolsFor(role, { tenancyOps: false }).map((t) => t.name));
+      const hidden = toolsFor(role, { tenancyOps: true })
+        .map((t) => t.name)
+        .filter((n) => !offTools.has(n));
+      expect(hidden.length).toBeGreaterThan(0);
       const u = { id: "u", email: "u@x", name: "U", role };
       const off = systemPrompt(u, "2026-11-02", undefined, { tenancyOps: false });
       const on = systemPrompt(u, "2026-11-02", undefined, { tenancyOps: true });

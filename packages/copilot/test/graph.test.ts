@@ -200,6 +200,7 @@ describe("registry and client", () => {
         .map((t) => t.name)
         .toSorted();
     expect(by("propose")).toEqual([
+      "add_contract_clause",
       "create_task",
       "propose_application",
       "propose_approval",
@@ -207,6 +208,9 @@ describe("registry and client", () => {
       "propose_request_documents",
       "propose_resend_signing_link",
       "propose_viewing_invite",
+      "save_contract_rule",
+      "save_rent_rule",
+      "save_sri_value",
     ]);
     expect(by("draft")).toEqual(["draft_approval_note", "draft_email", "summarise_case"]);
     expect(copilotTools.every((t) => ["read", "draft", "propose"].includes(t.kind))).toBe(true);
@@ -227,9 +231,15 @@ describe("registry and client", () => {
       "propose_viewing_invite",
       "summarise_case",
     ]);
-    expect(names("leasing_manager")).toEqual(names("leasing_officer"));
+    expect(names("leasing_manager")).toEqual([...names("leasing_officer"), "save_sri_value"].toSorted());
     expect(names("finance")).toEqual(["draft_approval_note", "draft_email", "propose_approval"]);
-    expect(names("admin")).toEqual(["draft_approval_note"]);
+    expect(names("admin")).toEqual([
+      "add_contract_clause",
+      "draft_approval_note",
+      "save_contract_rule",
+      "save_rent_rule",
+      "save_sri_value",
+    ]);
     // Every role reads everything except the dispute case pack (leasing staff only).
     const readers = copilotTools.filter((t) => t.kind === "read");
     for (const role of ["leasing_officer", "leasing_manager"] as const) {
@@ -268,7 +278,8 @@ describe("registry and client", () => {
     ]) {
       await expect(client.get(p)).rejects.toThrow("invalid engine path");
     }
-    expect(Object.keys(client)).toEqual(["get", "propose"]);
+    // `change` reaches only the D45 config-changes route (tested in config-tools.test.ts).
+    expect(Object.keys(client)).toEqual(["get", "change", "propose"]);
   });
 
   test("the client's only write stores a proposal in the thread: POST to /api/copilot/proposals and nowhere else", async () => {
@@ -299,5 +310,45 @@ describe("registry and client", () => {
       await expect(client.propose(p, {})).rejects.toThrow("invalid engine path");
     }
     expect(seen).toHaveLength(1);
+  });
+
+  test("the company's own clause text doesn't turn an explicit change into a suggestion; tenant text does (D45)", async () => {
+    const admin: StaffUser = { ...officer, role: "admin" };
+    const settings = {
+      company: "Silverline Properties",
+      rentRules: [],
+      contractRules: [],
+      clauses: [{ ref: "cc:1", title: "Pets", text: "No pets.", inTemplate: false }],
+      sri: [],
+    };
+    const run = async (first: ModelTurn) => {
+      const via: string[] = [];
+      const engine: EngineClient = {
+        async get<T>(path: string) {
+          if (path.startsWith("/api/copilot/company-settings")) return settings as T;
+          return new FakeEngine().get<T>(path);
+        },
+        async propose<T>() {
+          via.push("propose");
+          return { id: "p1", status: "pending" } as T;
+        },
+        async change<T>() {
+          via.push("change");
+          return { status: "done", summary: "Clause added" } as T;
+        },
+      };
+      const clause = {
+        mode: "explicit",
+        userQuote: "Add a clause to Silverline",
+        company: "Silverline",
+        title: "Exit",
+        text: "x",
+      };
+      const model = new ScriptedModel([() => first, () => call("add_contract_clause", clause, "c2"), () => say("ok")]);
+      await runCopilotTurn({ model, tenancyOps: true, ctx: { ...ctx(engine), user: admin }, message: "x" });
+      return via;
+    };
+    expect(await run(call("get_company_settings", { company: "Silverline" }))).toEqual(["change"]);
+    expect(await run(call("get_lease", { lease: "MRN-1204" }))).toEqual(["propose"]);
   });
 });

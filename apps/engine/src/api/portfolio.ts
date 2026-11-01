@@ -5,7 +5,7 @@ import type { Hono } from "hono";
 import { z } from "zod";
 import type { EngineContext } from "../context.ts";
 import {
-  approveTemplate,
+  approveSample,
   companyTemplatePanel,
   previewTemplate,
   resuggestTemplate,
@@ -15,13 +15,20 @@ import {
   templateLogo,
 } from "../manager/company-templates.ts";
 import {
+  addCompanyClause,
+  clauseView,
+  companyClauseList,
   decideClause,
+  editCompanyClause,
+  removeCompanyClause,
+  setClauseRules,
   MAX_SAMPLE_BYTES,
   retrySample,
   ruleClauseReview,
   uploadSample,
 } from "../manager/contract-templates.ts";
-import { unprocessable } from "../errors.ts";
+import { notFound, unprocessable } from "../errors.ts";
+import { companyKycConfig, saveKycConfig } from "../manager/kyc-config.ts";
 import {
   lookupCompanyLandlord,
   CompanyLegalInput,
@@ -97,6 +104,24 @@ const TemplateReviewBody = z
     valuesConfirmed: z.record(z.string().max(60), z.boolean()).optional(),
     authorityBodyConfirmed: z.record(z.string().max(60), z.boolean()).optional(),
     droppedParagraphs: z.record(z.string().max(60), z.boolean()).optional(),
+  })
+  .strict();
+
+const AddClause = z
+  .object({
+    title: z.string().max(200),
+    text: z.string().max(5000),
+    category: z.string().max(40).optional(),
+    ruleIds: z.array(z.uuid()).max(50).optional(),
+    confirmValues: z.literal(true).optional(),
+  })
+  .strict();
+
+const EditClause = z
+  .object({
+    title: z.string().max(200).optional(),
+    text: z.string().max(5000).optional(),
+    confirmValues: z.literal(true).optional(),
   })
   .strict();
 
@@ -317,6 +342,70 @@ export function registerPortfolioRoutes(api: Hono<AuthEnv>, ctx: EngineContext) 
     return c.json(await decideClause(ctx, id, body, actorOf(user)));
   });
 
+  /** Edit or remove an approved clause at any time (admin). Clauses inside the template's wording change there. */
+  api.patch("/company-clauses/:id", async (c) => {
+    const user = c.get("user");
+    requireRole(user, ["admin"]);
+    const id = z.uuid().catch("00000000-0000-0000-0000-000000000000").parse(c.req.param("id"));
+    const row = await editCompanyClause(ctx, id, EditClause.parse(await c.req.json()), actorOf(user));
+    return c.json(clauseView(row));
+  });
+  api.put("/company-clauses/:id/rules", async (c) => {
+    const user = c.get("user");
+    requireRole(user, ["admin"]);
+    const id = z.uuid().catch("00000000-0000-0000-0000-000000000000").parse(c.req.param("id"));
+    const body = z
+      .object({ ruleIds: z.array(z.uuid()).max(100) })
+      .strict()
+      .parse(await c.req.json());
+    return c.json(await setClauseRules(ctx, id, body.ruleIds, actorOf(user)));
+  });
+  api.delete("/company-clauses/:id", async (c) => {
+    const user = c.get("user");
+    requireRole(user, ["admin"]);
+    const id = z.uuid().catch("00000000-0000-0000-0000-000000000000").parse(c.req.param("id"));
+    return c.json(await removeCompanyClause(ctx, id, actorOf(user)));
+  });
+
+  // Document form and KYC rules (D46). Read: any staff. Save: admin only.
+  api.get("/companies/:id/kyc-config", async (c) =>
+    c.json(
+      await withTx(ctx.database, (tx) =>
+        companyKycConfig(
+          tx,
+          z.uuid().catch("00000000-0000-0000-0000-000000000000").parse(c.req.param("id")),
+          ctx.clock.today(),
+        ),
+      ),
+    ),
+  );
+  api.put("/companies/:id/kyc-config", async (c) => {
+    const user = c.get("user");
+    requireRole(user, ["admin"]);
+    const id = z.uuid().catch("00000000-0000-0000-0000-000000000000").parse(c.req.param("id"));
+    const body = z.object({ form: z.unknown(), rules: z.unknown() }).parse(await c.req.json());
+    return c.json(await withTx(ctx.database, (tx) => saveKycConfig(ctx, tx, id, body, actorOf(user))));
+  });
+
+  api.get("/companies/:id/clauses", async (c) =>
+    c.json(
+      await companyClauseList(ctx, z.uuid().catch("00000000-0000-0000-0000-000000000000").parse(c.req.param("id"))),
+    ),
+  );
+
+  api.post("/companies/:id/clauses", async (c) => {
+    const user = c.get("user");
+    requireRole(user, ["admin"]);
+    const id = z.uuid().catch("00000000-0000-0000-0000-000000000000").parse(c.req.param("id"));
+    const body = AddClause.parse(await c.req.json());
+    const row = await withTx(ctx.database, async (tx) => {
+      const [co] = await tx.db.select({ id: companies.id }).from(companies).where(eq(companies.id, id));
+      if (!co) throw notFound("company");
+      return addCompanyClause(ctx, tx, id, body, actorOf(user));
+    });
+    return c.json(clauseView(row), 201);
+  });
+
   // Company contract templates (slice 4). Reads: any staff. Review, approve, retire and preview: admin only.
   const idOf = (c: { req: { param: (k: string) => string } }) =>
     z.uuid().catch("00000000-0000-0000-0000-000000000000").parse(c.req.param("id"));
@@ -336,10 +425,16 @@ export function registerPortfolioRoutes(api: Hono<AuthEnv>, ctx: EngineContext) 
     return c.json(await reviewTemplate(ctx, idOf(c), body, actorOf(user)));
   });
 
-  api.post("/contract-templates/:id/approve", async (c) => {
+  /** D47 "Approve all": the latest sample's proposed clauses (ticked ones join its rule) and its proposed template. */
+  api.post("/companies/:id/sample/approve", async (c) => {
     const user = c.get("user");
     requireRole(user, ["admin"]);
-    return c.json(await approveTemplate(ctx, idOf(c), actorOf(user)));
+    const raw = await c.req.text();
+    const body = z
+      .object({ ruleClauseIds: z.array(z.uuid()).max(200).optional(), checked: z.boolean().optional() })
+      .strict()
+      .parse(raw ? JSON.parse(raw) : {});
+    return c.json(await approveSample(ctx, idOf(c), actorOf(user), body));
   });
 
   api.post("/contract-templates/:id/resuggest", async (c) => {

@@ -107,7 +107,9 @@ export function createApi(ctx: EngineContext, opts: ApiOptions) {
     return c.json({ error: "internal error", code: "internal" }, 500);
   });
 
-  app.get("/health", (c) => c.json({ ok: true, today: ctx.clock.today(), demoMode: ctx.demoMode }));
+  app.get("/health", (c) =>
+    c.json({ ok: true, today: ctx.clock.today(), demoMode: ctx.demoMode, voice: !!ctx.transcriber }),
+  );
 
   // --- auth (demo login only in phase 0) ---
   if (ctx.demoMode) {

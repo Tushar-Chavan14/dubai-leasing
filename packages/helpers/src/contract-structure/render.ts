@@ -33,6 +33,11 @@ export const TemplateReview = z
     authorityBodyConfirmed: z.array(z.string().max(60)).max(1000).default([]),
     /** Paragraph keys the admin dropped ("Drop this line"): not printed in contracts, and their blanks are not needed. */
     droppedParagraphs: z.array(z.string().max(60)).max(1000).default([]),
+    /**
+     * D47: the one tick on the sample review: "I checked the amounts, dates and DLD/RERA references, and the logo is
+     * the company's own". Replaces the per-paragraph confirmations for templates approved since.
+     */
+    checked: z.boolean().default(false),
   })
   .strict();
 export type TemplateReview = z.infer<typeof TemplateReview>;
@@ -380,6 +385,11 @@ export interface TemplateRenderInput {
   templateVersion: number;
   /** Paragraph keys the admin dropped: not printed. */
   dropped?: readonly string[];
+  /**
+   * D47: paragraphs that print a company clause instead of the sample's wording (key to text, blank tokens allowed),
+   * or `null` to leave the paragraph out (its clause was removed or isn't in the contract's rule).
+   */
+  paragraphs?: Readonly<Record<string, string | null>>;
 }
 
 export interface TemplateRenderOptions {
@@ -510,8 +520,11 @@ export function templateContractBlocks(
       }
     }
     for (const [pi, p] of s.paragraphs.entries()) {
-      if (dropped.has(`${s.id}:${pi}`)) continue;
-      for (const b of paragraph(p)) {
+      const key = `${s.id}:${pi}`;
+      if (dropped.has(key)) continue;
+      const linked = t.paragraphs && Object.hasOwn(t.paragraphs, key) ? t.paragraphs[key] : undefined;
+      if (linked === null) continue;
+      for (const b of paragraph(linked ?? p)) {
         blocks.push(b);
         if (b.kind === "para") seen.push(b.text);
       }
@@ -593,3 +606,129 @@ export const SAMPLE_CONTRACT_FIELDS: ContractFields = {
   moveInOn: calendarDate("2027-01-01"),
   contractOn: calendarDate("2026-12-15"),
 };
+
+/**
+ * D47: the placeholder each blank of a paragraph gets in clause wording: `[<label>]`, `[signature line]`, and a number
+ * when a label repeats in the paragraph (`[Date]`, `[Date (2)]`), so each placeholder maps back to one blank.
+ */
+function paragraphPlaceholders(raw: string, blanks: readonly TemplateBlank[]): Map<string, string> {
+  const byId = new Map(blanks.map((b) => [b.id, b]));
+  const out = new Map<string, string>();
+  const seen = new Map<string, number>();
+  for (const m of raw.matchAll(/\{\{(b\d+)\}\}/g)) {
+    const id = m[1]!;
+    if (out.has(id)) continue;
+    const b = byId.get(id);
+    const base = b?.role === "signature" ? "signature line" : (b?.label ?? id);
+    const n = (seen.get(base.toLowerCase()) ?? 0) + 1;
+    seen.set(base.toLowerCase(), n);
+    out.set(id, n === 1 ? base : `${base} (${n})`);
+  }
+  return out;
+}
+
+/** D47: a template paragraph as clause wording: each blank token becomes its placeholder (see above). */
+export function clauseTextFromParagraph(raw: string, blanks: readonly TemplateBlank[]): string {
+  const names = paragraphPlaceholders(raw, blanks);
+  return raw
+    .replace(/\{\{(b\d+)\}\}/g, (_m, id: string) => `[${names.get(id) ?? id}]`)
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * D47: clause wording back into a template paragraph: a placeholder becomes the token of its blank in the clause's own
+ * paragraph (so the field is still filled from the records). Other brackets stay as written.
+ */
+export function paragraphFromClauseText(text: string, raw: string, blanks: readonly TemplateBlank[]): string {
+  const byName = new Map([...paragraphPlaceholders(raw, blanks)].map(([id, name]) => [name.toLowerCase(), id]));
+  return text.replace(/\[([^[\]]{1,80})\]/g, (m, label: string) => {
+    const id = byName.get(label.trim().toLowerCase());
+    return id ? `{{${id}}}` : m;
+  });
+}
+
+/** D47: `[...]` in clause wording that isn't one of its paragraph's fields (it would print as typed). */
+export function unknownPlaceholders(text: string, raw: string, blanks: readonly TemplateBlank[]): string[] {
+  const names = new Set([...paragraphPlaceholders(raw, blanks).values()].map((n) => n.toLowerCase()));
+  return [...text.matchAll(/\[([^[\]]{1,80})\]/g)].map((m) => m[1]!.trim()).filter((n) => !names.has(n.toLowerCase()));
+}
+
+/**
+ * D47: the review code applies itself, so the admin isn't asked line by line. A header, footer or logo area with DLD,
+ * RERA or Ejari marks or values from the sample is dropped, and so is a paragraph that is a note about the sample or
+ * holds values from the sample (an ID, contract number, amount or date of that one tenancy). Each change is listed.
+ */
+export function autoReview(
+  t: { style: TemplateStyle; logoDocumentId: string | null; sections?: TemplateSections },
+  review: TemplateReview,
+): { review: TemplateReview; changes: string[] } {
+  const next: TemplateReview = { ...review, droppedParagraphs: [...review.droppedParagraphs] };
+  const changes: string[] = [];
+  const areas = new Set(t.style.flags.authorityMarks ? t.style.flags.areas : []);
+  for (const [where, text, flag] of [
+    ["header", t.style.header, "dropHeader"],
+    ["footer", t.style.footer, "dropFooter"],
+  ] as const) {
+    const marks = areas.has(where) || (!!text && hasAuthorityMarks(text));
+    const values = text ? fixedValueKinds(text) : [];
+    if ((marks || values.length) && !next[flag]) {
+      next[flag] = true;
+      changes.push(
+        marks
+          ? `Removed the ${where}: it has DLD, RERA or Ejari marks, which are never reused.`
+          : `Removed the ${where}: it has ${values.join(", ")} from the sample.`,
+      );
+    }
+  }
+  if (t.logoDocumentId && areas.has("logo_area") && !next.dropLogo) {
+    next.dropLogo = true;
+    changes.push("Removed the logo: its area has DLD, RERA or Ejari marks.");
+  }
+  if (t.style.flags.authorityMarks) changes.push("A neutral accent colour is used (marks were found in the sample).");
+  for (const p of templateParagraphs(t.sections)) {
+    if (p.kind !== "paragraph" || next.droppedParagraphs.includes(p.key)) continue;
+    const quote = `"${p.text.replace(/\{\{b\d+\}\}/g, "…").slice(0, 60)}${p.text.length > 60 ? "…" : ""}"`;
+    if (p.fixedValues.length) {
+      next.droppedParagraphs.push(p.key);
+      changes.push(`Left out ${quote}: it has ${p.fixedValues.join(", ")} from the sample.`);
+    } else if (p.sampleOnly) {
+      next.droppedParagraphs.push(p.key);
+      changes.push(`Left out ${quote}: a note about the sample, not contract wording.`);
+    }
+  }
+  return { review: next, changes };
+}
+
+/**
+ * D47: what still blocks approving a template after `autoReview`: only text the PDF fonts can't print. Everything else
+ * is handled by code or covered by the one "I checked" tick (`needsCheck`).
+ */
+export function approvalBlockers(t: { style: TemplateStyle; sections?: TemplateSections }): string[] {
+  const texts = [
+    t.sections?.title,
+    ...(t.sections?.items.flatMap((i) => [i.heading, ...i.paragraphs]) ?? []),
+    t.style.header,
+    t.style.footer,
+  ];
+  return texts.some((x) => x && unprintable(x))
+    ? [
+        "This template has text the PDF fonts can't print (for example Arabic). Upload an English version or contact support.",
+      ]
+    : [];
+}
+
+/**
+ * D47: whether the one tick is needed: kept wording (or clause text) has numbers, periods, dates or amounts, or DLD,
+ * RERA or Ejari words, or a logo is kept.
+ */
+export function needsCheck(
+  t: { logoDocumentId: string | null; sections?: TemplateSections },
+  review: TemplateReview,
+  clauseTexts: readonly string[] = [],
+): boolean {
+  if (t.logoDocumentId && !review.dropLogo) return true;
+  const dropped = new Set(review.droppedParagraphs);
+  const kept = templateParagraphs(t.sections).filter((p) => !dropped.has(p.key));
+  return kept.some((p) => p.values || p.authority) || clauseTexts.some((x) => hasValues(x) || hasAuthorityMarks(x));
+}

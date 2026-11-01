@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LocalDiskStore } from "@leasing/adapters";
-import { addDays, defaultCompanyPolicy, newId } from "@leasing/core";
+import { addDays, defaultBaseRules, defaultCompanyPolicy, newId, STARTER_FORM } from "@leasing/core";
 import {
   actionLinks,
   applications,
@@ -105,6 +105,7 @@ async function setup(front: () => unknown = () => priyaFront()) {
   const officer = await addStaff(database, "leasing_officer");
   const manager = await addStaff(database, "leasing_manager");
   const finance = await addStaff(database, "finance");
+  const admin = await addStaff(database, "admin");
   const media = new LocalDiskStore(mkdtempSync(join(tmpdir(), "m-")));
   const app = createApi(t.ctx, { sessionSecret: SECRET, mediaStore: media });
   const staff = (user: { id: string }, path: string, method = "GET", body?: unknown) =>
@@ -158,6 +159,7 @@ async function setup(front: () => unknown = () => priyaFront()) {
     officer,
     manager,
     finance,
+    admin,
     staff,
     portal,
     upload,
@@ -224,6 +226,133 @@ async function toKyc(s: S, nameEn = "Priya Example Rao") {
 describe.skipIf(noDb)("applications: screening, KYC, offer, reservation (Postgres)", () => {
   beforeEach(async () => {
     database = await freshDatabase();
+  });
+
+  describe("company document form and KYC rules (D46)", () => {
+    const saveConfig = async (s: S) => {
+      const [u] = await database.db.select().from(units).where(eq(units.id, s.unitId));
+      const r = await s.staff(s.admin, `/api/companies/${u!.companyId}/kyc-config`, "PUT", {
+        form: [
+          ...STARTER_FORM,
+          { key: "employer", label: "Employer", type: "text", required: true, appliesTo: "individual" },
+        ],
+        rules: {
+          base: { ...defaultBaseRules(defaultCompanyPolicy), applicantName: "exact" },
+          company: [{ id: "emp", type: "answer_required", label: "Employer", fieldKey: "employer", allowed: [] }],
+        },
+      });
+      expect(r.status).toBe(200);
+      return ((await r.json()) as { version: number }).version;
+    };
+
+    test("the upload page gets the company's form; required answers are enforced; answers are stored", async () => {
+      const s = await setup();
+      const version = await saveConfig(s);
+      const { id } = await createWithViewing(s, { nameEn: "Priya", requestedMoveInOn: "2026-12-01" });
+      await attended(s, id);
+      const { upload } = s.tokens(s.lastMail().text);
+      const view = (await (await s.portal(`/api/portal/${upload}`)).json()) as {
+        form: { version: number; fields: { key: string }[] };
+      };
+      expect(view.form.version).toBe(version);
+      expect(view.form.fields.map((f) => f.key)).toContain("employer");
+      const front = (await (await s.upload(upload!, png("priya-eid-front.png"), "emirates_id", "front")).json()) as {
+        id: string;
+      };
+      const back = (await (await s.upload(upload!, png("priya-eid-back.png"), "emirates_id", "back")).json()) as {
+        id: string;
+      };
+      const missing = await s.portal("/api/inbound", "POST", {
+        token: upload,
+        type: "DOCS_UPLOADED",
+        payload: {
+          documentIds: [front.id, back.id],
+          answers: { version, answers: { full_name: "Priya Example Rao" } },
+        },
+      });
+      expect(missing.status).toBe(422);
+      const ok = await s.portal("/api/inbound", "POST", {
+        token: upload,
+        type: "DOCS_UPLOADED",
+        payload: {
+          documentIds: [front.id, back.id],
+          answers: { version, answers: { full_name: "Priya Example Rao", employer: "Fictional Trading LLC" } },
+        },
+      });
+      expect(ok.status).toBe(202);
+      await s.drain();
+      const a = await appRow(id);
+      expect(a.formAnswers).toEqual({
+        version,
+        answers: { full_name: "Priya Example Rao", employer: "Fictional Trading LLC" },
+      });
+      // The application name was only "Priya"; the exact check uses the name as per documents and passes.
+      expect(a.state).toBe("OFFER");
+    });
+
+    test("a saved form can't be bypassed: version 0 or an old version is refused; unknown answers are dropped", async () => {
+      const s = await setup();
+      const version = await saveConfig(s);
+      const { id } = await createWithViewing(s, { nameEn: "Priya", requestedMoveInOn: "2026-12-01" });
+      await attended(s, id);
+      const { upload } = s.tokens(s.lastMail().text);
+      const front = (await (await s.upload(upload!, png("priya-eid-front.png"), "emirates_id", "front")).json()) as {
+        id: string;
+      };
+      const back = (await (await s.upload(upload!, png("priya-eid-back.png"), "emirates_id", "back")).json()) as {
+        id: string;
+      };
+      const send = (payload: unknown) =>
+        s.portal("/api/inbound", "POST", { token: upload, type: "DOCS_UPLOADED", payload });
+      const ids = [front.id, back.id];
+      expect(
+        (await send({ documentIds: ids, answers: { version: 0, answers: { full_name: "Priya Example Rao" } } })).status,
+      ).toBe(409);
+      expect((await send({ documentIds: ids })).status).toBe(422);
+      const ok = await send({
+        documentIds: ids,
+        answers: {
+          version,
+          answers: { full_name: "Priya Example Rao", employer: "Fictional Trading LLC", sneaky: "x" },
+        },
+      });
+      expect(ok.status).toBe(202);
+      expect((await appRow(id)).formAnswers!.answers).not.toHaveProperty("sneaky");
+    });
+
+    test("an upload needs at least one ID document; other: keys must be on the form", async () => {
+      const s = await setup();
+      const [u] = await database.db.select().from(units).where(eq(units.id, s.unitId));
+      const r = await s.staff(s.admin, `/api/companies/${u!.companyId}/kyc-config`, "PUT", {
+        form: [
+          ...STARTER_FORM,
+          { key: "salary_slip", label: "Salary slip", type: "document", documentKind: "other", required: false },
+        ],
+        rules: { base: defaultBaseRules(defaultCompanyPolicy), company: [] },
+      });
+      const version = ((await r.json()) as { version: number }).version;
+      const { id } = await createWithViewing(s, { nameEn: "Priya", requestedMoveInOn: "2026-12-01" });
+      await attended(s, id);
+      const { upload } = s.tokens(s.lastMail().text);
+      expect((await s.upload(upload!, png("priya-eid-front.png"), "other:not_on_form", "page")).status).toBe(422);
+      const slip = await s.upload(upload!, png("priya-eid-front.png"), "other:salary_slip", "page");
+      expect(slip.status).toBe(201);
+      const only = await s.portal("/api/inbound", "POST", {
+        token: upload,
+        type: "DOCS_UPLOADED",
+        payload: {
+          documentIds: [((await slip.json()) as { id: string }).id],
+          answers: { version, answers: { full_name: "Priya Example Rao" } },
+        },
+      });
+      expect(only.status).toBe(422);
+    });
+
+    test("without a saved form, an upload without answers still works (older pages)", async () => {
+      const s = await setup();
+      const { id } = await toKyc(s);
+      expect((await appRow(id)).state).toBe("OFFER");
+    });
   });
 
   test("happy path: upload link → KYC verified → offer → in-limits counter → accept → reservation → lease in CONTRACT", async () => {

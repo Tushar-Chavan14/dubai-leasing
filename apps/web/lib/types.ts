@@ -238,7 +238,13 @@ export interface CompanyClauseView {
   quote: string | null;
   category: string;
   hasValues: boolean;
-  status: "proposed" | "approved" | "rejected";
+  status: "proposed" | "approved" | "rejected" | "removed";
+  /** D47: linked to a template paragraph; `[label]` in the text are fields filled from records. */
+  fromTemplate?: boolean;
+  /** Older clause in a template's fixed wording without a link: not editable. */
+  locked?: boolean;
+  /** Active contract rules that include it (clause list only). */
+  ruleIds?: string[];
 }
 export interface RuleReview {
   sample: {
@@ -316,6 +322,10 @@ export interface CompanyTemplateView {
   warnings: string[];
   hasLogo: boolean;
   problems: string[];
+  /** D47: what code changed on its own, in plain words. */
+  changes: string[];
+  /** D47: what still blocks approval (text the PDF fonts can't print). */
+  blockers: string[];
   approvedAt: string | null;
 }
 export interface CompanyTemplatePanel {
@@ -331,6 +341,14 @@ export interface CompanyTemplatePanel {
   rulesOnRetired: number;
   /** Active rules that approving a proposed version would move to it. */
   rulesToMove: number;
+  /** D47: the latest sample's clauses waiting for "Approve all", and its proposed template if any. */
+  review: {
+    sampleDocumentId: string;
+    ruleId: string | null;
+    clauses: CompanyClauseView[];
+    templateId: string | null;
+    needsCheck: boolean;
+  } | null;
 }
 
 /** Workspace and Home (engine `/api/records`, `/api/records/:kind/:id/log`, `/api/home`, `/api/views`). */

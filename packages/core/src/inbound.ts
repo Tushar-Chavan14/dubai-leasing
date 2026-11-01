@@ -1,3 +1,4 @@
+import { FormAnswers } from "./kyc-config.ts";
 import { z } from "zod";
 import { ContractSignature } from "./contract.ts";
 import { OfferCounter } from "./offer.ts";
@@ -16,7 +17,13 @@ export const RenewalReply = z
 export type RenewalReply = z.infer<typeof RenewalReply>;
 
 /** The applicant finished uploading ID documents and asks for them to be checked (step 3). */
-export const DocsUploaded = z.object({ documentIds: z.array(z.uuid()).min(1).max(10) }).strict();
+export const DocsUploaded = z
+  .object({
+    documentIds: z.array(z.uuid()).min(1).max(10),
+    /** What the applicant typed in the company's document form (D46), with the form version answered. */
+    answers: FormAnswers.optional(),
+  })
+  .strict();
 export type DocsUploaded = z.infer<typeof DocsUploaded>;
 
 /** The applicant's answer to an offer (step 4): buttons are trusted as typed, the comment is classified. */

@@ -9,9 +9,12 @@ import { activeRulesVersion } from "@leasing/rulebook";
 import { createApi } from "./api/app.ts";
 import { createEngineClock, EngineDemoClock } from "./clock.ts";
 import type { EngineContext } from "./context.ts";
+import { contractAgentModel } from "./contract-agent-model.ts";
+import { whisperTranscriber } from "./whisper.ts";
 import { customerAgentModel } from "./customer-agent-model.ts";
 import { bossScheduler, createBoss, requestSweep, startWorkers } from "./jobs.ts";
 import { backfillTenancySchedules } from "./manager/milestones.ts";
+import { backfillTemplateClauseLinks } from "./manager/company-templates.ts";
 import { syncRulebooks } from "./manager/rulebooks.ts";
 
 const env = loadEnv();
@@ -120,8 +123,17 @@ const ctx: EngineContext = {
         }),
       }
     : {}),
+  // Contract agent (D45): CONTRACT_AI_MODEL, else CHAT_MODEL. Local Ollama only (contract records hold ID numbers).
+  ...(env.CONTRACT_AI_MODEL || env.CHAT_MODEL
+    ? {
+        contractAgent: contractAgentModel({
+          url: env.OLLAMA_URL,
+          model: (env.CONTRACT_AI_MODEL || env.CHAT_MODEL)!,
+        }),
+      }
+    : {}),
   customerAgentLimits: { maxConcurrent: env.CUSTOMER_AGENT_MAX_CONCURRENT },
-  voiceModel: env.VOICE_MODEL,
+  ...(env.VOICE_URL ? { transcriber: whisperTranscriber(env.VOICE_URL) } : {}),
   webUrl: env.WEB_URL,
   serverSecret: sessionSecret,
   // Officers' replies in handed-off Telegram enquiries (the bot app receives updates).
@@ -132,6 +144,9 @@ await startWorkers(boss, ctx, {
   onSweep: () => demoClock?.refresh() ?? Promise.resolve(),
   backgroundModelTimeoutSeconds: env.BACKGROUND_MODEL_TIMEOUT_SECONDS,
 });
+// D47: clauses read before linking existed get linked to their template paragraphs (idempotent).
+const linkedClauses = await backfillTemplateClauseLinks(ctx);
+if (linkedClauses) console.log(`template clauses: linked ${linkedClauses} clause(s) to their paragraphs`);
 // After startWorkers: it creates the queues the backfill sends deadline jobs to.
 if (ctx.tenancyOps) {
   const filled = await backfillTenancySchedules(ctx);

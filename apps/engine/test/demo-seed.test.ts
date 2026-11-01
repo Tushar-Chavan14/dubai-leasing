@@ -20,20 +20,11 @@ describe.skipIf(noDb)("demo seed", () => {
     rows = await database.db.select().from(units);
   });
 
-  test("seeds the five companies and gives every unit one", async () => {
+  test("seeds one company and gives it every unit", async () => {
     const cs = await database.db.select().from(companies);
-    expect(cs.map((c) => c.slug).toSorted()).toEqual(DEMO_COMPANIES.map((c) => c.slug).toSorted());
-    const ids = new Set(cs.map((c) => c.id));
-    for (const u of rows) expect(ids.has(u.companyId), `${u.code} has no company`).toBe(true);
-    expect(new Set(rows.map((u) => u.companyId)).size).toBe(5);
-    expect(DEMO_COMPANIES.map((c) => c.slug)).toEqual(
-      expect.arrayContaining(["silverline", "qamar-realty", "al-noor-holdings", "sobha", "modon"]),
-    );
-    for (const slug of ["sobha", "modon"]) {
-      const n = rows.filter((u) => u.companyId === cs.find((c) => c.slug === slug)!.id && u.state === "LISTED").length;
-      expect(n, slug).toBeGreaterThanOrEqual(2);
-      expect(n, slug).toBeLessThanOrEqual(3);
-    }
+    expect(cs.map((c) => c.slug)).toEqual(DEMO_COMPANIES.map((c) => c.slug));
+    expect(cs.map((c) => c.slug)).toEqual(["silverline"]);
+    for (const u of rows) expect(u.companyId, `${u.code} is not Silverline's`).toBe(cs[0]!.id);
   });
 
   test("seeds the listed units, with rents inside the company's allowed range", async () => {

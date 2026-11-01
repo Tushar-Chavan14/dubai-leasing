@@ -2,7 +2,13 @@ import type { Hono } from "hono";
 import { withTx } from "@leasing/db";
 import { z } from "zod";
 import type { EngineContext } from "../context.ts";
-import { contractStatus, listCompanies, unitWithPricing, viewingSlotsFor } from "../manager/copilot-reads.ts";
+import {
+  companySettings,
+  contractStatus,
+  listCompanies,
+  unitWithPricing,
+  viewingSlotsFor,
+} from "../manager/copilot-reads.ts";
 import { notFound } from "../errors.ts";
 import { resolveCompany } from "../manager/availability.ts";
 import { listRecordsCounted, pipelineSummary, STAGES } from "../manager/workspace.ts";
@@ -15,6 +21,13 @@ import type { AuthEnv } from "./auth.ts";
 export function registerCopilotReadRoutes(api: Hono<AuthEnv>, ctx: EngineContext) {
   api.get("/copilot/pipeline", async (c) => c.json(await pipelineSummary(ctx, c.get("user"))));
   api.get("/copilot/companies", async (c) => c.json(await listCompanies(ctx)));
+  /** A company's rent rules, contract rules, approved clauses and the SRI table (D45). */
+  api.get("/copilot/company-settings", async (c) => {
+    const text = z.string().trim().min(2).max(120).parse(c.req.query("company"));
+    const hit = await withTx(ctx.database, (tx) => resolveCompany(tx, ctx.clock.today(), text));
+    if (!hit.ok) throw notFound(hit.reason === "ambiguous" ? `company (one of: ${hit.names.join(", ")})` : "company");
+    return c.json({ company: hit.name, ...(await companySettings(ctx, hit.id)) });
+  });
   api.get("/copilot/contract-status", async (c) =>
     c.json(await contractStatus(ctx, z.string().trim().min(2).max(80).parse(c.req.query("ref")))),
   );

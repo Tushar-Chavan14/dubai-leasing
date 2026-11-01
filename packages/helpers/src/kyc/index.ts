@@ -2,9 +2,11 @@ import type { Helper } from "@leasing/core";
 import { type Llm, ModelTimeoutError } from "@leasing/llm";
 import { assessKyc } from "./checks.ts";
 import { readPrompt } from "./prompt.ts";
+import { applyKycRules, kycAiChecks } from "./rules.ts";
 import { type DocRead, KycContext, KycData, readKeyOf, VisionRead } from "./schema.ts";
 
 export { assessKyc, parseDocDate } from "./checks.ts";
+export { applyKycRules, kycAiChecks } from "./rules.ts";
 export { readPrompt } from "./prompt.ts";
 export * from "./schema.ts";
 
@@ -121,7 +123,16 @@ export function kycHelper(
         reads.push({ ...d, read, ...(read || !error ? {} : { error }) });
       }
       await step({ kind: "assess" });
-      const data = assessKyc(ctx, reads);
+      let data = applyKycRules(ctx, reads, assessKyc(ctx, reads));
+      const ai = ctx.rules ? await kycAiChecks(llm, ctx.rules.company, data.identity, ctx.answers ?? {}) : [];
+      if (ai.length) {
+        data = {
+          ...data,
+          verdict: "review",
+          flags: [...data.flags, ...ai],
+          checks: [...data.checks, ...ai.map(() => ({ check: "company_rule", status: "flag" as const, docId: null }))],
+        };
+      }
       await step({ kind: "result", status: "ok", verdict: data.verdict, flags: data.flags.length });
       return {
         status: "ok",

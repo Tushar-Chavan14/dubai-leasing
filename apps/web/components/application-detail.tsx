@@ -35,6 +35,10 @@ interface Detail {
   viewingOutcome: "attended" | "no_show" | null;
   viewingOutcomeAt: string | null;
   kycVerifiedAt: string | null;
+  /** What the applicant typed in the company's document form (D46). Untrusted text. */
+  formAnswers?: { version: number; answers: Record<string, string> } | null;
+  /** Labels of that form version's fields, by key. */
+  formLabels?: Record<string, string>;
   offer: Terms | null;
   offerAcceptedAt: string | null;
   reservationPaidOn: string | null;
@@ -102,6 +106,12 @@ interface Detail {
   }[];
 }
 
+/** A form key as a label ("salary_slip" → "Salary slip"). */
+const keyLabel = (key: string) => {
+  const t = key.replaceAll("_", " ");
+  return t.charAt(0).toUpperCase() + t.slice(1);
+};
+
 const DOC_LABEL: Record<string, string> = {
   emirates_id: "Emirates ID",
   passport: "Passport",
@@ -166,7 +176,11 @@ export async function ApplicationDetail({ id, draftId }: { id: string; draftId?:
   const leaseId = leaseEvent ? String(leaseEvent.payload.leaseId ?? "") : "";
   const docLabel = (docId: string | null) => {
     const d = a.documents.find((x) => x.id === docId);
-    return d ? `${DOC_LABEL[d.kind] ?? d.kind}${d.side && d.side !== "page" ? ` (${d.side})` : ""}` : "";
+    if (!d) return "";
+    const label =
+      DOC_LABEL[d.kind] ??
+      (d.kind.startsWith("other:") ? (a.formLabels?.[d.kind.slice(6)] ?? keyLabel(d.kind.slice(6))) : d.kind);
+    return `${label}${d.side && d.side !== "page" ? ` (${d.side})` : ""}`;
   };
 
   return (
@@ -262,6 +276,16 @@ export async function ApplicationDetail({ id, draftId }: { id: string; draftId?:
                   </li>
                 ))}
               </ul>
+            )}
+            {a.formAnswers && Object.keys(a.formAnswers.answers).length > 0 && (
+              <dl className="panel-pad facts">
+                {Object.entries(a.formAnswers.answers).map(([k, v]) => (
+                  <div key={k}>
+                    <dt>{a.formLabels?.[k] ?? keyLabel(k)}</dt>
+                    <dd className="tenant-text">{v}</dd>
+                  </div>
+                ))}
+              </dl>
             )}
           </section>
 

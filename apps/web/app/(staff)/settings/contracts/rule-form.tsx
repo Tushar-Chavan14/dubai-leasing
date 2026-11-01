@@ -8,23 +8,21 @@ import type { CompanyRow, ContractRuleRow, RuleReview } from "../../../../lib/ty
 import { ClauseReview, UploadSample } from "./clause-review";
 import { removeContractRule, saveContractRule } from "./actions";
 
-type ApprovedTemplates = Record<string, { id: string; version: number }[]>;
+type ApprovedTemplates = { id: string; version: number }[];
 
 function RuleEditor({
   rule,
-  companies,
+  company,
   templates,
   category,
   onDone,
 }: {
   rule?: ContractRuleRow;
-  companies: CompanyRow[];
+  company: CompanyRow;
   templates: ApprovedTemplates;
   category: Category;
   onDone: () => void;
 }) {
-  const [companyId, setCompanyId] = useState(rule?.companyId ?? companies.find((c) => c.active)?.id ?? "");
-  const approved = templates[companyId] ?? [];
   const [state, action, pending] = useActionState<RuleResult, FormData>(async (prev, formData) => {
     const r = await saveContractRule(prev, formData);
     if (r.ok) onDone();
@@ -33,7 +31,6 @@ function RuleEditor({
   const fe = state.fieldErrors ?? {};
   const err = (k: string) => (fe[k] ? <span className="err">{fe[k]}</span> : null);
   const inv = (k: string) => (fe[k] ? { "aria-invalid": true as const } : {});
-  const choices = rule ? companies.filter((c) => c.id === rule.companyId) : companies.filter((c) => c.active);
   return (
     <form action={action} className="rule-form" noValidate>
       {state.error && (
@@ -55,28 +52,13 @@ function RuleEditor({
       {rule && <input type="hidden" name="clauseIds" value={rule.clauseIds.join(",")} />}
       {rule?.sampleDocumentId && <input type="hidden" name="sampleDocumentId" value={rule.sampleDocumentId} />}
       <input type="hidden" name="category" value={category} />
+      <input type="hidden" name="companyId" value={rule?.companyId ?? company.id} />
       <div className="grid-fields">
         <label className="field span-3">
-          <span className="field-label">Company</span>
-          <select
-            name="companyId"
-            value={companyId}
-            onChange={(e) => setCompanyId(e.target.value)}
-            disabled={!!rule}
-            required
-          >
-            {choices.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field span-3">
           <span className="field-label">Contract template</span>
-          <select name="templateId" defaultValue={rule?.templateId ?? ""} key={companyId}>
+          <select name="templateId" defaultValue={rule?.templateId ?? ""}>
             <option value="">Standard contract</option>
-            {approved.map((t) => (
+            {templates.map((t) => (
               <option key={t.id} value={t.id}>
                 Company template v{t.version}
               </option>
@@ -137,14 +119,14 @@ function RuleEditor({
 
 const templateLabel = (r: ContractRuleRow, templates: ApprovedTemplates) => {
   if (!r.templateId) return "Standard layout (no company template)";
-  const t = (templates[r.companyId] ?? []).find((x) => x.id === r.templateId);
+  const t = templates.find((x) => x.id === r.templateId);
   return t ? `Company template v${t.version}` : "Company template (not approved any more)";
 };
 
 export function ContractRules({
   rules,
   reviews,
-  companies,
+  company,
   templates,
   category,
   canEdit,
@@ -154,14 +136,13 @@ export function ContractRules({
   /** Rule id to true when a company template was read from the rule's sample. */
   templateReady?: Record<string, boolean>;
   reviews: Record<string, RuleReview>;
-  companies: CompanyRow[];
+  company: CompanyRow;
   templates: ApprovedTemplates;
   category: Category;
   canEdit: boolean;
 }) {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
-  const nameOf = (id: string) => companies.find((c) => c.id === id)?.name ?? "Unknown company";
   const closeAdd = () => setAdding(false);
   const closeEdit = () => setEditing(null);
   return (
@@ -170,15 +151,10 @@ export function ContractRules({
         <div className="settings-add">
           {adding ? (
             <div className="panel panel-pad">
-              <RuleEditor companies={companies} templates={templates} category={category} onDone={closeAdd} />
+              <RuleEditor company={company} templates={templates} category={category} onDone={closeAdd} />
             </div>
           ) : (
-            <button
-              type="button"
-              className="btn primary"
-              onClick={() => setAdding(true)}
-              disabled={!companies.some((c) => c.active)}
-            >
+            <button type="button" className="btn primary" onClick={() => setAdding(true)}>
               <IconPlus size={16} />
               Add rule
             </button>
@@ -187,13 +163,14 @@ export function ContractRules({
       )}
       <section className="panel">
         {rules.length === 0 ? (
-          <p className="muted panel-pad">No {category} contract rules yet. Offers use the company defaults.</p>
+          <p className="muted panel-pad">
+            No {category} contract rules for {company.name} yet. Offers use the company defaults.
+          </p>
         ) : (
           <div className="table-wrap">
             <table className="data">
               <thead>
                 <tr>
-                  <th>Company</th>
                   <th>Type</th>
                   <th>Tenure</th>
                   <th>Cheques</th>
@@ -205,10 +182,10 @@ export function ContractRules({
                 {rules.map((r) =>
                   editing === r.id ? (
                     <tr key={r.id}>
-                      <td colSpan={canEdit ? 6 : 5}>
+                      <td colSpan={canEdit ? 5 : 4}>
                         <RuleEditor
                           rule={r}
-                          companies={companies}
+                          company={company}
                           templates={templates}
                           category={category}
                           onDone={closeEdit}
@@ -218,7 +195,6 @@ export function ContractRules({
                   ) : (
                     <Fragment key={r.id}>
                       <tr>
-                        <td>{nameOf(r.companyId)}</td>
                         <td>{subtypeLabel(r.subtype)}</td>
                         <td>{r.tenures.map((t) => TENURE_LABEL[t] ?? t).join(", ")}</td>
                         <td className="num nowrap">
@@ -245,7 +221,7 @@ export function ContractRules({
                       </tr>
                       {reviews[r.id]?.sample && (
                         <tr>
-                          <td colSpan={canEdit ? 6 : 5}>
+                          <td colSpan={canEdit ? 5 : 4}>
                             <ClauseReview
                               rule={r}
                               review={reviews[r.id]}

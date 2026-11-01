@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
+import { AskAi } from "../../../../components/ask-ai";
 import { Empty, PageHead } from "../../../../components/ui";
 import { get } from "../../../../lib/engine";
 import { aedShort, bedroomsLabel, longDate } from "../../../../lib/format";
 import type { Me } from "../../../../lib/types";
 import { SriForm } from "./sri-form";
 
-export const metadata: Metadata = { title: "Rent index" };
+export const metadata: Metadata = { title: "Smart Rental Index" };
 
 interface SriRow {
   id: string;
@@ -23,8 +24,8 @@ export default async function SriPage() {
   return (
     <>
       <PageHead
-        title="Rent index"
-        lede="Smart Rental Index averages by community and size. The renewal helper uses them to work out the legal rent cap; a value recorded on a lease overrides the table for that lease."
+        title="Smart Rental Index"
+        lede="The official DLD averages by community and size. Rent rules set each company's band around these values, and the renewal helper uses them for the legal rent cap. A value recorded on a lease overrides the table for that lease."
       />
       <div className="split">
         <section className="panel">
@@ -60,7 +61,12 @@ export default async function SriPage() {
         <aside className="panel panel-pad">
           <h2 className="section-title">Add or update a value</h2>
           {canEdit ? (
-            <SriForm />
+            <>
+              <SriForm />
+              <div style={{ marginTop: 12 }}>
+                <AskAi label="Ask AI to add an SRI value" prompt="Add a Smart Rental Index value of AED " />
+              </div>
+            </>
           ) : (
             <p className="muted">
               Admins and leasing managers can update the table. Officers can record a value on a lease.

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { MicButton, useReadAloud } from "../voice/voice-controls";
 import { useHasLocalVoice, useStored } from "../voice/use-voice";
 import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
@@ -65,38 +66,52 @@ type Starter = { text: string; kind: "ask" | "draft" | "prepare" };
 const ask = (text: string): Starter => ({ text, kind: "ask" });
 const draft = (text: string): Starter => ({ text, kind: "draft" });
 const prepare = (text: string): Starter => ({ text, kind: "prepare" });
-const STARTERS: Record<PageRef["kind"] | "none", Starter[]> = {
+const STARTERS: Record<PageRef["kind"] | "none" | "settings", Starter[]> = {
   lease: [
     ask("Why is this lease waiting?"),
-    ask("What happened on this lease so far?"),
     ask("What is the contract and Ejari status?"),
+    ask("Which contract rules and clauses apply to this lease?"),
+    ask("What happened on this lease so far?"),
     draft("Draft an email to the tenant about…"),
+    prepare("Prepare the contract for this lease"),
+    prepare("Resend the signing link to…"),
     prepare("Create a task to…"),
   ],
   unit: [
-    ask("Is this unit available for site visit, and at what rent?"),
+    ask("Is this unit available, and what rent range is allowed?"),
+    ask("Which rent rule and Smart Rental Index value set this unit's band?"),
     ask("Which applications are on this unit?"),
     prepare("Book a site visit of this unit for…"),
   ],
   approval: [
     ask("Explain this approval and what it's based on."),
+    ask("Which contract checks passed, and which clauses did the agent choose?"),
     ask("What happens after it's approved?"),
-    ask("Which rule applies here, and in which version?"),
     draft("Draft a note on this approval saying…"),
   ],
   none: [
     ask("How many applications are in each stage?"),
-    ask("How many applications are at the site visit stage?"),
-    ask("Show offers waiting on applicants"),
+    ask("Which contracts are waiting for approval?"),
     ask("Which contracts are waiting for a signature?"),
-    ask("Which approvals are waiting?"),
-    ask("Which units are available for site visit?"),
-    ask("What can you help me with?"),
+    ask("Which contracts couldn't be prepared, and why?"),
+    ask("What is pending at Ejari?"),
+    ask("Show offers waiting on applicants"),
+    prepare("Prepare the contract for lease…"),
+    prepare("Resend the signing link for lease…"),
+    prepare("Add a clause to the contract of…"),
     draft("Draft an email to the applicant of…"),
-    prepare("Book a site visit for a new applicant…"),
-    prepare("Create a task to…"),
+  ],
+  settings: [
+    ask("What contract rules, rent rules and clauses does each company have?"),
+    ask("How do rent rules and the Smart Rental Index work together?"),
+    ask("Which Smart Rental Index values are recorded?"),
+    prepare("Add a clause to the contract of…"),
+    prepare("Set the residential rent band of…"),
+    prepare("Change the residential contract rule of…"),
+    prepare("Add a Smart Rental Index value of AED "),
   ],
 };
+const isPrefill = (t: string) => t.endsWith("…") || t.endsWith(" ");
 const KIND_LABEL: Record<Starter["kind"], string> = {
   ask: "Ask",
   draft: "Draft (you send it)",
@@ -205,7 +220,18 @@ const PROPOSAL_TITLE: Record<ProposalView["kind"], string> = {
   request_documents: "Document request",
   resend_signing_link: "Signing link",
   prepare_contract: "Prepare contract",
+  config_change: "Settings change",
 };
+
+const CHANGE_TITLE: Record<string, string> = {
+  add_clause: "Add a contract clause",
+  rent_rule: "Rent rule",
+  contract_rule: "Contract rule",
+  sri_value: "Smart Rental Index value",
+};
+
+/** Settings tools: after one runs (or its card is confirmed) the page behind the panel is refreshed. */
+const SETTINGS_TOOLS = new Set(["add_contract_clause", "save_rent_rule", "save_contract_rule", "save_sri_value"]);
 
 const CONFIRM_NOTE: Record<ProposalView["kind"], string> = {
   create_application: "Confirming creates the application and emails the site visit invitation.",
@@ -216,6 +242,7 @@ const CONFIRM_NOTE: Record<ProposalView["kind"], string> = {
   resend_signing_link: "Confirming emails the signer a new signing link; the old link stops working.",
   prepare_contract:
     "Confirming prepares the contract only. It then waits for a person to approve it in the inbox (final contract); nothing is sent.",
+  config_change: "Confirming saves this to the company's settings, as the settings form would, in your name.",
 };
 
 const GROUND: Record<string, string> = {
@@ -227,6 +254,27 @@ const GROUND: Record<string, string> = {
 
 /** What the proposal would do, per kind. */
 function ProposalFacts({ p }: { p: ProposalView }) {
+  if (p.kind === "config_change") {
+    const s = p.summary;
+    return (
+      <dl>
+        <dt>Change</dt>
+        <dd>{CHANGE_TITLE[s.change] ?? s.change}</dd>
+        {s.company && (
+          <>
+            <dt>Company</dt>
+            <dd>{s.company}</dd>
+          </>
+        )}
+        {(s.facts ?? []).map(([label, value]) => (
+          <div key={label} style={{ display: "contents" }}>
+            <dt>{label}</dt>
+            <dd>{value}</dd>
+          </div>
+        ))}
+      </dl>
+    );
+  }
   if (p.kind === "create_application") {
     const s = p.summary;
     return (
@@ -348,6 +396,7 @@ const PROPOSAL_STATUS: Record<ProposalView["status"], string> = {
  * engine then does it as the normal form would, as this user.
  */
 function ProposalCard({ p, onChange }: { p: ProposalView; onChange: (v: ProposalView) => void }) {
+  const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const act = async (action: "confirm" | "cancel") => {
@@ -356,8 +405,10 @@ function ProposalCard({ p, onChange }: { p: ProposalView; onChange: (v: Proposal
     try {
       const res = await fetch(`/api/copilot/proposals/${p.id}/${action}`, { method: "POST" });
       const body = (await res.json().catch(() => null)) as (ProposalView & { error?: string; code?: string }) | null;
-      if (res.ok && body) onChange(body);
-      else {
+      if (res.ok && body) {
+        onChange(body);
+        if (p.kind === "config_change" && body.status === "confirmed") router.refresh();
+      } else {
         const message = body?.error ?? "Something went wrong.";
         setError(message.charAt(0).toUpperCase() + message.slice(1));
         // Only the engine's booking failures end the proposal; anything else can be retried.
@@ -437,6 +488,23 @@ function ProposalCard({ p, onChange }: { p: ProposalView; onChange: (v: Proposal
           <IconCheck size={13} /> Contract prepared. It still needs a person's approval:{" "}
           <Link className="link" href={`/work?approval=${p.result.approvalId}`}>
             open it in the inbox
+          </Link>
+        </p>
+      )}
+      {p.status === "confirmed" && p.kind === "config_change" && (
+        <p className="cp-proposal-note">
+          <IconCheck size={13} /> {p.result?.summary ?? "Saved"}.{" "}
+          <Link
+            className="link"
+            href={
+              p.summary.change === "sri_value"
+                ? "/settings/rent-index"
+                : p.summary.change === "rent_rule"
+                  ? "/settings/rent-rules"
+                  : "/settings/contracts"
+            }
+          >
+            Open settings
           </Link>
         </p>
       )}
@@ -559,7 +627,16 @@ export function CopilotChat({
   heading,
   suggestions,
   ask,
+  initialDraft,
+  prefill,
+  starters,
 }: {
+  /** Text put in the message box (not sent) each time it arrives: the "Ask AI to …" buttons. */
+  prefill?: { id: number; text: string } | undefined;
+  /** Starter set for pages that aren't records (Settings). */
+  starters?: "settings" | undefined;
+  /** Text placed in the composer for the user to edit and send ("Ask AI to …" links). Never sent on its own. */
+  initialDraft?: string | undefined;
   /** A question sent once when it arrives (for example the Workspace's "Draft a reply" button). */
   ask?: { id: number; text: string } | undefined;
   /** Home: a heading and ready-made questions replace the generic empty state. */
@@ -572,7 +649,7 @@ export function CopilotChat({
   onThread?: (id: string) => void;
 }) {
   const chat = useCopilotChat({ page, ...(threadId ? { threadId } : {}), ...(initial ? { initial } : {}) });
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(initialDraft?.slice(0, 2000) ?? "");
   const input = useRef<HTMLTextAreaElement>(null);
   const [auto, setAuto] = useStored("auto");
   const [read, setRead] = useStored("read");
@@ -590,10 +667,34 @@ export function CopilotChat({
     else setDraft((d) => `${d ? `${d} ` : ""}${text}`.slice(0, 2000));
   };
   const log = useRef<HTMLDivElement>(null);
+  const router = useRouter();
+  // A settings change made straight from your words: show it on the page behind the panel.
+  const changedKey =
+    lastMsg?.role === "assistant" &&
+    lastMsg.status === "done" &&
+    lastMsg.tools.some((t) => SETTINGS_TOOLS.has(t.name) && t.status === "ok")
+      ? lastMsg.id
+      : null;
+  useEffect(() => {
+    if (changedKey) router.refresh();
+  }, [changedKey, router]);
 
   useEffect(() => {
     if (autoFocus) input.current?.focus();
   }, [autoFocus]);
+  const prefilled = useRef(0);
+  useEffect(() => {
+    if (!prefill || prefill.id === prefilled.current) return;
+    prefilled.current = prefill.id;
+    setDraft(prefill.text.slice(0, 2000));
+    // After the panel's open transition, put the cursor at the end of the text.
+    setTimeout(() => {
+      const el = input.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    }, 50);
+  }, [prefill]);
   const asked = useRef(0);
   useEffect(() => {
     if (!ask || ask.id === asked.current || chat.busy) return;
@@ -610,6 +711,11 @@ export function CopilotChat({
     if (chat.threadId) onThread?.(chat.threadId);
   }, [chat.threadId, onThread]);
 
+  /** A starter ending in "…" or a space is put in the box for the user to finish instead of being sent. */
+  const fill = (t: string) => {
+    setDraft(t.endsWith("…") ? `${t.slice(0, -1)} ` : t);
+    input.current?.focus();
+  };
   const submit = (e?: FormEvent) => {
     e?.preventDefault();
     if (!draft.trim() || chat.busy) return;
@@ -645,8 +751,8 @@ export function CopilotChat({
                     key={t}
                     type="button"
                     className="cp-starter"
-                    data-kind="ask"
-                    onClick={() => void chat.send(t)}
+                    data-kind={isPrefill(t) ? "prepare" : "ask"}
+                    onClick={() => (isPrefill(t) ? fill(t) : void chat.send(t))}
                   >
                     {t}
                   </button>
@@ -654,7 +760,7 @@ export function CopilotChat({
               </div>
             )}
             {(suggestions ? [] : (["ask", "draft", "prepare"] as const)).map((kind) => {
-              const list = STARTERS[page?.kind ?? "none"].filter((x) => x.kind === kind);
+              const list = STARTERS[page?.kind ?? starters ?? "none"].filter((x) => x.kind === kind);
               return list.length ? (
                 <div key={kind} className="cp-starter-group">
                   <span className="cp-starter-kind">{KIND_LABEL[kind]}</span>
@@ -665,12 +771,7 @@ export function CopilotChat({
                         type="button"
                         className="cp-starter"
                         data-kind={kind}
-                        onClick={() => {
-                          if (x.text.endsWith("…")) {
-                            setDraft(`${x.text.slice(0, -1)} `);
-                            input.current?.focus();
-                          } else void chat.send(x.text);
-                        }}
+                        onClick={() => (isPrefill(x.text) ? fill(x.text) : void chat.send(x.text))}
                       >
                         {x.text}
                       </button>

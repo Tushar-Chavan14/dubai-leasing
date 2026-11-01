@@ -2,11 +2,10 @@
 
 import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useRef, useState } from "react";
-import { LegalTag, needsLegalCheck } from "../../../../components/legal-tag";
 import type { RuleResult } from "../../../../lib/portfolio";
 import { readingLabel } from "../../../../lib/status-labels";
-import type { CompanyClauseView, ContractRuleRow, RuleReview } from "../../../../lib/types";
-import { decideClause, retrySample, toggleRuleClause } from "./actions";
+import type { ContractRuleRow, RuleReview } from "../../../../lib/types";
+import { retrySample } from "./actions";
 
 /** The dashed "Upload sample contract" button for one rule row. */
 export function UploadSample({ rule, label = "Upload sample contract" }: { rule: ContractRuleRow; label?: string }) {
@@ -48,146 +47,6 @@ export function UploadSample({ rule, label = "Upload sample contract" }: { rule:
         </span>
       )}
     </div>
-  );
-}
-
-function ruleFields(rule: ContractRuleRow) {
-  return {
-    ruleId: rule.id,
-    clauseIds: rule.clauseIds.join(","),
-    category: rule.category,
-    subtype: rule.subtype ?? "",
-    tenures: rule.tenures.join(","),
-    minCheques: String(rule.minCheques),
-    maxCheques: String(rule.maxCheques),
-    sampleDocumentId: rule.sampleDocumentId ?? "",
-  };
-}
-
-function Hidden({ fields }: { fields: Record<string, string> }) {
-  return Object.entries(fields).map(([k, v]) => <input key={k} type="hidden" name={k} value={v} />);
-}
-
-function Clause({ clause, rule, canEdit }: { clause: CompanyClauseView; rule: ContractRuleRow; canEdit: boolean }) {
-  const [editing, setEditing] = useState(false);
-  const [confirmed, setConfirmed] = useState(false);
-  const [state, act, pending] = useActionState<RuleResult, FormData>(decideClause, {});
-  const [toggleState, toggle, toggling] = useActionState<RuleResult, FormData>(toggleRuleClause, {});
-  const toggleForm = useRef<HTMLFormElement>(null);
-  const added = rule.clauseIds.includes(clause.ref);
-  const proposed = clause.status === "proposed";
-  const needsBox = clause.hasValues || editing;
-  return (
-    <li className="clause" data-status={clause.status}>
-      <div className="clause-head">
-        <b>{clause.title}</b>
-        {needsLegalCheck(clause.category) && <LegalTag />}
-        {clause.hasValues && (
-          <span className="status" data-tone="warn">
-            Includes amounts or dates
-          </span>
-        )}
-        {clause.status === "approved" && (
-          <span className="status" data-tone="good">
-            Approved
-          </span>
-        )}
-        {clause.status === "rejected" && (
-          <span className="status" data-tone="quiet">
-            Rejected
-          </span>
-        )}
-      </div>
-      {editing ? (
-        <form id={`edit-${clause.id}`} action={act} className="stack">
-          <Hidden fields={{ id: clause.id, decision: "approve" }} />
-          <label className="field">
-            <span className="field-label">Clause text</span>
-            <textarea name="editedText" rows={4} maxLength={1200} defaultValue={clause.text} required />
-          </label>
-        </form>
-      ) : (
-        <p className="clause-text">{clause.text}</p>
-      )}
-      {clause.quote && <p className="clause-quote muted">From the sample: &ldquo;{clause.quote}&rdquo;</p>}
-      {canEdit && proposed && (
-        <div className="stack" style={{ gap: 8 }}>
-          {needsBox && (
-            <label className="check-row">
-              <input
-                type="checkbox"
-                name="confirmValues"
-                form={editing ? `edit-${clause.id}` : `approve-${clause.id}`}
-                checked={confirmed}
-                onChange={(e) => setConfirmed(e.target.checked)}
-              />
-              I checked the amounts and dates in this clause
-            </label>
-          )}
-          <div className="btn-row">
-            {editing ? (
-              <>
-                <button type="submit" form={`edit-${clause.id}`} className="btn small primary" disabled={pending}>
-                  {pending ? "Saving…" : "Save and approve"}
-                </button>
-                <button type="button" className="btn small ghost" onClick={() => setEditing(false)}>
-                  Cancel
-                </button>
-              </>
-            ) : (
-              <>
-                <form id={`approve-${clause.id}`} action={act}>
-                  <Hidden fields={{ id: clause.id, decision: "approve" }} />
-                  <button
-                    type="submit"
-                    className="btn small primary"
-                    disabled={pending || (clause.hasValues && !confirmed)}
-                  >
-                    Approve
-                  </button>
-                </form>
-                <button type="button" className="btn small" onClick={() => setEditing(true)}>
-                  Edit
-                </button>
-                <form action={act}>
-                  <Hidden fields={{ id: clause.id, decision: "reject" }} />
-                  <button type="submit" className="btn small danger" disabled={pending}>
-                    Reject
-                  </button>
-                </form>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-      {state.error && (
-        <span className="err" role="alert" style={{ display: "block" }}>
-          {state.error}
-        </span>
-      )}
-      {canEdit && clause.status === "approved" && (
-        <form ref={toggleForm} action={toggle}>
-          <Hidden fields={ruleFields(rule)} />
-          <input type="hidden" name="ref" value={clause.ref} />
-          <label className="check-row">
-            <input
-              type="checkbox"
-              name="on"
-              defaultChecked={added}
-              disabled={toggling}
-              onChange={() => toggleForm.current?.requestSubmit()}
-            />
-            Add to this rule
-          </label>
-          {toggleState.error && (
-            <span className="err" role="alert" style={{ display: "block" }}>
-              {toggleState.error}
-            </span>
-          )}
-        </form>
-      )}
-      {!canEdit && clause.status === "approved" && added && <p className="muted">Part of this rule.</p>}
-    </li>
   );
 }
 
@@ -248,12 +107,14 @@ export function ClauseReview({
       {sample.status === "done" && clauses.length === 0 && (
         <p className="muted">No clauses could be taken from this file.</p>
       )}
-      {clauses.length > 0 && (
-        <ul className="clause-list">
-          {clauses.map((c) => (
-            <Clause key={c.id} clause={c} rule={rule} canEdit={canEdit} />
-          ))}
-        </ul>
+      {clauses.some((c) => c.status === "proposed") && (
+        <p className="muted">
+          {clauses.filter((c) => c.status === "proposed").length} clauses read from this sample are waiting in{" "}
+          <a className="link" href="#sample-review">
+            Review the sample
+          </a>{" "}
+          below.
+        </p>
       )}
     </div>
   );

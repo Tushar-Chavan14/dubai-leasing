@@ -16,6 +16,7 @@ import { and, desc, eq } from "drizzle-orm";
 import type { Hono } from "hono";
 import { z } from "zod";
 import type { EngineContext } from "../context.ts";
+import { kycConfigVersion } from "../manager/kyc-config.ts";
 import { notFound } from "../errors.ts";
 import {
   bookViewing,
@@ -120,9 +121,20 @@ export function registerApplicationRoutes(api: Hono<AuthEnv>, ctx: EngineContext
       .from(conversations)
       .where(eq(conversations.applicationId, id))
       .limit(1);
+    // Field labels of the form version the applicant answered (D46), so the record shows "Employer", not "employer".
+    const formLabels = row.app.formAnswers
+      ? Object.fromEntries(
+          (
+            await withTx(ctx.database, (tx) =>
+              kycConfigVersion(tx, row.unit.companyId, row.app.formAnswers!.version, ctx.clock.today()),
+            )
+          ).form.map((f) => [f.key, f.label]),
+        )
+      : {};
     return c.json(
       maskPii({
         ...row.app,
+        formLabels,
         conversationId: conversation?.id ?? null,
         unit: {
           id: row.unit.id,

@@ -1,12 +1,24 @@
 import { type Actor, newId } from "@leasing/core";
 import { sha256Hex } from "@leasing/core/tokens";
-import { companyClauses, companyContractTemplates, contractRules, documents, withTx } from "@leasing/db";
-import { ContractTemplateSchemas, contractTemplateHelper, hasValues, isPdf } from "@leasing/helpers";
+import { companyClauses, companyContractTemplates, contractRules, documents, type Tx, withTx } from "@leasing/db";
+import {
+  ContractTemplateSchemas,
+  contractTemplateHelper,
+  hasValues,
+  isPdf,
+  templateParagraphs,
+  unknownPlaceholders,
+} from "@leasing/helpers";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
 import { conflict, notFound, unprocessable } from "../errors.ts";
 import { appendEvent, getCompanyPolicy } from "./events.ts";
-import { CONTRACT_STRUCTURE_JOB, extractCompanyTemplate } from "./company-templates.ts";
+import {
+  CONTRACT_STRUCTURE_JOB,
+  extractCompanyTemplate,
+  linkSampleClauses,
+  parseTemplate,
+} from "./company-templates.ts";
 import { recordRun, runOnly } from "./helpers.ts";
 import { replaceContractRule } from "./portfolio.ts";
 export { approvedClauses, resolveCompanyClauses } from "./clause-refs.ts";
@@ -391,6 +403,11 @@ export async function runContractTemplate(ctx: EngineContext, documentId: string
       payload: { documentId, helperRunId, status, proposed: count, autoApproved, dropped: data?.droppedCount ?? 0 },
       rulesVersion: ctx.rulesVersion,
     });
+    // D47: if the template from this sample is already read, link the clauses to its paragraphs now.
+    if (count) {
+      await tx.db.execute(sql`select pg_advisory_xact_lock(hashtext(${`template:${meta.companyId}`}))`);
+      await linkSampleClauses(ctx, tx, meta.companyId, doc.id);
+    }
     return { skipped: false as const, status, proposed: count };
   });
 }
@@ -473,6 +490,303 @@ export async function decideClause(ctx: EngineContext, clauseId: string, d: Clau
     });
     return row!;
   });
+}
+
+export interface AddClauseInput {
+  title: string;
+  text: string;
+  category?: string | undefined;
+  /** Active contract rules of the same company that get the clause (each as a new rule version). */
+  ruleIds?: string[] | undefined;
+  confirmValues?: true | undefined;
+}
+
+/**
+ * A clause written by an admin (settings or an explicit copilot request): approved as it is saved, since the person
+ * writing it is the one approving it. Amounts or dates in the text (found by code) need `confirmValues`.
+ */
+export async function addCompanyClause(
+  ctx: EngineContext,
+  tx: Tx,
+  companyId: string,
+  input: AddClauseInput,
+  actor: Actor,
+) {
+  const title = input.title.trim();
+  const text = input.text.trim();
+  if (title.length < 1 || title.length > 120)
+    throw unprocessable("The clause title must be 1 to 120 characters.", [], "bad_title");
+  if (text.length < 1 || text.length > MAX_CLAUSE_TEXT) {
+    throw unprocessable(`The clause text must be 1 to ${MAX_CLAUSE_TEXT} characters.`, [], "bad_text");
+  }
+  const values = hasValues(text);
+  if (values && input.confirmValues !== true) {
+    throw unprocessable(
+      "This clause includes amounts or dates. Check them and confirm before saving.",
+      [],
+      "confirm_values",
+    );
+  }
+  const ruleIds = [...new Set(input.ruleIds ?? [])];
+  const rules = ruleIds.length
+    ? await tx.db.select().from(contractRules).where(inArray(contractRules.id, ruleIds)).for("update")
+    : [];
+  const bad = ruleIds.filter((id) => !rules.some((r) => r.id === id && r.companyId === companyId && r.active));
+  if (bad.length) throw unprocessable("Each rule must be an active contract rule of this company.", bad, "bad_rule");
+  const id = newId();
+  const [row] = await tx.db
+    .insert(companyClauses)
+    .values({
+      id,
+      companyId,
+      title,
+      textEn: text,
+      category: input.category ?? "other",
+      hasValues: values,
+      status: "approved",
+      approvedBy: actor,
+      approvedAt: ctx.clock.now(),
+      createdBy: actor,
+    })
+    .returning();
+  for (const r of rules) {
+    await replaceContractRule(
+      ctx,
+      tx,
+      r.id,
+      {
+        category: r.category,
+        subtype: r.subtype,
+        tenures: r.tenures,
+        minCheques: r.minCheques,
+        maxCheques: r.maxCheques,
+        clauseIds: [...r.clauseIds, `cc:${id}`],
+        sampleDocumentId: r.sampleDocumentId,
+      },
+      actor,
+    );
+  }
+  await appendEvent(tx, ctx, {
+    entity: { kind: "company", id: companyId },
+    type: "COMPANY_CLAUSE_ADDED",
+    actor,
+    payload: { clauseId: id, textSha256: sha256Hex(text), hasValues: values, ruleIds },
+    rulesVersion: ctx.rulesVersion,
+  });
+  return row!;
+}
+
+/**
+ * A proposed or approved clause, locked for an edit or removal by an admin. A clause linked to a template paragraph
+ * (D47) is editable: the paragraph prints its wording. Only an older clause approved into a template's fixed wording
+ * without a link can't change here.
+ */
+async function editableClause(tx: Tx, clauseId: string) {
+  const [c] = await tx.db.select().from(companyClauses).where(eq(companyClauses.id, clauseId)).for("update");
+  if (!c) throw notFound("clause");
+  if (c.status !== "approved" && c.status !== "proposed") throw conflict(`This clause is ${c.status}.`, "not_editable");
+  if (c.inTemplateId && !c.templateParagraphKey && c.status === "approved")
+    throw conflict(
+      "This clause is part of an older template's fixed wording. Upload the sample again to edit it.",
+      "in_template",
+    );
+  return c;
+}
+
+export interface EditClauseInput {
+  title?: string | undefined;
+  text?: string | undefined;
+  confirmValues?: true | undefined;
+}
+
+/**
+ * Changes an approved clause's title or wording (admin, any time). Contracts prepared from now on use the new
+ * wording; prepared ones show "rules changed" (the config hash covers clause text). Signed contracts keep their PDF.
+ */
+export async function editCompanyClause(ctx: EngineContext, clauseId: string, input: EditClauseInput, actor: Actor) {
+  return withTx(ctx.database, async (tx) => {
+    const c = await editableClause(tx, clauseId);
+    const title = (input.title ?? c.title).trim();
+    const text = (input.text ?? c.textEn).trim();
+    if (title.length < 1 || title.length > 120)
+      throw unprocessable("The clause title must be 1 to 120 characters.", [], "bad_title");
+    if (text.length < 1 || text.length > MAX_CLAUSE_TEXT) {
+      throw unprocessable(`The clause text must be 1 to ${MAX_CLAUSE_TEXT} characters.`, [], "bad_text");
+    }
+    if (c.templateParagraphKey && c.inTemplateId) {
+      // A linked clause prints in its template paragraph: a [field] must be one of that paragraph's blanks.
+      const [row] = await tx.db
+        .select()
+        .from(companyContractTemplates)
+        .where(eq(companyContractTemplates.id, c.inTemplateId));
+      if (row) {
+        const t = parseTemplate(row);
+        const raw = templateParagraphs(t.sections).find((p) => p.key === c.templateParagraphKey)?.text ?? "";
+        const unknown = unknownPlaceholders(text, raw, t.blanks);
+        if (unknown.length) {
+          throw unprocessable(
+            "Words in [brackets] are fields filled from the records; these aren't fields of this clause. Remove the brackets or use one of its fields.",
+            unknown,
+            "unknown_field",
+          );
+        }
+      }
+    }
+    const values = hasValues(text);
+    if (values && text !== c.textEn && input.confirmValues !== true) {
+      throw unprocessable(
+        "This clause includes amounts or dates. Check them and confirm before saving.",
+        [],
+        "confirm_values",
+      );
+    }
+    const [row] = await tx.db
+      .update(companyClauses)
+      .set({
+        title,
+        textEn: text,
+        hasValues: values,
+        ...(c.status === "approved" ? { approvedBy: actor, approvedAt: ctx.clock.now() } : {}),
+      })
+      .where(eq(companyClauses.id, c.id))
+      .returning();
+    await appendEvent(tx, ctx, {
+      entity: { kind: "company", id: c.companyId },
+      type: "COMPANY_CLAUSE_EDITED",
+      actor,
+      // The earlier wording is the company's own text: kept so the change can be read back.
+      payload: {
+        clauseId: c.id,
+        before: { title: c.title, text: c.textEn },
+        after: { title, text },
+        hasValues: values,
+      },
+      rulesVersion: ctx.rulesVersion,
+    });
+    return row!;
+  });
+}
+
+/**
+ * Takes an approved clause out (admin, any time): it leaves every active contract rule of the company (each gets a
+ * new version) and is no longer used in contracts prepared from now on. The row stays, marked `removed`, for audit.
+ */
+export async function removeCompanyClause(ctx: EngineContext, clauseId: string, actor: Actor) {
+  return withTx(ctx.database, async (tx) => {
+    const c = await editableClause(tx, clauseId);
+    const ref = `cc:${c.id}`;
+    const rules = await tx.db
+      .select()
+      .from(contractRules)
+      .where(and(eq(contractRules.companyId, c.companyId), eq(contractRules.active, true)))
+      .for("update");
+    const using = rules.filter((r) => r.clauseIds.includes(ref));
+    // Still waiting for approval: simply not approved. Approved: kept for the audit trail as removed.
+    await tx.db
+      .update(companyClauses)
+      .set({ status: c.status === "proposed" ? "rejected" : "removed" })
+      .where(eq(companyClauses.id, c.id));
+    for (const r of using) {
+      await replaceContractRule(
+        ctx,
+        tx,
+        r.id,
+        {
+          category: r.category,
+          subtype: r.subtype,
+          tenures: r.tenures,
+          minCheques: r.minCheques,
+          maxCheques: r.maxCheques,
+          clauseIds: r.clauseIds.filter((x) => x !== ref),
+          sampleDocumentId: r.sampleDocumentId,
+        },
+        actor,
+      );
+    }
+    await appendEvent(tx, ctx, {
+      entity: { kind: "company", id: c.companyId },
+      type: "COMPANY_CLAUSE_REMOVED",
+      actor,
+      payload: { clauseId: c.id, title: c.title, textSha256: sha256Hex(c.textEn), ruleIds: using.map((r) => r.id) },
+      rulesVersion: ctx.rulesVersion,
+    });
+    return { removed: true as const, ruleIds: using.map((r) => r.id) };
+  });
+}
+
+/**
+ * Which of the company's active contract rules include an approved clause (D47 rule ticks). Each rule whose membership
+ * changes gets a new version, audited; the clause itself doesn't change.
+ */
+export async function setClauseRules(ctx: EngineContext, clauseId: string, ruleIds: string[], actor: Actor) {
+  return withTx(ctx.database, async (tx) => {
+    const [c] = await tx.db.select().from(companyClauses).where(eq(companyClauses.id, clauseId)).for("update");
+    if (!c) throw notFound("clause");
+    if (c.status !== "approved") throw conflict("Approve the clause first.", "not_approved");
+    const ref = `cc:${c.id}` as const;
+    const rules = await tx.db
+      .select()
+      .from(contractRules)
+      .where(and(eq(contractRules.companyId, c.companyId), eq(contractRules.active, true)))
+      .for("update");
+    const want = new Set(ruleIds);
+    const bad = ruleIds.filter((id) => !rules.some((r) => r.id === id));
+    if (bad.length) throw unprocessable("Each rule must be an active contract rule of this company.", bad, "bad_rule");
+    const changed: string[] = [];
+    for (const r of rules) {
+      const has = r.clauseIds.includes(ref);
+      if (has === want.has(r.id)) continue;
+      await replaceContractRule(
+        ctx,
+        tx,
+        r.id,
+        {
+          category: r.category,
+          subtype: r.subtype,
+          tenures: r.tenures,
+          minCheques: r.minCheques,
+          maxCheques: r.maxCheques,
+          clauseIds: has ? r.clauseIds.filter((x) => x !== ref) : [...r.clauseIds, ref],
+          sampleDocumentId: r.sampleDocumentId,
+        },
+        actor,
+      );
+      changed.push(r.id);
+    }
+    if (changed.length) {
+      await appendEvent(tx, ctx, {
+        entity: { kind: "company", id: c.companyId },
+        type: "COMPANY_CLAUSE_RULES_SET",
+        actor,
+        payload: { clauseId: c.id, ruleIds: [...want], changed },
+        rulesVersion: ctx.rulesVersion,
+      });
+    }
+    return { changed: changed.length };
+  });
+}
+
+/** A company's approved clauses, split into those inside its template's wording and the additional ones. */
+export async function companyClauseList(ctx: EngineContext, companyId: string) {
+  const rows = await ctx.database.db
+    .select()
+    .from(companyClauses)
+    .where(and(eq(companyClauses.companyId, companyId), eq(companyClauses.status, "approved")))
+    .orderBy(asc(companyClauses.createdAt), asc(companyClauses.id));
+  // D47: one list, each clause with the active rules that include it.
+  const rules = await ctx.database.db
+    .select({ id: contractRules.id, clauseIds: contractRules.clauseIds })
+    .from(contractRules)
+    .where(and(eq(contractRules.companyId, companyId), eq(contractRules.active, true)));
+  const withRules = (r: ClauseRow) => ({
+    ...clauseView(r),
+    ruleIds: rules.filter((x) => x.clauseIds.includes(`cc:${r.id}`)).map((x) => x.id),
+  });
+  return {
+    clauses: rows.map(withRules),
+    inTemplate: rows.filter((r) => r.inTemplateId).map(withRules),
+    additional: rows.filter((r) => !r.inTemplateId).map(withRules),
+  };
 }
 
 /** The rule's own id and every older row it replaced (clauses stay tied to the row they were uploaded on). */
@@ -562,6 +876,11 @@ export const clauseView = (c: ClauseRow) => ({
   category: c.category,
   hasValues: c.hasValues,
   status: c.status,
+  /** D47: linked to a template paragraph (prints there); `[label]` in the text are fields filled from records. */
+  fromTemplate: c.templateParagraphKey !== null,
+  /** Older clause approved into a template's fixed wording without a link: not editable here. */
+  locked: c.inTemplateId !== null && c.templateParagraphKey === null,
+  sourceDocumentId: c.sourceDocumentId,
   approvedBy: c.approvedBy,
   approvedAt: c.approvedAt,
   createdAt: c.createdAt,

@@ -8,6 +8,8 @@ import { CopilotChat } from "./chat";
 import type { PageRef } from "./use-chat";
 
 export const COPILOT_ASK_EVENT = "copilot:ask";
+/** Opens the panel with text in the message box (not sent): the "Ask AI to …" buttons. */
+export const COPILOT_PREFILL_EVENT = "copilot:prefill";
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 
 /** The record the current page shows, so "this lease" means something to the copilot. */
@@ -39,6 +41,7 @@ export function CopilotPanel() {
   const [open, setOpen] = useState(false);
   // "Draft a reply" in the Workspace asks the copilot here. It only drafts; the user sends.
   const [ask, setAsk] = useState<{ id: number; text: string } | undefined>();
+  const [prefill, setPrefill] = useState<{ id: number; text: string } | undefined>();
   useEffect(() => {
     const onAsk = (e: Event) => {
       const text = (e as CustomEvent<{ text?: string }>).detail?.text;
@@ -46,8 +49,18 @@ export function CopilotPanel() {
       setAsk({ id: Date.now(), text });
       setOpen(true);
     };
+    const onPrefill = (e: Event) => {
+      const text = (e as CustomEvent<{ text?: string }>).detail?.text;
+      if (!text) return;
+      setPrefill({ id: Date.now(), text });
+      setOpen(true);
+    };
     window.addEventListener(COPILOT_ASK_EVENT, onAsk);
-    return () => window.removeEventListener(COPILOT_ASK_EVENT, onAsk);
+    window.addEventListener(COPILOT_PREFILL_EVENT, onPrefill);
+    return () => {
+      window.removeEventListener(COPILOT_ASK_EVENT, onAsk);
+      window.removeEventListener(COPILOT_PREFILL_EVENT, onPrefill);
+    };
   }, []);
   // The top bar's backdrop-filter makes it the containing block for fixed children, so the
   // panel is rendered into <body> (after mount, since there is no document on the server).
@@ -121,7 +134,14 @@ export function CopilotPanel() {
                 </button>
               </header>
               {/* A new conversation per page, so "this lease" always means the page you're on. */}
-              <CopilotChat key={page?.id ?? "global"} page={page} autoFocus={open} ask={ask} />
+              <CopilotChat
+                key={page?.id ?? "global"}
+                page={page}
+                autoFocus={open}
+                ask={ask}
+                prefill={prefill}
+                starters={pathname.startsWith("/settings") ? "settings" : undefined}
+              />
             </aside>
           </>,
           document.body,

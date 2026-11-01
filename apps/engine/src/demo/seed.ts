@@ -56,8 +56,8 @@ import { companyLandlord, updateCompanyLegal } from "../manager/company-legal.ts
 import { syncRulebooks } from "../manager/rulebooks.ts";
 
 /**
- * Demo data: 4 staff users, company policy v1, 6 units (3 let, 3 not), 3 fictional tenants and
- * one lease 10 days before its T−5 months renewal milestone. All people and IDs are fictional.
+ * Demo data: 4 staff users, company policy v1, one company (Silverline Properties) with its rules and
+ * every unit, fictional tenants and leases. All people and IDs are fictional.
  */
 
 const STAFF = [
@@ -242,17 +242,8 @@ async function demoCompanyIds(database: Database): Promise<Map<string, string>> 
   return bySlug;
 }
 
-/** Demo lease CSV rows split by company: the units of Silverline Properties and of Al Noor Family Holdings. */
-const AL_NOOR_LEASE_UNITS = new Set(["JVC-0310", "JLT-2205"]);
-function leasesCsvFor(today: CalendarDate, company: "silverline" | "al-noor-holdings"): string {
-  const [header, ...rows] = demoLeasesCsv(today).split("\n");
-  const mine = rows.filter((r) => AL_NOOR_LEASE_UNITS.has(r.split(",")[0]!) === (company === "al-noor-holdings"));
-  return [header!, ...mine].join("\n");
-}
-
-/** The unit code to company slug of the let and in-progress units. */
-const LET_UNIT_COMPANY = (code: string) =>
-  AL_NOOR_LEASE_UNITS.has(code) || code === "JVC-0412" ? "al-noor-holdings" : "silverline";
+/** The one demo company: landlord of every demo unit, so the demo is easy to explain. */
+const DEMO_COMPANY = "silverline";
 
 export async function seedDemo(database: Database): Promise<void> {
   // Store the base version and load published ones, so seeded leases get the version in force.
@@ -297,7 +288,7 @@ export async function seedDemo(database: Database): Promise<void> {
     })
     .onConflictDoNothing({ target: companyPolicy.version });
 
-  // Three fictional companies, each with its own rent and contract rules.
+  // One fictional company with its own rent and contract rules.
   await database.db
     .insert(companies)
     .values(DEMO_COMPANIES.map((c) => ({ id: newId(), ...c, createdBy: "demo" })))
@@ -373,11 +364,8 @@ export async function seedDemo(database: Database): Promise<void> {
     )
     .onConflictDoNothing();
 
-  for (const slug of ["silverline", "al-noor-holdings"] as const) {
-    const results = await importLeasesCsv(ctx, leasesCsvFor(today, slug), "demo", companyOf(slug));
-    for (const r of results)
-      console.log(`  lease row ${r.row}: ${r.status} ${r.ref ?? ""} ${r.state ?? ""} ${r.reasons.join("; ")}`);
-  }
+  for (const r of await importLeasesCsv(ctx, demoLeasesCsv(today), "demo", companyOf(DEMO_COMPANY)))
+    console.log(`  lease row ${r.row}: ${r.status} ${r.ref ?? ""} ${r.state ?? ""} ${r.reasons.join("; ")}`);
 
   // Listing details for the let units (the CSV import carries only lease columns).
   for (const [code, d] of Object.entries(LET_UNIT_DETAILS)) {
@@ -401,7 +389,7 @@ export async function seedDemo(database: Database): Promise<void> {
         code: u.code,
         building: u.code.startsWith("MRN") ? "Demo Marina Tower" : "Demo Circle Residence",
         community: u.code.startsWith("MRN") ? "Dubai Marina" : "Jumeirah Village Circle",
-        companyId: companyOf(LET_UNIT_COMPANY(u.code)),
+        companyId: companyOf(DEMO_COMPANY),
         unitNo: u.unitNo,
         dldPropertyNo: demoDldNo(u.unitNo),
         makaniNo: u.makaniNo,
@@ -806,9 +794,7 @@ if (import.meta.main) {
  */
 export async function seedMissingDemoLeases(ctx: EngineContext) {
   const companyIds = await demoCompanyIds(ctx.database);
-  const results = [];
-  for (const slug of ["silverline", "al-noor-holdings"] as const)
-    results.push(...(await importLeasesCsv(ctx, leasesCsvFor(ctx.clock.today(), slug), "demo", companyIds.get(slug)!)));
+  const results = await importLeasesCsv(ctx, demoLeasesCsv(ctx.clock.today()), "demo", companyIds.get(DEMO_COMPANY)!);
   for (const [code, d] of Object.entries(LET_UNIT_DETAILS)) {
     await ctx.database.db
       .update(units)

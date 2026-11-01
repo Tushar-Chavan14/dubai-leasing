@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
+  autoReview,
+  unknownPlaceholders,
+  clauseTextFromParagraph,
+  needsCheck,
+  paragraphFromClauseText,
   approvalProblems,
   approvalWarnings,
   DEFAULT_STYLE,
@@ -489,5 +494,67 @@ describe("approval problems", () => {
       style: { accentColour: "#336699" },
       logoDocumentId: "doc",
     });
+  });
+});
+
+describe("D47: clause wording in template paragraphs", () => {
+  test("a paragraph becomes clause wording with [labels], and back to the same blanks", () => {
+    const text = clauseTextFromParagraph("The annual rent is {{b3}}.", blanks());
+    expect(text).toBe("The annual rent is [Annual rent].");
+    expect(paragraphFromClauseText("Rent of [annual rent] a year.", "The annual rent is {{b3}}.", blanks())).toBe(
+      "Rent of {{b3}} a year.",
+    );
+    // A label of a blank outside this paragraph, or any other bracket, stays as written.
+    expect(paragraphFromClauseText("[Tenant name] [see Annex A]", "The annual rent is {{b3}}.", blanks())).toBe(
+      "[Tenant name] [see Annex A]",
+    );
+  });
+
+  test("a linked paragraph prints its override; null leaves it out", () => {
+    const fields = { ...SAMPLE_CONTRACT_FIELDS, leaseRef: "L-1" };
+    const out = templateContractBlocks(
+      {
+        sections,
+        blanks: blanks(),
+        templateVersion: 1,
+        paragraphs: { "s1:0": "Rent: {{b3}} each year.", "s1:1": null },
+      },
+      fields,
+      { clauses: [], freeText: null },
+      { version: 1, reference: "R", demo: true },
+    );
+    const text = out.blocks.map((b) => ("text" in b ? b.text : "")).join(" | ");
+    expect(text).toContain("Rent: AED 85,000 each year.");
+    expect(text).not.toContain("The term starts on");
+  });
+
+  test("autoReview drops a marked footer and sample notes and says so; needsCheck follows what is kept", () => {
+    const style = {
+      ...DEFAULT_STYLE,
+      footer: "Dubai Land Department Ejari",
+      flags: { authorityMarks: true, areas: ["footer" as const] },
+    };
+    const withNote: TemplateSections = {
+      ...sections,
+      items: [...sections.items, { id: "s9", number: null, heading: null, paragraphs: ["Phone +971 50 123 4567."] }],
+    };
+    const { review, changes } = autoReview({ style, logoDocumentId: null, sections: withNote }, EMPTY_REVIEW);
+    expect(review.dropFooter).toBe(true);
+    expect(review.droppedParagraphs).toContain("s9:0");
+    expect(changes.join(" ")).toContain("Removed the footer");
+    // Nothing with values, authority words or a logo kept: no tick needed.
+    const plain: TemplateSections = { ...sections, items: [sections.items[0]!] };
+    expect(needsCheck({ logoDocumentId: null, sections: plain }, EMPTY_REVIEW)).toBe(false);
+    expect(needsCheck({ logoDocumentId: null, sections: plain }, EMPTY_REVIEW, ["Notice of 90 days."])).toBe(true);
+    expect(needsCheck({ logoDocumentId: "logo", sections: plain }, EMPTY_REVIEW)).toBe(true);
+  });
+
+  test("a label used twice in a paragraph gets a number, so each placeholder maps back to its own blank", () => {
+    const bs = [blank("b1", "Date", "startOn", "from "), blank("b2", "Date", "endOn", "to ")];
+    const raw = "From {{b1}} to {{b2}}.";
+    const text = clauseTextFromParagraph(raw, bs);
+    expect(text).toBe("From [Date] to [Date (2)].");
+    expect(paragraphFromClauseText(text, raw, bs)).toBe(raw);
+    expect(unknownPlaceholders("From [Date] to [Datum].", raw, bs)).toEqual(["Datum"]);
   });
 });

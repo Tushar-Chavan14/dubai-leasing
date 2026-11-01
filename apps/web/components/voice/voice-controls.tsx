@@ -1,11 +1,29 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { speak, stopSpeaking } from "./speech";
 import { voiceStatusText } from "./state";
 import { useVoice } from "./use-voice";
 
 /** Mic button: tap to start, tap again to stop (or hold-free "press to talk" with Space/Enter). */
+let voiceStatus: Promise<boolean> | null = null;
+/** True once the engine says voice input is set up (asked once per page load). */
+function useVoiceAvailable() {
+  const [ok, setOk] = useState(false);
+  useEffect(() => {
+    voiceStatus ??= fetch("/api/voice/status")
+      .then((r) => r.json() as Promise<{ enabled?: boolean }>)
+      .then((b) => b.enabled === true)
+      .catch(() => false);
+    let live = true;
+    void voiceStatus.then((v) => live && setOk(v));
+    return () => {
+      live = false;
+    };
+  }, []);
+  return ok;
+}
+
 export function MicButton({
   endpoint,
   onText,
@@ -16,9 +34,11 @@ export function MicButton({
   disabled?: boolean;
 }) {
   const { state, level, toggle } = useVoice(endpoint, onText);
+  const available = useVoiceAvailable();
   const recording = state.status === "recording";
   const busy = state.status === "requesting" || state.status === "transcribing";
   const label = recording ? "Stop recording" : "Record a voice message";
+  if (!available) return null;
   return (
     <>
       <button

@@ -61,6 +61,7 @@ export function testContext(
     demoRecipient?: string;
     copilot?: CopilotModel;
     customerAgent?: AgentModel;
+    contractAgent?: AgentModel;
     ejari?: FakeEjari;
   } = {},
 ) {
@@ -88,6 +89,7 @@ export function testContext(
     serverSecret: "test-server-secret",
     ...(opts.copilot ? { copilot: opts.copilot } : {}),
     ...(opts.customerAgent ? { customerAgent: opts.customerAgent } : {}),
+    ...(opts.contractAgent ? { contractAgent: opts.contractAgent } : {}),
   };
   return { ctx, clock, scheduler, mailer, llm, ejari };
 }

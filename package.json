@@ -20,7 +20,9 @@
     "demo:reset": "bun run --filter @leasing/engine reset",
     "demo:rewind": "bun run --filter @leasing/engine rewind",
     "demo:fill-legal": "bun run --filter @leasing/engine fill-legal",
-    "eval": "bun scripts/eval.ts"
+    "eval": "bun scripts/eval.ts",
+    "voice:setup": "bash scripts/whisper.sh setup",
+    "voice": "bash scripts/whisper.sh run"
   },
   "devDependencies": {
     "@types/bun": "1.4.3",

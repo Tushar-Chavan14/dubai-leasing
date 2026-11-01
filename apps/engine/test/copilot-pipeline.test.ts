@@ -110,9 +110,9 @@ describe.skipIf(noDb)("copilot pipeline reads (demo seed)", () => {
     expect(stage.total).toBe(web.filter((r) => r.stage === "Viewing").length);
     expect(stage.rows.every((r) => r.stage === "Viewing")).toBe(true);
     const silver = await json<{ total: number }>("leasing_manager", "/api/copilot/records?company=silverline");
-    const noor = await json<{ total: number }>("leasing_manager", "/api/copilot/records?company=Al%20Noor");
+    // The demo seeds one company, so every record is Silverline's.
     expect(silver.total).toBeGreaterThan(0);
-    expect(silver.total + noor.total).toBeLessThanOrEqual(all.total);
+    expect(silver.total).toBe(all.total);
     expect((await as("finance", "/api/copilot/records?company=nonexistentco")).status).toBe(404);
     const byId = await json<{ rows: { id: string }[] }>(
       "leasing_manager",

@@ -20,6 +20,8 @@ interface ProposalBase {
     approvalId?: string;
     leaseId?: string;
     contractId?: string;
+    id?: string;
+    summary?: string;
     error?: string;
   } | null;
   expiresAt: string;
@@ -50,6 +52,15 @@ export type ProposalView = ProposalBase &
         summary: { leaseRef: string; unitCode: string; signerRole: string; signerName: string };
       }
     | { kind: "prepare_contract"; summary: { leaseRef: string; unitCode: string } }
+    | {
+        kind: "config_change";
+        summary: {
+          change: "add_clause" | "rent_rule" | "contract_rule" | "sri_value";
+          company?: string | null;
+          /** Label/value lines formatted by the engine (older proposals have none). */
+          facts?: [string, string][];
+        };
+      }
     | {
         kind: "create_task";
         summary: { leaseRef: string; title: string; assigneeRole: string; dueOn: string | null };

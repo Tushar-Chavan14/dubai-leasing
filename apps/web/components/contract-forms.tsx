@@ -127,19 +127,45 @@ export function ProposeEjariButton({ leaseId }: { leaseId: string }) {
   );
 }
 
-/** Re-renders a contract that is still waiting for approval, from the current rule and company template. */
-export function ReprepareContractButton({ leaseId }: { leaseId: string }) {
-  const [state, action, pending] = useActionState<LeaseActionState, FormData>(reprepareContract, {});
+const LABEL = {
+  failed: "Preparation failed: try again",
+  rejected: "Contract not approved: prepare a new version",
+  not_prepared: "Prepare the contract now",
+  rules_changed: "Rules changed: prepare again",
+} as const;
+const HINT = {
+  failed: "The contract agent couldn\u2019t prepare this contract. Fix what the task says, then try again.",
+  rejected: "The last version was not approved. A new version is prepared from the current rules and template.",
+  not_prepared: "The contract is normally prepared automatically right after the offer is accepted.",
+  rules_changed:
+    "The company\u2019s contract rules, clauses or template changed after this contract was prepared. The pending approval (or the unsigned signing links) is cancelled and the new version waits for approval.",
+} as const;
+
+/**
+ * Shown only when the engine says a hand preparation is needed: the automatic one failed (prepares with the rule's
+ * clauses) or the contract config changed after the pending contract was prepared (re-renders it).
+ */
+export function ReprepareContractButton({
+  leaseId,
+  reason,
+  clauses,
+}: {
+  leaseId: string;
+  reason: "failed" | "rejected" | "not_prepared" | "rules_changed";
+  clauses: string[];
+}) {
+  const [state, action, pending] = useActionState<LeaseActionState, FormData>(
+    reason === "rules_changed" ? reprepareContract : prepareContract,
+    {},
+  );
   return (
     <form action={action} className="stack" style={{ gap: 6 }}>
       <input type="hidden" name="leaseId" value={leaseId} />
+      {reason !== "rules_changed" && clauses.map((c) => <input key={c} type="hidden" name="clause" value={c} />)}
       <button type="submit" className="btn small" disabled={pending}>
-        {pending ? "Preparing…" : "Prepare contract again"}
+        {pending ? "Preparing…" : LABEL[reason]}
       </button>
-      <small className="muted">
-        Uses the company&rsquo;s current contract rule and template. The pending approval is cancelled and a new one
-        opens.
-      </small>
+      <small className="muted">{HINT[reason]}</small>
       <Result s={state} />
     </form>
   );

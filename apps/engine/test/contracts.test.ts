@@ -31,10 +31,11 @@ import {
   leaseParties,
   leases,
   parties,
+  sriAverages,
   tasks,
   units,
 } from "@leasing/db";
-import { extractPdf } from "@leasing/helpers";
+import { type AgentModel, callTool, extractPdf, ScriptedAgentModel, say } from "@leasing/helpers";
 import { FakeLlm, type SystemOneResponse } from "@leasing/llm";
 import { and, eq } from "drizzle-orm";
 import { PDFDocument } from "pdf-lib";
@@ -44,6 +45,7 @@ import { advance } from "../src/manager/advance.ts";
 import { decideApproval } from "../src/manager/approvals.ts";
 import {
   CONTRACT_FINISH_JOB,
+  contractConfigHash,
   DEFAULT_ADDENDUM,
   defaultAddendumFor,
   finishContract,
@@ -92,9 +94,12 @@ const fieldAnswer = (choice: string, confidence = 0.94): SystemOneResponse => ({
  * A lease in CONTRACT for a passport-only tenant whose KYC-verified name is in capitals (as the
  * passport MRZ prints it), on a unit with full property data. All fictional.
  */
-async function setup(o: { ejari?: FakeEjari; llm?: FakeLlm; dldPropertyNo?: string | null } = {}) {
+async function setup(
+  o: { ejari?: FakeEjari; llm?: FakeLlm; dldPropertyNo?: string | null; contractAgent?: AgentModel } = {},
+) {
   const t = testContext(database, START, {
     ...(o.ejari ? { ejari: o.ejari } : {}),
+    ...(o.contractAgent ? { contractAgent: o.contractAgent } : {}),
     llm: o.llm ?? new FakeLlm(agreeingDecision),
   });
   // The company is the landlord (D44): its legal party is the lease's landlord.
@@ -359,6 +364,156 @@ describe.skipIf(noDb)("contract (step 5)", () => {
     expect(s.llm.chatCalls).toHaveLength(0);
   });
 
+  describe("contract agent (D45)", () => {
+    const agentAnswer = (extra: string[]) =>
+      say(
+        JSON.stringify({
+          extraClauseIds: extra,
+          clauseReasons: extra.map((id) => ({ id, reason: "in the rule" })),
+          flags: [],
+        }),
+      );
+
+    test("the agent prepares the contract: its clauses and the term checks are in the approval", async () => {
+      const model = new ScriptedAgentModel([() => callTool("check_terms"), () => agentAnswer(["maintenance"])]);
+      const s = await setup({ contractAgent: model });
+      const p = await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system" });
+      expect(p.status).toBe("prepared");
+      const [c] = await contractRows(s.leaseId);
+      // The starting clauses stay; the agent can only add.
+      expect(c!.addendum.clauses).toEqual(["maintenance", "no_subletting"]);
+      const a = await approvalOf(s.leaseId, "final_contract");
+      expect(a!.reasons).toContain("Cheques: no contract rule, company defaults apply");
+      expect(a!.reasons).toContain("Clause maintenance: in the rule");
+      expect(model.calls.length).toBe(2);
+    });
+
+    test("a rule the lease breaks stops preparation: a task and the try-again button", async () => {
+      const model = new ScriptedAgentModel([() => agentAnswer(["maintenance"])]);
+      const s = await setup({ contractAgent: model });
+      const companyId = (await database.db.select().from(units).where(eq(units.id, s.unitId)))[0]!.companyId;
+      await database.db.insert(contractRules).values({
+        id: newId(),
+        companyId,
+        category: "residential",
+        tenures: ["annual"],
+        minCheques: 1,
+        maxCheques: 2,
+        clauseIds: [],
+        createdBy: "test",
+      });
+      const p = await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system" });
+      expect(p).toMatchObject({ status: "needs_human", reasons: ["Cheques: 4 is outside the rule's 1–2"] });
+      expect(await contractRows(s.leaseId)).toHaveLength(0);
+      const ts = await database.db.select().from(tasks).where(eq(tasks.entityId, s.leaseId));
+      expect(ts.map((x) => x.kind)).toEqual(["contract_needs_person"]);
+      const view = (await (await s.staff(s.officer, `/api/leases/${s.leaseId}/contract`)).json()) as {
+        prepareNeeded: string | null;
+      };
+      expect(view.prepareNeeded).toBe("failed");
+    });
+
+    test("a model that is down when staff prepare: no contract, a task for a person", async () => {
+      const model = new ScriptedAgentModel([
+        () => {
+          throw new Error("ollama unreachable");
+        },
+      ]);
+      const s = await setup({ contractAgent: model });
+      const p = await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "user:x" });
+      expect(p.status).toBe("needs_human");
+      expect(await contractRows(s.leaseId)).toHaveLength(0);
+      const ts = await database.db.select().from(tasks).where(eq(tasks.entityId, s.leaseId));
+      expect(ts.map((x) => x.kind)).toEqual(["contract_needs_person"]);
+    });
+
+    test("the job retries when the model is down; a later success closes the task and the button goes away", async () => {
+      let up = false;
+      const model = new ScriptedAgentModel([
+        () => {
+          if (!up) throw new Error("ollama unreachable");
+          return agentAnswer([]);
+        },
+      ]);
+      const s = await setup({ contractAgent: model });
+      let thrown: unknown;
+      try {
+        await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system" });
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toMatchObject({ code: "model_unavailable", status: 503 });
+      expect(await reportTemplateFailure(s.ctx, s.leaseId, thrown)).toBe(false);
+      const open = async () =>
+        (await database.db.select().from(tasks).where(eq(tasks.entityId, s.leaseId))).filter(
+          (t) => t.status === "open",
+        );
+      expect((await open()).map((t) => t.kind)).toEqual(["contract_needs_person"]);
+      up = true;
+      expect((await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system" })).status).toBe(
+        "prepared",
+      );
+      expect(await open()).toHaveLength(0);
+      const view = (await (await s.staff(s.officer, `/api/leases/${s.leaseId}/contract`)).json()) as {
+        prepareNeeded: string | null;
+      };
+      expect(view.prepareNeeded).toBeNull();
+    });
+
+    test("a rent agreed at the offer passes even when it's outside today's band", async () => {
+      const s = await setup({ contractAgent: new ScriptedAgentModel([() => agentAnswer([])]) });
+      // Today's band for a Dubai Marina 2-bed tops out far below the agreed AED 135,000.
+      await database.db.insert(sriAverages).values({
+        id: newId(),
+        community: "Dubai Marina",
+        category: "residential",
+        bedrooms: 2,
+        avgAnnualRentFils: 5_000_000,
+        source: "manual",
+        effectiveFrom: "2025-01-01" as CalendarDate,
+        createdBy: "test",
+      });
+      const p = await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system" });
+      expect(p.status).toBe("prepared");
+      // A rent changed after the offer is held to the band.
+      await database.db.update(leases).set({ annualRentFils: 14_000_000 }).where(eq(leases.id, s.leaseId));
+      const s2 = await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "user:x" });
+      expect(s2).toMatchObject({ status: "needs_human" });
+      expect((s2 as { reasons: string[] }).reasons.join(" ")).toContain("Rent:");
+    });
+
+    test("a deposit agreed at the offer passes after the policy lowers its percentage", async () => {
+      const s = await setup({ contractAgent: new ScriptedAgentModel([() => agentAnswer([])]) });
+      await database.db.insert(companyPolicy).values({
+        id: newId(),
+        version: 2,
+        effectiveFrom: "2026-01-01" as CalendarDate,
+        values: { ...defaultCompanyPolicy, depositPercentUnfurnished: 1 },
+        createdBy: "test",
+      });
+      expect((await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system" })).status).toBe(
+        "prepared",
+      );
+    });
+
+    test("without the agent's model, code still stops a contract that breaks the rule", async () => {
+      const s = await setup();
+      const companyId = (await database.db.select().from(units).where(eq(units.id, s.unitId)))[0]!.companyId;
+      await database.db.insert(contractRules).values({
+        id: newId(),
+        companyId,
+        category: "residential",
+        tenures: ["annual"],
+        minCheques: 1,
+        maxCheques: 2,
+        clauseIds: [],
+        createdBy: "test",
+      });
+      const p = await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system" });
+      expect(p.status).toBe("needs_human");
+    });
+  });
+
   test("missing property data → a task, no contract", async () => {
     const s = await setup({ dldPropertyNo: null });
     const r = await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system" });
@@ -366,6 +521,10 @@ describe.skipIf(noDb)("contract (step 5)", () => {
     expect(await contractRows(s.leaseId)).toHaveLength(0);
     const ts = await database.db.select().from(tasks).where(eq(tasks.entityId, s.leaseId));
     expect(ts.map((x) => x.kind)).toEqual(["contract_needs_person"]);
+    const view = (await (await s.staff(s.officer, `/api/leases/${s.leaseId}/contract`)).json()) as {
+      prepareNeeded: string | null;
+    };
+    expect(view.prepareNeeded).toBe("failed");
   });
 
   test("approving sends signing links with the PDF; the approval is not consumed yet", async () => {
@@ -521,6 +680,85 @@ describe.skipIf(noDb)("contract (step 5)", () => {
           { version: 1, reference: "C-1", preparedOn: "2026-10-19" as CalendarDate, demo: true },
         ),
       ).toThrow("no wording");
+    });
+
+    test("prepareNeeded: rejected after a person rejects the contract", async () => {
+      const s = await setup();
+      await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system" });
+      await decideApproval(s.ctx, (await approvalOf(s.leaseId, "final_contract")).id, s.officer, {
+        decision: "reject",
+        note: "wrong clause",
+      });
+      const view = (await (await s.staff(s.officer, `/api/leases/${s.leaseId}/contract`)).json()) as {
+        prepareNeeded: string | null;
+      };
+      expect(view.prepareNeeded).toBe("rejected");
+    });
+
+    test("config hash changes with the rule and its clauses, not with unrelated clauses", async () => {
+      const s = await setup();
+      const companyId = await unitCompany(s);
+      const unit = (await database.db.select().from(units).where(eq(units.id, s.unitId)))[0]!;
+      const ruleId = newId();
+      await database.db.insert(contractRules).values({
+        id: ruleId,
+        companyId,
+        category: "residential",
+        tenures: ["annual"],
+        minCheques: 1,
+        maxCheques: 4,
+        clauseIds: ["parking"],
+        createdBy: "test",
+      });
+      const h0 = await contractConfigHash(database, unit);
+      expect(await contractConfigHash(database, unit)).toBe(h0);
+      await clause(companyId);
+      expect(await contractConfigHash(database, unit)).toBe(h0);
+      const ref = await clause(companyId);
+      await database.db
+        .update(contractRules)
+        .set({ clauseIds: ["parking", ref] })
+        .where(eq(contractRules.id, ruleId));
+      const h1 = await contractConfigHash(database, unit);
+      expect(h1).not.toBe(h0);
+      await database.db.update(contractRules).set({ maxCheques: 2 }).where(eq(contractRules.id, ruleId));
+      expect(await contractConfigHash(database, unit)).not.toBe(h1);
+    });
+
+    test("prepareNeeded: not_prepared before, null after preparing, rules_changed after the rule changes", async () => {
+      const s = await setup();
+      const companyId = await unitCompany(s);
+      const view = async () =>
+        (
+          (await (await s.staff(s.officer, `/api/leases/${s.leaseId}/contract`)).json()) as {
+            prepareNeeded: string | null;
+          }
+        ).prepareNeeded;
+      expect(await view()).toBe("not_prepared");
+      await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system" });
+      const [c] = await contractRows(s.leaseId);
+      expect(c!.configHash).toBeTruthy();
+      expect(await view()).toBeNull();
+      await database.db.insert(contractRules).values({
+        id: newId(),
+        companyId,
+        category: "residential",
+        tenures: ["annual"],
+        minCheques: 1,
+        maxCheques: 4,
+        clauseIds: [await clause(companyId)],
+        createdBy: "test",
+      });
+      expect(await view()).toBe("rules_changed");
+      // Approved and out for signing, nobody signed: still offered (D47); once someone signs, no longer.
+      await decideApproval(s.ctx, c!.approvalId!, await addStaff(database, "leasing_officer"), { decision: "approve" });
+      expect((await contractRows(s.leaseId))[0]!.status).toBe("sent");
+      expect(await view()).toBe("rules_changed");
+      await database.db
+        .update(contractSigners)
+        .set({ signedAt: s.ctx.clock.now() })
+        .where(and(eq(contractSigners.contractId, c!.id), eq(contractSigners.role, "tenant")));
+      expect(await view()).toBeNull();
     });
 
     test("without a matching rule the default clauses are used", async () => {

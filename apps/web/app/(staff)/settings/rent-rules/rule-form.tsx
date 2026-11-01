@@ -19,12 +19,12 @@ import { removeRentRule, saveRentRule } from "./actions";
 
 function RuleEditor({
   rule,
-  companies,
+  company,
   category,
   onDone,
 }: {
   rule?: RentRuleRow;
-  companies: CompanyRow[];
+  company: CompanyRow;
   category: Category;
   onDone: () => void;
 }) {
@@ -36,7 +36,6 @@ function RuleEditor({
   const fe = state.fieldErrors ?? {};
   const err = (k: string) => (fe[k] ? <span className="err">{fe[k]}</span> : null);
   const inv = (k: string) => (fe[k] ? { "aria-invalid": true as const } : {});
-  const choices = rule ? companies.filter((c) => c.id === rule.companyId) : companies.filter((c) => c.active);
   return (
     <form action={action} className="rule-form" noValidate>
       {state.error && (
@@ -56,19 +55,9 @@ function RuleEditor({
       )}
       {rule && <input type="hidden" name="id" value={rule.id} />}
       <input type="hidden" name="category" value={category} />
+      <input type="hidden" name="companyId" value={rule?.companyId ?? company.id} />
       <div className="grid-fields">
-        <label className="field span-2">
-          <span className="field-label">Company</span>
-          <select name="companyId" defaultValue={rule?.companyId} disabled={!!rule} required>
-            {choices.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-          {rule && <input type="hidden" name="companyId" value={rule.companyId} />}
-        </label>
-        <label className="field span-2">
+        <label className="field span-3">
           <span className="field-label">Type</span>
           <select name="subtype" defaultValue={rule?.subtype ?? ""}>
             <option value="">All types</option>
@@ -80,7 +69,7 @@ function RuleEditor({
           </select>
           {err("subtype")}
         </label>
-        <label className="field span-2">
+        <label className="field span-3">
           <span className="field-label">Area</span>
           <input
             name="community"
@@ -167,18 +156,17 @@ function RuleEditor({
 
 export function RentRules({
   rules,
-  companies,
+  company,
   category,
   canEdit,
 }: {
   rules: RentRuleRow[];
-  companies: CompanyRow[];
+  company: CompanyRow;
   category: Category;
   canEdit: boolean;
 }) {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
-  const nameOf = (id: string) => companies.find((c) => c.id === id)?.name ?? "Unknown company";
   const closeAdd = () => setAdding(false);
   const closeEdit = () => setEditing(null);
   return (
@@ -187,15 +175,10 @@ export function RentRules({
         <div className="settings-add">
           {adding ? (
             <div className="panel panel-pad">
-              <RuleEditor companies={companies} category={category} onDone={closeAdd} />
+              <RuleEditor company={company} category={category} onDone={closeAdd} />
             </div>
           ) : (
-            <button
-              type="button"
-              className="btn primary"
-              onClick={() => setAdding(true)}
-              disabled={!companies.some((c) => c.active)}
-            >
+            <button type="button" className="btn primary" onClick={() => setAdding(true)}>
               <IconPlus size={16} />
               Add rule
             </button>
@@ -205,14 +188,14 @@ export function RentRules({
       <section className="panel">
         {rules.length === 0 ? (
           <p className="muted panel-pad">
-            No {category} rent rules yet. Units in this category can&apos;t get a price range until one is added.
+            No {category} rent rules for {company.name} yet. Its units in this category can&apos;t get a price range
+            until one is added.
           </p>
         ) : (
           <div className="table-wrap">
             <table className="data">
               <thead>
                 <tr>
-                  <th>Company</th>
                   <th>Type</th>
                   <th>Area</th>
                   <th>Band</th>
@@ -224,13 +207,12 @@ export function RentRules({
                 {rules.map((r) =>
                   editing === r.id ? (
                     <tr key={r.id}>
-                      <td colSpan={canEdit ? 6 : 5}>
-                        <RuleEditor rule={r} companies={companies} category={category} onDone={closeEdit} />
+                      <td colSpan={canEdit ? 5 : 4}>
+                        <RuleEditor rule={r} company={company} category={category} onDone={closeEdit} />
                       </td>
                     </tr>
                   ) : (
                     <tr key={r.id}>
-                      <td>{nameOf(r.companyId)}</td>
                       <td>{subtypeLabel(r.subtype)}</td>
                       <td>{r.community ?? "All areas"}</td>
                       <td className="num nowrap">

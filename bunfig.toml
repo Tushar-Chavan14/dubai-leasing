@@ -1,0 +1,3 @@
+[test]
+# data/ holds runtime files and local tools (uploads, whisper.cpp with its own JS tests): never part of our suite.
+pathIgnorePatterns = ["data/**"]

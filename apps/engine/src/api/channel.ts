@@ -74,7 +74,9 @@ export function registerChannelRoutes(app: Hono<AuthEnv>, ctx: EngineContext, se
     if ("error" in read) return c.json({ error: read.error, code: read.code }, read.status);
     const bytes = read.bytes;
     if (bytes.length === 0) return c.json({ ok: false, message: "I didn't catch that. Please try again." });
-    return c.json(await transcribeVoice(ctx, bytes));
+    return c.json(
+      await transcribeVoice(ctx, bytes, c.req.header("content-type")?.split(";")[0]?.trim() || "audio/webm"),
+    );
   });
 
   app.post("/channel/web/history", async (c) => {

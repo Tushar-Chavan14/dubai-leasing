@@ -17,8 +17,17 @@ async function submit(token: string, type: string, payload: unknown): Promise<Po
     cache: "no-store",
   }).catch(() => null);
   if (!res) return { error: "We couldn't reach the leasing system. Please try again in a few minutes." };
-  const body = (await res.json().catch(() => ({}))) as { ref?: string; duplicate?: boolean; error?: string };
-  if (!res.ok) return { error: body.error ?? "Something went wrong. Please try again." };
+  const body = (await res.json().catch(() => ({}))) as {
+    ref?: string;
+    duplicate?: boolean;
+    error?: string;
+    reasons?: string[];
+  };
+  if (!res.ok) {
+    // Field problems come as "key: message"; the applicant sees the messages.
+    const details = (body.reasons ?? []).map((r) => r.replace(/^[a-z0-9_]+: /, "")).join(" ");
+    return { error: [body.error ?? "Something went wrong. Please try again.", details].filter(Boolean).join(" ") };
+  }
   return { ref: body.ref ?? "", duplicate: !!body.duplicate };
 }
 
@@ -43,7 +52,15 @@ export async function reply(_prev: PortalState, formData: FormData): Promise<Por
 export async function submitDocuments(_prev: PortalState, formData: FormData): Promise<PortalState> {
   const ids = formData.getAll("documentId").map(String).filter(Boolean);
   if (!ids.length) return { error: "Upload at least one document first." };
-  return submit(String(formData.get("token")), "DOCS_UPLOADED", { documentIds: ids });
+  const answers: Record<string, string> = {};
+  for (const [k, v] of formData.entries()) {
+    if (k.startsWith("answer:") && typeof v === "string" && v.trim()) answers[k.slice(7)] = v.trim().slice(0, 500);
+  }
+  const version = Number(formData.get("formVersion") ?? 0);
+  return submit(String(formData.get("token")), "DOCS_UPLOADED", {
+    documentIds: ids,
+    answers: { version: Number.isInteger(version) ? version : 0, answers },
+  });
 }
 
 const aedToFils = (raw: FormDataEntryValue | null): number | undefined => {

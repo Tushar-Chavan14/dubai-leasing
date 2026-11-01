@@ -130,10 +130,26 @@ export async function reviewTemplateAction(_prev: RuleResult, formData: FormData
   return { ok: true };
 }
 
-export async function approveTemplateAction(_prev: RuleResult, formData: FormData): Promise<RuleResult> {
-  const r = await engine(`/api/contract-templates/${String(formData.get("templateId"))}/approve`, {
+/** D47 "Approve all": the latest sample's clauses (ticked ones join its rule) and its template, in one step. */
+export async function approveSampleAction(_prev: RuleResult, formData: FormData): Promise<RuleResult> {
+  const body = {
+    ruleClauseIds: formData.getAll("ruleClauseIds").map(String),
+    checked: formData.get("checked") === "on",
+  };
+  const r = await engine(`/api/companies/${String(formData.get("companyId"))}/sample/approve`, {
     method: "POST",
-    body: "{}",
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) return ruleError(r);
+  revalidatePath("/settings/contracts");
+  return { ok: true };
+}
+
+/** The rules an approved clause is part of (D47 rule ticks). */
+export async function setClauseRulesAction(_prev: RuleResult, formData: FormData): Promise<RuleResult> {
+  const r = await engine(`/api/company-clauses/${String(formData.get("clauseId"))}/rules`, {
+    method: "PUT",
+    body: JSON.stringify({ ruleIds: formData.getAll("ruleIds").map(String) }),
   });
   if (!r.ok) return ruleError(r);
   revalidatePath("/settings/contracts");
@@ -167,6 +183,53 @@ export async function retryTemplateAction(_prev: RuleResult, formData: FormData)
     method: "POST",
     body: "{}",
   });
+  if (!r.ok) return ruleError(r);
+  revalidatePath("/settings/contracts");
+  return { ok: true };
+}
+
+/** An admin writes a clause; it is approved as it is saved (the engine checks the role and any amounts). */
+export async function addClause(
+  _prev: RuleResult & { needsConfirm?: boolean },
+  formData: FormData,
+): Promise<RuleResult & { needsConfirm?: boolean }> {
+  const companyId = String(formData.get("companyId"));
+  const body: Record<string, unknown> = {
+    title: String(formData.get("title") ?? ""),
+    text: String(formData.get("text") ?? ""),
+    ruleIds: formData.getAll("ruleIds").map(String),
+  };
+  if (formData.get("confirmValues") === "on") body.confirmValues = true;
+  const r = await engine(`/api/companies/${companyId}/clauses`, { method: "POST", body: JSON.stringify(body) });
+  if (r.error?.code === "confirm_values") return { error: r.error.error, needsConfirm: true };
+  if (!r.ok) return ruleError(r);
+  revalidatePath("/settings/contracts");
+  return { ok: true };
+}
+
+/** An admin changes an approved clause's title or wording. */
+export async function editClause(
+  _prev: RuleResult & { needsConfirm?: boolean },
+  formData: FormData,
+): Promise<RuleResult & { needsConfirm?: boolean }> {
+  const body: Record<string, unknown> = {
+    title: String(formData.get("title") ?? ""),
+    text: String(formData.get("text") ?? ""),
+  };
+  if (formData.get("confirmValues") === "on") body.confirmValues = true;
+  const r = await engine(`/api/company-clauses/${String(formData.get("clauseId"))}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+  if (r.error?.code === "confirm_values") return { error: r.error.error, needsConfirm: true };
+  if (!r.ok) return ruleError(r);
+  revalidatePath("/settings/contracts");
+  return { ok: true };
+}
+
+/** An admin takes an approved clause out; it also leaves the company's rules. */
+export async function removeClause(_prev: RuleResult, formData: FormData): Promise<RuleResult> {
+  const r = await engine(`/api/company-clauses/${String(formData.get("clauseId"))}`, { method: "DELETE" });
   if (!r.ok) return ruleError(r);
   revalidatePath("/settings/contracts");
   return { ok: true };

@@ -29,12 +29,15 @@ describe("quick-action pills", () => {
     expect(ar.every((p) => /[؀-ۿ]/.test(p.label))).toBe(true);
   });
 
-  test("staff copilot: six pills that each send a prompt", () => {
+  test("staff copilot: nine pills that each send a prompt", () => {
     expect(STAFF_PILLS.map((p) => p.label)).toEqual([
       "Pipeline summary",
       "My tasks",
       "Enquiries",
       "Available units",
+      "Contracts to approve",
+      "Failed preparations",
+      "Contract & rent rules",
       "Pending approvals",
       "Contract status",
     ]);

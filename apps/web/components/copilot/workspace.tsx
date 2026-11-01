@@ -13,11 +13,14 @@ export function CopilotWorkspace({
   initial,
   heading,
   suggestions,
+  initialDraft,
 }: {
   threadId?: string;
   initial?: ChatMessage[];
   heading?: string;
   suggestions?: string[];
+  /** Text placed in the composer, not sent ("Ask AI to …" links). */
+  initialDraft?: string;
 }) {
   const onThread = useCallback(
     (id: string) => {
@@ -31,6 +34,7 @@ export function CopilotWorkspace({
       {...(initial ? { initial } : {})}
       {...(heading ? { heading } : {})}
       {...(suggestions ? { suggestions } : {})}
+      {...(initialDraft ? { initialDraft } : {})}
       autoFocus
       onThread={onThread}
     />

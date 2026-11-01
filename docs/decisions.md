@@ -1000,3 +1000,92 @@ not a landlord.
 - **Demo.** "Fictional Holdings LLC" is gone: each seeded company has fictional legal and signatory
   details (`DEMO_COMPANY_LEGAL`), and the simulated Ejari registers each demo unit to its company's
   legal name. Rules 1, 3, 4, 8 and 9 are untouched.
+
+## D45 — Contract agent, one-step template approval, copilot edits contract and rent settings
+
+The leasing assistant automates the work up to the contract. Staff should approve a contract, not drive it.
+
+- **Contract agent.** `packages/helpers/src/contract-agent`: a LangGraph tool loop on the existing
+  `contract.prepare` job (after `OFFER_ACCEPTED → RESERVED → lease in CONTRACT`). Its tools are code:
+  contract fields with sources, the matching contract rule, the company's approved clauses, the approved
+  template's paragraphs, `fill_blanks` (template blanks filled from the records) and `check_terms` (tenure,
+  cheques, rent within the rent-rule band, deposit within the policy percentage, landlord details,
+  required terms, blanks). The model only chooses additional clauses (with a reason) and flags conflicts;
+  it never writes a value or rewrites template wording. After the loop, code recomputes every check, keeps
+  only standard or approved company clause ids not already in the template, and copies fields from the
+  records (rule 1). A failed check, an unknown clause or an answer that doesn't parse twice → no contract,
+  a `contract_needs_person` task (rule 6). Without a model (tests, demo seed) the code path runs and the
+  same checks still stop a contract that breaks the rule. Model: `CONTRACT_AI_MODEL`, else `CHAT_MODEL`,
+  local Ollama only (rule 8). `final_contract` is unchanged (rule 3).
+- **Template is the contract.** The generated contract keeps the approved template's wording, clauses and
+  look; only blanks are filled (D43). Extra clauses go under Additional terms.
+- **One approval.** Approving a proposed template approves the clauses read from the same sample in the
+  same step (`company_clauses.in_template_id`). An unticked clause is rejected and the paragraph it was read
+  from is dropped from the template. Admins can also write a clause by hand; it is approved as it is saved
+  (amounts or dates need the "I checked them" tick).
+- **Prepare again only when needed.** `contracts.config_hash` stores the rule, template and approved-clause
+  hash used. The lease's contract view returns `prepareNeeded`: `failed` (no open contract, or a
+  preparation task open) or `rules_changed` (the pending contract's hash differs from now). The button
+  shows only then.
+- **Copilot settings (amends rule 11 and D42).** `add_contract_clause`, `save_rent_rule`,
+  `save_contract_rule`, `save_sri_value`. A person asking is a human instruction: in `explicit` mode the
+  change is made now through `POST /api/copilot/config-changes`, which refuses (422 `not_your_words`)
+  unless the tool's `userQuote` (≥ 8 characters) is in the user's own latest message of the thread, so text
+  from tenants or tool results can never trigger it. In `suggest` mode it is a `config_change` proposal the
+  user confirms. Same roles and validation as the settings forms (admin for clauses and rules; admin and
+  leasing manager for the SRI table); audited as `copilot:<userId>` with the quote. A clause's amounts count
+  as checked only when every number is in the user's message. The copilot still never approves, sends,
+  changes a lease, submits to Ejari, or edits the rulebook or company policy.
+
+## D46 — Voice through whisper.cpp; per-company document form and KYC rules
+
+- **Voice.** Speech to text moves from an Ollama audio model (`VOICE_MODEL=gemma4:e4b`, which did not transcribe
+  reliably) to a local whisper.cpp `whisper-server` with `ggml-base.bin` (`VOICE_URL`, loopback only, rule 8).
+  Same caps, masking and review-before-send as D39. Supersedes the model part of D39.
+- **Document form (per company).** `company_kyc_configs` holds a versioned form (`FormField[]`: label, key, type
+  text/email/phone/date/number/select/document, required, shown to individuals/companies/both, placeholder, help,
+  choices, document kind) and the KYC rules. The upload link renders exactly the company's form; answers are stored
+  on `applications.form_answers` with the version answered and validated against it. Companies start with a starter
+  form. `other` document uploads are kept for staff and never read.
+- **Name as per documents.** One text field can carry the applicant's full name as printed on their documents; the
+  KYC name check uses it instead of the name typed when the application was created.
+- **KYC rules.** Base rules (today's checks) can be switched off or given values: validity days, read confidence,
+  required documents (from the form), Emirates ID format, passport MRZ, visa format, names consistent, applicant
+  name (off / lenient / exact), ID numbers consistent. Expired, unreadable and wrong documents always flag. Company
+  rules are added on top: answer matches a document field, answer required (optional accepted values), document
+  required, minimum age, and a plain-English custom check read by the local chat model. Every failed rule is a
+  non-blocking flag → `review`; nothing rejects an applicant automatically, and the AI check can only flag (a model
+  error also flags). No rules on nationality or similar traits are offered. Admin only, audited
+  (`KYC_CONFIG_SAVED`).
+- **Hardening (review).** Answers must be for the company's current form version (409 `form_changed` otherwise;
+  a saved form can't be skipped); keys not on the form are dropped; an upload needs at least one ID document;
+  `other:` uploads must match a form field. The starter form's optional ID fields keep the built-in "full ID set"
+  check. AI checks: at most 5, one retry, then a flag. Rules whose label, instruction or accepted answers mention
+  nationality, religion, race or similar traits are refused, and nationality is not a comparable document field.
+  whisper-server is asked to detect the language (`language=auto`) and redirects are refused.
+
+## D47 — Company template is the look; clause wording is the live company clauses
+
+- **Why.** Template approval asked for a tick per paragraph (values, "neutral reference"), a drop for every marked
+  header or footer and sample note, and a separate clause approval; once approved, clauses vanished into the
+  template's fixed wording and couldn't be edited or removed.
+- **Look vs wording.** The template keeps the sample's layout, headings, fixed wording, fields and signature block.
+  Each clause read from the same sample is linked to the paragraph it came from (`template_paragraph_key`); a contract
+  prints the clause's current approved wording there, only when the clause is in the contract's rule. Editing a
+  clause changes future contracts; removing it, or unticking its rule, leaves the paragraph out. Prepared contracts
+  show "Prepare again" (the config hash covers clause text and rule clause ids); signed contracts keep their PDF.
+- **Code decides what it can.** DLD/RERA/Ejari marks in a header, footer or logo area, values from the sample and
+  notes about the sample are removed automatically and listed. Only text the PDF fonts can't print blocks. One tick
+  ("I checked the amounts, dates and DLD/RERA references, and the logo is our own") replaces the per-line
+  confirmations when such wording, clause text or a logo is kept. A mapping that can't be used prints an empty line.
+- **One approval.** "Approve all" approves the latest sample's clauses (edited as the admin left them; ticked ones
+  join the sample's rule, auto-approved linked ones too) and its template, moving the company's rules to it.
+- **Backfill.** Clauses approved into older templates are linked at engine start and join the rules on that
+  template, so existing contracts keep printing them. Clauses that can't be matched to a paragraph stay in the fixed
+  wording ("In template wording", not editable).
+- Unchanged: `final_contract` gate, required terms appended, rule 9 (marks are never reused), approved templates
+  immutable. Supersedes the per-paragraph review parts of D38 and "approved clauses never change" in D35.
+- **Prepare again after sending.** A config change also offers "Rules changed: prepare again" for a contract out for
+  signing that nobody has signed yet: the signing links expire, the version is superseded and the new one waits at
+  `final_contract`. Once anyone signed it, never.
+

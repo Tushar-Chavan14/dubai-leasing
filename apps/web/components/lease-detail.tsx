@@ -74,6 +74,7 @@ interface LeaseView {
   }[];
   contracts: ContractRow[];
   clauseOptions?: ClauseOptions;
+  prepareNeeded?: "failed" | "rejected" | "not_prepared" | "rules_changed" | null;
   ejari: EjariAttempt[];
 }
 
@@ -212,6 +213,7 @@ export async function LeaseDetail({ id, draftId }: { id: string; draftId?: strin
             contracts={l.contracts ?? []}
             canAct={canAct}
             options={l.clauseOptions}
+            prepareNeeded={l.prepareNeeded ?? null}
           />
           <EjariPanel
             leaseId={l.id}

@@ -20,11 +20,17 @@ export async function resolveCompanyClauses(
   tx: Pick<Tx, "db">,
   companyId: string,
   ids: readonly string[],
+  opts: { skipRemoved?: boolean } = {},
 ): Promise<CompanyClauseText[]> {
   const refs = ids.filter((i): i is CompanyClauseRef => isCompanyClauseRef(i));
   if (!refs.length) return [];
-  const uuids = [...new Set(refs.map(companyClauseIdOf))];
+  let uuids = [...new Set(refs.map(companyClauseIdOf))];
   const rows = await tx.db.select().from(companyClauses).where(inArray(companyClauses.id, uuids));
+  // Preparing a contract from an earlier offer: a clause an admin removed since is left out, not an error.
+  if (opts.skipRemoved) {
+    const removed = new Set(rows.filter((r) => r.companyId === companyId && r.status === "removed").map((r) => r.id));
+    uuids = uuids.filter((u) => !removed.has(u));
+  }
   const ok = new Map(rows.filter((r) => r.companyId === companyId && r.status === "approved").map((r) => [r.id, r]));
   const bad = uuids.filter((u) => !ok.has(u));
   if (bad.length) {

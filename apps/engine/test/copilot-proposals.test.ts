@@ -114,6 +114,32 @@ describe.skipIf(noDb)("copilot proposes, the user confirms (D25)", () => {
     database = await freshDatabase();
   });
 
+  test("a suggested settings change streams a Confirm card with what would change (D45)", async () => {
+    const s = await setup([
+      call("add_contract_clause", {
+        mode: "suggest",
+        company: "Test Co",
+        title: "Early exit",
+        text: "Leaving within 30 days forfeits the deposit.",
+      }),
+      say("I've suggested the clause. Click Confirm on the card."),
+    ]);
+    const admin = await addStaff(database, "admin");
+    const events = await ndjson(await s.as(admin, "/api/copilot/chat", "POST", { message: "any clause ideas?" }));
+    const proposal = events.find((e) => e.type === "proposal")?.proposal as { kind: string; summary: object };
+    expect(proposal).toMatchObject({
+      kind: "config_change",
+      summary: {
+        change: "add_clause",
+        facts: [
+          ["Title", "Early exit"],
+          ["Wording", "Leaving within 30 days forfeits the deposit."],
+          ["Added to", "Additional clauses"],
+        ],
+      },
+    });
+  });
+
   test("end to end: the copilot finds the unit and proposes; nothing exists until Confirm; Confirm creates it once", async () => {
     const s = await setup([
       call("find_available_units", { bedrooms: 1 }),

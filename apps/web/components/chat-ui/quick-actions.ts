@@ -48,6 +48,21 @@ export const STAFF_PILLS: readonly Pill[] = [
     label: "Available units",
     action: { kind: "send", text: "Which units are available for site visit?" },
   },
+  {
+    key: "to-approve",
+    label: "Contracts to approve",
+    action: { kind: "send", text: "Which contracts are waiting for approval?" },
+  },
+  {
+    key: "prep-failed",
+    label: "Failed preparations",
+    action: { kind: "send", text: "Which contracts couldn't be prepared, and why?" },
+  },
+  {
+    key: "rules",
+    label: "Contract & rent rules",
+    action: { kind: "send", text: "What contract rules, rent rules and clauses does each company have?" },
+  },
   { key: "approvals", label: "Pending approvals", action: { kind: "send", text: "Which approvals are waiting?" } },
   {
     key: "contracts",

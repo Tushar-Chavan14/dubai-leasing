@@ -24,6 +24,8 @@ import {
   type OfferResponded,
   type OfferTerms,
   startOfDubaiDay,
+  checkAnswers,
+  type DocsUploaded,
 } from "@leasing/core";
 import { sha256Hex, shortRef } from "@leasing/core/tokens";
 import {
@@ -63,6 +65,7 @@ import { logKycStep } from "./kyc-check.ts";
 import { advance, unitHasContractedLease } from "./advance.ts";
 import { requestApproval } from "./approvals.ts";
 import { companyLandlord } from "./company-legal.ts";
+import { companyKycConfig, kycConfigVersion } from "./kyc-config.ts";
 import { appendEvent, getCompanyPolicy, getCompanyPolicyVersion } from "./events.ts";
 import { noteDefaultLimits, offerPolicyAndRuleFor } from "./pricing.ts";
 import type { KycReviewProposal, OfferLimitsProposal } from "./gate-rules.ts";
@@ -504,14 +507,23 @@ export async function addApplicationDocument(
   ctx: EngineContext,
   link: LinkRow | null,
   bytes: Uint8Array,
-  kind: "emirates_id" | "passport" | "visa" | "trade_licence",
+  kind: "emirates_id" | "passport" | "visa" | "trade_licence" | `other:${string}`,
   side: "front" | "back" | "page",
 ) {
   if (bytes.byteLength > MAX_DOC_BYTES) throw unprocessable("the photo is larger than 10 MB", [], "too_large");
   const type = sniffImage(bytes);
   if (!type) throw unprocessable("only JPEG, PNG or WebP photos of the document", [], "unsupported_type");
-  // Validate the link before writing anything to disk.
-  await withTx(ctx.database, (tx) => uploadTarget(tx, link));
+  // Validate the link (and an `other:` key against the company's form) before writing anything to disk.
+  await withTx(ctx.database, async (tx) => {
+    const app = await uploadTarget(tx, link);
+    if (kind.startsWith("other:")) {
+      const [unit] = await tx.db.select({ companyId: units.companyId }).from(units).where(eq(units.id, app.unitId));
+      const cfg = await companyKycConfig(tx, unit!.companyId, ctx.clock.today());
+      const key = kind.slice("other:".length);
+      if (!cfg.form.some((f) => f.key === key && f.type === "document" && f.documentKind === "other"))
+        throw unprocessable("this document isn't on the form", [], "unknown_document");
+    }
+  });
   const clean = stripImageMetadata(bytes, type);
   if (!clean) throw unprocessable("the photo file looks damaged; take it again and retry", [], "unsupported_type");
   const stored = await ctx.uploads.put(clean, type.ext);
@@ -600,12 +612,36 @@ export async function receiveApplicationInbound(
   let summary: Record<string, unknown> = {};
   if (req.type === "DOCS_UPLOADED") {
     if (app.state !== "SCREENING") throw conflict("This application isn't waiting for documents.");
-    const ids = (data as { documentIds: string[] }).documentIds;
+    const { documentIds: ids, answers } = data as DocsUploaded;
+    // Typed answers are checked against the form version the applicant was shown (D46).
+    const [unit] = await tx.db.select({ companyId: units.companyId }).from(units).where(eq(units.id, app.unitId));
+    const [party] = await tx.db.select({ kind: parties.kind }).from(parties).where(eq(parties.id, app.partyId));
+    // The form the company has now: answers must be for it (a saved form can't be bypassed with an older version).
+    const cfg = await companyKycConfig(tx, unit!.companyId, ctx.clock.today());
+    if (cfg.version > 0 && !answers) throw unprocessable("Fill in the form on the upload page.", [], "bad_answers");
+    if (answers && answers.version !== cfg.version)
+      throw conflict("The form changed since you opened this page. Reload it and send again.", "form_changed");
+    const kind = party?.kind ?? "individual";
+    const onForm = new Set(cfg.form.filter((f) => f.type !== "document").map((f) => f.key));
+    const given = Object.fromEntries(Object.entries(answers?.answers ?? {}).filter(([k]) => onForm.has(k)));
+    const problems = answers || cfg.version > 0 ? checkAnswers(cfg.form, kind, given) : [];
+    if (problems.length) throw unprocessable("Some answers need attention.", problems, "bad_answers");
+    await tx.db
+      .update(applications)
+      .set({ formAnswers: { version: cfg.version, answers: given } })
+      .where(eq(applications.id, app.id));
     const docs = await tx.db
       .select({ id: documents.id })
       .from(documents)
       .where(and(eq(documents.applicationId, app.id), eq(documents.status, "uploaded"), inArray(documents.id, ids)));
     if (docs.length !== new Set(ids).size) throw unprocessable("some documents are not part of this application");
+    const idKinds = await tx.db.select({ kind: documents.kind }).from(documents).where(inArray(documents.id, ids));
+    if (!idKinds.some((d) => ["emirates_id", "passport", "visa", "trade_licence"].includes(d.kind)))
+      throw unprocessable(
+        "Upload at least one ID document (Emirates ID, passport, visa or trade licence).",
+        [],
+        "no_id_document",
+      );
     dedupeKey = `docs:${app.id}:${req.linkId ?? sha256Hex(ids.toSorted().join(","))}`;
     summary = { documents: ids.length };
     // Sent for checking: they no longer count as open uploads and can't be submitted again.
@@ -713,14 +749,21 @@ async function runKyc(ctx: EngineContext, ev: InboundRow, attempt: number) {
       .select()
       .from(documents)
       .where(and(eq(documents.applicationId, app.id), inArray(documents.id, ids)));
-    const policy = await getCompanyPolicy(tx, ctx.clock.today());
-    return { app, party, docs, policy };
+    const [unit] = await tx.db.select({ companyId: units.companyId }).from(units).where(eq(units.id, app.unitId));
+    const cfg = await kycConfigVersion(tx, unit!.companyId, app.formAnswers?.version ?? 0, ctx.clock.today());
+    return { app, party, docs, cfg };
   });
   if (!prepared) return null;
-  const { app, party, docs, policy } = prepared;
+  const { app, party, docs, cfg } = prepared;
+  // The name check uses the applicant's "name as per documents" answer when the form has one (D46).
+  const answers = app.formAnswers?.answers ?? {};
+  const nameField = cfg.form.find((f) => f.nameAsPerDocuments);
+  const nameAsPerDocuments = (nameField ? answers[nameField.key] : undefined)?.trim();
+  // Only ID documents are read; `other:` uploads are kept for staff.
+  const idDocs = docs.filter((d) => ["emirates_id", "passport", "visa", "trade_licence"].includes(d.kind));
   const today = ctx.clock.today();
   const readImage = async (docId: string) => {
-    const d = docs.find((x) => x.id === docId);
+    const d = idDocs.find((x) => x.id === docId);
     if (!d) throw new Error("document not on this application");
     return new Uint8Array(await ctx.uploads.read(d.path));
   };
@@ -739,12 +782,15 @@ async function runKyc(ctx: EngineContext, ev: InboundRow, attempt: number) {
     entity,
     "SCREENING",
     {
-      applicant: { nameEn: party?.fullNameEn ?? "", kind: party?.kind ?? "individual" },
+      applicant: { nameEn: nameAsPerDocuments || party?.fullNameEn || "", kind: party?.kind ?? "individual" },
       leaseStartOn: app.requestedMoveInOn ?? addDays(today, 14),
       today,
-      minValidityDays: policy.kycMinValidityDays,
-      minConfidence: policy.kycMinConfidence,
-      documents: docs.map((d) => ({
+      minValidityDays: cfg.rules.base.validityDays,
+      minConfidence: cfg.rules.base.minConfidence,
+      rules: cfg.rules,
+      form: cfg.form,
+      answers,
+      documents: idDocs.map((d) => ({
         docId: d.id,
         kind: d.kind as "emirates_id" | "passport" | "visa" | "trade_licence",
         side: (d.side ?? "page") as "front" | "back" | "page",

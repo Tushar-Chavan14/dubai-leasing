@@ -27,7 +27,8 @@ export const EnvSchema = z.object({
   CHAT_MODEL: optStr(),
   VISION_MODEL: optStr(),
   /** Voice input (audio-capable, local Ollama only). */
-  VOICE_MODEL: z.preprocess(clean, z.string().default("gemma4:e4b")),
+  /** Local whisper.cpp `whisper-server` for voice input, e.g. http://127.0.0.1:8178. Unset: voice input is off. */
+  VOICE_URL: z.preprocess(clean, z.string().url().optional()),
   DECISION_MODEL: optStr(),
   COPILOT_MODEL: optStr(),
   /** Leasing assistant (enquiry answers). Empty = CHAT_MODEL. */

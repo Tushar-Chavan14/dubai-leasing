@@ -24,6 +24,7 @@ export {
 export * from "./kyc/index.ts";
 export * from "./offer/index.ts";
 export * from "./contract/index.ts";
+export * from "./contract-agent/index.ts";
 export * from "./registration/index.ts";
 export * from "./leasing-assistant/index.ts";
 export { type FormalReminderInput, formalReminderNotice } from "./collections/formal-reminder.ts";

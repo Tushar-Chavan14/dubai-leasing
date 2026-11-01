@@ -6,46 +6,44 @@ import { IconCheck, IconTrash, IconUpload, IconWarning } from "../../../../lib/i
 import { checkPhotoFile, preparePhoto } from "../../../../lib/images";
 import { type PortalState, submitDocuments } from "../actions";
 
-type Kind = "emirates_id" | "passport" | "visa" | "trade_licence";
 type Side = "front" | "back" | "page";
 interface Slot {
-  kind: Kind;
+  key: string;
+  kind: string;
   side: Side;
   label: string;
   hint: string;
+  required: boolean;
 }
-const SETS: { key: string; label: string; slots: Slot[] }[] = [
-  {
-    key: "eid",
-    label: "Emirates ID",
-    slots: [
-      { kind: "emirates_id", side: "front", label: "Emirates ID, front", hint: "The side with your photo" },
-      { kind: "emirates_id", side: "back", label: "Emirates ID, back", hint: "The side with the card number" },
-    ],
-  },
-  {
-    key: "passport",
-    label: "Passport and visa",
-    slots: [
-      {
-        kind: "passport",
-        side: "page",
-        label: "Passport data page",
-        hint: "Include the two lines of letters at the bottom",
-      },
-      { kind: "visa", side: "page", label: "Residence visa", hint: "The visa page or e-visa" },
-    ],
-  },
-  {
-    key: "company",
-    label: "Company",
-    slots: [
-      { kind: "trade_licence", side: "page", label: "Trade licence", hint: "The current licence page" },
-      { kind: "emirates_id", side: "front", label: "Signatory's Emirates ID, front", hint: "The person signing" },
-      { kind: "emirates_id", side: "back", label: "Signatory's Emirates ID, back", hint: "" },
-    ],
-  },
-];
+
+/** One field of the company's document form (D46), as the engine sends it. */
+export interface FormFieldView {
+  key: string;
+  label: string;
+  placeholder: string;
+  help: string;
+  type: "text" | "email" | "phone" | "date" | "number" | "select" | "document";
+  required: boolean;
+  appliesTo: "individual" | "company" | "both";
+  options: string[];
+  documentKind?: "emirates_id_front" | "emirates_id_back" | "passport" | "visa" | "trade_licence" | "other";
+}
+export interface DocumentFormView {
+  version: number;
+  applicantKind: "individual" | "company";
+  fields: FormFieldView[];
+}
+
+const DOC_KIND: Record<NonNullable<FormFieldView["documentKind"]>, { kind: string; side: Side } | null> = {
+  emirates_id_front: { kind: "emirates_id", side: "front" },
+  emirates_id_back: { kind: "emirates_id", side: "back" },
+  passport: { kind: "passport", side: "page" },
+  visa: { kind: "visa", side: "page" },
+  trade_licence: { kind: "trade_licence", side: "page" },
+  other: null,
+};
+
+const INPUT_TYPE = { text: "text", email: "email", phone: "tel", date: "date", number: "number" } as const;
 
 const keyOf = (s: { kind: string; side: string | null }) => `${s.kind}:${s.side}`;
 
@@ -56,22 +54,31 @@ interface Doc {
   bytes: number | null;
 }
 
-export function UploadDocuments({ token, initial }: { token: string; initial: Doc[] }) {
+export function UploadDocuments({ token, initial, form }: { token: string; initial: Doc[]; form: DocumentFormView }) {
   const router = useRouter();
-  const [set, setSet] = useState(
-    initial.some((d) => d.kind === "trade_licence")
-      ? "company"
-      : initial.some((d) => d.kind === "passport")
-        ? "passport"
-        : "eid",
-  );
+  const fields = form.fields.filter((f) => f.appliesTo === "both" || f.appliesTo === form.applicantKind);
+  const slots: Slot[] = fields
+    .filter((f) => f.type === "document" && f.documentKind)
+    .map((f) => {
+      const known = DOC_KIND[f.documentKind!];
+      return {
+        key: f.key,
+        kind: known?.kind ?? `other:${f.key}`,
+        side: known?.side ?? "page",
+        label: f.label,
+        hint: f.help,
+        required: f.required,
+      };
+    });
+  const answerFields = fields.filter((f) => f.type !== "document");
   const [docs, setDocs] = useState<Doc[]>(initial);
   const [busy, setBusy] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [state, submit, sending] = useActionState<PortalState, FormData>(submitDocuments, {});
-  const slots = SETS.find((s) => s.key === set)!.slots;
   const docFor = (s: Slot) => docs.find((d) => keyOf(d) === keyOf(s));
-  const complete = slots.every((s) => docFor(s));
+  // At least one ID document (an `other:` upload alone can't be checked).
+  const complete =
+    slots.every((s) => !s.required || docFor(s)) && slots.some((s) => !s.kind.startsWith("other:") && docFor(s));
 
   async function upload(slot: Slot, file: File) {
     const k = keyOf(slot);
@@ -132,15 +139,6 @@ export function UploadDocuments({ token, initial }: { token: string; initial: Do
 
   return (
     <div className="stack" style={{ gap: 16 }}>
-      <fieldset className="segmented" aria-label="Which documents do you have?">
-        {SETS.map((s) => (
-          <label key={s.key}>
-            <input type="radio" name="set" value={s.key} checked={set === s.key} onChange={() => setSet(s.key)} />
-            <span>{s.label}</span>
-          </label>
-        ))}
-      </fieldset>
-
       <ul className="doc-slots">
         {slots.map((slot) => {
           const k = keyOf(slot);
@@ -149,7 +147,10 @@ export function UploadDocuments({ token, initial }: { token: string; initial: Do
             <li key={k} className="panel panel-pad" data-done={!!d}>
               <div className="doc-slot-head">
                 <div>
-                  <b>{slot.label}</b>
+                  <b>
+                    {slot.label}
+                    {!slot.required && <em className="muted"> (optional)</em>}
+                  </b>
                   {slot.hint && (
                     <div className="muted" style={{ fontSize: 13 }}>
                       {slot.hint}
@@ -202,6 +203,40 @@ export function UploadDocuments({ token, initial }: { token: string; initial: Do
 
       <form action={submit} className="stack">
         <input type="hidden" name="token" value={token} />
+        <input type="hidden" name="formVersion" value={form.version} />
+        {answerFields.length > 0 && (
+          <div className="panel panel-pad grid-fields">
+            {answerFields.map((f) => (
+              <label key={f.key} className="field span-6">
+                <span className="field-label">
+                  {f.label}
+                  {!f.required && <em> (optional)</em>}
+                </span>
+                {f.type === "select" ? (
+                  <select name={`answer:${f.key}`} required={f.required} defaultValue="">
+                    <option value="" disabled>
+                      {f.placeholder || "Choose…"}
+                    </option>
+                    {f.options.map((o) => (
+                      <option key={o} value={o}>
+                        {o}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    name={`answer:${f.key}`}
+                    type={f.type === "document" ? "text" : INPUT_TYPE[f.type]}
+                    placeholder={f.placeholder}
+                    required={f.required}
+                    maxLength={500}
+                  />
+                )}
+                {f.help && <span className="hint">{f.help}</span>}
+              </label>
+            ))}
+          </div>
+        )}
         {docs.map((d) => (
           <input key={d.id} type="hidden" name="documentId" value={d.id} />
         ))}
@@ -217,7 +252,7 @@ export function UploadDocuments({ token, initial }: { token: string; initial: Do
         </div>
         {!complete && (
           <p className="muted" style={{ fontSize: 13, margin: 0 }}>
-            Upload every photo above to continue.
+            Upload the required photos above (at least one document) to continue.
           </p>
         )}
       </form>

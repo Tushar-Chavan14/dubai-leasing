@@ -35,6 +35,7 @@ import { type LinkRow, resolveLink } from "../manager/links.ts";
 import { moveInStatus } from "../manager/move-in.ts";
 import { addTenancyPhoto } from "../manager/tenancy-files.ts";
 import { noticeSentForTerm, sentNoticeValid } from "../manager/outbound.ts";
+import { companyKycConfig } from "../manager/kyc-config.ts";
 import type { AuthEnv } from "./auth.ts";
 
 /**
@@ -444,7 +445,10 @@ export function registerPortalRoutes(app: Hono<AuthEnv>, ctx: EngineContext, med
         throw unprocessable("attach a photo of the document as `file`", [], "invalid_request");
       const meta = z
         .object({
-          kind: z.enum(["emirates_id", "passport", "visa", "trade_licence"]),
+          kind: z.union([
+            z.enum(["emirates_id", "passport", "visa", "trade_licence"]),
+            z.custom<`other:${string}`>((v) => typeof v === "string" && /^other:[a-z][a-z0-9_]{1,39}$/.test(v)),
+          ]),
           side: z.enum(["front", "back", "page"]),
         })
         .parse({ kind: form.get("kind"), side: form.get("side") });
@@ -465,7 +469,7 @@ export function registerPortalRoutes(app: Hono<AuthEnv>, ctx: EngineContext, med
   /** What an applicant sees: status, their uploads (upload link), the current offer (offer link). Nothing else. */
   async function applicationView(tx: Tx, link: LinkRow) {
     const [row] = await tx.db
-      .select({ app: applications, unit: units, name: parties.fullNameEn })
+      .select({ app: applications, unit: units, name: parties.fullNameEn, kind: parties.kind })
       .from(applications)
       .innerJoin(units, eq(units.id, applications.unitId))
       .innerJoin(parties, eq(parties.id, applications.partyId))
@@ -484,6 +488,15 @@ export function registerPortalRoutes(app: Hono<AuthEnv>, ctx: EngineContext, med
       unit: { label: `${unit.unitNo ?? unit.code}, ${unit.building}`, community: unit.community },
       documents: link.purpose === "kyc_upload" ? await uploadedDocuments(tx, a.id) : [],
       canUpload: link.purpose === "kyc_upload" && !link.usedAt && a.state === "SCREENING",
+      // The company's document form (D46), with its version, for the upload page.
+      form:
+        link.purpose === "kyc_upload"
+          ? await companyKycConfig(tx, unit.companyId, today).then((c) => ({
+              version: c.version,
+              applicantKind: row.kind,
+              fields: c.form,
+            }))
+          : null,
       offer:
         a.offer && (a.state === "OFFER" || a.state === "RESERVED" || a.state === "CONVERTED")
           ? {

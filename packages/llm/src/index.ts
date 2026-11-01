@@ -93,7 +93,6 @@ export interface Llm {
   vision(images: Uint8Array[], prompt: string, schema: z.ZodTypeAny, opts?: CallOpts): Promise<unknown>;
   decide(state: string, questions: Record<string, SystemOneQuestion>): Promise<SystemOneResponse>;
   /** Listens to one short clip and answers in JSON shaped by `schema` (unvalidated). Local models only; audio is never kept. */
-  audio(model: string, bytes: Uint8Array, prompt: string, schema: z.ZodTypeAny): Promise<unknown>;
 }
 
 export interface OllamaConfig {
@@ -222,32 +221,6 @@ export class OllamaLlm implements Llm {
       throw new Error("the vision model did not return JSON");
     }
   }
-
-  /**
-   * Transcribes audio with a local audio-capable model (Ollama carries audio base64 in `images`).
-   * Voice may hold personal data, so it only goes to a loopback Ollama (rule 8). The bytes are
-   * sent and dropped: nothing here writes or logs them.
-   */
-  async audio(model: string, bytes: Uint8Array, prompt: string, schema: z.ZodTypeAny): Promise<unknown> {
-    if (!model) throw new Error("VOICE_MODEL is not set");
-    assertLocalModel(this.cfg.url, model, "Voice audio");
-    const r = await this.call(undefined, (c) =>
-      c.chat({
-        model,
-        stream: false,
-        think: false,
-        keep_alive: "10m",
-        format: z.toJSONSchema(schema, { io: "input" }) as object,
-        options: { temperature: 0, num_ctx: MODEL_NUM_CTX },
-        messages: [{ role: "user", content: prompt, images: [Buffer.from(bytes).toString("base64")] }],
-      }),
-    );
-    try {
-      return JSON.parse(r.message.content);
-    } catch {
-      throw new Error("the voice model did not return JSON");
-    }
-  }
 }
 
 /**
@@ -279,17 +252,7 @@ export class FakeLlm implements Llm {
     private readonly visionScript?: (images: Uint8Array[], prompt: string) => unknown,
     /** Returns the parsed JSON answer (or plain text) for a chat call. */
     private readonly chatScript?: (messages: ChatMessage[]) => unknown,
-    /** Returns the parsed JSON answer for an audio call. */
-    private readonly audioScript?: (bytes: Uint8Array, prompt: string) => unknown,
   ) {}
-  audioCalls: { model: string; bytes: Uint8Array; prompt: string }[] = [];
-  async audio(model: string, bytes: Uint8Array, prompt: string): Promise<unknown> {
-    this.audioCalls.push({ model, bytes, prompt });
-    if (!this.audioScript) throw new Error("FakeLlm.audio not scripted");
-    const r = this.audioScript(bytes, prompt);
-    if (r instanceof Error) throw r;
-    return r;
-  }
   async decide(state: string, questions: Record<string, SystemOneQuestion>): Promise<SystemOneResponse> {
     this.calls.push({ state, questions });
     const r = this.script(state);

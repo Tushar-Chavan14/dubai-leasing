@@ -174,6 +174,22 @@ describe.skipIf(noDb)("company contract templates (structure extraction)", () =>
     ]);
   });
 
+  test("a reading that stopped shows Try again; after it the panel reads again (not still stopped)", async () => {
+    const s = await setup(structureLlm());
+    await s.upload(await generatePdf(SAMPLES[0]!.spec));
+    // No job ran (the engine restarted mid-read): after 15 minutes it counts as stopped.
+    s.clock.set(new Date(s.clock.now().getTime() + 16 * 60_000));
+    const panel = async () =>
+      (
+        (await (await s.call(`/companies/${s.companyId}/contract-template`)).json()) as {
+          extraction: { status: string; reasons: string[] };
+        }
+      ).extraction;
+    expect(await panel()).toMatchObject({ status: "failed", reasons: ["The reading job stopped; try again."] });
+    expect((await s.call(`/companies/${s.companyId}/contract-template/retry`, "POST")).status).toBe(202);
+    expect((await panel()).status).toBe("reading");
+  });
+
   test("a read-again the model fails shows as failed, not reading", async () => {
     const s = await setup(
       new FakeLlm(

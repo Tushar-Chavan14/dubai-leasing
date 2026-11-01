@@ -44,7 +44,7 @@ export default async function DocumentsPage({ params }: { params: Promise<{ toke
           used only to prepare your tenancy and register it in Ejari.
         </p>
       </div>
-      <UploadDocuments token={token} initial={v.documents} />
+      {v.form && <UploadDocuments token={token} initial={v.documents} form={v.form} />}
     </div>
   );
 }

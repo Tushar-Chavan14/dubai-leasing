@@ -1,6 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { EjariUnavailableError, HttpEjariClient } from "@leasing/adapters";
-import { type CalendarDate, type EjariPayload, FixedClock, luhnCheckDigit } from "@leasing/core";
+import { type CalendarDate, DEMO_COMPANY_LEGAL, type EjariPayload, FixedClock, luhnCheckDigit } from "@leasing/core";
 import { PDFDocument } from "pdf-lib";
 import { count, sql } from "drizzle-orm";
 import { createEjariMock } from "../src/app.ts";
@@ -20,7 +20,8 @@ const priya = (over: Partial<EjariPayload> = {}): EjariPayload => ({
   tenantIdNo: eid("1991", "4820193"),
   tenantIdExpiresOn: d("2029-08-14"),
   tenantNationality: "IND",
-  landlordNameEn: "Fictional Holdings LLC",
+  // D44: the registered owner of a demo unit is its company's legal name.
+  landlordNameEn: DEMO_COMPANY_LEGAL.silverline!.legalNameEn,
   landlordIdNo: null,
   propertyUsage: "residential",
   dldPropertyNo: "DEMO-DLD-000412",
@@ -117,7 +118,7 @@ describe.skipIf(noDb)("simulated Ejari", () => {
     expect(await codes(priya({ dldPropertyNo: "DEMO-DLD-999999" }))).toEqual(["PROPERTY_NOT_FOUND"]);
     expect(await codes(priya({ makaniNo: "2222233334" }))).toEqual(["PROPERTY_DATA_MISMATCH"]);
     expect(await codes(priya({ propertyUsage: "commercial" }))).toEqual(["PROPERTY_DATA_MISMATCH"]);
-    expect(await codes(priya({ landlordNameEn: "Fictional Holdings" }))).toEqual(["LANDLORD_MISMATCH"]);
+    expect(await codes(priya({ landlordNameEn: "Silverline Properties" }))).toEqual(["LANDLORD_MISMATCH"]);
     expect(await codes(priya({ tenantIdNo: "784-1991-4820193-0" }))).toEqual(["INVALID_ID"]);
     expect(await codes(priya({ tenantIdType: "passport", tenantIdNo: "X0000000" }))).toEqual(["TENANT_NOT_FOUND"]);
     expect(await codes(priya({ startOn: d("2033-01-01"), endOn: d("2033-12-31") }))).toEqual(["ID_EXPIRED"]);

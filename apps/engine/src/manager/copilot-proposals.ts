@@ -23,6 +23,7 @@ import { listedUnit, takenViewings } from "./availability.ts";
 import { defaultAddendumFor, prepareContract, resendSignLink } from "./contracts.ts";
 import { FORMAL_PROPOSER_ROLES, proposeFormalReminder } from "./collections.ts";
 import { appendEvent, getCompanyPolicy, leaseRulesVersion } from "./events.ts";
+import { applyConfigChange, ConfigChange } from "./config-changes.ts";
 import { createStaffTaskTx, NewTask, proposeVacateNoticeTx, TASK_CREATOR_ROLES } from "./task-actions.ts";
 
 /**
@@ -205,7 +206,10 @@ export async function confirmProposal(ctx: EngineContext, user: StaffUser, propo
       const p = await lockOwn(tx, user, proposalId);
       const now = ctx.clock.now();
       assertPending(p, now.getTime());
-      let done: { result: Record<string, unknown>; entity: { kind: "application" | "lease"; id: string } };
+      let done: {
+        result: Record<string, unknown>;
+        entity: { kind: "application" | "lease" | "company" | "rulebook"; id: string };
+      };
       try {
         done =
           p.kind === "create_task"
@@ -214,7 +218,9 @@ export async function confirmProposal(ctx: EngineContext, user: StaffUser, propo
               ? await confirmApprovalRequest(ctx, tx, p, user)
               : p.kind === "viewing_invite" || p.kind === "request_documents" || p.kind === "resend_signing_link"
                 ? await confirmAction(ctx, tx, p, user)
-                : await confirmApplication(ctx, tx, p, user);
+                : p.kind === "config_change"
+                  ? await confirmConfigChange(ctx, tx, p, user)
+                  : await confirmApplication(ctx, tx, p, user);
       } catch (e) {
         if (e instanceof DomainError && e.status !== 403) throw new CreateFailed(e);
         throw e;
@@ -538,6 +544,13 @@ export async function proposeAction(ctx: EngineContext, user: StaffUser, threadI
       .returning();
     return proposalView(row!, now.getTime());
   });
+}
+
+/** Confirm for a suggested settings change (D45): applied as the user, who saw the values on the card. */
+async function confirmConfigChange(ctx: EngineContext, tx: Tx, p: ProposalRow, user: StaffUser) {
+  const change = ConfigChange.parse(p.payload.change);
+  const done = await applyConfigChange(ctx, tx, user, change, `copilot:${user.id}`, true);
+  return { result: { id: done.id, summary: done.summary }, entity: done.entity };
 }
 
 /** Confirm for the three actions that fit in one transaction. */

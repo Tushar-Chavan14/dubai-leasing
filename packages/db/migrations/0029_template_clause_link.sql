@@ -1,0 +1,1 @@
+ALTER TABLE "company_clauses" ADD COLUMN "template_paragraph_key" text;

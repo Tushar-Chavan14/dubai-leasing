@@ -190,6 +190,27 @@
       "when": 1793243622751,
       "tag": "0026_signer_capacity",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1793534232644,
+      "tag": "0027_contract_agent",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1793543372159,
+      "tag": "0028_kyc_config",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1793556528344,
+      "tag": "0029_template_clause_link",
+      "breakpoints": true
     }
   ]
 }

@@ -65,7 +65,10 @@ tests pass.
     come from rulebook tools. Tenant-written text reaching the copilot is untrusted data.
     `propose` tools need the user's Confirm click. Seven confirmed actions exist (decisions D25, D26, D42): an application (with its viewing invitation email), a task, a pending approval request (`formal_reminder`, `vacate_notice`), a viewing invitation, a document request, a signing-link resend, and preparing a contract (it only prepares: the contract still waits at the `final_contract` gate). Each runs through the normal route, as the user, only when that user clicks Confirm in the chat. `draft` tools save text the user opens
     in the normal form and sends or posts themselves; the copilot never sends. The copilot's
-    client can store a proposal or a draft but can never confirm, send or post one.
+    client can store a proposal or a draft but can never confirm, send or post one. Amendment (D45): the copilot may change contract clauses, rent rules, contract rules and
+    Smart Rental Index values when the user's own latest message asks for that change (the engine checks the
+    quoted words); a change the copilot suggests on its own waits for Confirm. Same roles and validation as
+    the settings forms.
 
 ## Repo map
 
@@ -107,6 +110,8 @@ bun run lint                    # oxlint + oxfmt --check + domain-rule guard (sc
 bun run lint:fix                # oxlint --fix + oxfmt (writes)
 bun run eval                    # helper + copilot evals against labelled fixtures (needs Ollama running)
 bun run eval -- copilot         # copilot evals only
+bun run voice:setup             # once: build whisper.cpp + download ggml-base.bin (needs cmake, ffmpeg)
+bun run voice                   # local whisper-server for voice input (VOICE_URL)
 ```
 
 ## Stack

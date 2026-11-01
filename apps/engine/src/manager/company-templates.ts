@@ -1,6 +1,16 @@
 import { PdfLogoError, renderStyledPdf } from "@leasing/adapters";
-import { type Actor, type Addendum, type ContractFields, newId } from "@leasing/core";
 import {
+  type Actor,
+  type Addendum,
+  companyClauseIdOf,
+  isCompanyClauseRef,
+  type ContractFields,
+  newId,
+  type PropertyCategory,
+  type PropertySubtype,
+} from "@leasing/core";
+import {
+  companyClauses,
   companyContractTemplates,
   companies,
   contractRules,
@@ -11,8 +21,14 @@ import {
   withTx,
 } from "@leasing/db";
 import {
+  approvalBlockers,
   approvalProblems,
   approvalWarnings,
+  autoReview,
+  clauseTextFromParagraph,
+  hasValues,
+  needsCheck,
+  paragraphFromClauseText,
   templateParagraphs,
   ContractStructureSchemas,
   contractStructureHelper,
@@ -37,7 +53,9 @@ import type { EngineContext } from "../context.ts";
 import { conflict, notFound, unprocessable } from "../errors.ts";
 import { appendEvent } from "./events.ts";
 import { recordRun, runOnly } from "./helpers.ts";
-import { repointContractRule } from "./portfolio.ts";
+import { replaceContractRule, repointContractRule } from "./portfolio.ts";
+// Used only inside functions (the two modules import each other).
+import { clauseView } from "./contract-templates.ts";
 
 /**
  * Company contract templates (slice 4). When a sample contract is uploaded, the `contract-structure`
@@ -144,6 +162,8 @@ export async function extractCompanyTemplate(
       .limit(1);
     const templateId = newId();
     const version = (last?.version ?? 0) + 1;
+    // D47: code makes the review decisions it can (marked header or footer, sample notes and values) up front.
+    const auto = autoReview({ style: data.style, logoDocumentId, sections: data.sections }, EMPTY_REVIEW);
     await tx.db.insert(companyContractTemplates).values({
       id: templateId,
       companyId,
@@ -152,6 +172,7 @@ export async function extractCompanyTemplate(
       sections: data.sections,
       blanks: data.blanks,
       style: data.style,
+      review: auto.review,
       logoDocumentId,
       version,
       helperRunId,
@@ -175,8 +196,178 @@ export async function extractCompanyTemplate(
       },
       rulesVersion: ctx.rulesVersion,
     });
+    await linkSampleClauses(ctx, tx, companyId, sampleDocumentId);
     return { skipped: false as const, status: "ok" as const, templateId, version };
   });
+}
+
+/**
+ * D47: links the clauses read from a sample to the paragraphs of the template read from the same sample, in whichever
+ * order the two jobs finish. A linked clause's wording becomes the paragraph's (blanks as `[label]`), and contracts in
+ * that template print the clause's current wording there. A clause whose paragraph code left out (sample values or a
+ * sample note) is rejected if still proposed. Idempotent: clauses already linked to this template are skipped.
+ */
+export async function linkSampleClauses(ctx: EngineContext, tx: Tx, companyId: string, sampleDocumentId: string) {
+  const [row] = await tx.db
+    .select()
+    .from(companyContractTemplates)
+    .where(
+      and(
+        eq(companyContractTemplates.companyId, companyId),
+        eq(companyContractTemplates.sampleDocumentId, sampleDocumentId),
+        inArray(companyContractTemplates.status, ["proposed", "approved"]),
+      ),
+    )
+    .orderBy(desc(companyContractTemplates.version))
+    .limit(1);
+  if (!row) return 0;
+  const t = parseTemplate(row);
+  const clauses = await tx.db
+    .select()
+    .from(companyClauses)
+    .where(
+      and(
+        eq(companyClauses.companyId, companyId),
+        eq(companyClauses.sourceDocumentId, sampleDocumentId),
+        inArray(companyClauses.status, ["proposed", "approved"]),
+      ),
+    )
+    .orderBy(companyClauses.createdAt, companyClauses.id)
+    .for("update");
+  const taken = new Set(
+    clauses.filter((c) => c.inTemplateId === row.id && c.templateParagraphKey).map((c) => c.templateParagraphKey!),
+  );
+  const paragraphs = templateParagraphs(t.sections);
+  const raw = new Map(paragraphs.map((p) => [p.key, p.text]));
+  const dropped = new Set(t.review.droppedParagraphs);
+  let linked = 0;
+  const joined: string[] = [];
+  for (const c of clauses) {
+    if (c.inTemplateId === row.id && c.templateParagraphKey) continue;
+    const key = paragraphForQuote(paragraphs, c.quote ?? c.textEn);
+    if (!key || taken.has(key)) continue;
+    if (dropped.has(key)) {
+      if (c.status === "proposed") {
+        await tx.db.update(companyClauses).set({ status: "rejected" }).where(eq(companyClauses.id, c.id));
+        await appendEvent(tx, ctx, {
+          entity: { kind: "company", id: companyId },
+          type: "COMPANY_CLAUSE_REJECTED",
+          actor: HELPER_ACTOR,
+          payload: { clauseId: c.id, reason: "paragraph_left_out", templateId: row.id, paragraphKey: key },
+          rulesVersion: ctx.rulesVersion,
+        });
+      }
+      continue;
+    }
+    taken.add(key);
+    const text = clauseTextFromParagraph(raw.get(key)!, t.blanks);
+    await tx.db
+      .update(companyClauses)
+      .set({ inTemplateId: row.id, templateParagraphKey: key, textEn: text, hasValues: hasValues(text) })
+      .where(eq(companyClauses.id, c.id));
+    await appendEvent(tx, ctx, {
+      entity: { kind: "company", id: companyId },
+      type: "COMPANY_CLAUSE_LINKED",
+      actor: HELPER_ACTOR,
+      payload: {
+        clauseId: c.id,
+        templateId: row.id,
+        paragraphKey: key,
+        beforeSha256: sha256Hex(c.textEn),
+        afterSha256: sha256Hex(text),
+      },
+      rulesVersion: ctx.rulesVersion,
+    });
+    linked++;
+    if (c.status === "approved") joined.push(`cc:${c.id}`);
+  }
+  // Clauses already approved (an older template, or auto-approved) printed in the template's wording before they were
+  // linked: they join the active rules on this template so contracts keep printing them.
+  if (joined.length && row.status === "approved") {
+    const rules = await tx.db
+      .select()
+      .from(contractRules)
+      .where(
+        and(
+          eq(contractRules.companyId, companyId),
+          eq(contractRules.active, true),
+          eq(contractRules.templateId, row.id),
+        ),
+      )
+      .for("update");
+    for (const r of rules) {
+      const add = joined.filter((x) => !r.clauseIds.includes(x as (typeof r.clauseIds)[number]));
+      if (!add.length) continue;
+      await replaceContractRule(
+        ctx,
+        tx,
+        r.id,
+        {
+          category: r.category as PropertyCategory,
+          subtype: r.subtype as PropertySubtype | null,
+          tenures: r.tenures as ("annual" | "short_term")[],
+          minCheques: r.minCheques,
+          maxCheques: r.maxCheques,
+          clauseIds: [...r.clauseIds, ...add] as typeof r.clauseIds,
+          sampleDocumentId: r.sampleDocumentId,
+        },
+        HELPER_ACTOR,
+      );
+    }
+  }
+  return linked;
+}
+
+/** D47, once at start: links the clauses of templates read before linking existed. Safe to run every start. */
+export async function backfillTemplateClauseLinks(ctx: EngineContext) {
+  const rows = await ctx.database.db
+    .select({
+      companyId: companyContractTemplates.companyId,
+      sampleDocumentId: companyContractTemplates.sampleDocumentId,
+    })
+    .from(companyContractTemplates)
+    .where(inArray(companyContractTemplates.status, ["proposed", "approved"]));
+  let linked = 0;
+  for (const r of rows) {
+    linked += await withTx(ctx.database, async (tx) => {
+      await tx.db.execute(sql`select pg_advisory_xact_lock(hashtext(${`template:${r.companyId}`}))`);
+      return linkSampleClauses(ctx, tx, r.companyId, r.sampleDocumentId);
+    });
+  }
+  return linked;
+}
+
+/**
+ * D47: what each linked paragraph prints in a contract: an approved clause in the contract's rule prints its current
+ * wording (`[label]` back to the paragraph's blanks); a clause that is removed, still proposed or not in the rule
+ * leaves its paragraph out. `ruleClauseIds` absent (a preview): every approved linked clause prints.
+ */
+export async function linkedParagraphs(
+  tx: Pick<Tx, "db">,
+  row: TemplateRow,
+  ruleClauseIds?: readonly string[] | null,
+  /** Preview of a proposed template: its proposed clauses print as they would once approved. */
+  includeProposed = false,
+): Promise<{ paragraphs: Record<string, string | null>; clauseIds: Set<string> }> {
+  const t = parseTemplate(row);
+  const raw = new Map(templateParagraphs(t.sections).map((p) => [p.key, p.text]));
+  const rows = await tx.db
+    .select()
+    .from(companyClauses)
+    .where(and(eq(companyClauses.inTemplateId, row.id), eq(companyClauses.companyId, row.companyId)));
+  const inRule = ruleClauseIds ? new Set(ruleClauseIds) : null;
+  const paragraphs: Record<string, string | null> = {};
+  const clauseIds = new Set<string>();
+  for (const c of rows) {
+    if (!c.templateParagraphKey || !raw.has(c.templateParagraphKey)) continue;
+    clauseIds.add(c.id);
+    const live = c.status === "approved" || (includeProposed && c.status === "proposed");
+    const on = live && (!inRule || inRule.has(`cc:${c.id}`));
+    paragraphs[c.templateParagraphKey] = on
+      ? paragraphFromClauseText(c.textEn, raw.get(c.templateParagraphKey)!, t.blanks)
+      : null;
+  }
+  return { paragraphs, clauseIds };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -267,6 +458,37 @@ async function readLogo(ctx: EngineContext, tx: Pick<Tx, "db">, logoDocumentId: 
 }
 
 /**
+ * Fills a template's blanks from the records without rendering (code only): what the contract agent sees through
+ * `fill_blanks`. Legal and money blanks with no value come back in `missingCore`.
+ */
+export function fillTemplateBlanks(
+  ctx: EngineContext,
+  row: TemplateRow,
+  fields: ContractFields,
+  extras: Record<string, string | number | null>,
+  blanks?: TemplateBlank[],
+): { filled: { label: string; key: string }[]; leftEmpty: string[]; missingCore: string[] } {
+  const t = parseTemplate(row);
+  try {
+    const built = templateContractBlocks(
+      {
+        sections: t.sections,
+        blanks: blanks ?? t.blanks,
+        templateVersion: row.version,
+        dropped: t.review.droppedParagraphs,
+      },
+      { ...fields, contractOn: fields.contractOn ?? ctx.clock.today() },
+      { clauses: [], freeText: null },
+      { version: 1, reference: "check", demo: ctx.demoMode, preview: true, extras },
+    );
+    return { filled: built.filled, leftEmpty: built.leftEmpty, missingCore: [] };
+  } catch (e) {
+    if (e instanceof TemplateRenderError) return { filled: [], leftEmpty: [], missingCore: e.problems };
+    throw e;
+  }
+}
+
+/**
  * The contract PDF in a company template: its sections and wording, blanks filled from `fields`
  * only, its look. A blank with no value prints as an empty line (listed in `leftEmpty`), except legal and money
  * core fields: those fail with a 422 listing what is missing.
@@ -286,10 +508,23 @@ export async function renderCompanyContract(
     extras?: Record<string, string | number | null>;
     /** Blank mappings to use for this contract instead of the stored ones (a per-lease refresh; the row is untouched). */
     blanks?: TemplateBlank[];
+    /** D47: the contract rule's clause ids (linked paragraphs print only for clauses in it); absent for a preview. */
+    ruleClauseIds?: readonly string[] | null;
   },
 ): Promise<{ pdf: Uint8Array; title: string; leftEmpty: string[]; filled: { label: string; key: string }[] }> {
   const t = parseTemplate(row);
   const look = effectiveStyle(t.style, t.review, row.logoDocumentId);
+  const linked = await linkedParagraphs(
+    tx,
+    row,
+    input.ruleClauseIds,
+    input.preview === true && row.status === "proposed",
+  );
+  // A clause linked to a paragraph prints there, never again under the additional terms.
+  const extra = input.addendum.companyClauses?.filter((c) => !linked.clauseIds.has(c.id));
+  const { companyClauses: _all, ...rest } = input.addendum;
+  const clauses = rest.clauses.filter((x) => !(isCompanyClauseRef(x) && linked.clauseIds.has(companyClauseIdOf(x))));
+  const addendum: Addendum = extra?.length ? { ...rest, clauses, companyClauses: extra } : { ...rest, clauses };
   let built: ReturnType<typeof templateContractBlocks>;
   try {
     built = templateContractBlocks(
@@ -298,10 +533,11 @@ export async function renderCompanyContract(
         blanks: input.blanks ?? t.blanks,
         templateVersion: row.version,
         dropped: t.review.droppedParagraphs,
+        paragraphs: linked.paragraphs,
       },
       // The date of the contract is the day it is prepared (Clock), never read from the lease.
       { ...input.fields, contractOn: input.fields.contractOn ?? ctx.clock.today() },
-      input.addendum,
+      addendum,
       {
         version: input.version,
         reference: input.reference,
@@ -399,6 +635,11 @@ export function templateView(row: TemplateRow) {
       (p) => p.values || p.authority || p.warning || p.fixedValues.length > 0 || p.sampleOnly,
     ),
     warnings: approvalWarnings({ sections: t.sections }),
+    /** D47: what code changed on its own (removed marked header, notes and sample values), in plain words. */
+    changes: autoReview({ style: t.style, logoDocumentId: row.logoDocumentId, sections: t.sections }, EMPTY_REVIEW)
+      .changes,
+    /** D47: what still blocks approval (text the PDF fonts can't print). */
+    blockers: row.status === "proposed" ? approvalBlockers({ style: t.style, sections: t.sections }) : [],
     problems:
       row.status === "proposed"
         ? approvalProblems(
@@ -450,7 +691,23 @@ export async function companyTemplatePanel(ctx: EngineContext, companyId: string
     } else {
       // Clock times only (runs and events use the Clock; row `createdAt` is the database's own time).
       const queuedAt = (sample.extracted as { queuedAt?: string } | null)?.queuedAt;
-      const since = reAskedAt ?? (queuedAt ? new Date(queuedAt) : sample.createdAt);
+      const queued = queuedAt ? new Date(queuedAt) : sample.createdAt;
+      // "Try again" after a failed or stopped reading starts the clock again (the run before it no longer counts).
+      const [retried] = reAskedAt
+        ? []
+        : await db
+            .select({ at: leaseEvents.at })
+            .from(leaseEvents)
+            .where(
+              and(
+                eq(leaseEvents.entityId, companyId),
+                eq(leaseEvents.type, "COMPANY_TEMPLATE_EXTRACTION_RETRIED"),
+                gte(leaseEvents.at, queued),
+              ),
+            )
+            .orderBy(desc(leaseEvents.at))
+            .limit(1);
+      const since = reAskedAt ?? retried?.at ?? queued;
       const [run] = await db
         .select()
         .from(helperRuns)
@@ -520,12 +777,45 @@ export async function companyTemplatePanel(ctx: EngineContext, companyId: string
           : isNull(contractRules.templateId),
       ),
     );
+  // D47: the latest sample's clauses waiting for approval (shown on the review with "Approve all").
+  const proposedClauses = sample
+    ? await db
+        .select()
+        .from(companyClauses)
+        .where(
+          and(
+            eq(companyClauses.companyId, companyId),
+            eq(companyClauses.sourceDocumentId, sample.id),
+            eq(companyClauses.status, "proposed"),
+          ),
+        )
+        .orderBy(companyClauses.createdAt, companyClauses.id)
+    : [];
+  const openTemplate = sample
+    ? rows.find((r) => r.sampleDocumentId === sample.id && r.status === "proposed")
+    : undefined;
   return {
     templates: rows.map(templateView),
     extraction,
     catalogue,
     rulesOnRetired: onRetired.length,
     rulesToMove: toMove.length,
+    review: sample
+      ? {
+          sampleDocumentId: sample.id,
+          ruleId: (sample.extracted as { ruleId?: string } | null)?.ruleId ?? null,
+          clauses: proposedClauses.map(clauseView),
+          templateId: openTemplate?.id ?? null,
+          // The one tick is needed when kept wording or these clauses have amounts, dates, DLD/RERA words or a logo.
+          needsCheck: openTemplate
+            ? needsCheck(
+                { logoDocumentId: openTemplate.logoDocumentId, sections: parseTemplate(openTemplate).sections },
+                parseTemplate(openTemplate).review,
+                proposedClauses.map((c) => c.textEn),
+              )
+            : proposedClauses.some((c) => c.hasValues),
+        }
+      : null,
   };
 }
 
@@ -630,6 +920,7 @@ export async function reviewTemplate(ctx: EngineContext, templateId: string, pat
       dropLogo: patch.dropLogo ?? t.review.dropLogo,
       logoConfirmed: patch.logoConfirmed ?? t.review.logoConfirmed,
       authorityChecked: patch.authorityChecked ?? t.review.authorityChecked,
+      checked: t.review.checked,
       valuesConfirmed: applyConfirmations(t.review.valuesConfirmed, patch.valuesConfirmed, validKeys),
       authorityBodyConfirmed: applyConfirmations(
         t.review.authorityBodyConfirmed,
@@ -667,96 +958,307 @@ export async function reviewTemplate(ctx: EngineContext, templateId: string, pat
  * or while a kept logo has not been confirmed as the company's own. The previous approved version
  * is retired in the same step. Audited with the actor.
  */
-export async function approveTemplate(ctx: EngineContext, templateId: string, actor: Actor) {
+/** Words of a text, lower case, without template blanks. */
+const words = (t: string) =>
+  t
+    .replace(/\{\{b\d+\}\}/g, " ")
+    .toLowerCase()
+    .match(/[\p{L}\p{N}]+/gu) ?? [];
+
+/**
+ * The template paragraph a clause's quote was read from: the paragraph whose words appear in the quote the most
+ * (blanks in the paragraph hold the sample's values, so an exact match can't be used). At least 60% of the
+ * paragraph's words and three words must match; otherwise none.
+ */
+export function paragraphForQuote(paragraphs: { key: string; kind: string; text: string }[], quote: string) {
+  const q = new Set(words(quote));
+  let best: { key: string; score: number } | null = null;
+  for (const p of paragraphs) {
+    if (p.kind !== "paragraph") continue;
+    const w = words(p.text);
+    if (w.length < 3) continue;
+    const hit = w.filter((x) => q.has(x)).length;
+    const score = hit / w.length;
+    if (hit >= 3 && score >= 0.6 && (!best || score > best.score)) best = { key: p.key, score };
+  }
+  return best?.key ?? null;
+}
+/**
+ * D47 "Approve all": in one step, every proposed clause read from the company's latest sample is approved (with the
+ * wording as the admin left it), the ticked ones join the sample's contract rule, and the proposed template from that
+ * sample, if any, is approved and the company's rules move to it. The template only gives the look: its clause
+ * paragraphs print the linked clauses' current wording. Blocked only by text the PDF fonts can't print, and by the one
+ * "I checked" tick when amounts, dates, DLD/RERA wording or a logo are kept.
+ */
+export async function approveSample(
+  ctx: EngineContext,
+  companyId: string,
+  actor: Actor,
+  opts: {
+    /** Clauses to add to the sample's rule. Absent: all of them. */
+    ruleClauseIds?: string[] | undefined;
+    /** "I checked the amounts, dates and DLD/RERA references, and the logo is the company's own." */
+    checked?: boolean | undefined;
+  } = {},
+) {
   return withTx(ctx.database, async (tx) => {
-    const [row] = await tx.db
+    await tx.db.execute(sql`select pg_advisory_xact_lock(hashtext(${`template:${companyId}`}))`);
+    const [sample] = await tx.db
       .select()
-      .from(companyContractTemplates)
-      .where(eq(companyContractTemplates.id, templateId));
-    if (!row) throw notFound("template");
-    await tx.db.execute(sql`select pg_advisory_xact_lock(hashtext(${`template:${row.companyId}`}))`);
+      .from(documents)
+      .where(and(eq(documents.kind, "contract_sample"), sql`${documents.extracted}->>'companyId' = ${companyId}`))
+      .orderBy(desc(documents.createdAt))
+      .limit(1);
+    if (!sample) throw conflict("This company has no sample contract.", "no_sample");
+    const sampleRuleId = (sample.extracted as { ruleId?: string } | null)?.ruleId ?? null;
     const [locked] = await tx.db
       .select()
       .from(companyContractTemplates)
-      .where(eq(companyContractTemplates.id, templateId))
-      .for("update");
-    if (!locked || locked.status !== "proposed") {
-      throw conflict(
-        `This template is ${locked?.status ?? "gone"}; only a proposed one can be approved.`,
-        "template_immutable",
-      );
-    }
-    const t = parseTemplate(locked);
-    const reasons = approvalProblems(
-      { blanks: t.blanks, style: t.style, logoDocumentId: locked.logoDocumentId, sections: t.sections },
-      t.review,
-    );
-    if (reasons.length) throw unprocessable("This template can't be approved yet.", reasons, "template_not_ready");
-    const entity = { kind: "company" as const, id: locked.companyId };
-    const previous = await tx.db
-      .select()
-      .from(companyContractTemplates)
-      .where(
-        and(eq(companyContractTemplates.companyId, locked.companyId), eq(companyContractTemplates.status, "approved")),
-      )
-      .for("update");
-    for (const p of previous) {
-      await tx.db
-        .update(companyContractTemplates)
-        .set({ status: "retired" })
-        .where(eq(companyContractTemplates.id, p.id));
-      await appendEvent(tx, ctx, {
-        entity,
-        type: "COMPANY_TEMPLATE_RETIRED",
-        actor,
-        payload: { templateId: p.id, version: p.version, replacedBy: locked.id },
-        rulesVersion: ctx.rulesVersion,
-      });
-    }
-    const [approved] = await tx.db
-      .update(companyContractTemplates)
-      .set({ status: "approved", approvedBy: actor, approvedAt: ctx.clock.now() })
-      .where(eq(companyContractTemplates.id, locked.id))
-      .returning();
-    // Active rules of this company with no template, or on a retired (older) one, move to the new version as a
-    // new rule version, in this transaction, audited with the approving user.
-    const retiredIds = (
-      await tx.db
-        .select({ id: companyContractTemplates.id })
-        .from(companyContractTemplates)
-        .where(
-          and(eq(companyContractTemplates.companyId, locked.companyId), eq(companyContractTemplates.status, "retired")),
-        )
-    ).map((r) => r.id);
-    const moved = await tx.db
-      .select({ id: contractRules.id })
-      .from(contractRules)
       .where(
         and(
-          eq(contractRules.companyId, locked.companyId),
-          eq(contractRules.active, true),
-          retiredIds.length
-            ? or(isNull(contractRules.templateId), inArray(contractRules.templateId, retiredIds))
-            : isNull(contractRules.templateId),
+          eq(companyContractTemplates.companyId, companyId),
+          eq(companyContractTemplates.sampleDocumentId, sample.id),
+          eq(companyContractTemplates.status, "proposed"),
+        ),
+      )
+      .orderBy(desc(companyContractTemplates.version))
+      .limit(1)
+      .for("update");
+    if (locked) {
+      // Save code's review first (templates read before D47 have none), so a clause whose paragraph code leaves out is
+      // rejected by the link step instead of being approved and printed nowhere.
+      const t0 = parseTemplate(locked);
+      const auto = autoReview(
+        { style: t0.style, logoDocumentId: locked.logoDocumentId, sections: t0.sections },
+        t0.review,
+      ).review;
+      await tx.db
+        .update(companyContractTemplates)
+        .set({ review: auto })
+        .where(eq(companyContractTemplates.id, locked.id));
+      locked.review = auto;
+      await linkSampleClauses(ctx, tx, companyId, sample.id);
+    }
+    const proposed = await tx.db
+      .select()
+      .from(companyClauses)
+      .where(
+        and(
+          eq(companyClauses.companyId, companyId),
+          eq(companyClauses.sourceDocumentId, sample.id),
+          eq(companyClauses.status, "proposed"),
         ),
       )
       .for("update");
-    for (const r of moved) await repointContractRule(ctx, tx, r.id, locked.id, actor);
+    if (!locked && proposed.length === 0)
+      throw conflict("There is nothing waiting for approval.", "nothing_to_approve");
+    const toRule = new Set(opts.ruleClauseIds ?? proposed.map((c) => c.id));
+    const foreign = [...toRule].filter((id) => !proposed.some((c) => c.id === id));
+    if (foreign.length)
+      throw unprocessable("Only clauses waiting for approval can be added here.", foreign, "bad_clause");
+
+    let review: TemplateReview | null = null;
+    if (locked) {
+      const t = parseTemplate(locked);
+      review = autoReview(
+        { style: t.style, logoDocumentId: locked.logoDocumentId, sections: t.sections },
+        t.review,
+      ).review;
+      const blockers = approvalBlockers({ style: t.style, sections: t.sections });
+      if (blockers.length) throw unprocessable("This template can't be approved.", blockers, "template_not_ready");
+    }
+    const texts = proposed.map((c) => c.textEn);
+    const mustCheck = locked
+      ? needsCheck({ logoDocumentId: locked.logoDocumentId, sections: parseTemplate(locked).sections }, review!, texts)
+      : proposed.some((c) => c.hasValues);
+    if (mustCheck && opts.checked !== true) {
+      throw unprocessable(
+        "Tick that you checked the amounts, dates and DLD/RERA references (and the logo) before approving.",
+        [],
+        "confirm_checked",
+      );
+    }
+    const now = ctx.clock.now();
+    const entity = { kind: "company" as const, id: companyId };
+    for (const c of proposed) {
+      await tx.db
+        .update(companyClauses)
+        .set({ status: "approved", approvedBy: actor, approvedAt: now })
+        .where(eq(companyClauses.id, c.id));
+    }
+
+    let approved: TemplateRow | null = null;
+    let retired: string[] = [];
+    let moved = 0;
+    if (locked) {
+      const previous = await tx.db
+        .select()
+        .from(companyContractTemplates)
+        .where(and(eq(companyContractTemplates.companyId, companyId), eq(companyContractTemplates.status, "approved")))
+        .for("update");
+      for (const p of previous) {
+        await tx.db
+          .update(companyContractTemplates)
+          .set({ status: "retired" })
+          .where(eq(companyContractTemplates.id, p.id));
+        await appendEvent(tx, ctx, {
+          entity,
+          type: "COMPANY_TEMPLATE_RETIRED",
+          actor,
+          payload: { templateId: p.id, version: p.version, replacedBy: locked.id },
+          rulesVersion: ctx.rulesVersion,
+        });
+      }
+      retired = previous.map((p) => p.id);
+      const [row] = await tx.db
+        .update(companyContractTemplates)
+        .set({
+          status: "approved",
+          review: { ...review!, checked: opts.checked === true },
+          approvedBy: actor,
+          approvedAt: now,
+        })
+        .where(eq(companyContractTemplates.id, locked.id))
+        .returning();
+      approved = row ?? null;
+      // Active rules of this company with no template, or on a retired (older) one, move to the new version as a
+      // new rule version, in this transaction, audited with the approving user.
+      const retiredIds = (
+        await tx.db
+          .select({ id: companyContractTemplates.id })
+          .from(companyContractTemplates)
+          .where(and(eq(companyContractTemplates.companyId, companyId), eq(companyContractTemplates.status, "retired")))
+      ).map((r) => r.id);
+      const toMove = await tx.db
+        .select({ id: contractRules.id })
+        .from(contractRules)
+        .where(
+          and(
+            eq(contractRules.companyId, companyId),
+            eq(contractRules.active, true),
+            retiredIds.length
+              ? or(isNull(contractRules.templateId), inArray(contractRules.templateId, retiredIds))
+              : isNull(contractRules.templateId),
+          ),
+        )
+        .for("update");
+      for (const r of toMove) await repointContractRule(ctx, tx, r.id, locked.id, actor);
+      moved = toMove.length;
+    }
+
+    // The ticked clauses join the rule the sample was uploaded on (its current version).
+    // Clauses auto-approved from this sample (D37) and linked to the template print with it too.
+    const auto = locked
+      ? await tx.db
+          .select({ id: companyClauses.id })
+          .from(companyClauses)
+          .where(
+            and(
+              eq(companyClauses.inTemplateId, locked.id),
+              eq(companyClauses.sourceDocumentId, sample.id),
+              eq(companyClauses.status, "approved"),
+            ),
+          )
+      : [];
+    const added = [
+      ...proposed.filter((c) => toRule.has(c.id)).map((c) => `cc:${c.id}`),
+      ...auto.filter((c) => !proposed.some((p) => p.id === c.id)).map((c) => `cc:${c.id}`),
+    ];
+    // The ticked clauses join the rule the sample was uploaded on and every active rule now on this template (so
+    // wording from the template prints for each rule using it); each rule can be changed later from the clause list.
+    const targets = new Map<string, typeof contractRules.$inferSelect>();
+    if (added.length) {
+      const fromSample = sampleRuleId ? await activeRuleFrom(tx, sampleRuleId) : null;
+      if (fromSample) targets.set(fromSample.id, fromSample);
+      if (locked) {
+        const onTemplate = await tx.db
+          .select()
+          .from(contractRules)
+          .where(
+            and(
+              eq(contractRules.companyId, companyId),
+              eq(contractRules.active, true),
+              eq(contractRules.templateId, locked.id),
+            ),
+          )
+          .for("update");
+        for (const r of onTemplate) targets.set(r.id, r);
+      }
+    }
+    const ruleIds: string[] = [];
+    for (const rule of targets.values()) {
+      const clauseIds = [
+        ...rule.clauseIds,
+        ...added.filter((x) => !rule.clauseIds.includes(x as (typeof rule.clauseIds)[number])),
+      ];
+      if (clauseIds.length === rule.clauseIds.length) {
+        ruleIds.push(rule.id);
+        continue;
+      }
+      const next = await replaceContractRule(
+        ctx,
+        tx,
+        rule.id,
+        {
+          category: rule.category as PropertyCategory,
+          subtype: rule.subtype as PropertySubtype | null,
+          tenures: rule.tenures as ("annual" | "short_term")[],
+          minCheques: rule.minCheques,
+          maxCheques: rule.maxCheques,
+          clauseIds: clauseIds as typeof rule.clauseIds,
+          sampleDocumentId: rule.sampleDocumentId,
+        },
+        actor,
+      );
+      ruleIds.push(next.id);
+    }
     await appendEvent(tx, ctx, {
       entity,
-      type: "COMPANY_TEMPLATE_APPROVED",
+      type: locked ? "COMPANY_TEMPLATE_APPROVED" : "COMPANY_SAMPLE_CLAUSES_APPROVED",
       actor,
       payload: {
-        templateId: locked.id,
-        version: locked.version,
-        contentHash: templateKey(approved!).contentHash,
-        retired: previous.map((p) => p.id),
-        rulesRepointed: moved.length,
+        sampleDocumentId: sample.id,
+        ...(approved
+          ? {
+              templateId: approved.id,
+              version: approved.version,
+              contentHash: templateKey(approved).contentHash,
+              retired,
+              rulesRepointed: moved,
+            }
+          : {}),
+        clausesApproved: proposed.map((c) => c.id),
+        addedToRules: ruleIds.length ? { ruleIds, clauseIds: added } : null,
+        checked: opts.checked === true,
       },
       rulesVersion: ctx.rulesVersion,
     });
-    return { ...templateView(approved!), rulesRepointed: moved.length };
+    return {
+      template: approved ? templateView(approved) : null,
+      clausesApproved: proposed.length,
+      rulesRepointed: moved,
+    };
   });
+}
+
+/** The active version of a contract rule, following `supersedesId` forward from any of its versions. */
+async function activeRuleFrom(tx: Tx, ruleId: string) {
+  let id: string | null = ruleId;
+  for (let i = 0; id && i < 200; i++) {
+    const [r]: (typeof contractRules.$inferSelect)[] = await tx.db
+      .select()
+      .from(contractRules)
+      .where(eq(contractRules.id, id))
+      .for("update");
+    if (!r) return null;
+    if (r.active) return r;
+    const [next]: { id: string }[] = await tx.db
+      .select({ id: contractRules.id })
+      .from(contractRules)
+      .where(eq(contractRules.supersedesId, r.id));
+    id = next?.id ?? null;
+  }
+  return null;
 }
 
 /** Retires an approved template: contract rules that point at it fall back to no template (new rule version). */

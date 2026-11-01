@@ -253,6 +253,9 @@ export async function runCopilotTurn(opts: {
               resultSha256: "",
             };
       records.push(rec);
+      // Tenant or applicant text reached the model this turn: settings changes can now only be suggested (D45).
+      const companyText = tools.find((t) => t.name === rec.name)?.companyText;
+      if (!companyText && rec.content.includes("<untrusted>")) toolCtx.untrustedSeen = true;
       if (rec.ok) {
         collectIssued(issued, rec.output, rec.ui);
         if (rec.ui?.cards?.length) {

@@ -9,6 +9,8 @@ export interface ApplicationPortalView {
   unit: { label: string; community: string };
   documents: { id: string; kind: string; side: string | null; bytes: number | null }[];
   canUpload: boolean;
+  /** The company's document form (D46), on the upload link only. */
+  form: import("../app/t/[token]/documents/upload-documents").DocumentFormView | null;
   offer: {
     revision: number;
     annualRentFils: number;

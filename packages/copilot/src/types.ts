@@ -11,6 +11,11 @@ import type { z } from "zod";
 export interface EngineClient {
   get<T = unknown>(path: string): Promise<T>;
   propose<T = unknown>(path: string, body: unknown): Promise<T>;
+  /**
+   * An explicit settings change the user asked for in their own words (D45): only
+   * `POST /api/copilot/config-changes`, which refuses unless the quote is in the user's latest message.
+   */
+  change?<T = unknown>(path: string, body: unknown): Promise<T>;
 }
 
 export class EngineError extends Error {
@@ -32,6 +37,11 @@ export interface ToolContext {
    * fills it; `offer_choices` accepts only these.
    */
   issued?: ReadonlyMap<string, string | null>;
+  /**
+   * Set by the graph once a tool result this turn carried untrusted (tenant-written) text. Settings tools then only
+   * suggest (a Confirm card), whatever mode the model asked for.
+   */
+  untrustedSeen?: boolean;
   /** The engine's TENANCY_OPS (the graph fills it). While off, tools stay on the Contract AI pipeline. */
   tenancyOps?: boolean;
 }
@@ -49,6 +59,11 @@ export interface CopilotTool<I extends z.ZodType = z.ZodType, O extends z.ZodTyp
   output: O;
   /** Who may use it. Only hides the tool from the model; the engine checks the role again. */
   roles: readonly StaffRole[];
+  /**
+   * Its untrusted-wrapped text is the company's own (clauses it wrote or approved), not a tenant's: it stays reference
+   * text, but doesn't turn this turn's settings changes into suggestions (D45).
+   */
+  companyText?: true;
   run(args: z.infer<I>, ctx: ToolContext): Promise<z.infer<O>>;
 }
 

@@ -1,6 +1,8 @@
 import { appendSignatureRecord, renderPdf } from "@leasing/adapters";
 import {
   type Actor,
+  companyClauseIdOf,
+  isCompanyClauseRef,
   Addendum,
   compareNames,
   CONTRACT_CLAUSES,
@@ -27,15 +29,23 @@ import {
   withTx,
 } from "@leasing/db";
 import {
+  buildContractFields,
+  checkContractTerms,
+  contractAgent,
+  type ContractAgentData,
+  ContractAgentSchemas,
   type ContractContext,
+  type ContractData,
   ContractSchemas,
   contractDocument,
   contractHelper,
   remapForData,
   type Remapped,
+  type RunRecord,
   sheetExtras,
+  type TermCheck,
 } from "@leasing/helpers";
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
 import { conflict, DomainError, notFound, unprocessable } from "../errors.ts";
 import { advance } from "./advance.ts";
@@ -52,11 +62,12 @@ import { companyLandlord, landlordGapMessage, landlordGaps, landlordSigner } fro
 import { appendEvent, getCompanyPolicy } from "./events.ts";
 import { sendTime } from "./agent-switches.ts";
 import type { FinalContractProposal } from "./gate-rules.ts";
-import { runAndRecord } from "./helpers.ts";
+import { recordRun, runOnly } from "./helpers.ts";
 import { queueLeaseMail } from "./lease-mail.ts";
 import type { LinkRow } from "./links.ts";
 import { createTask } from "./milestones.ts";
-import { matchContractRule } from "./pricing.ts";
+import { blankFiller, contractAgentContext } from "./contract-agent-backend.ts";
+import { matchContractRule, type PricingUnit } from "./pricing.ts";
 
 /**
  * Step 5 (architecture §3 Lease: CONTRACT). The Contract helper copies every field from its
@@ -89,6 +100,39 @@ export async function defaultAddendumFor(tx: Pick<Tx, "db">, leaseId: string): P
     (c): c is Addendum["clauses"][number] => Object.hasOwn(CONTRACT_CLAUSES, c) || approved.has(c),
   );
   return { clauses, freeText: null };
+}
+
+/**
+ * Hash of the contract config a contract follows: the unit's matching rule (its terms and clauses), the approved
+ * template it pins, and the company's approved clauses. A pending contract whose stored hash differs from the
+ * current one was prepared under older rules ("Rules changed: prepare again").
+ */
+export async function contractConfigHash(tx: Pick<Tx, "db">, unit: PricingUnit): Promise<string> {
+  const rule = await matchContractRule(tx, unit);
+  let templateHash: string | null = null;
+  if (rule?.templateId) {
+    try {
+      templateHash = templateKey(await approvedTemplateFor(tx, unit.companyId, rule.templateId)).contentHash;
+    } catch (e) {
+      if (!(e instanceof DomainError)) throw e;
+    }
+  }
+  // Only clauses that reach this unit's contracts: the rule's own and those inside the company template.
+  const used = new Set((rule?.clauseIds ?? []).filter(isCompanyClauseRef).map(companyClauseIdOf));
+  const clauses = (await approvedClauses(tx, unit.companyId))
+    .filter((c) => used.has(c.id) || c.inTemplateId !== null)
+    .map((c) => [c.id, sha256Hex(c.textEn)] as const)
+    .toSorted((a, b) => a[0].localeCompare(b[0]));
+  return sha256Hex(
+    JSON.stringify({
+      rule: rule
+        ? { id: rule.id, tenures: rule.tenures, min: rule.minCheques, max: rule.maxCheques, clauseIds: rule.clauseIds }
+        : null,
+      templateId: rule?.templateId ?? null,
+      templateHash,
+      clauses,
+    }),
+  );
 }
 
 /** The records a contract is copied from, as the helper receives them, and their hash. */
@@ -223,7 +267,7 @@ export async function prepareContract(
       .limit(1);
     if (open) return { status: "exists", contractId: open.id };
   }
-  const pre = await withTx(ctx.database, async (tx) => {
+  const staged = await withTx(ctx.database, async (tx) => {
     const i = await contractInputs(tx, leaseId);
     if (i.lease.state !== "CONTRACT") {
       throw conflict(
@@ -245,49 +289,118 @@ export async function prepareContract(
       .update(leaseParties)
       .set({ partyId: i.landlord.id })
       .where(and(eq(leaseParties.leaseId, leaseId), eq(leaseParties.role, "landlord")));
-    const companyClauses = await resolveCompanyClauses(tx, i.unit.companyId, addendum.clauses);
-    // Approved company clauses are immutable (decideClause only touches `proposed` rows), which is why the
-    // inputHash (records the contract is copied from) does not include their text.
+    const companyClauses = await resolveCompanyClauses(tx, i.unit.companyId, addendum.clauses, { skipRemoved: true });
+    // Clause wording is copied in as it is now. An admin can edit or remove an approved clause later; the inputHash
+    // (records the contract is copied from) leaves the text out, and the config hash shows such a change as
+    // "rules changed" so the contract can be prepared again.
     addendum = { ...addendum, companyClauses };
     if (!companyClauses.length) delete addendum.companyClauses;
-    const { run, helperRunId } = await runAndRecord(
+    const agentCtx = await contractAgentContext(ctx, tx, i, addendum);
+    // Taken before any model call, so a config change while the agent runs still shows as "rules changed".
+    const configHash = await contractConfigHash(tx, i.unit);
+    return { i, addendum, agentCtx, configHash };
+  });
+
+  // The model calls (blank remap, contract agent) run with no transaction open: no locks are held while a model
+  // thinks. What they produced is recorded below, and the second transaction checks the records didn't change.
+  const { i, agentCtx } = staged;
+  addendum = staged.addendum;
+  const entity = { kind: "lease" as const, id: leaseId };
+  const helperRunId = newId();
+  let remapped: Remapped | null = null;
+  let run: RunRecord<ContractData & Partial<ContractAgentData>>;
+  let helperName: string;
+  if (ctx.contractAgent) {
+    // The contract agent (D45): blanks are mapped for the data held now first, so `fill_blanks` sees what prints.
+    const f = buildContractFields({ ...i.context, addendum });
+    if (i.template && f.ok) {
+      const t = parseTemplate(i.template);
+      remapped = await remapForData(ctx.contractAiLlm ?? ctx.llm, t.sections, t.blanks, { ...i.extras, ...f.fields });
+    }
+    const helper = contractAgent(ctx.contractAgent, { fillBlanks: blankFiller(ctx, i, remapped?.blanks) });
+    helperName = helper.name;
+    run = await runOnly(
       ctx,
-      tx,
-      contractHelper(ctx.llm),
+      helper,
+      ContractAgentSchemas,
+      entity,
+      "prepare",
+      agentCtx,
+      i.lease.rulesVersion,
+      helperRunId,
+    );
+  } else {
+    const helper = contractHelper(ctx.llm);
+    helperName = helper.name;
+    run = await runOnly(
+      ctx,
+      helper,
       ContractSchemas,
-      { kind: "lease", id: leaseId },
+      entity,
       "prepare",
       { ...i.context, addendum },
       i.lease.rulesVersion,
+      helperRunId,
     );
-    if (run.result.status !== "ok" || !run.result.data) {
+  }
+
+  const pre = await withTx(ctx.database, async (tx) => {
+    await recordRun(ctx, tx, helperName, entity, i.lease.rulesVersion, run, helperRunId);
+    let result = run.result;
+    let checks: TermCheck[] = result.data?.checks ?? [];
+    if (!ctx.contractAgent && result.status === "ok" && result.data) {
+      // Without the agent's model, code still checks the terms against the contract config.
+      checks = checkContractTerms(agentCtx, result.data.fields, await blankFiller(ctx, i)(result.data.fields));
+      const failed = checks.filter((c) => !c.ok);
+      if (failed.length) result = { ...result, status: "needs_human", reasons: failed.map((c) => c.reason) };
+    }
+    if (result.status !== "ok" || !result.data) {
       await createTask(ctx, tx, leaseId, {
         kind: "contract_needs_person",
-        title: `Contract for ${i.lease.ref} can't be prepared: ${run.result.reasons.join(" ")}`,
-        details: { helperRunId, reasons: run.result.reasons },
+        title: `Contract for ${i.lease.ref} can't be prepared: ${result.reasons.join(" ")}`,
+        details: { helperRunId, reasons: result.reasons },
         assigneeRole: "leasing_officer",
         dueOn: ctx.clock.today(),
         dedupeKey: `${leaseId}:contract_needs_person:${i.inputHash}:${sha256Hex(JSON.stringify(addendum))}`,
       });
-      return { ok: false as const, reasons: run.result.reasons, helperRunId };
+      // A model that could not be reached: the job is retried (the task stays until a preparation succeeds).
+      return { ok: false as const, reasons: result.reasons, helperRunId, retry: result.status === "failed" };
+    }
+    let data: ContractData = result.data;
+    if (ctx.contractAgent) {
+      // The clauses the agent chose: their wording is copied from the approved rows by code.
+      const chosen = await resolveCompanyClauses(tx, i.unit.companyId, data.addendum.clauses);
+      const { companyClauses: _drop, ...rest } = data.addendum;
+      data = { ...data, addendum: chosen.length ? { ...rest, companyClauses: chosen } : rest };
     }
     return {
       ok: true as const,
-      data: run.result.data,
+      data,
       helperRunId,
       inputHash: i.inputHash,
+      configHash: staged.configHash,
       template: i.template,
       extras: i.extras,
+      remapped,
+      checks,
+      clauseReasons: result.data.clauseReasons ?? [],
     };
   });
+  if (!pre.ok && pre.retry && input.actor === "system") {
+    throw new DomainError(
+      `The contract agent's model is unavailable: ${pre.reasons.join(" ")}`,
+      503,
+      "model_unavailable",
+    );
+  }
   if (!pre.ok) return { status: "needs_human", reasons: pre.reasons, helperRunId: pre.helperRunId };
 
   // Every preparation (the job after the offer, the copilot's confirmed proposal, "Prepare again"): the blank mapping
   // of the approved template is refreshed against the data held now (code rules, then the model on keys and
   // descriptions only). The template row is never edited; the mapping used is kept in the event payload. A model
   // that is down leaves the stored mapping in place.
-  let remap: Remapped | null = null;
-  if (pre.template) {
+  let remap: Remapped | null = pre.remapped;
+  if (pre.template && !remap) {
     const t = parseTemplate(pre.template);
     remap = await remapForData(ctx.contractAiLlm ?? ctx.llm, t.sections, t.blanks, {
       ...pre.extras,
@@ -322,18 +435,35 @@ export async function prepareContract(
         .leftJoin(approvals, eq(approvals.id, contracts.approvalId))
         .where(eq(contracts.leaseId, leaseId))
         .for("update", { of: contracts });
-      if (held.some((r) => r.c.status === "sent" || r.c.status === "signed" || r.approvalStatus === "approved")) {
+      // A contract out for signing can be prepared again while nobody has signed it yet (D47): its signing links stop
+      // working and the new version waits at the final_contract gate like any other. Once anyone signed, never.
+      const sent = held.filter((r) => r.c.status === "sent").map((r) => r.c.id);
+      const [signature] = sent.length
+        ? await tx.db
+            .select({ id: contractSigners.id })
+            .from(contractSigners)
+            .where(and(inArray(contractSigners.contractId, sent), isNotNull(contractSigners.signedAt)))
+            .limit(1)
+        : [];
+      if (
+        signature ||
+        held.some(
+          (r) => r.c.status === "signed" || (r.c.status === "pending_approval" && r.approvalStatus === "approved"),
+        )
+      ) {
         throw conflict(
-          "The contract was already approved or sent to the signers, so it can't be prepared again.",
+          "The contract was already signed by someone or approved a moment ago, so it can't be prepared again.",
           "contract_already_approved",
         );
       }
-      supersededVersion = held.find((r) => r.c.status === "pending_approval")?.c.version ?? null;
+      supersededVersion =
+        held.find((r) => r.c.status === "pending_approval" || r.c.status === "sent")?.c.version ?? null;
       if (supersededVersion === null) {
-        throw conflict("There is no contract waiting for approval to prepare again.", "no_pending_contract");
+        throw conflict("There is no contract waiting for approval or signing to prepare again.", "no_pending_contract");
       }
     }
-    await supersedeOpenContracts(ctx, tx, leaseId, `replaced by version ${version}`, input.reprepare === true);
+    // Prepare again replaces the pending or unsigned sent version (signing links expire); see the guard above.
+    await supersedeOpenContracts(ctx, tx, leaseId, `replaced by version ${version}`);
 
     const d = pre.data;
     const reference = shortRef("C");
@@ -344,9 +474,13 @@ export async function prepareContract(
     let leftEmpty: string[] = [];
     let filled: { label: string; key: string }[] = [];
     if (i.template) {
+      const rule = await matchContractRule(tx, i.unit);
       ({ pdf, leftEmpty, filled } = await renderCompanyContract(ctx, tx, i.template, {
         fields: d.fields,
         addendum: d.addendum,
+        // A linked paragraph prints for clauses in the rule and for any the contract's addendum chose, so the PDF never
+        // drops a clause the addendum lists (D47).
+        ruleClauseIds: [...(rule?.clauseIds ?? []), ...d.addendum.clauses],
         version,
         reference,
         subject,
@@ -386,6 +520,7 @@ export async function prepareContract(
       addendum: d.addendum,
       flags: d.flags,
       inputHash: i.inputHash,
+      configHash: pre.configHash,
       helperRunId: pre.helperRunId,
       documentId,
       sha256: stored.sha256,
@@ -434,6 +569,8 @@ export async function prepareContract(
         ...(d.flags.length
           ? d.flags.map((f) => `Addendum ${f.kind.replace("_", " ")}: "${f.quote}" (${f.reason})`)
           : ["Every field is copied from its record. Check them against the sources and the PDF before approving."]),
+        ...pre.checks.map((c) => c.reason),
+        ...pre.clauseReasons.map((r) => `Clause ${r.id}: ${r.reason}`),
       ],
       sources: [
         { kind: "document", documentId, label: `Contract PDF, version ${version}` },
@@ -486,38 +623,40 @@ export async function prepareContract(
     await tx.db
       .update(tasks)
       .set({ status: "done" })
-      .where(and(eq(tasks.dedupeKey, `${leaseId}:prepare_contract`), eq(tasks.status, "open")));
+      .where(
+        and(
+          eq(tasks.status, "open"),
+          or(
+            eq(tasks.dedupeKey, `${leaseId}:prepare_contract`),
+            and(eq(tasks.entityId, leaseId), eq(tasks.kind, "contract_needs_person")),
+          ),
+        ),
+      );
     return { status: "prepared" as const, contractId, version, approvalId: approval.id };
   });
 }
 
 /**
- * "Prepare contract again" (staff). Allowed only while the open contract still waits for its `final_contract`
- * approval and nothing went to the signers. The pending approval is cancelled (CONTRACT_SUPERSEDED) and a new
- * contract is rendered from the current rule and template, with the same addendum, and a new `final_contract`
- * approval opens. Refused once a contract was approved, sent or signed. The gate is unchanged.
+ * "Prepare contract again" (staff). Allowed while the open contract waits for its `final_contract` approval, or is out
+ * for signing with nobody signed yet (D47: its signing links stop working). The open version is superseded
+ * (CONTRACT_SUPERSEDED), a new contract is rendered from the current rule and template with the same addendum, and a
+ * new `final_contract` approval opens. Refused once anyone signed (checked again under the lock). The gate is unchanged.
  */
 export async function reprepareContract(ctx: EngineContext, leaseId: string, actor: Actor) {
   const [latest] = await ctx.database.db
     .select({ addendum: contracts.addendum })
     .from(contracts)
-    .where(and(eq(contracts.leaseId, leaseId), eq(contracts.status, "pending_approval")))
+    .where(and(eq(contracts.leaseId, leaseId), inArray(contracts.status, ["pending_approval", "sent"])))
     .orderBy(desc(contracts.version))
     .limit(1);
   if (!latest) {
-    // Same answers as the locked check: an approved or sent contract refuses, otherwise nothing is pending.
     const [done] = await ctx.database.db
       .select({ id: contracts.id })
       .from(contracts)
-      .where(and(eq(contracts.leaseId, leaseId), inArray(contracts.status, ["sent", "signed"])))
+      .where(and(eq(contracts.leaseId, leaseId), eq(contracts.status, "signed")))
       .limit(1);
-    if (done) {
-      throw conflict(
-        "The contract was already approved or sent to the signers, so it can't be prepared again.",
-        "contract_already_approved",
-      );
-    }
-    throw conflict("There is no contract waiting for approval to prepare again.", "no_pending_contract");
+    if (done) throw conflict("This contract is already signed, so it can't be prepared again.", "contract_signed");
+    throw conflict("There is no contract waiting for approval or signing to prepare again.", "no_pending_contract");
   }
   const old = latest.addendum as Addendum;
   const addendum = Addendum.parse({ clauses: old.clauses, freeText: old.freeText ?? null });

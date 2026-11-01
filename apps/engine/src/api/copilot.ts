@@ -27,6 +27,7 @@ import {
   proposeOther,
   threadProposals,
 } from "../manager/copilot-proposals.ts";
+import { explicitConfigChange, proposeConfigChange } from "../manager/config-changes.ts";
 import { readVoiceBody, transcribeVoice } from "../manager/voice.ts";
 import { ipLimiter } from "./secret-gate.ts";
 import { createDraft, draftView, threadDrafts } from "../manager/staff-messages.ts";
@@ -43,6 +44,10 @@ const PROPOSE_TOOLS = new Set([
   "propose_request_documents",
   "propose_resend_signing_link",
   "propose_prepare_contract",
+  "add_contract_clause",
+  "save_rent_rule",
+  "save_contract_rule",
+  "save_sri_value",
 ]);
 const DRAFT_TOOLS = new Set(["draft_email", "draft_approval_note"]);
 
@@ -100,7 +105,9 @@ export function registerCopilotRoutes(api: Hono<AuthEnv>, ctx: EngineContext, ap
     if ("error" in read) return c.json({ error: read.error, code: read.code }, read.status);
     const bytes = read.bytes;
     if (bytes.length === 0) return c.json({ ok: false, message: "I didn't catch that. Please try again." });
-    return c.json(await transcribeVoice(ctx, bytes));
+    return c.json(
+      await transcribeVoice(ctx, bytes, c.req.header("content-type")?.split(";")[0]?.trim() || "audio/webm"),
+    );
   });
 
   api.post("/copilot/chat", async (c) => {
@@ -303,6 +310,8 @@ export function registerCopilotRoutes(api: Hono<AuthEnv>, ctx: EngineContext, ap
     // the four engine actions (D42).
     if (ACTION_KINDS.includes(body.kind as (typeof ACTION_KINDS)[number]))
       return c.json(await proposeAction(ctx, c.get("user"), threadId.data, body), 201);
+    if (body.kind === "config_change")
+      return c.json(await proposeConfigChange(ctx, c.get("user"), threadId.data, body), 201);
     if (body.kind === "create_task" || body.kind === "request_approval")
       return c.json(await proposeOther(ctx, c.get("user"), threadId.data, body), 201);
     const { kind: _k, ...rest } = body as Record<string, unknown>;
@@ -310,6 +319,19 @@ export function registerCopilotRoutes(api: Hono<AuthEnv>, ctx: EngineContext, ap
       await proposeApplication(ctx, c.get("user"), threadId.data, body.kind === "create_application" ? rest : body),
       201,
     );
+  });
+  /**
+   * An explicit settings change (D45): applied now, as the user, only when `userQuote` is in the user's own latest
+   * message of the thread. Suggestions go through /copilot/proposals and wait for Confirm.
+   */
+  api.post("/copilot/config-changes", async (c) => {
+    const threadId = z.uuid().safeParse(c.req.header(COPILOT_THREAD_HEADER));
+    if (!threadId.success)
+      throw new DomainError("settings changes are made from a copilot conversation", 400, "no_thread");
+    const body = z
+      .object({ mode: z.literal("explicit"), userQuote: z.string().max(2000), change: z.unknown() })
+      .parse(await c.req.json());
+    return c.json(await explicitConfigChange(ctx, c.get("user"), threadId.data, body.userQuote, body.change));
   });
   /** Saves a copilot draft in the caller's thread. Sends nothing. */
   api.post("/copilot/drafts", async (c) => {

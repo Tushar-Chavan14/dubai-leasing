@@ -41,6 +41,7 @@ const ALLOWED = [
   new RegExp(`^/api/available-units(\\?(${AU})(&(${AU}))*)?$`),
   /^\/api\/copilot\/pipeline$/,
   /^\/api\/copilot\/companies$/,
+  /^\/api\/copilot\/company-settings\?company=[^&]{2,200}$/,
   /^\/api\/copilot\/contract-status\?ref=[^&]{2,200}$/,
   new RegExp(`^/api/copilot/records(\\?(${RK})(&(${RK}))*)?$`),
   /^\/api\/records\/(application|lease)\/[0-9a-fA-F-]{36}\/log$/,
@@ -54,6 +55,13 @@ const ALLOWED = [
 
 /** The only write the copilot can make: store a proposal. Confirm and cancel are never reachable. */
 const PROPOSE_ALLOWED = [/^\/api\/copilot\/proposals$/, /^\/api\/copilot\/drafts$/];
+
+/** The only path of `change`: an explicit settings change, checked by the engine against the user's words. */
+const CHANGE_ALLOWED = /^\/api\/copilot\/config-changes$/;
+function checkChangePath(path: string): string {
+  if (!CHANGE_ALLOWED.test(path)) throw new EngineError(400, "invalid engine path");
+  return path;
+}
 
 function checkProposePath(path: string): string {
   if (!PROPOSE_ALLOWED.some((r) => r.test(path))) throw new EngineError(400, "invalid engine path");
@@ -82,6 +90,18 @@ export function inProcessClient(
       const res = await app.request(checkPath(path), { method: "GET", headers: auth });
       return parse<T>(res, path);
     },
+    async change<T>(path: string, body: unknown) {
+      const res = await app.request(checkChangePath(path), {
+        method: "POST",
+        headers: {
+          ...auth,
+          "content-type": "application/json",
+          ...(opts.threadId ? { "x-copilot-thread": opts.threadId } : {}),
+        },
+        body: JSON.stringify(body),
+      });
+      return parse<T>(res, path);
+    },
     async propose<T>(path: string, body: unknown) {
       const res = await app.request(checkProposePath(path), {
         method: "POST",
@@ -103,6 +123,18 @@ export function httpClient(baseUrl: string, sessionToken: string, opts: { thread
   return {
     async get<T>(path: string) {
       const res = await fetch(new URL(checkPath(path), baseUrl), { method: "GET", headers: auth });
+      return parse<T>(res, path);
+    },
+    async change<T>(path: string, body: unknown) {
+      const res = await fetch(new URL(checkChangePath(path), baseUrl), {
+        method: "POST",
+        headers: {
+          ...auth,
+          "content-type": "application/json",
+          ...(opts.threadId ? { "x-copilot-thread": opts.threadId } : {}),
+        },
+        body: JSON.stringify(body),
+      });
       return parse<T>(res, path);
     },
     async propose<T>(path: string, body: unknown) {

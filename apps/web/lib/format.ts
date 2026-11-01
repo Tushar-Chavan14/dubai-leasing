@@ -18,6 +18,9 @@ export const ROLE_LABELS: Record<string, string> = {
 };
 export const roleLabel = (r: string) => ROLE_LABELS[r] ?? r;
 
+/** "Silverline Properties'" but "Acme's". */
+export const possessive = (name: string) => (name.endsWith("s") ? `${name}'` : `${name}'s`);
+
 /** AED without fils when they're zero: "AED 85,000". */
 export function aedShort(fils: number | null | undefined): string {
   if (fils === null || fils === undefined) return "—";

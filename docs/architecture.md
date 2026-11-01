@@ -138,6 +138,10 @@ remove one.
   reusable status link (`application`). Uploads: JPEG/PNG/WebP by content, 10 MB, EXIF/GPS
   stripped, stored content-addressed in `UPLOADS_DIR`. "Send for checking" = `DOCS_UPLOADED`
   (spends the link).
+- The upload page renders the company's **document form** (D46, `company_kyc_configs`): typed answers go with
+  `DOCS_UPLOADED`, are validated against the form version shown and stored on `applications.form_answers`. The KYC
+  helper gets the company's **KYC rules** (base switches and values, company rules) and the answers; the name check
+  uses the "name as per documents" answer. Every failed rule is a non-blocking flag; custom AI rules can only flag.
 - `DOCS_UPLOADED` runs the **KYC helper** (vision reads each image; pure code decides). Nothing
   flagged → `KYC_VERIFIED`, which copies the identity onto the applicant's party (never retyped;
   the ID's English name becomes `full_name_en`; an Emirates ID already on another party moves the
@@ -431,6 +435,18 @@ export interface Helper<C, D> {
 The runner wraps every helper: validate input → run → validate output → on invalid retry once
 → else `needs_human`. It writes a `helper_runs` row (input hash, output, duration, model, tokens).
 
+### Contract agent (D45)
+
+`contract_agent` prepares the contract on the `contract.prepare` job when a model is configured
+(`CONTRACT_AI_MODEL`, else `CHAT_MODEL`; local only). LangGraph tool loop, at most 8 tool calls. Tools (code, no
+arguments): `contract_inputs`, `contract_rule`, `company_clauses`, `template`, `fill_blanks`, `check_terms`.
+Company-written text reaches the model inside `<<<DATA_…>>>` delimiters. The model returns
+`{ extraClauseIds, clauseReasons, flags }`; code recomputes the checks, filters clause ids to standard or
+approved company clauses not inside the template, and copies every field from the records. A failed check →
+`needs_human` → `contract_needs_person` task. The `final_contract` approval lists the checks and clause reasons.
+Without a model, `contract` (below) runs and the same checks apply. `contracts.config_hash` lets the lease page
+show "Rules changed: prepare again" only when the config changed after preparation, while the contract waits for approval or is out for signing with nobody signed yet (D47: the unsigned signing links expire and the new version goes back to `final_contract`).
+
 ### Contract template and customer agent (slice 3, D35, D36)
 
 - **`contract_template`** (`packages/helpers/src/contract-template`): reads a sample contract (PDF
@@ -458,11 +474,18 @@ The runner wraps every helper: validate input → run → validate output → on
   picks a key or "none" from key descriptions only (no values), code checks type fit, anything else
   is `leave_empty`. At prepare, code copies the value; a blank with no value prints as an empty
   line, except core legal/money keys (rent, dates, deposit, cheques, parties, unit, period) which
-  block. `final_contract` lists each filled blank with its source key and what was left empty. Review
-  and approval are code (`render.ts`): wrong-type mappings, DLD or Ejari marks (header, footer, logo block
-  until dropped; body wording needs "Neutral reference, not branding"), values per paragraph
-  (`review.valuesConfirmed`), WinAnsi limit, required terms appended (D38).
-- **Voice** is speech to text only (`VOICE_MODEL`, local Ollama audio input), see section 8.
+  block. `final_contract` lists each filled blank with its source key and what was left empty. D47: the
+  template gives the **look** (layout, headings, fixed wording, fields, signature block); each clause read from the
+  same sample is linked to its paragraph (`company_clauses.template_paragraph_key` + `in_template_id`,
+  `linkSampleClauses`, run when both jobs finish and once at engine start), and that paragraph prints the clause's
+  current wording (`[label]` mapped back to the paragraph's blanks), only while the clause is approved and in the
+  contract's rule; otherwise it is left out. Code applies the review itself (`autoReview`): a header, footer or
+  logo with DLD/RERA/Ejari marks or sample values is removed, sample notes and paragraphs with sample values are
+  left out, each listed as "What we changed". Approval ("Approve all", `POST /companies/:id/sample/approve`)
+  approves the sample's clauses (ticked ones join its rule) and the template together; it is blocked only by text
+  outside WinAnsi and needs one "I checked" tick when amounts, dates, DLD/RERA wording or a logo are kept. Required
+  terms are still appended (D38).
+- **Voice** is speech to text only (local whisper.cpp server, `VOICE_URL`), see section 8.
 
 ### Run loop
 
@@ -491,7 +514,7 @@ flowchart LR
 | Complaint Triage | category, urgency 0–3, safety, legal threat, system instruction, language | 2–3 sentence acknowledgement from the category and urgency band only (never the tenant's text), post-checked; fixed EN/AR template on any doubt (D28) | — | routing (escalate / review / ticket), ticket due hours from policy |
 | Contract template (D35) | - | clause proposals from a sample contract (`CHAT_MODEL`; text only, the quote must appear in the document) | `VISION_MODEL` only if a page renderer is wired (not yet) | PDF text, caps, quote guard, `hasValues`, approval, `cc:` ids |
 | Contract structure (D38) | - | headings and blank-to-field proposals from a sample (`CONTRACT_AI_MODEL`, else `CHAT_MODEL`), validated by code | - | wording copy, blanks, look, mapping types, approval problems, render |
-| Voice (D39) | - | speech to text (`VOICE_MODEL`, default `gemma4:e4b`, local audio) | - | type, size and length caps, masking, nothing stored |
+| Voice (D39) | - | speech to text (whisper.cpp `ggml-base.bin` via `VOICE_URL`, local) | - | type, size and length caps, masking, nothing stored |
 | Customer agent (D36) | - | tool loop for web chat free text (`CUSTOMER_AGENT_MODEL`, else `CHAT_MODEL`; local Ollama, tool calling) | - | every tool body, identity, choice cards, value post-check, deadline, fixed fallbacks |
 | Renewal & Notice | reply class | — | — | cap, dates, template |
 | Exit & Deposit | — | — | photo differences per room, move-in vs move-out, price-list ids only, suggestions an officer confirms (`exit_compare`, D29) | statement: price list × quantity, capped at the deposit, refund, approval reasons (`exit_deposit`) |
@@ -787,8 +810,13 @@ emails. No inbound email parsing in the MVP.
 A microphone button in the public chat and the staff copilot records at most 30 s (`audio/webm`
 or `audio/ogg`, 2 MB). The web routes (`/api/public/voice`, `/api/voice/transcribe`) relay to the
 engine (`/channel/web/voice`, `/api/voice/transcribe`), refusing a missing `Content-Length` (411)
-and reading the body as a stream cut off past the cap (413). The engine sends the audio to
-`VOICE_MODEL` on local Ollama; the bytes stay in memory for the call and are never stored. The
+and reading the body as a stream cut off past the cap (413). The engine sends the audio to a
+local whisper.cpp `whisper-server` (`VOICE_URL`, loopback only, model `ggml-base.bin`; D46); the bytes stay in
+memory for the call and are never stored. Without `VOICE_URL` voice input answers "Voice input isn't set up".
+Setup: `bun run voice:setup` (clones and builds whisper.cpp into `data/whisper.cpp`, downloads
+`ggml-base.bin`; needs git, cmake, a C++ compiler and ffmpeg), then `bun run voice` (starts `whisper-server` on the
+loopback host and port of `VOICE_URL`, language auto-detect, temporary files in `/dev/shm`). The microphone shows
+only when the engine has `VOICE_URL` (`/health` → `voice`). The
 reply is the PII-masked transcript, which fills the message box: the person reads and sends it as
 typed text, so it is untrusted input like any message. Limits: 20 per IP per hour (public), 60 per
 user per hour (staff). Speaking back uses only the browser's local voices. Voice opens no new
@@ -1161,6 +1189,8 @@ export interface CopilotTool<I extends z.ZodTypeAny, O extends z.ZodTypeAny> {
 |---|---|---|---|
 | `read` | `search_entities`, `get_lease`, `get_lease_timeline`, `list_deadlines`, `list_approvals`, `get_helper_run`, `list_outbound_messages`, `explain_rule`, `compute_renewal_cap`, `find_available_units`, `get_case_pack` (leasing roles; the dispute case index, tenant text untrusted), `list_payments`, `list_tickets`, `list_tasks`, `list_enquiries`, `get_enquiry` (visitor text untrusted), `get_unit` (SRI band and rent-rule range from the engine), `viewing_slots` | None | No |
 | `draft` | `draft_email` (leasing roles, finance; to a lease's tenant or an application's applicant, D42), `draft_approval_note` (any staff), `summarise_case` (leasing roles; an RDC case summary built from `get_case_pack`, opened on the lease page with copy/download, never filed) | Saves a `copilot_drafts` row in the user's thread; the user opens it in the normal form, edits it and sends or posts it. The copilot never sends | No |
+| `read` (settings, D45) | `get_company_settings` (all staff) | `GET /api/copilot/company-settings?company=` | No |
+| `propose` (settings, D45) | `add_contract_clause`, `save_rent_rule`, `save_contract_rule` (admin), `save_sri_value` (admin, leasing manager) | `explicit`: `POST /api/copilot/config-changes`, applied now only if `userQuote` is in the user's latest message; `suggest`: a `config_change` proposal | `explicit`: no (the user's own words asked for it); `suggest`: **yes** |
 | `propose` | `propose_application` (D25), `propose_viewing_invite`, `propose_request_documents`, `propose_resend_signing_link`, `propose_prepare_contract` (leasing roles; D42: prepare only, the contract still waits at `final_contract`), `create_task` (leasing roles), `propose_approval` (gates `formal_reminder`: leasing roles and finance; `vacate_notice`: leasing roles) (D26) | Stores a proposal; on Confirm the normal engine route creates the application, the task or the pending approval, as the user | **Yes**: the user clicks Confirm in the chat |
 
 **Proposals and Confirm (phase 3, D25):** `propose_application` stores a `copilot_proposals`
@@ -1359,7 +1389,7 @@ Key columns:
 - `rent_rules` (D32): `company_id`, `category`, `subtype`, `emirate`, `community`, `min_pct_bp`, `max_pct_bp` (signed basis points vs SRI), `min_rent_fils`, `max_rent_fils`, `active`, `supersedes_id`, `created_by`; immutable, replaced by a new row
 - `contract_rules` (D32): `company_id`, `category`, `subtype`, `tenures`, `min_cheques`, `max_cheques` (1 to 12), `clause_ids`, `sample_document_id`, `active`, `supersedes_id`, `created_by`
 - `visitor_verifications` (D34, migration 0020): `conversation_id`, `email`, `code_hash` (HMAC, never the code), `attempts`, `expires_at`, `verified_at`, `created_at`; `outbound_messages.purpose` gains `chat_code`
-- `company_clauses` (D35, migration 0021): `company_id`, `contract_rule_id`, `title`, `text_en`, `quote`, `category`, `has_values` (set by code), `status (proposed|approved|rejected)`, `source_document_id`, `helper_run_id`, `approved_by`, `approved_at`, `created_by`; approved rows are never edited; contracts reference them as `cc:<uuid>` in `addendum.clauses`
+- `company_clauses` (D35, migration 0021): `company_id`, `contract_rule_id`, `title`, `text_en`, `quote`, `category`, `has_values` (set by code), `status (proposed|approved|rejected|removed)`, `in_template_id`, `template_paragraph_key` (D47, migration 0029), `source_document_id`, `helper_run_id`, `approved_by`, `approved_at`, `created_by`; an admin may edit an approved row outside the template wording (`PATCH /company-clauses/:id`, event `COMPANY_CLAUSE_EDITED` with the earlier wording) or remove it (`DELETE`, status `removed`, dropped from the company's active rules as new rule versions, skipped when a contract is prepared from an earlier offer); prepared contracts then show "rules changed" through the config hash, signed ones keep their PDF; contracts reference them as `cc:<uuid>` in `addendum.clauses`
 - `sri_averages`: `community`, `category`, `bedrooms` (null for commercial and retail), `avg_annual_rent_fils` or `avg_annual_rent_per_sqft_fils` (exactly one), `source (mock|manual)`, `effective_from`; `sri_overrides`: `lease_id`, `lease_end_on`, `avg_annual_rent_fils`, `reason`, `entered_by`
 - `rulebooks`: `version` unique, `emirate`, `status (draft|published)`, `based_on`, `effective_from` (date), `values jsonb` (`RulebookValues`), `reference_rules jsonb`, `created_by`, `published_by`, `published_at`; published rows immutable (trigger); see §4
 - `copilot_threads`: `user_id`, `context_entity` (kind + id the panel was opened on, nullable), `created_at`

@@ -183,6 +183,8 @@ export const applications = pgTable(
     ref: text("ref"),
     requestedMoveInOn: calDate("requested_move_in_on"),
     kycVerifiedAt: ts("kyc_verified_at"),
+    /** What the applicant typed in the company's document form (D46), with the form version answered. */
+    formAnswers: jsonb("form_answers").$type<{ version: number; answers: Record<string, string> }>(),
     offerAcceptedAt: ts("offer_accepted_at"),
     reservationFils: fils("reservation_fils"),
     reservationRef: text("reservation_ref"),
@@ -784,6 +786,29 @@ export const contractRules = pgTable(
   ],
 );
 
+/**
+ * A company's document form and KYC rules (D46), versioned: saving makes a new row and deactivates the old one, so an
+ * application keeps the version it answered and was checked against.
+ */
+export const companyKycConfigs = pgTable(
+  "company_kyc_configs",
+  {
+    id: id(),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id),
+    version: integer("version").notNull(),
+    /** `FormField[]` (packages/core kyc-config). */
+    form: jsonb("form").notNull(),
+    /** `KycRules`. */
+    rules: jsonb("rules").notNull(),
+    active: boolean("active").notNull().default(true),
+    createdBy: text("created_by").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("company_kyc_configs_version_uq").on(t.companyId, t.version)],
+);
+
 /** Clauses proposed from a company's sample contract. Only `approved` ones can reach a contract. */
 export const companyClauses = pgTable(
   "company_clauses",
@@ -801,8 +826,16 @@ export const companyClauses = pgTable(
     category: text("category").notNull(),
     /** Set by code, never by the model: the text contains an amount, a number or a period. */
     hasValues: boolean("has_values").notNull(),
-    status: text("status").$type<"proposed" | "approved" | "rejected">().notNull().default("proposed"),
+    /** `removed`: an approved clause an admin took out; kept for the audit trail, used nowhere. */
+    status: text("status").$type<"proposed" | "approved" | "rejected" | "removed">().notNull().default("proposed"),
     sourceDocumentId: uuid("source_document_id").references(() => documents.id),
+    /**
+     * The company template this clause is linked to (D47): its paragraph prints this clause's current wording. Set
+     * when the clause is linked to a template paragraph (proposed or approved); older rows: approved with the template.
+     */
+    inTemplateId: uuid("in_template_id"),
+    /** The template paragraph (`<sectionId>:<index>`) the clause was read from and prints into (D47). */
+    templateParagraphKey: text("template_paragraph_key"),
     helperRunId: uuid("helper_run_id"),
     approvedBy: text("approved_by"),
     approvedAt: ts("approved_at"),
@@ -1062,6 +1095,7 @@ export const copilotProposals = pgTable(
         | "request_documents"
         | "resend_signing_link"
         | "prepare_contract"
+        | "config_change"
       >()
       .notNull(),
     /** What will be done on Confirm, validated when proposed and again on Confirm. */
@@ -1141,6 +1175,8 @@ export const contracts = pgTable(
     flags: jsonb("flags").$type<AddendumFlag[]>().notNull().default([]),
     /** Hash of the records the fields were copied from; a change makes the approval stale. */
     inputHash: text("input_hash").notNull(),
+    /** Hash of the contract config used (rule, template, approved clauses): a different current hash means "rules changed". */
+    configHash: text("config_hash"),
     helperRunId: uuid("helper_run_id"),
     documentId: uuid("document_id"),
     sha256: text("sha256").notNull(),

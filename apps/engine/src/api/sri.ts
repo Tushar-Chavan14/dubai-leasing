@@ -1,9 +1,9 @@
-import { newId } from "@leasing/core";
-import { sriAverages } from "@leasing/db";
+import { sriAverages, withTx } from "@leasing/db";
 import { asc } from "drizzle-orm";
 import type { Hono } from "hono";
 import { z } from "zod";
 import type { EngineContext } from "../context.ts";
+import { saveSriValue } from "../manager/sri-values.ts";
 import { type AuthEnv, requireRole } from "./auth.ts";
 
 const actorOf = (c: { get(k: "user"): { id: string } }) => `user:${c.get("user").id}` as const;
@@ -29,22 +29,7 @@ export function registerSriRoutes(api: Hono<AuthEnv>, ctx: EngineContext) {
         avgAnnualRentFils: z.number().int().positive().max(100_000_000_00),
       })
       .parse(await c.req.json());
-    const today = ctx.clock.today();
-    const [row] = await db
-      .insert(sriAverages)
-      .values({
-        id: newId(),
-        ...b,
-        category: "residential",
-        source: "manual",
-        effectiveFrom: today,
-        createdBy: actorOf(c),
-      })
-      .onConflictDoUpdate({
-        target: [sriAverages.community, sriAverages.category, sriAverages.bedrooms, sriAverages.effectiveFrom],
-        set: { avgAnnualRentFils: b.avgAnnualRentFils, source: "manual", createdBy: actorOf(c) },
-      })
-      .returning();
+    const row = await withTx(ctx.database, (tx) => saveSriValue(ctx, tx, b, actorOf(c)));
     return c.json(row);
   });
 }

@@ -1,17 +1,73 @@
 import { Addendum, maskPii, type StaffRole } from "@leasing/core";
-import { contracts, contractSigners, ejariSubmissions, leases, units } from "@leasing/db";
-import { asc, desc, eq } from "drizzle-orm";
+import { contracts, contractSigners, ejariSubmissions, leases, tasks, units } from "@leasing/db";
+import { and, asc, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { Hono } from "hono";
 import { z } from "zod";
 import type { EngineContext } from "../context.ts";
 import { approvedClauses } from "../manager/clause-refs.ts";
-import { defaultAddendumFor, prepareContract, reprepareContract, resendSignLink } from "../manager/contracts.ts";
+import {
+  contractConfigHash,
+  defaultAddendumFor,
+  prepareContract,
+  reprepareContract,
+  resendSignLink,
+} from "../manager/contracts.ts";
 import { reproposeEjariSubmission } from "../manager/registration.ts";
 import { type AuthEnv, requireRole } from "./auth.ts";
 
 const LEASING: StaffRole[] = ["leasing_officer", "leasing_manager"];
 const actorOf = (c: { get(k: "user"): { id: string } }) => `user:${c.get("user").id}` as const;
 const uuid = (v: string | undefined) => z.uuid().catch("00000000-0000-0000-0000-000000000000").parse(v);
+
+/**
+ * Whether staff need to prepare the contract by hand (only then the panel shows the button): `failed` while the lease
+ * waits in CONTRACT with no open contract or with a preparation task open; `rules_changed` when the pending
+ * contract was prepared under a contract config that has since changed.
+ */
+/**
+ * Why staff may need to prepare the contract by hand: `failed` (a preparation task is open), `rejected` (the last
+ * version was not approved), `not_prepared` (nothing prepared yet: the job may still be queued), `rules_changed`
+ * (the pending contract predates a contract config change). Null: nothing to do.
+ */
+export type PrepareNeeded = "failed" | "rejected" | "not_prepared" | "rules_changed" | null;
+async function prepareNeeded(
+  db: EngineContext["database"]["db"],
+  leaseId: string,
+  cs: (typeof contracts.$inferSelect)[],
+): Promise<PrepareNeeded> {
+  const [row] = await db
+    .select({ lease: leases, unit: units })
+    .from(leases)
+    .innerJoin(units, eq(units.id, leases.unitId))
+    .where(eq(leases.id, leaseId));
+  if (row?.lease.state !== "CONTRACT") return null;
+  const open = cs.find((c) => c.status === "pending_approval" || c.status === "sent" || c.status === "signed");
+  const [task] = await db
+    .select({ id: tasks.id })
+    .from(tasks)
+    .where(
+      and(
+        eq(tasks.entityId, leaseId),
+        eq(tasks.status, "open"),
+        inArray(tasks.kind, ["contract_needs_person", "prepare_contract"]),
+      ),
+    )
+    .limit(1);
+  if (task && (!open || open.status === "pending_approval")) return "failed";
+  if (!open) return cs[0]?.status === "rejected" ? "rejected" : "not_prepared";
+  // Waiting for approval, or out for signing with nobody signed yet (D47): a config change offers "prepare again".
+  if (open.status !== "pending_approval" && open.status !== "sent") return null;
+  if (!open.configHash || open.configHash === (await contractConfigHash({ db }, row.unit))) return null;
+  if (open.status === "sent") {
+    const [signed] = await db
+      .select({ id: contractSigners.id })
+      .from(contractSigners)
+      .where(and(eq(contractSigners.contractId, open.id), isNotNull(contractSigners.signedAt)))
+      .limit(1);
+    if (signed) return null;
+  }
+  return "rules_changed";
+}
 
 /** Contract versions with their signers, and Ejari attempts, for the lease page. ID numbers masked. */
 export async function leaseContractView(db: EngineContext["database"]["db"], leaseId: string) {
@@ -40,6 +96,7 @@ export async function leaseContractView(db: EngineContext["database"]["db"], lea
   const approved = lu ? await approvedClauses({ db }, lu.companyId) : [];
   const suggested = lu ? (await defaultAddendumFor({ db }, leaseId)).clauses : [];
   return {
+    prepareNeeded: await prepareNeeded(db, leaseId, cs),
     clauseOptions: {
       suggested,
       companyClauses: approved.map((c) => ({
