@@ -1,0 +1,3 @@
+name,slug,kind,categories,legal_name_en,legal_name_ar,trade_licence_no,licence_authority,trade_licence_expires_on,rera_orn,registered_address,email,phone,cheque_payee,signatory_name,signatory_title,signatory_email,signatory_id_no,signatory_id_expires_on
+Sample Harbour Realty,sample-harbour,realty,residential;commercial,Sample Harbour Realty L.L.C. (demo),,DEMO-TL-900001,Demo Department of Economy and Tourism,2030-12-31,DEMO-ORN-9001,"Demo Tower, Business Bay, Dubai (fictional)",leasing@sample-harbour.demo.example,+971 4 000 0901,Sample Harbour Realty L.L.C. (demo),Alex Example Rahman,Managing Director,signatory@sample-harbour.demo.example,784-1900-4000001-1,2031-06-30
+Sample Dune Developers,,developer,residential,,,,,,,,,,,,,,,

@@ -49,7 +49,7 @@ export default async function PropertyPage({ params }: { params: Promise<{ token
           <p style={{ margin: 0, display: "flex", gap: 8, alignItems: "center" }}>
             <IconClock size={16} />
             <span>
-              Your viewing: <b>{viewingTime(v.viewingAt)}</b> (Dubai time)
+              Your site visit: <b>{viewingTime(v.viewingAt)}</b> (Dubai time)
             </span>
           </p>
         </section>

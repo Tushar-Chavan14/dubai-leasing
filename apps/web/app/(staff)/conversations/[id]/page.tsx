@@ -54,14 +54,14 @@ export default async function ConversationPage({ params }: { params: Promise<{ i
             ) : null}
             {c.applicationId ? (
               <>
-                Booked a viewing:{" "}
+                Booked a site visit:{" "}
                 <Link href={`/applications/${c.applicationId}`} className="link">
                   application {c.applicationRef}
                 </Link>
                 .
               </>
             ) : (
-              "No viewing booked yet."
+              "No site visit booked yet."
             )}
             {c.status === "handoff" && c.handoffReason ? <> Why an officer: {c.handoffReason}</> : null}
           </>

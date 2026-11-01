@@ -159,13 +159,13 @@ export function formatDubaiDateTime(at: Date): string {
 /** Step 2: the first email to an applicant: the viewing appointment and the property online. */
 export function viewingInvitationEmail(d: ViewingInvitationMail): Rendered {
   const when = formatDubaiDateTime(d.viewingAt);
-  const subject = `Your viewing: ${d.unitLabel}`;
+  const subject = `Your site visit: ${d.unitLabel}`;
   const paras = [
     `Dear ${d.applicantName},`,
-    `Thank you for your interest in ${d.unitLabel} (reference ${d.reference}). Your viewing is booked for ${when}.`,
+    `Thank you for your interest in ${d.unitLabel} (reference ${d.reference}). Your site visit is booked for ${when}.`,
     `Address: ${d.address}.`,
     "You can see the photos and details online before you come. If you can't come, please let the leasing team know.",
-    "After the viewing we will send you a personal link to upload your ID documents.",
+    "After the site visit we will send you a personal link to upload your ID documents.",
   ];
   const actions = [{ label: "View the property online", url: d.propertyUrl }];
   if (d.virtualTourUrl) actions.push({ label: "Virtual tour", url: d.virtualTourUrl });
@@ -582,10 +582,10 @@ export interface ViewingReminderMail {
 
 /** Reminder before a booked viewing. */
 export function viewingReminderEmail(d: ViewingReminderMail): Rendered {
-  const subject = `Reminder: your viewing of ${d.unitLabel}`;
+  const subject = `Reminder: your site visit of ${d.unitLabel}`;
   const paras = [
     `Dear ${d.applicantName},`,
-    `A reminder that your viewing of ${d.unitLabel} (reference ${d.reference}) is on ${formatDubaiDateTime(d.viewingAt)}.`,
+    `A reminder that your site visit of ${d.unitLabel} (reference ${d.reference}) is on ${formatDubaiDateTime(d.viewingAt)}.`,
     `Address: ${d.address}.`,
     "If you can no longer come, please let the leasing team know.",
   ];
@@ -611,8 +611,8 @@ export function noShowFollowupEmail(d: NoShowFollowupMail): Rendered {
   const subject = `We missed you: ${d.unitLabel}`;
   const paras = [
     `Dear ${d.applicantName},`,
-    `We were expecting you at the viewing of ${d.unitLabel} (reference ${d.reference}) and did not see you. These things happen.`,
-    "If you are still interested, the property is online below and you can ask for a new viewing time at any point.",
+    `We were expecting you at the site visit of ${d.unitLabel} (reference ${d.reference}) and did not see you. These things happen.`,
+    "If you are still interested, the property is online below and you can ask for a new site visit time at any point.",
   ];
   const actions = [{ label: "View the property online", url: d.propertyUrl }];
   const foot = footer(d.demo);

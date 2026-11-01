@@ -301,9 +301,9 @@ describe("customer agent loop", () => {
     ]);
     const r = await run(model, b);
     expect(String(model.calls[2]!.messages.at(-1)!.content)).toContain("Call offer_choices now");
-    expect(r.result.data).toMatchObject({ kind: "final", text: "Pick a viewing time (Dubai time):" });
+    expect(r.result.data).toMatchObject({ kind: "final", text: "Pick a site visit time (Dubai time):" });
     expect(offered).toEqual([
-      { question: "Pick a viewing time (Dubai time):", options: slots.map((x) => ({ value: x.choice })) },
+      { question: "Pick a site visit time (Dubai time):", options: slots.map((x) => ({ value: x.choice })) },
     ]);
     expect(r.result.data!.tools.map((t) => t.name)).toEqual(["viewing_slots", "offer_choices"]);
     // A model that calls offer_choices itself is not interfered with.

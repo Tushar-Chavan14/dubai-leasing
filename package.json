@@ -19,6 +19,7 @@
     "demo:seed": "bun run --filter @leasing/engine seed",
     "demo:reset": "bun run --filter @leasing/engine reset",
     "demo:rewind": "bun run --filter @leasing/engine rewind",
+    "demo:fill-legal": "bun run --filter @leasing/engine fill-legal",
     "eval": "bun scripts/eval.ts"
   },
   "devDependencies": {

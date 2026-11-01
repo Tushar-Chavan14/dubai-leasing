@@ -188,7 +188,7 @@ async function advanceApplication(
   if (event === "APPLIED" && app.state === "ENQUIRY") {
     const { version, values } = await getCompanyPolicyVersion(tx, ctx.clock.today());
     if (!values.autopilot.apply_without_viewing)
-      throw conflict("a viewing is required before an application can proceed", "viewing_required");
+      throw conflict("a site visit is required before an application can proceed", "viewing_required");
     opts = { ...opts, payload: { ...opts.payload, viewingSkipped: true, policyVersion: version } };
   }
   if (event === "KYC_VERIFIED") {

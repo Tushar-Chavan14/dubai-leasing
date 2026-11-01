@@ -1,7 +1,7 @@
 import { revalidatePath } from "next/cache";
 import { ENGINE_URL, sessionToken } from "../../../../lib/engine";
 
-const KINDS = ["leases", "units"] as const;
+const KINDS = ["leases", "units", "companies"] as const;
 
 /**
  * CSV import from the browser: forwards the file (or pasted rows) to the engine as the signed-in
@@ -16,7 +16,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ kind: string }
   if (!token) return Response.json({ error: "Sign in again to import." }, { status: 401 });
   const form = await req.formData();
   const company = String(form.get("company") ?? "").trim();
-  if (!company && kind !== "units")
+  if (!company && kind === "leases")
     return Response.json({ error: "Choose the company these rows belong to." }, { status: 400 });
   const file = form.get("file");
   const pasted = String(form.get("csv") ?? "");
@@ -33,7 +33,15 @@ export async function POST(req: Request, ctx: { params: Promise<{ kind: string }
   );
   const body = await res.json().catch(() => ({ error: `Engine returned ${res.status}` }));
   if (res.status === 403)
-    return Response.json({ error: `Only admins and leasing managers can import ${kind}.` }, { status: 403 });
+    return Response.json(
+      {
+        error:
+          kind === "companies"
+            ? "Only admins can import companies."
+            : `Only admins and leasing managers can import ${kind}.`,
+      },
+      { status: 403 },
+    );
   if (res.ok) revalidatePath("/", "layout");
   return Response.json(body, { status: res.status });
 }

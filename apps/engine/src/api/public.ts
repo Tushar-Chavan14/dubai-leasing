@@ -242,9 +242,9 @@ export function registerPublicRoutes(
         throw conflict("This unit is no longer available to view.", "unit_not_bookable");
       const open = await openApplicationsFor(tx, body.email);
       if (open.some((o) => o.unitId === body.unitId))
-        throw conflict("You already have a viewing request for this unit.", "already_enquired");
+        throw conflict("You already have a site visit request for this unit.", "already_enquired");
       if ((await openWebApplicationsFor(tx, body.email)) >= MAX_OPEN_WEB_PER_EMAIL)
-        throw new DomainError("Too many open viewing requests for this email address.", 429, "too_many_enquiries");
+        throw new DomainError("Too many open site visit requests for this email address.", 429, "too_many_enquiries");
       const taken = await takenViewings(tx, body.unitId);
       const at = body.slot.getTime();
       const onGrid = (list: Date[]) => list.some((s) => s.getTime() === at);
@@ -252,7 +252,7 @@ export function registerPublicRoutes(
         // On the grid but not free: someone booked it. Otherwise it is past, off-grid or out of range.
         const grid = freeViewingSlots(ctx.clock.now(), policy, [], Number.POSITIVE_INFINITY);
         if (onGrid(grid))
-          throw conflict("That viewing time was just taken; please pick another.", "viewing_slot_taken");
+          throw conflict("That site visit time was just taken; please pick another.", "viewing_slot_taken");
         throw conflict("That time isn't available. Pick another.", "viewing_slot_unavailable");
       }
       return createApplication(

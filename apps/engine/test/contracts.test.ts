@@ -48,6 +48,7 @@ import {
   defaultAddendumFor,
   finishContract,
   prepareContract,
+  reportTemplateFailure,
 } from "../src/manager/contracts.ts";
 import { LEASE_MAIL_JOB, type LeaseMailJob, sendLeaseMail } from "../src/manager/lease-mail.ts";
 import {
@@ -280,6 +281,11 @@ describe.skipIf(noDb)("contract (step 5)", () => {
     expect((blocked as Error).message).toContain("Settings → Companies");
     expect((blocked as Error).message).toContain("authorised signatory name");
     expect(await contractRows(s.leaseId)).toHaveLength(0);
+    // The automatic job reports it as a task on the record instead of failing silently.
+    expect(await reportTemplateFailure(s.ctx, s.leaseId, blocked)).toBe(true);
+    const [task] = await database.db.select().from(tasks).where(eq(tasks.entityId, s.leaseId));
+    expect(task).toMatchObject({ kind: "contract_needs_person", assigneeRole: "leasing_officer" });
+    expect(task!.title).toContain("Settings → Companies");
     await database.db.update(companies).set({
       signatoryName: "Sam Signatory",
       registeredAddress: "1 Test Street, Dubai",

@@ -14,7 +14,7 @@ import type { EngineContext } from "../context.ts";
 import { DomainError, notFound } from "../errors.ts";
 import { decideApproval } from "../manager/approvals.ts";
 import { appendEvent, getCompanyPolicy, getCompanyPolicyVersion } from "../manager/events.ts";
-import { importLeasesCsv, importUnitsCsv } from "../manager/import.ts";
+import { importCompaniesCsv, importLeasesCsv, importUnitsCsv } from "../manager/import.ts";
 import { sweepDueDeadlines } from "../manager/milestones.ts";
 import { type AuthEnv, issueToken, requireRole, requireUser } from "./auth.ts";
 import * as q from "./queries.ts";
@@ -48,10 +48,10 @@ const importRoute = (
     companyId: string | null,
   ) => Promise<{ status: "imported" | "skipped" | "error" }[]>,
   /** Units import: each row names its `company`; `?company=` is only the default for rows without one (D44). */
-  opts: { companyOptional?: boolean } = {},
+  opts: { companyOptional?: boolean; roles?: Parameters<typeof requireRole>[1] } = {},
 ) =>
   async function handler(c: Context<AuthEnv>) {
-    requireRole(c.get("user"), ["admin", "leasing_manager"]);
+    requireRole(c.get("user"), opts.roles ?? ["admin", "leasing_manager"]);
     const slug = c.req.query("company");
     if (!slug && !opts.companyOptional)
       throw new DomainError("company is required: pass ?company=<slug>", 400, "company_required");
@@ -248,6 +248,11 @@ export function createApi(ctx: EngineContext, opts: ApiOptions) {
     importRoute(ctx, (csv, actor, companyId) => importUnitsCsv(ctx, csv, actor, companyId), {
       companyOptional: true,
     }),
+  );
+
+  api.post(
+    "/import/companies",
+    importRoute(ctx, (csv, actor) => importCompaniesCsv(ctx, csv, actor), { companyOptional: true, roles: ["admin"] }),
   );
 
   if (ctx.demoMode && opts.demoClock) {

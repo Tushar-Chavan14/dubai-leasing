@@ -511,7 +511,7 @@ describe.skipIf(noDb)("customer agent: search, slots, choice card, booking", () 
     expect(w.model.calls).toBe(3);
     expect(picked.reply!.text).toContain("full name");
     expect((await c.conv()).flow).toMatchObject({ step: "asking_name", unitId: u });
-    expect((await c.say("Sara Khan")).reply!.text).toContain("Your viewing is booked");
+    expect((await c.say("Sara Khan")).reply!.text).toContain("Your site visit is booked");
     const [app] = await database.db.select().from(applications);
     expect(app!.state).toBe("VIEWING");
     expect(app!.viewingAt!.toISOString()).toBe("2026-11-03T06:00:00.000Z"); // 10:00 Dubai
@@ -645,7 +645,7 @@ describe.skipIf(noDb)("customer agent: search, slots, choice card, booking", () 
         }),
     );
     const r = await c.say("book for my friend at x@y.com");
-    expect(r.reply!.text).toContain("Your viewing is booked");
+    expect(r.reply!.text).toContain("Your site visit is booked");
     const rows = await database.db
       .select({ email: parties.email, state: applications.state })
       .from(applications)
@@ -681,10 +681,10 @@ describe.skipIf(noDb)("customer agent: search, slots, choice card, booking", () 
     // A different unit: the name is known, so the agent books straight away.
     const b = await w.unit();
     const second = await agentBooks(b, "and the other one too");
-    expect(second.reply!.text).toContain("Your viewing is booked");
+    expect(second.reply!.text).toContain("Your site visit is booked");
     expect(second.reply!.text).not.toContain("full name");
     const u3 = await w.unit();
-    expect((await agentBooks(u3, "and this one")).reply!.text).toContain("Your viewing is booked");
+    expect((await agentBooks(u3, "and this one")).reply!.text).toContain("Your site visit is booked");
     const u4 = await w.unit();
     expect((await agentBooks(u4, "one more")).reply!.text).toContain("several open applications");
     expect(await database.db.select().from(applications)).toHaveLength(3);
@@ -1067,7 +1067,7 @@ describe.skipIf(noDb)("customer agent: deadline, concurrency, leftovers, single-
     expect(flow.apply).toBeUndefined();
     expect(flow.companyName).toBeUndefined();
     const done = await c.say("Sara Khan");
-    expect(done.reply!.text).toContain("Your viewing is booked");
+    expect(done.reply!.text).toContain("Your site visit is booked");
     const [app] = await database.db.select().from(applications);
     expect(app!.state).toBe("VIEWING");
     expect(await database.db.select().from(applications)).toHaveLength(1);
@@ -1091,7 +1091,7 @@ describe.skipIf(noDb)("customer agent: deadline, concurrency, leftovers, single-
     const card = await c.say("I'd rather see it first");
     await c.tap(card.reply!.choices!.options[0]!.data);
     expect((await c.conv()).flow.apply).toBeUndefined();
-    expect((await c.say("Sara Khan")).reply!.text).toContain("Your viewing is booked");
+    expect((await c.say("Sara Khan")).reply!.text).toContain("Your site visit is booked");
     expect((await database.db.select().from(applications))[0]!.state).toBe("VIEWING");
   });
 

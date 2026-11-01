@@ -151,9 +151,9 @@ export function nextStepFor(r: {
 }): string {
   switch (r.stage) {
     case "Enquiry":
-      return "Confirm a viewing time with the applicant.";
+      return "Confirm a site visit time with the applicant.";
     case "Viewing":
-      return "Hold the viewing, then record whether the applicant came.";
+      return "Hold the site visit, then record whether the applicant came.";
     case "Documents":
       return "Agent is checking the applicant's documents.";
     case "Offer":
@@ -200,11 +200,11 @@ const EVENT_TEXT: Record<string, EventText> = {
   ENQUIRY_HANDOFF: (s) => `${s} handed the enquiry to staff.`,
   RETURNED_TO_BOT: (s) => `${s} handed the enquiry back to the agent.`,
   STAFF_REPLIED: (s) => `${s} replied to the enquiry.`,
-  VIEWING_REQUESTED: (s) => `${s} asked for a viewing time.`,
-  VIEWING_BOOKED: (s) => `${s} booked a viewing.`,
-  VIEWING_BOOKED_BY_ENQUIRER: (s) => `${s} booked a viewing.`,
-  APPLIED_FROM_CHAT: (s) => `${s} applied from the chat without a viewing.`,
-  VIEWING_NO_SHOW: (s) => `${s} marked the viewing as a no-show.`,
+  VIEWING_REQUESTED: (s) => `${s} asked for a site visit time.`,
+  VIEWING_BOOKED: (s) => `${s} booked a site visit.`,
+  VIEWING_BOOKED_BY_ENQUIRER: (s) => `${s} booked a site visit.`,
+  APPLIED_FROM_CHAT: (s) => `${s} applied from the chat without a site visit.`,
+  VIEWING_NO_SHOW: (s) => `${s} marked the site visit as a no-show.`,
   APPLIED: (s) => `${s} moved the application to document checks.`,
   DOCUMENTS_REQUESTED: (s) => `${s} asked the applicant for documents.`,
   DOCUMENT_UPLOADED: (s) => `${s} uploaded a document.`,
@@ -287,12 +287,12 @@ export type DescribeInput =
   | { source: "task"; title: string; status: string };
 
 const EMAIL_PURPOSE: Record<string, string> = {
-  offer: "offer link",
-  link: "portal link",
-  notice: "notice",
-  formal_reminder: "formal late-payment reminder",
-  reminder: "rent reminder",
-  receipt: "receipt",
+  offer: "Offer link",
+  link: "Portal link",
+  notice: "Notice",
+  formal_reminder: "Formal late-payment reminder",
+  reminder: "Rent reminder",
+  receipt: "Receipt",
 };
 
 /** One plain sentence for a log entry. Unknown event types fall back to a humanised name. */
@@ -313,10 +313,10 @@ export function describeEntry(i: DescribeInput): string {
       return `Approval of ${noun} was cancelled.`;
     }
     case "email": {
-      const what = EMAIL_PURPOSE[i.purpose] ?? "message";
-      if (i.status === "sent") return `Email sent: ${what}.`;
-      if (i.status === "failed") return `Email failed to send: ${what}.`;
-      return `Email on its way: ${what}.`;
+      const what = EMAIL_PURPOSE[i.purpose] ?? "System notification";
+      if (i.status === "sent") return `Email sent: ${what}`;
+      if (i.status === "failed") return `Email failed to send: ${what}`;
+      return `Email on its way: ${what}`;
     }
     case "task": {
       const title = i.title.trim().replace(/[.!?]+$/, "");
@@ -517,7 +517,7 @@ async function buildLog(
         at: v.viewingAt!.toISOString(),
         source: "event",
         actor: { kind: "system", name: "System" },
-        text: "The viewing time has passed. Record whether the applicant came.",
+        text: "The site visit time has passed. Record whether the applicant came.",
         refId: v.id,
         pending: true,
         actions: ["record_viewing_outcome"],

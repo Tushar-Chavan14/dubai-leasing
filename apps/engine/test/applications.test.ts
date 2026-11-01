@@ -186,7 +186,7 @@ async function createWithViewing(s: S, body: Record<string, unknown> = {}) {
   const { id } = (await r.json()) as { id: string };
   await s.drain();
   const mail = s.lastMail();
-  expect(mail.subject).toContain("Your viewing");
+  expect(mail.subject).toContain("Your site visit");
   return { id, mail };
 }
 
@@ -1253,7 +1253,7 @@ describe.skipIf(noDb)("agent switches (D37): reminders, chases and held-offer re
       expect(j.singletonKey).toBe(`${id}:viewing_reminder#1@${new Date(FAR_VIEWING).getTime()}`);
       const before = s.mailer.sent.length;
       expect((await run(s, j)).sent).toBe(true);
-      expect(s.lastMail().subject).toContain("Reminder: your viewing");
+      expect(s.lastMail().subject).toContain("Reminder: your site visit of");
       expect(s.mailer.sent.length).toBe(before + 1);
       const [row] = await database.db
         .select()
@@ -1470,7 +1470,7 @@ describe.skipIf(noDb)("agent switches (D37): reminders, chases and held-offer re
     expect(jobs).toHaveLength(1);
     expect(jobs[0]!.startAfter).toBeUndefined();
     expect((await run(s, jobs[0]!)).sent).toBe(true);
-    expect(s.lastMail().subject).toContain("Reminder: your viewing");
+    expect(s.lastMail().subject).toContain("Reminder: your site visit of");
     // The sweep never fires it twice.
     expect((await sweepDueDeadlines(s.ctx)).filter((f) => f.fired)).toHaveLength(0);
   });

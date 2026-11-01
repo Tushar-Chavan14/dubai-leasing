@@ -99,7 +99,7 @@ export async function proposeApplication(ctx: EngineContext, user: StaffUser, th
       );
     }
     if (at.getTime() <= ctx.clock.now().getTime())
-      throw unprocessable("the viewing time must be in the future", [], "viewing_in_past");
+      throw unprocessable("the site visit time must be in the future", [], "viewing_in_past");
     await checkSlot(tx, unit.id, at, policy.viewingSlotMinutes);
     await checkNoOpenApplication(tx, unit.id, input.email);
 
@@ -163,7 +163,7 @@ async function checkSlot(tx: Tx, unitId: string, at: Date, slotMinutes: number) 
   const clash = (await takenViewings(tx, unitId)).find((t) => Math.abs(t.getTime() - at.getTime()) < slotMs);
   if (clash) {
     throw conflict(
-      `another viewing of this unit is booked at ${formatDubaiDateTime(clash)}; viewings need ${slotMinutes} minutes between them`,
+      `another site visit of this unit is booked at ${formatDubaiDateTime(clash)}; site visits need ${slotMinutes} minutes between them`,
       "viewing_slot_taken",
     );
   }
@@ -469,11 +469,11 @@ export async function proposeAction(ctx: EngineContext, user: StaffUser, threadI
         const at = new Date(input.viewingAt);
         if (app.state !== "ENQUIRY")
           throw conflict(
-            `application ${app.ref} is ${app.state}, so a viewing can't be booked: a viewing invitation goes out when an enquiry gets a viewing`,
+            `application ${app.ref} is ${app.state}, so a site visit can't be booked: a site visit invitation goes out when an enquiry gets a site visit`,
             "transition_not_allowed",
           );
         if (at.getTime() <= ctx.clock.now().getTime())
-          throw unprocessable("the viewing time must be in the future", [], "viewing_in_past");
+          throw unprocessable("the site visit time must be in the future", [], "viewing_in_past");
         const policy = await getCompanyPolicy(tx, ctx.clock.today());
         await checkSlot(tx, unit.id, at, policy.viewingSlotMinutes);
         payload = { applicationId: app.id, viewingAt: at.toISOString() };

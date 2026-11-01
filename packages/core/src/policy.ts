@@ -58,7 +58,7 @@ export const DEFAULT_AUTOPILOT: Record<AutopilotStep, boolean> = {
 
 /** Numbers stored next to the switches, each bounded (an out-of-range save is refused, never clamped). */
 export const AUTOPILOT_NUMBERS = {
-  viewing_reminder_hours: { label: "Remind before the viewing", unit: "hours", min: 1, max: 72, default: 24 },
+  viewing_reminder_hours: { label: "Remind before the site visit", unit: "hours", min: 1, max: 72, default: 24 },
   kyc_chase_hours: { label: "Chase documents after", unit: "hours without an upload", min: 6, max: 336, default: 48 },
   sign_reminder_days: { label: "Remind signers after", unit: "days", min: 1, max: 14, default: 3 },
   held_offer_release_hours: { label: "Release a held offer after", unit: "hours", min: 1, max: 168, default: 24 },
@@ -118,8 +118,8 @@ export const AUTOPILOT_STEPS: {
   {
     id: "chat_viewing_booking",
     group: "Chat agent",
-    label: "Chat books viewings",
-    offMeans: "The chat takes details and an officer books the viewing.",
+    label: "Chat books site visits",
+    offMeans: "The chat takes details and an officer books the site visit.",
   },
   {
     id: "agent_free_text_book",
@@ -130,8 +130,8 @@ export const AUTOPILOT_STEPS: {
   {
     id: "apply_without_viewing",
     group: "Chat agent",
-    label: "Apply without a viewing",
-    offMeans: "A viewing is required before an application is created.",
+    label: "Apply without a site visit",
+    offMeans: "A site visit is required before an application is created.",
   },
   {
     id: "agent_free_text_apply",
@@ -142,7 +142,7 @@ export const AUTOPILOT_STEPS: {
   {
     id: "agent_sri_answers",
     group: "Chat agent",
-    label: "Answer rent index questions",
+    label: "Answer rent rule questions",
     offMeans: "The chat does not quote average rents for an area.",
   },
   {
@@ -154,15 +154,15 @@ export const AUTOPILOT_STEPS: {
   {
     id: "viewing_reminder",
     group: "Reminders",
-    label: "Remind applicants before a viewing",
-    offMeans: "No reminder email goes out before a viewing.",
+    label: "Remind applicants before a site visit",
+    offMeans: "No reminder email goes out before a site visit.",
     numbers: ["viewing_reminder_hours"],
   },
   {
     id: "no_show_followup",
     group: "Reminders",
     label: "Follow up after a no-show",
-    offMeans: "No email goes to an applicant who missed the viewing.",
+    offMeans: "No email goes to an applicant who missed the site visit.",
   },
   {
     id: "kyc_chase",

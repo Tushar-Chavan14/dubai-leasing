@@ -33,7 +33,7 @@ describe("nextStepFor and stageFor (pure)", () => {
     for (const c of copy) expect(c).not.toMatch(/[–—]/);
   });
   test.each([
-    ["Enquiry", "Confirm a viewing time"],
+    ["Enquiry", "Confirm a site visit time"],
     ["Viewing", "record whether the applicant came"],
     ["Documents", "checking the applicant's documents"],
     ["Offer", "Waiting for the applicant"],
@@ -67,7 +67,7 @@ describe("nextStepFor and stageFor (pure)", () => {
         canDecide: false,
       }),
     ).toBe("You approved the final contract.");
-    expect(describeEntry({ source: "email", purpose: "offer", status: "sent" })).toBe("Email sent: offer link.");
+    expect(describeEntry({ source: "email", purpose: "offer", status: "sent" })).toBe("Email sent: Offer link");
     expect(describeEntry({ source: "event", type: "SOMETHING_NEW", payload: {}, subject: "Agent" })).toBe(
       "Something new by Agent.",
     );
@@ -380,7 +380,7 @@ describe.skipIf(noDb)("workspace API", () => {
     // "Mark done" is not offered for a task that has its own action.
     expect(task.actions).toEqual(["send_offer"]);
     expect(log.some((e) => e.text === "Agent drafted offer revision 1, within limits.")).toBe(true);
-    expect(log.some((e) => e.text === "Email sent: offer link.")).toBe(true);
+    expect(log.some((e) => e.text === "Email sent: Offer link")).toBe(true);
     expect(log.find((e) => e.source === "approval")!.actions).toEqual(["approve", "reject", "edit"]);
   });
 

@@ -6,7 +6,7 @@ describe("quick-action pills", () => {
     const pills = customerPills(false);
     expect(pills.map((p) => p.label)).toEqual([
       "Find properties",
-      "Book a viewing",
+      "Book a site visit",
       "Apply now",
       "Check my applications",
       "Use a different email",

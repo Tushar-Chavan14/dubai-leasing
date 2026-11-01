@@ -216,7 +216,7 @@ describe.skipIf(noDb)("web chat autopilot", () => {
     expect(await database.db.select().from(applications)).toHaveLength(0);
     expect((await s.say("1234")).reply!.text).toContain("name");
     const booked = await s.say("Sara Khan");
-    expect(booked.reply!.text).toContain("Your viewing is booked");
+    expect(booked.reply!.text).toContain("Your site visit is booked");
     expect(booked.reply!.buttons![0]).toEqual({ label: "Find another home", data: "units" });
     const [app] = await database.db.select().from(applications);
     expect(app).toMatchObject({ unitId: s.a, state: "VIEWING", source: "web_chat" });
@@ -241,7 +241,7 @@ describe.skipIf(noDb)("web chat autopilot", () => {
     const slot = shown.reply!.buttons!.find((x) => x.data.startsWith("slot:"))!;
     await s.tap(slot.data);
     const r = await s.say("Sara Khan");
-    expect(r.reply!.text).toBe("Thanks. A leasing officer will confirm your viewing time by email.");
+    expect(r.reply!.text).toBe("Thanks. A leasing officer will confirm your site visit time by email.");
     expect(await s.conv()).toMatchObject({ status: "bot", flow: { step: "idle" } });
     const [app] = await database.db.select().from(applications);
     expect(app).toMatchObject({ state: "ENQUIRY", viewingAt: null, source: "web_chat" });
@@ -251,7 +251,7 @@ describe.skipIf(noDb)("web chat autopilot", () => {
       policyVersion: 97,
     });
     const ts = await database.db.select().from(tasks).where(eq(tasks.entityId, app!.id));
-    expect(ts.map((t) => t.title)).toEqual(["Confirm a viewing time"]);
+    expect(ts.map((t) => t.title)).toEqual(["Confirm a site visit time"]);
     expect(s.scheduler.jobs.filter((j) => j.name === APPLICATION_MAIL_JOB)).toHaveLength(0);
     // Asking again doesn't loop back to offering a second request.
     const again = await s.book(s.a);

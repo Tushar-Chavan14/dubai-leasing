@@ -49,7 +49,7 @@ export async function bookViewing(_p: AppActionState, f: FormData) {
     String(f.get("id")),
     "viewing",
     { viewingAt: dubaiInstant(f.get("viewingAt")) },
-    "Viewing booked. The invitation is on its way to the applicant.",
+    "Site visit booked. The invitation is on its way to the applicant.",
   );
 }
 export async function recordViewingOutcome(_p: AppActionState, f: FormData) {
@@ -60,7 +60,7 @@ export async function recordViewingOutcome(_p: AppActionState, f: FormData) {
     "viewing-outcome",
     { outcome, ...(note ? { note } : {}) },
     outcome === "attended"
-      ? "Viewing recorded. The document upload link is on its way to the applicant."
+      ? "Site visit recorded. The document upload link is on its way to the applicant."
       : "No-show recorded. The application is closed; the applicant must apply again.",
   );
 }

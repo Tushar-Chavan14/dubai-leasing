@@ -29,12 +29,44 @@ const UNIT_COLUMNS: [string, string][] = [
   ["company", "name or slug of the company that owns the unit and is its landlord; unknown is a row error"],
 ];
 
+const COMPANY_COLUMNS: [string, string][] = [
+  [
+    "name, slug, kind",
+    "name required; slug optional (made from the name); kind developer, realty or owner, required for a new company",
+  ],
+  ["categories", "residential, commercial, retail; checked, not stored"],
+  [
+    "legal_name_en, legal_name_ar, trade_licence_no, licence_authority, trade_licence_expires_on, rera_orn",
+    "legal details; expiry must be in the future",
+  ],
+  ["registered_address, email, phone, cheque_payee", "landlord contact details"],
+  [
+    "signatory_name, signatory_title, signatory_email, signatory_id_no, signatory_id_expires_on",
+    "authorised signatory; ID like 784-YYYY-NNNNNNN-C or a passport number",
+  ],
+];
+
 const PAGES: Record<ImportKind, { title: string; lede: string; columns: [string, string][]; note: ReactNode }> = {
   leases: {
     title: "Import leases",
     lede: "Bring current leases in from a spreadsheet. Each lease's state comes from its dates, and its renewal milestones are scheduled at once. Importing the same file again skips rows that are already in.",
     columns: LEASE_COLUMNS,
     note: "Running leases become active, or in renewal from five months before their end. Leases imported after their 90-day notice deadline get a same-rent renewal task. Leases that already ended are refused.",
+  },
+  companies: {
+    title: "Import companies",
+    lede: "Bring in the companies that are landlords, with their legal details. A company that already exists (same slug or name) only has the details the file provides updated.",
+    columns: COMPANY_COLUMNS,
+    note: (
+      <>
+        Admins only. Give all of a company&apos;s required legal details together; empty cells never erase what is
+        saved.{" "}
+        <a className="link" href="/samples/companies-sample.csv" download>
+          Download a sample CSV
+        </a>
+        .
+      </>
+    ),
   },
   units: {
     title: "Import units",
@@ -54,7 +86,7 @@ const PAGES: Record<ImportKind, { title: string; lede: string; columns: [string,
 
 export default async function ImportPage({ searchParams }: { searchParams: Promise<{ kind?: string }> }) {
   const { kind: raw } = await searchParams;
-  const kind: ImportKind = raw === "units" ? "units" : "leases";
+  const kind: ImportKind = raw === "units" || raw === "companies" ? raw : "leases";
   const page = PAGES[kind];
   const companies = (await get<CompanyRow[]>("/api/companies")) ?? [];
   return (
@@ -66,6 +98,9 @@ export default async function ImportPage({ searchParams }: { searchParams: Promi
         </Link>
         <Link href="/settings/import?kind=units" aria-current={kind === "units" ? "page" : undefined}>
           Units
+        </Link>
+        <Link href="/settings/import?kind=companies" aria-current={kind === "companies" ? "page" : undefined}>
+          Companies
         </Link>
       </nav>
       <div className="split">

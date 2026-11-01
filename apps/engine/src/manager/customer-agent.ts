@@ -515,7 +515,7 @@ export class WebAgentBackend implements AgentBackend {
             choice: `slot:${id}@${dubaiIso(s)}`,
           })),
           ...(shown.length === 0
-            ? { note: "No free viewing times in the next few days." }
+            ? { note: "No free site visit times in the next few days." }
             : wanted.length || (!a.day && !a.part)
               ? {}
               : { note: "Nothing is free for that day or part of the day; these are the next free times." }),

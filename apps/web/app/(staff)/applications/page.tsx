@@ -29,8 +29,8 @@ const FILTERS = [
 
 /** What a person should do next, in a few words. */
 function next(r: Row): string {
-  if (r.state === "ENQUIRY") return "Book viewing";
-  if (r.state === "VIEWING") return "Record viewing outcome";
+  if (r.state === "ENQUIRY") return "Book site visit";
+  if (r.state === "VIEWING") return "Record site visit outcome";
   if (r.state === "SCREENING") return "Waiting for documents or checks";
   if (r.state === "OFFER") return r.offerAcceptedAt ? "Record the reservation" : "Waiting for the applicant";
   if (r.state === "CONVERTED") return "Lease created";

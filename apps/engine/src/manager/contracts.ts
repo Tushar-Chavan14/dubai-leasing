@@ -529,7 +529,9 @@ export async function reprepareContract(ctx: EngineContext, leaseId: string, act
  * not retried forever; an officer gets a task that says why. Returns true when the failure was reported.
  */
 export async function reportTemplateFailure(ctx: EngineContext, leaseId: string, e: unknown): Promise<boolean> {
-  if (!(e instanceof DomainError) || e.status !== 422 || !e.code.startsWith("template_")) return false;
+  // Problems a person must fix (template, company legal details): a task on the record, not silent job retries.
+  const needsPerson = e instanceof DomainError && e.status === 422;
+  if (!needsPerson || !(e.code.startsWith("template_") || e.code === "landlord_details_missing")) return false;
   await withTx(ctx.database, async (tx) => {
     const [lease] = await tx.db.select({ ref: leases.ref }).from(leases).where(eq(leases.id, leaseId));
     await createTask(ctx, tx, leaseId, {

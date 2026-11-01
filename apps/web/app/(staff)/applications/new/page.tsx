@@ -18,7 +18,7 @@ export default async function NewApplicationPage({ searchParams }: { searchParam
       <PageHead
         back={{ href: "/applications", label: "Applicants" }}
         title="New application"
-        lede="Enter the applicant's contact details and book a viewing. They get an invitation with the time, the address and a page to view the property online. Once you record that they came, they get a one-time link to upload their ID documents; the names and numbers on the contract will come from those documents, not from this form."
+        lede="Enter the applicant's contact details and book a site visit. They get an invitation with the time, the address and a page to view the property online. Once you record that they came, they get a one-time link to upload their ID documents; the names and numbers on the contract will come from those documents, not from this form."
       />
       {units.length === 0 ? (
         <section className="panel">

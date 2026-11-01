@@ -563,7 +563,9 @@ export function UnitForm({
             placeholder="https://"
             {...inv("virtualTourUrl")}
           />
-          <span className="hint">Shown to applicants on the viewing invitation and the property page. https only.</span>
+          <span className="hint">
+            Shown to applicants on the site visit invitation and the property page. https only.
+          </span>
           {err("virtualTourUrl")}
         </label>
       </section>

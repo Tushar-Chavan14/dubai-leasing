@@ -20,7 +20,7 @@ export function HomeTiles({ initial }: { initial: Counts }) {
       .catch(() => {});
   });
   const tiles = [
-    { label: "Viewings today", n: h.viewingsToday, href: "/work?stage=Viewing" },
+    { label: "Site visits today", n: h.viewingsToday, href: "/work?stage=Viewing" },
     { label: "Offers out", n: h.offersOut, href: "/work?stage=Offer" },
     { label: "Awaiting signature", n: h.awaitingSignature, href: "/work?stage=Contract" },
     { label: "Ejari pending", n: h.ejariPending, href: "/work?stage=Ejari" },

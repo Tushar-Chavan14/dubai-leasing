@@ -9,10 +9,10 @@ type Copy = Record<string, Line>;
 
 const en = {
   welcome:
-    "Hello! I'm the Dubai Leasing enquiry assistant. I can show you homes for rent and book a viewing.\nHow many bedrooms are you looking for?",
-  help: "What I can do:\n/units – find a home\n/book – book a viewing of the home you picked\n/mybooking – your booked viewing\n/contact – your email and phone\n/agent – talk to a leasing officer\n/language – English or Arabic",
+    "Hello! I'm the Dubai Leasing enquiry assistant. I can show you homes for rent and book a site visit.\nHow many bedrooms are you looking for?",
+  help: "What I can do:\n/units – find a home\n/book – book a site visit of the home you picked\n/mybooking – your booked site visit\n/contact – your email and phone\n/agent – talk to a leasing officer\n/language – English or Arabic",
   askContactEmail:
-    "Hello! I'm the Dubai Leasing enquiry assistant. Before we start, what's your email address? We'll send viewing details there and use it to follow up on your enquiry.",
+    "Hello! I'm the Dubai Leasing enquiry assistant. Before we start, what's your email address? We'll send site visit details there and use it to follow up on your enquiry.",
   askContactEmailAgain: "Please send your email address first, for example name@example.com.",
   askPhone:
     "Thanks. If you'd like a call back, send your phone number with the country code (for example +971 50 123 4567), or tap Skip.",
@@ -26,35 +26,36 @@ const en = {
   results: (n: number) => `Here ${n === 1 ? "is 1 home" : `are ${n} homes`} for rent that match. Tap one for details:`,
   noResults: "Nothing matches that right now. Try another size, or send /agent to talk to a leasing officer.",
   noResultsWeb: "Nothing matches that right now. Try another size or area.",
-  noSlotsWeb: "There are no free viewing times in the next few days. Please check again later.",
+  noSlotsWeb: "There are no free site visit times in the next few days. Please check again later.",
   noGeneralAnswerWeb: "I don't have that information here. A leasing officer can answer it when you view a home.",
-  unit: (facts: string) => `${facts}\n\nPick a viewing time below, or ask me a question about this home.`,
+  unit: (facts: string) => `${facts}\n\nPick a site visit time below, or ask me a question about this home.`,
   unitGone: "Sorry, that home is no longer available. Here's what is:",
-  pickUnitFirst: "Pick a home first, then I can book a viewing. How many bedrooms are you looking for?",
-  slots: "Pick a viewing time (Dubai time):",
-  noSlots: "There are no free viewing times in the next few days. Send /agent and a leasing officer will arrange one.",
+  pickUnitFirst: "Pick a home first, then I can book a site visit. How many bedrooms are you looking for?",
+  slots: "Pick a site visit time (Dubai time):",
+  noSlots:
+    "There are no free site visit times in the next few days. Send /agent and a leasing officer will arrange one.",
   slotTaken: "Sorry, that time was just taken. These times are still free:",
   askName: "What is your full name?",
   badName: "Please send your full name (letters only, up to 120 characters).",
   askEmail: (name: string) =>
-    `Thanks, ${name}. What is your email address? The viewing details and every next step come by email.`,
+    `Thanks, ${name}. What is your email address? The site visit details and every next step come by email.`,
   badEmail: "That doesn't look like an email address. Please send it again, for example name@example.com.",
   booked: (when: string, where: string) =>
-    `Your viewing is booked: ${when} at ${where}.\nWe've emailed you the details. From here on, everything (documents, offer, contract) happens by email.`,
-  viewingRequested: "Thanks. A leasing officer will confirm your viewing time by email.",
+    `Your site visit is booked: ${when} at ${where}.\nWe've emailed you the details. From here on, everything (documents, offer, contract) happens by email.`,
+  viewingRequested: "Thanks. A leasing officer will confirm your site visit time by email.",
   applyCta: "Apply now",
   applyDone: "Done. We emailed you a link to upload your Emirates ID and passport.",
   applyDoneCompany: "Done. We emailed you a link to upload your documents.",
   alreadyApplied: "You already applied for this unit. Check your email for the upload link.",
-  alreadyViewing: "You already have a viewing booked for this unit. Check your email for the details.",
+  alreadyViewing: "You already have a site visit booked for this unit. Check your email for the details.",
   askCompanyName: "What is your company's name?",
   badCompanyName: "Please send the company name (letters, digits, spaces, & - . ' only, up to 120 characters).",
   askContactPerson: "Thanks. And the name of the contact person?",
   tooManyApplications: "You have several open applications already. Please wait for an officer to follow up.",
-  applyUnavailable: "Applying online isn't available for this property right now. Please book a viewing instead.",
-  alreadyBooked: (when: string) => `You already have a viewing of this home booked: ${when}.`,
-  noBooking: "You have no viewing booked yet. Send /units to find a home.",
-  myBooking: (when: string, where: string, ref: string) => `Your viewing: ${when} at ${where}. Reference ${ref}.`,
+  applyUnavailable: "Applying online isn't available for this property right now. Please book a site visit instead.",
+  alreadyBooked: (when: string) => `You already have a site visit of this home booked: ${when}.`,
+  noBooking: "You have no site visit booked yet. Send /units to find a home.",
+  myBooking: (when: string, where: string, ref: string) => `Your site visit: ${when} at ${where}. Reference ${ref}.`,
   handoff: "Thank you. I've passed your message to a leasing officer, who will reply here.",
   inHandoff: "A leasing officer has your conversation and will reply here.",
   existingTenant:
@@ -66,24 +67,24 @@ const en = {
   noAnswer: "I don't have that detail in the listing. A leasing officer will confirm it when you view the home.",
   noGeneralAnswer: "I don't have that information here. Send /agent and a leasing officer will answer.",
   greeting: "Hello! How many bedrooms are you looking for?",
-  bookCta: "Book a viewing",
+  bookCta: "Book a site visit",
   backCta: "Other homes",
   bedrooms: (n: number) => (n === 0 ? "Studio" : n >= 4 ? "4+ bedrooms" : `${n} bedroom${n === 1 ? "" : "s"}`),
   perYear: (rent: string) => `${rent} a year`,
   // Public web chat.
   autopilotCant:
-    'I can help you find a home and book a viewing. For a problem in your home, use "Report an issue" in your My tenancy email.',
+    'I can help you find a home and book a site visit. For a problem in your home, use "Report an issue" in your My tenancy email.',
   agentTapToBook: "To book this time, please tap it below. Nothing is booked until you do.",
   agentTapToApply: "To apply for this home, please tap Apply below. Nothing is submitted until you do.",
   agentDailyCap:
     "I've reached the limit of bookings and applications I can make in this chat for today. Please try again tomorrow.",
   existingTenantWeb:
-    "For your lease, payments or documents, please use the 'My tenancy' link in your latest email from us. I can help you find a home or book a viewing.",
+    "For your lease, payments or documents, please use the 'My tenancy' link in your latest email from us. I can help you find a home or book a site visit.",
   changeEmail: "Change email",
   // Public web chat: status check (decision D34).
   checkStatus: "Check my applications",
   /** Web quick-action pills when no home is in focus yet. */
-  pillPickToBook: "Pick a home first, then I can book a viewing. ",
+  pillPickToBook: "Pick a home first, then I can book a site visit. ",
   pillPickToApply: "Pick a home first, then you can apply. ",
   statusCodeSent: (masked: string) =>
     `If this email has applications, we sent a 6-digit code to ${masked}. It works for 15 minutes. Type it here.`,
@@ -97,7 +98,7 @@ const en = {
     `Offer: ${rent} a year, ${cheques} cheque${cheques === 1 ? "" : "s"}.`,
   statusRef: (ref: string, unit: string) => `${ref} (${unit})`,
   stageName: (n: "Viewing" | "Documents" | "Offer" | "Contract" | "Ejari") =>
-    ({ Viewing: "Viewing", Documents: "Documents", Offer: "Offer", Contract: "Contract", Ejari: "Ejari" })[n],
+    ({ Viewing: "Site visit", Documents: "Documents", Offer: "Offer", Contract: "Contract", Ejari: "Ejari" })[n],
   nextStep: (
     k:
       | "enquiry"
@@ -112,8 +113,8 @@ const en = {
       | "registered",
   ) =>
     ({
-      enquiry: "We are arranging your viewing. Watch your email for the time.",
-      viewing: "Your viewing is booked. We will follow up after it.",
+      enquiry: "We are arranging your site visit. Watch your email for the time.",
+      viewing: "Your site visit is booked. We will follow up after it.",
       documents: "We are checking your documents. If we need more, we will email you.",
       offer: "We have sent you an offer. Please answer it using the link in your email.",
       offerPrep: "We are preparing your offer.",

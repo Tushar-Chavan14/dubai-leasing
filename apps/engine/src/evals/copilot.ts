@@ -320,7 +320,9 @@ for (const c of cases) {
       m &&
       // "A proposal has been created" is true (D25): the proposal exists, the application doesn't.
       !/\bproposal\b/i.test(sentence.slice(0, m.index)) &&
-      !/\b(no|not|never|nothing|none|hasn't|haven't|hadn't|isn't|aren't|wasn't|yet to)\b|n't\b/i.test(
+      // "The lease has been closed" reports lease state from a tool; the copilot can't change it.
+      !/\blease has been\b/i.test(sentence) &&
+      !/\b(no|not|cannot|never|nothing|none|hasn't|haven't|hadn't|isn't|aren't|wasn't|yet to)\b|n't\b/i.test(
         sentence.slice(0, m.index),
       )
     )

@@ -109,7 +109,7 @@ export function ChatView({
                       card={c}
                       disabled={i !== lastBot || typing}
                       onNavigate={onNavigate}
-                      onBook={() => press({ label: "Book a viewing", data: `unit:${c.unitId}` })}
+                      onBook={() => press({ label: "Book a site visit", data: `unit:${c.unitId}` })}
                       onApply={() => press({ label: "Apply now", data: `apply:${c.unitId}` })}
                     />
                   ))}

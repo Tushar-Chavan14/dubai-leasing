@@ -8,7 +8,8 @@
     "start": "bun --env-file=../../.env src/main.ts",
     "seed": "bun --env-file=../../.env src/demo/seed.ts",
     "reset": "bun --env-file=../../.env src/demo/reset.ts",
-    "rewind": "bun --env-file=../../.env src/demo/rewind.ts"
+    "rewind": "bun --env-file=../../.env src/demo/rewind.ts",
+    "fill-legal": "bun --env-file=../../.env src/demo/fill-legal.ts"
   },
   "dependencies": {
     "@leasing/adapters": "workspace:*",

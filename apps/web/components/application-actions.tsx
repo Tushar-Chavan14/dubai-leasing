@@ -66,11 +66,11 @@ export function ApplicationActions(p: {
         <form action={book} className="stack">
           <input type="hidden" name="id" value={p.id} />
           <p style={{ margin: 0 }}>
-            Book a viewing. The applicant gets an invitation with the time, the address and a page to view the property
-            online.
+            Book a site visit. The applicant gets an invitation with the time, the address and a page to view the
+            property online.
           </p>
           <label className="field">
-            <span className="field-label">Viewing date &amp; time (Dubai)</span>
+            <span className="field-label">Site visit date &amp; time (Dubai)</span>
             <input
               name="viewingAt"
               type="datetime-local"
@@ -81,7 +81,7 @@ export function ApplicationActions(p: {
           </label>
           <div>
             <button className="btn primary" disabled={booking}>
-              {booking ? "Booking…" : "Book viewing"}
+              {booking ? "Booking…" : "Book site visit"}
             </button>
           </div>
           <Result s={bookS} />
@@ -92,10 +92,10 @@ export function ApplicationActions(p: {
           <p style={{ margin: 0 }}>
             {p.viewingAt ? (
               <>
-                Viewing booked for <b>{viewingTime(p.viewingAt)}</b> (Dubai). Record what happened.
+                Site visit booked for <b>{viewingTime(p.viewingAt)}</b> (Dubai). Record what happened.
               </>
             ) : (
-              "Viewing booked. Record what happened."
+              "Site visit booked. Record what happened."
             )}
           </p>
           <form action={came} className="stack">
@@ -123,7 +123,7 @@ export function ApplicationActions(p: {
               </button>
             </div>
             <p className="muted" style={{ margin: 0, fontSize: 12.5 }}>
-              Only once the viewing time has passed. The applicant must apply again.
+              Only once the site visit time has passed. The applicant must apply again.
             </p>
             <Result s={noShowS} />
           </form>

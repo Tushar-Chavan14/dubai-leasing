@@ -152,7 +152,7 @@ export async function openWebApplicationsFor(tx: Tx, email: string): Promise<num
  */
 export async function createApplication(ctx: EngineContext, input: NewApplication, actor: Actor, inTx?: Tx) {
   if (input.viewingAt && input.viewingAt.getTime() <= ctx.clock.now().getTime()) {
-    throw unprocessable("the viewing time must be in the future", [], "viewing_in_past");
+    throw unprocessable("the site visit time must be in the future", [], "viewing_in_past");
   }
   const run = async (tx: Tx) => {
     const [unit] = await tx.db.select().from(units).where(eq(units.id, input.unitId)).for("update");
@@ -200,7 +200,7 @@ export async function createApplication(ctx: EngineContext, input: NewApplicatio
  */
 export async function bookViewing(ctx: EngineContext, applicationId: string, viewingAt: Date, actor: Actor, inTx?: Tx) {
   if (viewingAt.getTime() <= ctx.clock.now().getTime()) {
-    throw unprocessable("the viewing time must be in the future", [], "viewing_in_past");
+    throw unprocessable("the site visit time must be in the future", [], "viewing_in_past");
   }
   const run = async (tx: Tx) => {
     const [found] = await tx.db
@@ -219,7 +219,7 @@ export async function bookViewing(ctx: EngineContext, applicationId: string, vie
     const clash = await clashingViewing(tx, app.unitId, app.id, viewingAt, viewingSlotMinutes);
     if (clash) {
       throw conflict(
-        `another viewing of this unit is booked at ${formatDubaiDateTime(clash)}; viewings need ${viewingSlotMinutes} minutes between them`,
+        `another site visit of this unit is booked at ${formatDubaiDateTime(clash)}; site visits need ${viewingSlotMinutes} minutes between them`,
         "viewing_slot_taken",
       );
     }
@@ -279,10 +279,10 @@ export async function recordViewingOutcome(
     const [app] = await tx.db.select().from(applications).where(eq(applications.id, applicationId)).for("update");
     if (!app) throw notFound("application");
     if (app.state !== "VIEWING")
-      throw conflict(`application is ${app.state}, not waiting for a viewing`, "not_viewing");
+      throw conflict(`application is ${app.state}, not waiting for a site visit`, "not_viewing");
     const now = ctx.clock.now();
     if (outcome === "no_show" && app.viewingAt && now.getTime() < app.viewingAt.getTime()) {
-      throw unprocessable("the viewing time hasn't passed yet", [], "viewing_not_due");
+      throw unprocessable("the site visit time hasn't passed yet", [], "viewing_not_due");
     }
     // Staff free text: mask any ID or phone number typed into it before it reaches the audit log.
     const masked = note ? maskPiiText(note) : null;

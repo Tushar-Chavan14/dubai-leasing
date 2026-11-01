@@ -54,7 +54,7 @@ export function UnitCardView({
           </Link>
           {onBook && (
             <button type="button" className="btn small primary" onClick={onBook} disabled={disabled}>
-              Book a viewing
+              Book a site visit
             </button>
           )}
           {card.canApply && onApply && (

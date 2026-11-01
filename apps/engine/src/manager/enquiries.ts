@@ -1390,7 +1390,7 @@ export async function book(
       created.id,
       {
         kind: "confirm_viewing_time",
-        title: "Confirm a viewing time",
+        title: "Confirm a site visit time",
         details: { applicationId: created.id, ref: created.ref, unitCode: unit.code, requestedAt, policyVersion },
         assigneeRole: "leasing_officer",
         dueOn: ctx.clock.today(),

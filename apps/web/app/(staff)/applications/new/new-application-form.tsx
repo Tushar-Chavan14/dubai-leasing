@@ -59,7 +59,7 @@ export function NewApplicationForm({
           <input name="requestedMoveInOn" type="date" />
         </label>
         <label className="field span-3">
-          <span className="field-label">Viewing date &amp; time (Dubai)</span>
+          <span className="field-label">Site visit date &amp; time (Dubai)</span>
           <input
             name="viewingAt"
             type="datetime-local"
@@ -86,7 +86,7 @@ export function NewApplicationForm({
       )}
       <div>
         <button type="submit" className="btn primary" disabled={pending}>
-          {pending ? "Creating…" : "Create and send viewing invitation"}
+          {pending ? "Creating…" : "Create and send site visit invitation"}
         </button>
       </div>
     </form>

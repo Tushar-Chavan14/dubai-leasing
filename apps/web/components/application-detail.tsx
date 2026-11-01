@@ -463,7 +463,7 @@ export async function ApplicationDetail({ id, draftId }: { id: string; draftId?:
           {a.viewingAt && (
             <section className="panel panel-pad" aria-labelledby="viewing-h">
               <h2 id="viewing-h" className="section-title">
-                Viewing
+                Site visit
               </h2>
               <dl className="facts">
                 <dt>Booked for</dt>

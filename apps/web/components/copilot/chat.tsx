@@ -35,7 +35,7 @@ const TOOL_LABEL: Record<string, string> = {
   list_outbound_messages: "Checked sent emails",
   explain_rule: "Looked up the rulebook",
   compute_renewal_cap: "Worked out the rent cap (rulebook)",
-  find_available_units: "Checked available units and viewing slots",
+  find_available_units: "Checked available units and site visit slots",
   propose_application: "Prepared an application for you to confirm",
   list_payments: "Checked rent payments",
   list_tickets: "Checked maintenance tickets",
@@ -46,8 +46,8 @@ const TOOL_LABEL: Record<string, string> = {
   list_enquiries: "Checked enquiries",
   get_enquiry: "Read an enquiry",
   get_unit: "Looked up the unit and its price limits",
-  viewing_slots: "Checked free viewing slots",
-  propose_viewing_invite: "Prepared a viewing invitation for you to confirm",
+  viewing_slots: "Checked free site visit slots",
+  propose_viewing_invite: "Prepared a site visit invitation for you to confirm",
   propose_request_documents: "Prepared a document request for you to confirm",
   propose_resend_signing_link: "Prepared a signing-link resend for you to confirm",
   propose_prepare_contract: "Prepared the contract preparation for you to confirm",
@@ -74,9 +74,9 @@ const STARTERS: Record<PageRef["kind"] | "none", Starter[]> = {
     prepare("Create a task to…"),
   ],
   unit: [
-    ask("Is this unit available for viewing, and at what rent?"),
+    ask("Is this unit available for site visit, and at what rent?"),
     ask("Which applications are on this unit?"),
-    prepare("Book a viewing of this unit for…"),
+    prepare("Book a site visit of this unit for…"),
   ],
   approval: [
     ask("Explain this approval and what it's based on."),
@@ -86,14 +86,14 @@ const STARTERS: Record<PageRef["kind"] | "none", Starter[]> = {
   ],
   none: [
     ask("How many applications are in each stage?"),
-    ask("How many applications are in viewing?"),
+    ask("How many applications are at the site visit stage?"),
     ask("Show offers waiting on applicants"),
     ask("Which contracts are waiting for a signature?"),
     ask("Which approvals are waiting?"),
-    ask("Which units are available for viewing?"),
+    ask("Which units are available for site visit?"),
     ask("What can you help me with?"),
     draft("Draft an email to the applicant of…"),
-    prepare("Book a viewing for a new applicant…"),
+    prepare("Book a site visit for a new applicant…"),
     prepare("Create a task to…"),
   ],
 };
@@ -201,17 +201,17 @@ const PROPOSAL_TITLE: Record<ProposalView["kind"], string> = {
   create_application: "New application",
   create_task: "New task",
   request_approval: "Approval request",
-  viewing_invite: "Viewing invitation",
+  viewing_invite: "Site visit invitation",
   request_documents: "Document request",
   resend_signing_link: "Signing link",
   prepare_contract: "Prepare contract",
 };
 
 const CONFIRM_NOTE: Record<ProposalView["kind"], string> = {
-  create_application: "Confirming creates the application and emails the viewing invitation.",
+  create_application: "Confirming creates the application and emails the site visit invitation.",
   create_task: "Confirming adds the task to the lease.",
   request_approval: "Confirming sends it to the approver's inbox. Nothing reaches the tenant until it is approved.",
-  viewing_invite: "Confirming books the viewing and emails the applicant the invitation.",
+  viewing_invite: "Confirming books the site visit and emails the applicant the invitation.",
   request_documents: "Confirming emails the applicant a new upload link; the old link stops working.",
   resend_signing_link: "Confirming emails the signer a new signing link; the old link stops working.",
   prepare_contract:
@@ -239,7 +239,7 @@ function ProposalFacts({ p }: { p: ProposalView }) {
         <dd>
           {s.applicant} · {s.email}
         </dd>
-        <dt>Viewing</dt>
+        <dt>Site visit</dt>
         <dd>{s.viewingLabel} (Dubai)</dd>
       </dl>
     );
@@ -272,7 +272,7 @@ function ProposalFacts({ p }: { p: ProposalView }) {
         </dd>
         {p.kind === "viewing_invite" && (
           <>
-            <dt>Viewing</dt>
+            <dt>Site visit</dt>
             <dd>{p.summary.viewingLabel} (Dubai)</dd>
           </>
         )}
@@ -633,7 +633,7 @@ export function CopilotChat({
                   <IconSpark size={20} />
                 </span>
                 <p>
-                  Ask about the pipeline: enquiries, viewings, offers, contracts and Ejari registration. Answers come
+                  Ask about the pipeline: enquiries, site visits, offers, contracts and Ejari registration. Answers come
                   from the system.
                 </p>
               </>
@@ -705,7 +705,7 @@ export function CopilotChat({
         className="cp-composer"
       >
         <label htmlFor="cp-input" className="sr-only">
-          Ask the copilot
+          Ask the leasing agent
         </label>
         <textarea
           id="cp-input"
@@ -713,7 +713,7 @@ export function CopilotChat({
           rows={1}
           maxLength={2000}
           value={draft}
-          placeholder="Ask a question…"
+          placeholder="Ask the leasing agent…"
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={onKey}
         />

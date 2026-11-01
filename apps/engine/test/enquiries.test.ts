@@ -237,7 +237,7 @@ describe.skipIf(noDb)("Telegram enquiries (step 2)", () => {
     expect((await s.send(text("501", "what's the price?"))).reply!.text).toContain("Please send your full name");
     // The email was given at the start: the name books it.
     const booked = await s.send(text("501", "Priya Example"));
-    expect(booked.reply!.text).toContain("Your viewing is booked");
+    expect(booked.reply!.text).toContain("Your site visit is booked");
     expect(booked.reply!.text).toContain("12:00");
 
     const [app] = await database.db.select().from(applications);
@@ -724,7 +724,7 @@ describe.skipIf(noDb)("one viewing per slot, whoever books it", () => {
     const booked = await database.db.select().from(applications).where(eq(applications.state, "VIEWING"));
     expect(booked).toHaveLength(1);
     if (staff.status === "fulfilled") expect(await s.lastKind("801")).toBe("slot_taken");
-    else expect(bot.status === "fulfilled" && bot.value.reply!.text).toContain("Your viewing is booked");
+    else expect(bot.status === "fulfilled" && bot.value.reply!.text).toContain("Your site visit is booked");
   });
 
   test("the staff API answers 409 with a clear reason", async () => {

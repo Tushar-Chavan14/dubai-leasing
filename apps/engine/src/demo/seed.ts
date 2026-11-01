@@ -67,6 +67,8 @@ const STAFF = [
   { email: "admin@demo.example", name: "Demo Admin", role: "admin" },
 ] as const;
 
+const DEMO_TOUR_URL = "https://www.youtube.com/watch?v=Flh4hmHJrxU";
+
 const DESCRIPTIONS: Record<string, string> = {
   "MRN-1502":
     "One-bedroom on the 15th floor facing the marina walk. Open kitchen, built-in wardrobes, balcony. Floor-plan and photos still to come.",
@@ -459,6 +461,9 @@ export async function seedDemo(database: Database): Promise<void> {
     newlyListed.add(u.code);
     console.log(`  unit ${u.code}: LISTED`);
   }
+
+  // Every demo unit gets a virtual tour; a tour an admin set later is kept.
+  await database.db.update(units).set({ virtualTourUrl: DEMO_TOUR_URL }).where(isNull(units.virtualTourUrl));
 
   // Steps 5–6: a lease waiting for its contract on MRN-1608. The tenant applied with a passport
   // only, so the KYC-verified name is in capitals as the passport's machine-readable zone prints

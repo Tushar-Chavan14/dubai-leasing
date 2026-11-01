@@ -15,7 +15,7 @@ export function customerPills(arabic: boolean): Pill[] {
   const l = (en: string, ar: string) => (arabic ? ar : en);
   return [
     { key: "find", label: l("Find properties", "ابحث عن عقار"), action: { kind: "press", data: "units" } },
-    { key: "book", label: l("Book a viewing", "احجز معاينة"), action: { kind: "press", data: "chat:book" } },
+    { key: "book", label: l("Book a site visit", "احجز معاينة"), action: { kind: "press", data: "chat:book" } },
     { key: "apply", label: l("Apply now", "قدّم الآن"), action: { kind: "press", data: "chat:apply" } },
     {
       key: "status",
@@ -43,7 +43,11 @@ export const STAFF_PILLS: readonly Pill[] = [
     label: "Enquiries",
     action: { kind: "send", text: "How many enquiries are open, and which need a person?" },
   },
-  { key: "units", label: "Available units", action: { kind: "send", text: "Which units are available for viewing?" } },
+  {
+    key: "units",
+    label: "Available units",
+    action: { kind: "send", text: "Which units are available for site visit?" },
+  },
   { key: "approvals", label: "Pending approvals", action: { kind: "send", text: "Which approvals are waiting?" } },
   {
     key: "contracts",

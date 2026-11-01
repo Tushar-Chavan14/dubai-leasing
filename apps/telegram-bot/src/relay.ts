@@ -132,8 +132,8 @@ export const COMMANDS = {
   en: [
     { command: "start", description: "Start over" },
     { command: "units", description: "Find a home to rent" },
-    { command: "book", description: "Book a viewing" },
-    { command: "mybooking", description: "My viewing" },
+    { command: "book", description: "Book a site visit" },
+    { command: "mybooking", description: "My site visit" },
     { command: "contact", description: "My email and phone" },
     { command: "agent", description: "Talk to a leasing officer" },
     { command: "language", description: "English / العربية" },

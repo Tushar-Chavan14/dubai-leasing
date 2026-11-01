@@ -14,7 +14,7 @@ export function ApplicationStatus({ v, token }: { v: ApplicationPortalView; toke
   const at = stageIndex(v);
   const closed =
     v.state === "WITHDRAWN" && v.viewingOutcome === "no_show"
-      ? "This application is closed because we didn't see you at the viewing. If you're still interested, contact the leasing team to apply again."
+      ? "This application is closed because we didn't see you at the site visit. If you're still interested, contact the leasing team to apply again."
       : CLOSED[v.state];
   return (
     <div className="stack" style={{ gap: 22 }}>
@@ -56,12 +56,12 @@ export function ApplicationStatus({ v, token }: { v: ApplicationPortalView; toke
           <p style={{ margin: 0 }}>
             {v.viewingAt ? (
               <>
-                Your viewing is booked for <b>{viewingTime(v.viewingAt)}</b> (Dubai time).
+                Your site visit is booked for <b>{viewingTime(v.viewingAt)}</b> (Dubai time).
               </>
             ) : (
-              "Your viewing is booked."
+              "Your site visit is booked."
             )}{" "}
-            After the viewing we&apos;ll email you a link to upload your ID documents.
+            After the site visit we&apos;ll email you a link to upload your ID documents.
           </p>
           {v.property && (
             <div>

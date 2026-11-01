@@ -31,9 +31,9 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
 
   const suggestions = [
     "How many applications are in each stage?",
-    h.waitingForYou > 0 && `Show the ${plural(h.waitingForYou, "item", "items")} waiting for me`,
+    h.waitingForYou > 0 && `View ${plural(h.waitingForYou, "item", "items")} requiring action`,
     h.offersOut > 0 && `Show the ${plural(h.offersOut, "offer", "offers")} waiting on applicants`,
-    h.viewingsToday > 0 && `Show the ${plural(h.viewingsToday, "viewing", "viewings")} today`,
+    h.viewingsToday > 0 && `Show the ${plural(h.viewingsToday, "site visit", "site visits")} today`,
     h.awaitingSignature > 0 &&
       `Which ${h.awaitingSignature === 1 ? "contract is" : `${h.awaitingSignature} contracts are`} waiting for a signature?`,
     h.ejariPending > 0 && `What is pending at Ejari?`,
@@ -51,7 +51,7 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
       <section className="home-chat panel" aria-label="Copilot">
         <CopilotWorkspace
           key={current?.id ?? "new"}
-          heading="What should we move forward today?"
+          heading="What needs your attention today?"
           suggestions={suggestions}
           {...(current ? { threadId: current.id, initial: toChat(current) } : {})}
         />
@@ -73,7 +73,7 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
       )}
 
       <section aria-labelledby="did-h" className="home-did">
-        <h2 id="did-h">Agent did today</h2>
+        <h2 id="did-h">Agent activity today</h2>
         {h.agentToday.length === 0 ? (
           <p className="muted">Nothing yet today.</p>
         ) : (

@@ -45,7 +45,7 @@ export interface ApplicationPortalView {
 
 /** Where an application is, in the applicant's words. */
 export const APPLICANT_STAGES = [
-  { key: "viewing", label: "Viewing" },
+  { key: "viewing", label: "Site visit" },
   { key: "docs", label: "Documents" },
   { key: "check", label: "Checks" },
   { key: "offer", label: "Offer" },

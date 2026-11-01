@@ -108,8 +108,8 @@ export function PropertyGrid({
           </p>
         ) : options.length === 0 ? (
           <p className="pub-empty">
-            No properties are open for viewing right now. <Link href="/customer/chat">Chat with us</Link> and we&apos;ll
-            tell you when one is.
+            No properties are open for site visit right now. <Link href="/customer/chat">Chat with us</Link> and
+            we&apos;ll tell you when one is.
           </p>
         ) : units.length === 0 ? (
           <div className="pub-empty">

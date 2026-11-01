@@ -27,9 +27,9 @@ export function EnquiryForm({ unitId, slots }: { unitId: string; slots: { at: st
   if (state.ref)
     return (
       <div className="pub-success" role="status">
-        <h3>Viewing booked</h3>
+        <h3>Site visit booked</h3>
         <p>
-          Viewing booked. We&apos;ve emailed your invitation (ref <span className="ref">{state.ref}</span>).
+          Site visit booked. We&apos;ve emailed your invitation (ref <span className="ref">{state.ref}</span>).
         </p>
       </div>
     );
@@ -39,7 +39,7 @@ export function EnquiryForm({ unitId, slots }: { unitId: string; slots: { at: st
   const local: Partial<Record<keyof typeof values, string | undefined>> = {
     name: values.name.trim().length < 2 ? "Enter your name." : undefined,
     email: EMAIL.test(values.email.trim()) ? undefined : "Enter a valid email address.",
-    slot: values.slot ? undefined : "Choose a viewing time.",
+    slot: values.slot ? undefined : "Choose a site visit time.",
   };
   const err = (k: keyof typeof values) => (touched[k] ? local[k] : undefined) ?? state.fields?.[k];
   const blur = (k: string) => () => setTouched((t) => ({ ...t, [k]: true }));
@@ -47,7 +47,7 @@ export function EnquiryForm({ unitId, slots }: { unitId: string; slots: { at: st
   if (!slots.length)
     return (
       <p className="pub-empty">
-        There are no free viewing times for this home right now. Chat with us and we&apos;ll arrange one.
+        There are no free site visit times for this home right now. Chat with us and we&apos;ll arrange one.
       </p>
     );
 
@@ -125,7 +125,7 @@ export function EnquiryForm({ unitId, slots }: { unitId: string; slots: { at: st
         )}
       </label>
       <label className="field">
-        <span className="field-label">Viewing time (Dubai)</span>
+        <span className="field-label">Site visit time (Dubai)</span>
         <select
           name="slot"
           required
@@ -154,7 +154,7 @@ export function EnquiryForm({ unitId, slots }: { unitId: string; slots: { at: st
         </div>
       )}
       <button type="submit" className="btn primary pub-submit" disabled={pending}>
-        {pending ? "Booking…" : "Book this viewing"}
+        {pending ? "Booking…" : "Book this site visit"}
       </button>
     </form>
   );

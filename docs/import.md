@@ -75,3 +75,40 @@ page (`/units/{id}/edit`), complete the checklist and get the price approved bef
 The web upload goes through the route handler `apps/web/app/api/import/[kind]/route.ts`, not a
 server action, so files over the 1 MB server-action body limit work; the engine accepts up to
 2 MB per request.
+
+# Importing companies (CSV)
+
+Staff app → **Import** → **Companies**, or `POST /api/import/companies` (**admin only**) with a CSV
+body or `{"csv": "..."}`. No `?company=` is used. A sample file is at
+`apps/web/public/samples/companies-sample.csv`. The company is the landlord (D44), so this loads
+landlord details in bulk. Rows are matched by `slug`, else by name (case-insensitive):
+
+- **New company**: created with its party row (`COMPANY_CREATED`); `kind` is required.
+- **Existing company**: only the legal fields the row provides are changed, an empty cell never
+  erases a saved value; `name`, `slug` and `kind` of an existing company are not changed. No
+  change is a `skipped` row.
+- The legal record is saved whole through the same audited update as the Companies form
+  (`COMPANY_LEGAL_UPDATED`, field names only). A row that gives any legal field must leave the
+  merged record complete (legal name, licence number, authority, expiry, address, email,
+  signatory name, title, email, ID number), otherwise the row is an error and nothing is saved
+  for it. Expiry dates must be in the future.
+- Error messages name columns, never values; ID numbers never reach messages, logs or events.
+
+| Column | Notes |
+|---|---|
+| `name` | required |
+| `slug` | optional; letters, digits, dashes; default is made from the name |
+| `kind` | `developer`, `realty` or `owner`; required for a new company |
+| `categories` | `residential`, `commercial`, `retail` separated by `;` or `,`. Validated, not stored (companies have no category column) |
+| `legal_name_en`, `legal_name_ar`, `trade_licence_no`, `licence_authority`, `trade_licence_expires_on`, `rera_orn` | legal details; expiry `YYYY-MM-DD` |
+| `registered_address`, `email`, `phone`, `cheque_payee` | |
+| `signatory_name`, `signatory_title`, `signatory_email`, `signatory_id_no`, `signatory_id_expires_on` | ID is an Emirates ID (`784-YYYY-NNNNNNN-C`) or, if not of that shape, a passport number |
+
+There is no preview step in the import framework; each row commits on its own.
+
+## Filling legal details on a demo database
+
+`bun run demo:fill-legal` (`DEMO_MODE=true` only) fills the missing legal fields of every company
+with fictional values (the demo set for the seeded slugs, derived from the name otherwise),
+through the audited update as actor `system:demo`. Filled values are never overwritten; a second
+run changes nothing. It prints the field names filled per company, never ID numbers.

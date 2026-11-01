@@ -6,10 +6,18 @@ import type { EngineContext } from "../context.ts";
 import { scheduleTermPayments } from "./collections.ts";
 import { ensureMoveInInspection } from "./move-in.ts";
 import { parseCsv } from "../import/csv.ts";
+import { COLUMN_OF, CompanyImportRow, providedLegal } from "../import/company-row.ts";
 import { importedLeaseState, LeaseImportRow } from "../import/lease-row.ts";
-import { parseUnitRow } from "../import/unit-row.ts";
-import { DomainError } from "../errors.ts";
-import { companyLandlord } from "./company-legal.ts";
+import { findCompany, parseUnitRow } from "../import/unit-row.ts";
+import { DomainError, unprocessable } from "../errors.ts";
+import {
+  CompanyLegalInput,
+  companyLandlord,
+  legalView,
+  lookupCompanyLandlord,
+  updateCompanyLegal,
+} from "./company-legal.ts";
+import { createCompany, slugify } from "./portfolio.ts";
 import { appendEvent } from "./events.ts";
 import { createSameRentFallbackTask, scheduleLeaseMilestones } from "./milestones.ts";
 import { createUnitInTx } from "./units.ts";
@@ -142,6 +150,108 @@ export async function importUnitsCsv(
     }
   }
   return results;
+}
+
+export interface CompanyImportRowResult {
+  row: number;
+  status: "imported" | "skipped" | "error";
+  /** Company slug. */
+  ref?: string;
+  action?: "created" | "updated";
+  /** Names of the legal fields changed; never values. */
+  changedFields?: string[];
+  reasons: string[];
+}
+
+/**
+ * Imports companies (the landlords, D44) from CSV, upserting by slug or name. A new company is created with its
+ * party row; for an existing one only the legal fields the row provides are changed, never emptied. The legal
+ * record is saved whole through `updateCompanyLegal` (audited, future expiry checks), so a row that gives any
+ * legal field must leave the merged record complete. Each row is its own transaction. Messages name columns,
+ * never values (ID numbers).
+ */
+export async function importCompaniesCsv(
+  ctx: EngineContext,
+  csv: string,
+  actor: Actor,
+): Promise<CompanyImportRowResult[]> {
+  let records: Record<string, string>[];
+  try {
+    records = parseCsv(csv);
+  } catch (e) {
+    return [{ row: 0, status: "error", reasons: [(e as Error).message] }];
+  }
+  const results: CompanyImportRowResult[] = [];
+  for (const [i, record] of records.entries()) {
+    const row = i + 2; // header is row 1
+    const parsed = CompanyImportRow.safeParse(record);
+    if (!parsed.success) {
+      results.push({
+        row,
+        status: "error",
+        reasons: parsed.error.issues.map((x) => `${x.path.join(".")}: ${x.message}`),
+      });
+      continue;
+    }
+    try {
+      results.push({ row, ...(await withTx(ctx.database, (tx) => importCompanyRow(ctx, tx, parsed.data, actor))) });
+    } catch (e) {
+      const reasons = e instanceof DomainError && e.reasons?.length ? e.reasons : [safeMessage(e)];
+      results.push({ row, status: "error", reasons: reasons.map(maskPiiText) });
+    }
+  }
+  return results;
+}
+
+async function importCompanyRow(
+  ctx: EngineContext,
+  tx: Tx,
+  r: CompanyImportRow,
+  actor: Actor,
+): Promise<Omit<CompanyImportRowResult, "row">> {
+  const known = await tx.db
+    .select({ id: companies.id, name: companies.name, slug: companies.slug, active: companies.active })
+    .from(companies);
+  const found = findCompany(known, r.slug ?? r.name) ?? (r.slug ? findCompany(known, r.name) : null);
+  const provided = providedLegal(r);
+  let companyId = found?.id;
+  const created = !found;
+  if (!found) {
+    if (!r.kind) return { status: "error", reasons: ["kind: required for a new company (developer, realty or owner)"] };
+    const slug = r.slug ?? slugify(r.name);
+    const company = await createCompany(ctx, tx, { name: r.name, kind: r.kind }, actor);
+    if (company.slug !== slug) throw new Error("slug mismatch");
+    companyId = company.id;
+  }
+  let changedFields: string[] = [];
+  if (Object.keys(provided).length) {
+    const { company, party } = await lookupCompanyLandlord(tx, companyId!);
+    const current = legalView(company, party);
+    const merged = { ...current, ...provided } as Record<string, unknown>;
+    const legal = CompanyLegalInput.safeParse(merged);
+    if (!legal.success)
+      // Thrown, so a company created by this row is rolled back with it.
+      throw unprocessable("invalid legal details", [
+        ...new Set(
+          legal.error.issues.map((x) => {
+            const key = String(x.path[0]);
+            const col = COLUMN_OF[key] ?? key;
+            const blank = merged[key] === null || merged[key] === undefined || merged[key] === "";
+            return `${col}: ${blank ? "required once any legal detail is given (the legal record is saved whole)" : x.message}`;
+          }),
+        ),
+      ]);
+    ({ changedFields } = await updateCompanyLegal(ctx, tx, company.id, legal.data, actor));
+  }
+  const [row] = await tx.db.select({ slug: companies.slug }).from(companies).where(eq(companies.id, companyId!));
+  if (!created && !changedFields.length) return { status: "skipped", ref: row!.slug, reasons: ["already up to date"] };
+  return {
+    status: "imported",
+    ref: row!.slug,
+    action: created ? "created" : "updated",
+    changedFields,
+    reasons: [],
+  };
 }
 
 /**

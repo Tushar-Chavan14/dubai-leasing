@@ -484,7 +484,7 @@ describe.skipIf(noDb)("web chat status check", () => {
       return c.say("Sara Khan");
     };
     const first = await w.chat();
-    expect((await bookIt(first)).reply!.text).toContain("Your viewing is booked");
+    expect((await bookIt(first)).reply!.text).toContain("Your site visit is booked");
     // Another visitor types the same email: nothing about the viewing, its time or its existence.
     const other = await w.chat("sara@example.com");
     const neutral = await bookIt(other);
@@ -495,7 +495,7 @@ describe.skipIf(noDb)("web chat status check", () => {
     // After the email code the same repeat gets the specific answer.
     await w.verify(other);
     const specific = await bookIt(other);
-    expect(specific.reply!.text).toContain("already have a viewing of this home booked");
+    expect(specific.reply!.text).toContain("already have a site visit of this home booked");
     expect(await database.db.select().from(applications)).toHaveLength(1);
   });
 

@@ -89,10 +89,10 @@ export default async function PropertyPage({ params }: PageProps<"/customer/prop
           ) : (
             <>
               <p className="muted">
-                Book a viewing in the chat. Tell it you are interested in {u.code} and it will find you a time.
+                Book a site visit in the chat. Tell it you are interested in {u.code} and it will find you a time.
               </p>
               <Link href={`/customer/chat?unit=${u.id}`} className="btn primary pub-submit">
-                Book a viewing in the chat
+                Book a site visit in the chat
               </Link>
             </>
           )}

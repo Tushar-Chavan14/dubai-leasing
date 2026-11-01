@@ -95,7 +95,7 @@ export async function runEntryAction(_prev: EntryActionState, f: FormData): Prom
         method: "POST",
         body: JSON.stringify({ outcome }),
       });
-      ok = outcome === "attended" ? "Viewing recorded." : "No-show recorded.";
+      ok = outcome === "attended" ? "Site visit recorded." : "No-show recorded.";
       break;
     }
     case "reservation":

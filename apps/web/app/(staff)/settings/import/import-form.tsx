@@ -7,7 +7,7 @@ import { Status } from "../../../../components/ui";
 import { IconUpload, IconWarning } from "../../../../lib/icons";
 import type { CompanyRow } from "../../../../lib/types";
 
-export type ImportKind = "leases" | "units";
+export type ImportKind = "leases" | "units" | "companies";
 
 interface ImportResult {
   imported: number;
@@ -30,6 +30,12 @@ const COPY: Record<ImportKind, { noun: string; button: string; ref: string; plac
     button: "Import leases",
     ref: "Lease",
     placeholder: "unit_code,building,community,unit_no,…",
+  },
+  companies: {
+    noun: "company",
+    button: "Import companies",
+    ref: "Company",
+    placeholder: "name,slug,kind,legal_name_en,trade_licence_no,…",
   },
   units: {
     noun: "unit",
@@ -68,29 +74,31 @@ export function ImportForm({ kind, companies }: { kind: ImportKind; companies: C
   return (
     <>
       <form onSubmit={onSubmit} className="panel panel-pad stack">
-        <label className="field">
-          <span className="field-label">Company</span>
-          <select
-            name="company"
-            required={kind !== "units"}
-            defaultValue={kind === "units" ? "" : companies.find((c) => c.active)?.slug}
-          >
-            {kind === "units" && <option value="">Use the company column in the file</option>}
-            {kind !== "units" && companies.length === 0 && <option value="">No companies yet</option>}
-            {companies
-              .filter((c) => c.active)
-              .map((c) => (
-                <option key={c.slug} value={c.slug}>
-                  {c.name}
-                </option>
-              ))}
-          </select>
-          <span className="hint">
-            {kind === "units"
-              ? "Each row names its company; a company chosen here is used for rows that leave it empty."
-              : "Every row is imported under this company."}
-          </span>
-        </label>
+        {kind !== "companies" && (
+          <label className="field">
+            <span className="field-label">Company</span>
+            <select
+              name="company"
+              required={kind !== "units"}
+              defaultValue={kind === "units" ? "" : companies.find((c) => c.active)?.slug}
+            >
+              {kind === "units" && <option value="">Use the company column in the file</option>}
+              {kind !== "units" && companies.length === 0 && <option value="">No companies yet</option>}
+              {companies
+                .filter((c) => c.active)
+                .map((c) => (
+                  <option key={c.slug} value={c.slug}>
+                    {c.name}
+                  </option>
+                ))}
+            </select>
+            <span className="hint">
+              {kind === "units"
+                ? "Each row names its company; a company chosen here is used for rows that leave it empty."
+                : "Every row is imported under this company."}
+            </span>
+          </label>
+        )}
         <label className="dropzone" htmlFor="csv-file">
           <IconUpload size={22} />
           <span>
