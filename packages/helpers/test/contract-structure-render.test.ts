@@ -504,10 +504,13 @@ describe("D47: clause wording in template paragraphs", () => {
     expect(paragraphFromClauseText("Rent of [annual rent] a year.", "The annual rent is {{b3}}.", blanks())).toBe(
       "Rent of {{b3}} a year.",
     );
-    // A label of a blank outside this paragraph, or any other bracket, stays as written.
-    expect(paragraphFromClauseText("[Tenant name] [see Annex A]", "The annual rent is {{b3}}.", blanks())).toBe(
-      "[Tenant name] [see Annex A]",
-    );
+    // Any field of the template works, by its label or by what fills it; any other bracket stays as written.
+    expect(
+      paragraphFromClauseText("[tenant name] [Start date] [see Annex A]", "The annual rent is {{b3}}.", blanks()),
+    ).toBe("{{b2}} {{b4}} [see Annex A]");
+    expect(unknownPlaceholders("[Tenant name] [Tennant name]", "The annual rent is {{b3}}.", blanks())).toEqual([
+      "Tennant name",
+    ]);
   });
 
   test("a linked paragraph prints its override; null leaves it out", () => {

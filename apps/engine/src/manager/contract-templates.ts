@@ -625,7 +625,7 @@ export async function editCompanyClause(ctx: EngineContext, clauseId: string, in
         const unknown = unknownPlaceholders(text, raw, t.blanks);
         if (unknown.length) {
           throw unprocessable(
-            "Words in [brackets] are fields filled from the records; these aren't fields of this clause. Remove the brackets or use one of its fields.",
+            "Words in [brackets] are filled from the records and must name a field from the template's Fields list. These don't; correct the name or remove the brackets.",
             unknown,
             "unknown_field",
           );

@@ -637,20 +637,36 @@ export function clauseTextFromParagraph(raw: string, blanks: readonly TemplateBl
 }
 
 /**
- * D47: clause wording back into a template paragraph: a placeholder becomes the token of its blank in the clause's own
- * paragraph (so the field is still filled from the records). Other brackets stay as written.
+ * D47: every name a clause may use in `[brackets]`: the placeholders of its own paragraph first, then any field blank
+ * of the template by its label ("Community") or by what fills it ("Community or area"). Lower-case name to blank id.
+ */
+function fieldNames(raw: string, blanks: readonly TemplateBlank[]): Map<string, string> {
+  const out = new Map([...paragraphPlaceholders(raw, blanks)].map(([id, name]) => [name.toLowerCase(), id]));
+  for (const b of blanks) {
+    if (b.role !== "field" || b.field === "leave_empty" || b.field === "unmapped" || mappingProblem(b)) continue;
+    for (const name of [b.label, sheetKeyInfo(b.field)?.label]) {
+      const key = name?.trim().toLowerCase();
+      if (key && !out.has(key)) out.set(key, b.id);
+    }
+  }
+  return out;
+}
+
+/**
+ * D47: clause wording back into a template paragraph: a `[name]` becomes the token of its field (see `fieldNames`), so
+ * the value is filled from the records. Other brackets stay as written.
  */
 export function paragraphFromClauseText(text: string, raw: string, blanks: readonly TemplateBlank[]): string {
-  const byName = new Map([...paragraphPlaceholders(raw, blanks)].map(([id, name]) => [name.toLowerCase(), id]));
+  const names = fieldNames(raw, blanks);
   return text.replace(/\[([^[\]]{1,80})\]/g, (m, label: string) => {
-    const id = byName.get(label.trim().toLowerCase());
+    const id = names.get(label.trim().toLowerCase());
     return id ? `{{${id}}}` : m;
   });
 }
 
-/** D47: `[...]` in clause wording that isn't one of its paragraph's fields (it would print as typed). */
+/** D47: `[...]` in clause wording that isn't a field of the template (it would print as typed). */
 export function unknownPlaceholders(text: string, raw: string, blanks: readonly TemplateBlank[]): string[] {
-  const names = new Set([...paragraphPlaceholders(raw, blanks).values()].map((n) => n.toLowerCase()));
+  const names = fieldNames(raw, blanks);
   return [...text.matchAll(/\[([^[\]]{1,80})\]/g)].map((m) => m[1]!.trim()).filter((n) => !names.has(n.toLowerCase()));
 }
 

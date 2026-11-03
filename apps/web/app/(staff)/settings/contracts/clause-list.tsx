@@ -214,7 +214,8 @@ export function ClauseItem({
               />
               <span className="hint">
                 Contracts prepared from now on use the new wording. Signed contracts don&apos;t change.
-                {c.fromTemplate && " Words in [brackets] are filled from the records; keep them as they are."}
+                {c.fromTemplate &&
+                  " Words in [brackets] are filled from the records: use any name from the template's Fields list, like [Community]."}
               </span>
             </label>
             {state.needsConfirm && (

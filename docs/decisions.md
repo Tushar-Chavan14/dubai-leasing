@@ -1089,3 +1089,17 @@ The leasing assistant automates the work up to the contract. Staff should approv
   signing that nobody has signed yet: the signing links expire, the version is superseded and the new one waits at
   `final_contract`. Once anyone signed it, never.
 
+## D48 — Decision cards in the staff copilot
+
+- **What.** When the user's own message asks to approve or reject something waiting for a person (final contract,
+  Ejari submission, identity check, any flagged approval) or to record a site visit, the copilot calls the read tool
+  `show_decision`, which puts a card in the chat: what is being decided, the record, and the inbox's own buttons
+  (Approve, Reject with a required note) or Came / Didn't come for a site visit.
+- **Rules kept.** The copilot never decides: the card is a staff UI action shown in the chat (rule 11), the click is the
+  person's decision (rule 3), and it runs the same routes as the inbox and the application page as the signed-in user,
+  with the same checks (gate approver role, a preparer can't approve their own, approving a contract re-checks the
+  records). The card shows "Not yours to decide" with the reason when the role can't decide it. A model can't create a
+  card for an item the user didn't name (the tool looks the record up from the user's words), and untrusted text never
+  triggers one. Decisions are audited as the user, exactly as from the inbox.
+- **Not included.** Approving several items at once, edits (rent, note) — the card links to the full approval.
+

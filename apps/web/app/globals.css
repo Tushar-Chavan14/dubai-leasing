@@ -3219,6 +3219,10 @@ tr[data-current="true"] td {
   display: grid;
   gap: 12px;
 }
+.cc-welcome {
+  max-width: 640px;
+  margin: 24px auto;
+}
 .cc-center {
   text-align: center;
 }

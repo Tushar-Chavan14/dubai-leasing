@@ -30,6 +30,33 @@ export function customerPills(arabic: boolean): Pill[] {
   ];
 }
 
+/**
+ * Public web chat, start screen: what the assistant can do for a visitor. The first four press the same buttons as the
+ * pills; the questions are sent as the visitor's own message (the agent answers from its tools, never prices it can't
+ * show).
+ */
+export const CUSTOMER_STARTERS: readonly Pill[] = [
+  { key: "find", label: "Show me homes available now", action: { kind: "press", data: "units" } },
+  { key: "book", label: "Book a site visit", action: { kind: "press", data: "chat:book" } },
+  { key: "apply", label: "Apply for a home", action: { kind: "press", data: "chat:apply" } },
+  { key: "status", label: "Check my application", action: { kind: "press", data: "status:start" } },
+  {
+    key: "q-2bed",
+    label: "I'm looking for a 2-bedroom apartment",
+    action: { kind: "send", text: "I'm looking for a 2-bedroom apartment" },
+  },
+  {
+    key: "q-docs",
+    label: "What documents do I need to apply?",
+    action: { kind: "send", text: "What documents do I need to apply?" },
+  },
+  {
+    key: "q-how",
+    label: "How does renting in Dubai work?",
+    action: { kind: "send", text: "How does renting in Dubai work?" },
+  },
+];
+
 /** Staff copilot (Home and the side panel): each sends its prompt into the chat. */
 export const STAFF_PILLS: readonly Pill[] = [
   {

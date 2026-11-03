@@ -64,7 +64,7 @@ export const listApprovals: CopilotTool<typeof Input, typeof Output> = {
             proposedRent: typeof p.proposedRentFils === "number" ? aed(p.proposedRentFils) : null,
           };
         }),
-      note: "Approvals are decided only by a person in the approval inbox (/inbox), never in chat.",
+      note: "A person decides each approval: in the inbox, or by clicking the decision card show_decision puts in the chat. You never decide.",
     };
   },
 };

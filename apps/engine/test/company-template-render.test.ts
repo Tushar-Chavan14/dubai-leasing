@@ -20,6 +20,7 @@ import {
   leases,
   parties,
   units,
+  withTx,
 } from "@leasing/db";
 import {
   buildEjariPayload,
@@ -36,6 +37,8 @@ import { FakeLlm } from "@leasing/llm";
 import { and, eq } from "drizzle-orm";
 import { createApi } from "../src/api/app.ts";
 import { backfillTemplateClauseLinks } from "../src/manager/company-templates.ts";
+import { contractAgentContext } from "../src/manager/contract-agent-backend.ts";
+import { contractInputs } from "../src/manager/contracts.ts";
 import { issueToken } from "../src/api/auth.ts";
 import { decideApproval } from "../src/manager/approvals.ts";
 import { DEFAULT_ADDENDUM, prepareContract } from "../src/manager/contracts.ts";
@@ -758,6 +761,46 @@ describe.skipIf(noDb)("contract rendered in the company template", () => {
     expect(b).toEqual(a);
   });
 
+  test("D47: the contract agent checks the wording as printed, not the sample's original", async () => {
+    const s = await setup();
+    const id = await s.propose();
+    const sampleId = (await templateRow(id)).sampleDocumentId;
+    const clauseId = newId();
+    await database.db.insert(companyClauses).values({
+      id: clauseId,
+      companyId: s.companyId,
+      title: "Deposit",
+      textEn: "A security deposit of AED 6,750 is held.",
+      quote: "A security deposit of AED 6,750 is held.",
+      category: "payment",
+      hasValues: true,
+      status: "proposed",
+      sourceDocumentId: sampleId,
+      createdBy: "helper:contract_template",
+    });
+    await s.approve(id);
+    const r = await s.api("/contract-rules", "POST", {
+      companyId: s.companyId,
+      category: "residential",
+      tenures: ["annual"],
+      minCheques: 1,
+      maxCheques: 12,
+      clauseIds: [`cc:${clauseId}`],
+      templateId: id,
+    });
+    expect(r.status).toBe(201);
+    await s.api(`/company-clauses/${clauseId}`, "PATCH", {
+      text: "The landlord holds [Security deposit] for [Building].",
+    });
+    const agentView = await withTx(s.ctx.database, async (tx) => {
+      const i = await contractInputs(tx, s.leaseId);
+      return contractAgentContext(s.ctx, tx, i, DEFAULT_ADDENDUM);
+    });
+    const texts = agentView.template!.paragraphs.map((p) => p.text).join(" | ");
+    expect(texts).toContain("The landlord holds {{b9}} for {{b4}}.");
+    expect(texts).not.toContain("A security deposit of");
+  });
+
   test("D47: a linked paragraph prints the clause's current wording, only when the clause is in the rule", async () => {
     const s = await setup();
     const id = await s.propose();
@@ -900,7 +943,7 @@ describe.skipIf(noDb)("contract rendered in the company template", () => {
     expect(row!.status).toBe("rejected");
   });
 
-  test("D47: editing a linked clause refuses a [field] its paragraph doesn't have", async () => {
+  test("D47: a linked clause may use any template field in [brackets]; an unknown name is refused", async () => {
     const s = await setup();
     const id = await s.propose();
     const sampleId = (await templateRow(id)).sampleDocumentId;
@@ -918,9 +961,14 @@ describe.skipIf(noDb)("contract rendered in the company template", () => {
       createdBy: "helper:contract_template",
     });
     await s.approve(id);
-    const bad = await s.api(`/company-clauses/${clauseId}`, "PATCH", { text: "A deposit of [Annual rent] is held." });
+    const bad = await s.api(`/company-clauses/${clauseId}`, "PATCH", { text: "A deposit of [Anual rent] is held." });
     expect(bad.status).toBe(422);
     expect(((await bad.json()) as { code: string }).code).toBe("unknown_field");
+    // A field from another part of the template (as listed under Fields) is fine.
+    const ok = await s.api(`/company-clauses/${clauseId}`, "PATCH", {
+      text: "A deposit of [Security deposit] for [building] is held.",
+    });
+    expect(ok.status).toBe(200);
   });
 
   test("company clauses are appended after the template sections", async () => {

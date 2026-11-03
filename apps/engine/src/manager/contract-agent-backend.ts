@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { type BlankFill, type ContractAgentContext, templateParagraphs, type TemplateBlank } from "@leasing/helpers";
 import type { EngineContext } from "../context.ts";
 import { approvedClauses } from "./clause-refs.ts";
-import { fillTemplateBlanks, parseTemplate } from "./company-templates.ts";
+import { fillTemplateBlanks, linkedParagraphs, parseTemplate, type TemplateRow } from "./company-templates.ts";
 import { landlordGaps } from "./company-legal.ts";
 import type { contractInputs } from "./contracts.ts";
 import { getCompanyPolicy } from "./events.ts";
@@ -56,13 +56,7 @@ export async function contractAgentContext(
       : null,
     clauses,
     template: i.template
-      ? {
-          id: i.template.id,
-          version: i.template.version,
-          paragraphs: templateParagraphs(parseTemplate(i.template).sections)
-            .filter((p) => p.kind === "paragraph")
-            .map((p) => ({ key: p.key, text: p.text })),
-        }
+      ? await printedTemplate(tx, i.template, [...(rule?.clauseIds ?? []), ...addendum.clauses])
       : null,
     rentBand: range ? { minFils: range.min, maxFils: range.max } : null,
     // A deposit agreed at the offer was set from the policy then; only a deposit changed since is held to today's policy.
@@ -86,4 +80,23 @@ async function offerOf(tx: Tx, applicationId: string) {
 export function blankFiller(ctx: EngineContext, i: Inputs, blanks?: TemplateBlank[]) {
   return async (fields: Record<string, unknown>): Promise<BlankFill | null> =>
     i.template ? fillTemplateBlanks(ctx, i.template, fields as never, i.extras, blanks) : null;
+}
+
+/**
+ * The template wording as the contract prints it (D47), for the agent to check: a paragraph linked to a clause shows
+ * the clause's current wording, one whose clause isn't in this contract is left out, and paragraphs code left out
+ * (sample notes, sample values) are not shown. Never the sample's original wording where a clause replaced it.
+ */
+async function printedTemplate(tx: Tx, row: TemplateRow, clauseIds: readonly string[]) {
+  const t = parseTemplate(row);
+  const dropped = new Set(t.review.droppedParagraphs);
+  const linked = await linkedParagraphs(tx, row, clauseIds);
+  const paragraphs = templateParagraphs(t.sections)
+    .filter((p) => p.kind === "paragraph" && !dropped.has(p.key))
+    .flatMap((p) => {
+      const over = Object.hasOwn(linked.paragraphs, p.key) ? linked.paragraphs[p.key] : undefined;
+      if (over === null) return [];
+      return [{ key: p.key, text: over ?? p.text }];
+    });
+  return { id: row.id, version: row.version, paragraphs };
 }

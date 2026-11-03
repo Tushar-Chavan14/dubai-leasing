@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { customerPills, STAFF_PILLS } from "../components/chat-ui/quick-actions.ts";
+import { CUSTOMER_STARTERS, customerPills, STAFF_PILLS } from "../components/chat-ui/quick-actions.ts";
 
 describe("quick-action pills", () => {
   test("public chat: the five code-driven pills, in order, each a fixed button the engine handles", () => {
@@ -50,5 +50,13 @@ describe("quick-action pills", () => {
   test("no pill asks the model to approve, send or change anything", () => {
     const text = STAFF_PILLS.map((p) => (p.action.kind === "send" ? p.action.text : "")).join(" ");
     expect(text).not.toMatch(/\b(approve|send|submit|change|record)\b/i);
+  });
+
+  test("public chat start screen: the actions press the same buttons as the pills; questions are sent as text", () => {
+    const press = CUSTOMER_STARTERS.flatMap((p) => (p.action.kind === "press" ? [p.action.data] : []));
+    const pillData = customerPills(false).flatMap((p) => (p.action.kind === "press" ? [p.action.data] : []));
+    expect(press).toEqual(["units", "chat:book", "chat:apply", "status:start"]);
+    expect(press.every((d) => pillData.includes(d))).toBe(true);
+    for (const p of CUSTOMER_STARTERS) if (p.action.kind === "send") expect(p.action.text).toBe(p.label);
   });
 });

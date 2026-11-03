@@ -8,7 +8,8 @@ import { StatusTracker } from "./status-tracker";
 import { ChoiceCardView } from "../chat-ui/choice-card";
 import { UnitCardView } from "../chat-ui/unit-card";
 import { Composer, VoiceMenu } from "../chat-ui/composer";
-import { customerPills } from "../chat-ui/quick-actions.ts";
+import { CUSTOMER_STARTERS, customerPills, type Pill } from "../chat-ui/quick-actions.ts";
+import { IconSpark } from "../../lib/icons";
 import { type ChatController, isArabicChat } from "./use-chat";
 
 /** The chat view. The parent holds the state (`useChat`), so it can also send a button on load. */
@@ -43,6 +44,10 @@ export function ChatView({
     const el = scroller.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [bubbles.length, typing]);
+
+  /** A pill or start-screen prompt: presses an engine button, or sends the text as the visitor's message. */
+  const pick = (p: Pill) =>
+    p.action.kind === "press" ? press({ label: p.label, data: p.action.data }) : sendText(p.action.text);
 
   const submit = (e?: FormEvent) => {
     e?.preventDefault();
@@ -84,9 +89,33 @@ export function ChatView({
             </p>
           )}
           {!loading && !loadFailed && bubbles.length === 0 && (
-            <>
-              <p className="muted cc-center">Tell us what kind of home you&apos;re looking for, or ask a question.</p>
-            </>
+            <div className="cp-empty cc-welcome">
+              <div className="cp-mark" aria-hidden="true">
+                <IconSpark size={18} />
+              </div>
+              <p>
+                <strong>Hello, welcome to Dubai Leasing.</strong> I can find homes that suit you, book a site visit,
+                start your application and tell you where an application stands. Ask in English or Arabic.
+              </p>
+              <div className="cp-starters" role="list" aria-label="Things you can ask">
+                {CUSTOMER_STARTERS.map((p) => (
+                  <button
+                    key={p.key}
+                    type="button"
+                    role="listitem"
+                    className="cp-starter"
+                    disabled={typing}
+                    onClick={() => pick(p)}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+              <p className="muted tpl-note">
+                Prices, dates and documents always come from our records. Documents are only ever uploaded through a
+                secure link we email you.
+              </p>
+            </div>
           )}
           {bubbles.map((b, i) => (
             <div key={b.key} className="cc-row" data-role={b.role}>
@@ -173,9 +202,7 @@ export function ChatView({
           pills={customerPills(ar)}
           pillsLabel={ar ? "إجراءات سريعة" : "Quick actions"}
           pillsDisabled={typing}
-          onPick={(p) =>
-            p.action.kind === "press" ? press({ label: p.label, data: p.action.data }) : sendText(p.action.text)
-          }
+          onPick={pick}
           onSubmit={askingCode ? submitCode : submit}
           className={askingCode ? "cc-code" : undefined}
         >

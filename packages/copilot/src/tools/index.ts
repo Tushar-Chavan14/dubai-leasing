@@ -15,6 +15,7 @@ import { getHelperRun } from "./get-helper-run.ts";
 import { getLease } from "./get-lease.ts";
 import { getLeaseTimeline } from "./get-lease-timeline.ts";
 import { listApprovals } from "./list-approvals.ts";
+import { showDecision } from "./show-decision.ts";
 import { listDeadlines } from "./list-deadlines.ts";
 import { listOutboundMessages } from "./list-outbound-messages.ts";
 import { proposeApplication } from "./propose-application.ts";
@@ -63,6 +64,7 @@ export const copilotTools: readonly CopilotTool[] = [
   getLeaseTimeline,
   listDeadlines,
   listApprovals,
+  showDecision,
   getHelperRun,
   listOutboundMessages,
   explainRule,

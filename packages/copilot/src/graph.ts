@@ -149,10 +149,11 @@ export function collectIssued(into: Map<string, string | null>, output: unknown,
     if (c.kind === "record") {
       into.set(c.ref, c.href);
       into.set(c.id, c.href);
-    } else {
+    } else if (c.kind === "unit") {
       into.set(c.card.unitId, c.href);
       into.set(c.card.code, c.href);
     }
+    // Decision cards issue nothing: a choice can never point at an approval.
   }
 }
 

@@ -49,7 +49,38 @@ export const UnitCardItem = z.object({
 });
 export type UnitCardItem = z.infer<typeof UnitCardItem>;
 
-export const CopilotCard = z.discriminatedUnion("kind", [RecordCard, UnitCardItem]);
+/**
+ * A decision the user asked for (approve or reject a pending approval, or record a site visit). The card shows what is
+ * being decided, and its buttons call the same staff route as the inbox or the application page, as the user: the
+ * copilot only puts the card on screen, the click is the person's decision (AGENTS.md rules 3 and 11).
+ */
+export const DecisionCard = z.discriminatedUnion("decision", [
+  z.object({
+    kind: z.literal("decision"),
+    decision: z.literal("approval"),
+    approvalId: z.string(),
+    title: z.string(),
+    gateLabel: z.string(),
+    ref: z.string().nullable(),
+    /** The approval in the Workspace, for the full details or an edit. */
+    href: z.string(),
+    /** Why this user can't decide it (another role decides it, or they prepared it); absent when they can. */
+    blocked: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal("decision"),
+    decision: z.literal("site_visit"),
+    applicationId: z.string(),
+    ref: z.string(),
+    name: z.string(),
+    unit: z.string(),
+    href: z.string(),
+    blocked: z.string().optional(),
+  }),
+]);
+export type DecisionCard = z.infer<typeof DecisionCard>;
+
+export const CopilotCard = z.union([RecordCard, UnitCardItem, DecisionCard]);
 export type CopilotCard = z.infer<typeof CopilotCard>;
 
 export const ChoiceOption = z.object({
