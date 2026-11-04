@@ -140,7 +140,13 @@ export function CopilotPanel() {
                 autoFocus={open}
                 ask={ask}
                 prefill={prefill}
-                starters={pathname.startsWith("/settings") ? "settings" : undefined}
+                starters={
+                  pathname.startsWith("/settings/kyc")
+                    ? "kyc"
+                    : pathname.startsWith("/settings")
+                      ? "settings"
+                      : undefined
+                }
               />
             </aside>
           </>,

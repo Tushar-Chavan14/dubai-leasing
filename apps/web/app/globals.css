@@ -4936,6 +4936,122 @@ p.wk-err {
   border-radius: var(--r-m);
   box-shadow: inset 0 0 0 1px var(--line);
 }
+/* Upload page: who is renting (decides which document fields apply). */
+.renting-as {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  align-items: center;
+  border: 0;
+  margin: 0;
+}
+.renting-as legend {
+  float: left;
+  width: 100%;
+  margin-bottom: 4px;
+}
+/* "Ask AI" with request templates. */
+.ask-ai-menu {
+  position: relative;
+  display: inline-block;
+}
+.ask-ai-menu > summary {
+  list-style: none;
+  cursor: pointer;
+}
+.ask-ai-menu > summary::-webkit-details-marker {
+  display: none;
+}
+.ask-ai-menu > ul {
+  position: absolute;
+  right: 0;
+  z-index: 20;
+  min-width: 280px;
+  margin: 6px 0 0;
+  padding: 6px;
+  list-style: none;
+  background: var(--surface);
+  border-radius: var(--r-m);
+  box-shadow:
+    inset 0 0 0 1px var(--line),
+    var(--shadow-lift);
+}
+.ask-ai-menu li button {
+  width: 100%;
+  padding: 8px 10px;
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  border-radius: var(--r-s);
+  cursor: pointer;
+}
+.ask-ai-menu li button:hover,
+.ask-ai-menu li button:focus-visible {
+  background: var(--surface-3);
+}
+/* Documents & KYC: one card per document, one row per check with its severity. */
+.kyc-doc {
+  border-radius: var(--r-m);
+  box-shadow: inset 0 0 0 1px var(--line);
+  padding: 0 14px;
+}
+.kyc-doc > summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: baseline;
+  padding: 12px 0;
+  cursor: pointer;
+}
+.kyc-doc[open] > summary {
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 12px;
+}
+.kyc-doc > summary .muted {
+  font-size: 13px;
+}
+.kyc-checks {
+  list-style: none;
+  margin: 8px 0 12px;
+  padding: 0;
+}
+.kyc-check {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px 16px;
+  align-items: start;
+  padding: 10px 0;
+  border-top: 1px dashed var(--line);
+}
+.kyc-checks > .kyc-check:first-child {
+  border-top: 0;
+}
+.kyc-check[data-severity="off"] strong {
+  color: var(--muted);
+}
+.kyc-check-say {
+  margin: 2px 0 0;
+  font-size: 13px;
+}
+.kyc-severity {
+  display: grid;
+  gap: 6px;
+  justify-items: end;
+}
+.kyc-severity .check-row {
+  font-size: 13px;
+}
+@media (max-width: 640px) {
+  .kyc-check {
+    grid-template-columns: 1fr;
+  }
+  .kyc-severity {
+    justify-items: start;
+  }
+}
 .check-col {
   display: grid;
   gap: 6px;

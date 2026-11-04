@@ -138,10 +138,28 @@ remove one.
   reusable status link (`application`). Uploads: JPEG/PNG/WebP by content, 10 MB, EXIF/GPS
   stripped, stored content-addressed in `UPLOADS_DIR`. "Send for checking" = `DOCS_UPLOADED`
   (spends the link).
+- The upload page first asks who is renting (myself / a company): the answer goes with `DOCS_UPLOADED` as
+  `applicantKind`, sets the application's own (not yet verified) party kind, is recorded as `APPLICANT_KIND_SET`, and
+  decides which fields apply ("Shown to") and how KYC checks (e.g. the company name vs the trade licence). Chat and
+  Telegram applications start as individual.
 - The upload page renders the company's **document form** (D46, `company_kyc_configs`): typed answers go with
   `DOCS_UPLOADED`, are validated against the form version shown and stored on `applications.form_answers`. The KYC
   helper gets the company's **KYC rules** (base switches and values, company rules) and the answers; the name check
-  uses the "name as per documents" answer. Every failed rule is a non-blocking flag; custom AI rules can only flag.
+  uses the "name as per documents" answer. D49: each read document field on the form (`FormField.rules`) has its own
+  validity days, read confidence and checks for its category; checks across documents are in `base.checks`; every check
+  (per field, across documents, company rules) has a severity: `off` drops the flag, `warning` is a normal approvable flag, `blocker` is a blocking flag. A blocker with
+  "email applicant" makes the engine call `requestDocuments` as `helper:kyc` instead of opening a `kyc_review`: a new
+  upload link whose email lists code-written reasons (`applicantReason`, no personal data), recorded on
+  `DOCUMENTS_REQUESTED` (`automatic`, `checks`, `reasons`). At most `MAX_AUTO_REUPLOAD_EMAILS` (2) per application;
+  after that the review opens with the blocking flags. Expired documents are always blockers; wrong or unreadable
+  documents can't be off; custom AI checks can only warn. Older saved configs derive the same behaviour as before.
+  D50: the settings page and the copilot edit one **draft** per company (`company_kyc_configs.status = 'draft'`, never
+  active); **Publish** makes it the live version (`KYC_CONFIG_SAVED`), Discard throws it away. Applications only ever
+  use published versions. A document field may be a **custom** category (`customCategory`: name, description, has an
+  expiry date): uploaded as `other:<key>`, read by the vision model (matches the description, holder name, number,
+  issue and expiry dates; the description goes in the prompt as quoted data) and checked by code (expiry, read
+  clearly, right document, holder is the applicant). **Issued within N days** (`issued_recently`, off by default) runs
+  on every category with an issue date. Check ids for custom fields are `custom:<key>.<check>`.
 - `DOCS_UPLOADED` runs the **KYC helper** (vision reads each image; pure code decides). Nothing
   flagged → `KYC_VERIFIED`, which copies the identity onto the applicant's party (never retyped;
   the ID's English name becomes `full_name_en`; an Emirates ID already on another party moves the
@@ -1190,8 +1208,9 @@ export interface CopilotTool<I extends z.ZodTypeAny, O extends z.ZodTypeAny> {
 | `read` | `search_entities`, `get_lease`, `get_lease_timeline`, `list_deadlines`, `list_approvals`, `get_helper_run`, `list_outbound_messages`, `explain_rule`, `compute_renewal_cap`, `find_available_units`, `get_case_pack` (leasing roles; the dispute case index, tenant text untrusted), `list_payments`, `list_tickets`, `list_tasks`, `list_enquiries`, `get_enquiry` (visitor text untrusted), `get_unit` (SRI band and rent-rule range from the engine), `viewing_slots` | None | No |
 | `draft` | `draft_email` (leasing roles, finance; to a lease's tenant or an application's applicant, D42), `draft_approval_note` (any staff), `summarise_case` (leasing roles; an RDC case summary built from `get_case_pack`, opened on the lease page with copy/download, never filed) | Saves a `copilot_drafts` row in the user's thread; the user opens it in the normal form, edits it and sends or posts it. The copilot never sends | No |
 | `read` (settings, D45) | `get_company_settings` (all staff) | `GET /api/copilot/company-settings?company=` | No |
+| `read` (KYC settings, D50) | `get_kyc_config` (all staff) | `GET /api/copilot/kyc-config?company=` (the open draft first) | No |
 | `read` (decision card, D48) | `show_decision` (all staff; the card is blocked for roles that can't decide) | `GET /api/copilot/records`, `GET /api/approvals?status=pending`; the card's buttons call `POST /api/approvals/:id/decide` and `POST /api/applications/:id/viewing-outcome` as the user | No (the user's click decides) |
-| `propose` (settings, D45) | `add_contract_clause`, `save_rent_rule`, `save_contract_rule` (admin), `save_sri_value` (admin, leasing manager) | `explicit`: `POST /api/copilot/config-changes`, applied now only if `userQuote` is in the user's latest message; `suggest`: a `config_change` proposal | `explicit`: no (the user's own words asked for it); `suggest`: **yes** |
+| `propose` (settings, D45; KYC D50) | `add_contract_clause`, `save_rent_rule`, `save_contract_rule`, `edit_kyc_config` (admin), `save_sri_value` (admin, leasing manager) | `explicit`: `POST /api/copilot/config-changes`, applied now only if `userQuote` is in the user's latest message; `suggest`: a `config_change` proposal | `explicit`: no (the user's own words asked for it); `suggest`: **yes** |
 | `propose` | `propose_application` (D25), `propose_viewing_invite`, `propose_request_documents`, `propose_resend_signing_link`, `propose_prepare_contract` (leasing roles; D42: prepare only, the contract still waits at `final_contract`), `create_task` (leasing roles), `propose_approval` (gates `formal_reminder`: leasing roles and finance; `vacate_notice`: leasing roles) (D26) | Stores a proposal; on Confirm the normal engine route creates the application, the task or the pending approval, as the user | **Yes**: the user clicks Confirm in the chat |
 
 **Proposals and Confirm (phase 3, D25):** `propose_application` stores a `copilot_proposals`

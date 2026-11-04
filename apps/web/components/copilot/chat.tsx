@@ -66,7 +66,7 @@ type Starter = { text: string; kind: "ask" | "draft" | "prepare" };
 const ask = (text: string): Starter => ({ text, kind: "ask" });
 const draft = (text: string): Starter => ({ text, kind: "draft" });
 const prepare = (text: string): Starter => ({ text, kind: "prepare" });
-const STARTERS: Record<PageRef["kind"] | "none" | "settings", Starter[]> = {
+const STARTERS: Record<PageRef["kind"] | "none" | "settings" | "kyc", Starter[]> = {
   lease: [
     ask("Why is this lease waiting?"),
     ask("What is the contract and Ejari status?"),
@@ -109,6 +109,15 @@ const STARTERS: Record<PageRef["kind"] | "none" | "settings", Starter[]> = {
     prepare("Set the residential rent band of…"),
     prepare("Change the residential contract rule of…"),
     prepare("Add a Smart Rental Index value of AED "),
+  ],
+  kyc: [
+    ask("What KYC checks does each company run on each document?"),
+    ask("What is the difference between a warning and a blocker?"),
+    ask("Which KYC checks email the applicant automatically?"),
+    prepare("Make the passport valid this many days after the lease starts for…"),
+    prepare("Add a required custom document to the applicant form of…"),
+    prepare("Make a KYC check a blocker that emails the applicant for…"),
+    prepare("Publish the KYC draft of…"),
   ],
 };
 const isPrefill = (t: string) => t.endsWith("…") || t.endsWith(" ");
@@ -228,10 +237,17 @@ const CHANGE_TITLE: Record<string, string> = {
   rent_rule: "Rent rule",
   contract_rule: "Contract rule",
   sri_value: "Smart Rental Index value",
+  kyc_config: "Documents & KYC settings (draft)",
 };
 
 /** Settings tools: after one runs (or its card is confirmed) the page behind the panel is refreshed. */
-const SETTINGS_TOOLS = new Set(["add_contract_clause", "save_rent_rule", "save_contract_rule", "save_sri_value"]);
+const SETTINGS_TOOLS = new Set([
+  "add_contract_clause",
+  "save_rent_rule",
+  "save_contract_rule",
+  "save_sri_value",
+  "edit_kyc_config",
+]);
 
 const CONFIRM_NOTE: Record<ProposalView["kind"], string> = {
   create_application: "Confirming creates the application and emails the site visit invitation.",
@@ -434,7 +450,11 @@ function ProposalCard({ p, onChange }: { p: ProposalView; onChange: (v: Proposal
       <ProposalFacts p={p} />
       {p.status === "pending" && (
         <>
-          <p className="cp-proposal-note">{CONFIRM_NOTE[p.kind]}</p>
+          <p className="cp-proposal-note">
+            {p.kind === "config_change" && p.summary.change === "kyc_config"
+              ? "Confirming saves this to the company's KYC draft in your name. Applicants keep the live version until the draft is published."
+              : CONFIRM_NOTE[p.kind]}
+          </p>
           <div className="cp-proposal-actions">
             <button type="button" className="btn primary small" disabled={busy} onClick={() => void act("confirm")}>
               Confirm
@@ -501,7 +521,9 @@ function ProposalCard({ p, onChange }: { p: ProposalView; onChange: (v: Proposal
                 ? "/settings/rent-index"
                 : p.summary.change === "rent_rule"
                   ? "/settings/rent-rules"
-                  : "/settings/contracts"
+                  : p.summary.change === "kyc_config"
+                    ? "/settings/kyc"
+                    : "/settings/contracts"
             }
           >
             Open settings
@@ -634,7 +656,7 @@ export function CopilotChat({
   /** Text put in the message box (not sent) each time it arrives: the "Ask AI to …" buttons. */
   prefill?: { id: number; text: string } | undefined;
   /** Starter set for pages that aren't records (Settings). */
-  starters?: "settings" | undefined;
+  starters?: "settings" | "kyc" | undefined;
   /** Text placed in the composer for the user to edit and send ("Ask AI to …" links). Never sent on its own. */
   initialDraft?: string | undefined;
   /** A question sent once when it arrives (for example the Workspace's "Draft a reply" button). */

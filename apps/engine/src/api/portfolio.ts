@@ -28,7 +28,13 @@ import {
   uploadSample,
 } from "../manager/contract-templates.ts";
 import { notFound, unprocessable } from "../errors.ts";
-import { companyKycConfig, saveKycConfig } from "../manager/kyc-config.ts";
+import {
+  discardKycDraft,
+  kycConfigWithDraft,
+  publishKycDraft,
+  saveKycConfig,
+  saveKycDraft,
+} from "../manager/kyc-config.ts";
 import {
   lookupCompanyLandlord,
   CompanyLegalInput,
@@ -367,11 +373,11 @@ export function registerPortfolioRoutes(api: Hono<AuthEnv>, ctx: EngineContext) 
     return c.json(await removeCompanyClause(ctx, id, actorOf(user)));
   });
 
-  // Document form and KYC rules (D46). Read: any staff. Save: admin only.
+  // Document form and KYC rules (D46). Read: any staff (with the open draft, D50). Save, publish: admin only.
   api.get("/companies/:id/kyc-config", async (c) =>
     c.json(
       await withTx(ctx.database, (tx) =>
-        companyKycConfig(
+        kycConfigWithDraft(
           tx,
           z.uuid().catch("00000000-0000-0000-0000-000000000000").parse(c.req.param("id")),
           ctx.clock.today(),
@@ -385,6 +391,25 @@ export function registerPortfolioRoutes(api: Hono<AuthEnv>, ctx: EngineContext) 
     const id = z.uuid().catch("00000000-0000-0000-0000-000000000000").parse(c.req.param("id"));
     const body = z.object({ form: z.unknown(), rules: z.unknown() }).parse(await c.req.json());
     return c.json(await withTx(ctx.database, (tx) => saveKycConfig(ctx, tx, id, body, actorOf(user))));
+  });
+  api.put("/companies/:id/kyc-config/draft", async (c) => {
+    const user = c.get("user");
+    requireRole(user, ["admin"]);
+    const id = z.uuid().catch("00000000-0000-0000-0000-000000000000").parse(c.req.param("id"));
+    const body = z.object({ form: z.unknown(), rules: z.unknown() }).parse(await c.req.json());
+    return c.json(await withTx(ctx.database, (tx) => saveKycDraft(ctx, tx, id, body, actorOf(user))));
+  });
+  api.post("/companies/:id/kyc-config/publish", async (c) => {
+    const user = c.get("user");
+    requireRole(user, ["admin"]);
+    const id = z.uuid().catch("00000000-0000-0000-0000-000000000000").parse(c.req.param("id"));
+    return c.json(await withTx(ctx.database, (tx) => publishKycDraft(ctx, tx, id, actorOf(user))));
+  });
+  api.delete("/companies/:id/kyc-config/draft", async (c) => {
+    const user = c.get("user");
+    requireRole(user, ["admin"]);
+    const id = z.uuid().catch("00000000-0000-0000-0000-000000000000").parse(c.req.param("id"));
+    return c.json(await withTx(ctx.database, (tx) => discardKycDraft(ctx, tx, id, actorOf(user))));
   });
 
   api.get("/companies/:id/clauses", async (c) =>

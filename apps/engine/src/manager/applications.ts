@@ -26,6 +26,8 @@ import {
   startOfDubaiDay,
   checkAnswers,
   type DocsUploaded,
+  applicantReason,
+  MAX_AUTO_REUPLOAD_EMAILS,
 } from "@leasing/core";
 import { sha256Hex, shortRef } from "@leasing/core/tokens";
 import {
@@ -320,8 +322,17 @@ export async function applyWithoutViewing(ctx: EngineContext, applicationId: str
   return inTx ? run(inTx) : withTx(ctx.database, run);
 }
 
-/** A fresh upload link (e.g. after a KYC review asked for new documents). */
-export async function requestDocuments(ctx: EngineContext, applicationId: string, actor: Actor, inTx?: Tx) {
+/**
+ * A fresh upload link (e.g. after a KYC review asked for new documents). `auto`: sent by the engine because a
+ * check the company set as a blocker failed; `reasons` are code-written lines for the applicant (no personal data).
+ */
+export async function requestDocuments(
+  ctx: EngineContext,
+  applicationId: string,
+  actor: Actor,
+  inTx?: Tx,
+  auto?: { reasons: string[]; helperRunId: string; checks: string[] },
+) {
   const run = async (tx: Tx) => {
     const [app] = await tx.db.select().from(applications).where(eq(applications.id, applicationId)).for("update");
     if (!app) throw notFound("application");
@@ -335,7 +346,9 @@ export async function requestDocuments(ctx: EngineContext, applicationId: string
       entity: { kind: "application", id: app.id },
       type: "DOCUMENTS_REQUESTED",
       actor,
-      payload: {},
+      payload: auto
+        ? { automatic: true, reasons: auto.reasons, checks: auto.checks, helperRunId: auto.helperRunId }
+        : {},
       rulesVersion: ctx.rulesVersion,
     });
     const seq = await nextMailSeq(tx, app.id, "docs");
@@ -520,7 +533,11 @@ export async function addApplicationDocument(
       const [unit] = await tx.db.select({ companyId: units.companyId }).from(units).where(eq(units.id, app.unitId));
       const cfg = await companyKycConfig(tx, unit!.companyId, ctx.clock.today());
       const key = kind.slice("other:".length);
-      if (!cfg.form.some((f) => f.key === key && f.type === "document" && f.documentKind === "other"))
+      if (
+        !cfg.form.some(
+          (f) => f.key === key && f.type === "document" && (f.documentKind === "other" || f.documentKind === "custom"),
+        )
+      )
         throw unprocessable("this document isn't on the form", [], "unknown_document");
     }
   });
@@ -612,7 +629,7 @@ export async function receiveApplicationInbound(
   let summary: Record<string, unknown> = {};
   if (req.type === "DOCS_UPLOADED") {
     if (app.state !== "SCREENING") throw conflict("This application isn't waiting for documents.");
-    const { documentIds: ids, answers } = data as DocsUploaded;
+    const { documentIds: ids, answers, applicantKind } = data as DocsUploaded;
     // Typed answers are checked against the form version the applicant was shown (D46).
     const [unit] = await tx.db.select({ companyId: units.companyId }).from(units).where(eq(units.id, app.unitId));
     const [party] = await tx.db.select({ kind: parties.kind }).from(parties).where(eq(parties.id, app.partyId));
@@ -621,7 +638,20 @@ export async function receiveApplicationInbound(
     if (cfg.version > 0 && !answers) throw unprocessable("Fill in the form on the upload page.", [], "bad_answers");
     if (answers && answers.version !== cfg.version)
       throw conflict("The form changed since you opened this page. Reload it and send again.", "form_changed");
-    const kind = party?.kind ?? "individual";
+    let kind = party?.kind ?? "individual";
+    // The applicant says whether they rent as themselves or for a company. Each application has its own party and
+    // it isn't verified yet (SCREENING), so the change touches nobody else; it is recorded.
+    if (applicantKind && applicantKind !== kind && !app.kycVerifiedAt) {
+      await tx.db.update(parties).set({ kind: applicantKind }).where(eq(parties.id, app.partyId));
+      await appendEvent(tx, ctx, {
+        entity: { kind: "application", id: app.id },
+        type: "APPLICANT_KIND_SET",
+        actor: req.actor,
+        payload: { from: kind, to: applicantKind },
+        rulesVersion: ctx.rulesVersion,
+      });
+      kind = applicantKind;
+    }
     const onForm = new Set(cfg.form.filter((f) => f.type !== "document").map((f) => f.key));
     const given = Object.fromEntries(Object.entries(answers?.answers ?? {}).filter(([k]) => onForm.has(k)));
     const problems = answers || cfg.version > 0 ? checkAnswers(cfg.form, kind, given) : [];
@@ -759,8 +789,13 @@ async function runKyc(ctx: EngineContext, ev: InboundRow, attempt: number) {
   const answers = app.formAnswers?.answers ?? {};
   const nameField = cfg.form.find((f) => f.nameAsPerDocuments);
   const nameAsPerDocuments = (nameField ? answers[nameField.key] : undefined)?.trim();
-  // Only ID documents are read; `other:` uploads are kept for staff.
-  const idDocs = docs.filter((d) => ["emirates_id", "passport", "visa", "trade_licence"].includes(d.kind));
+  // ID documents and company-named custom documents (D50) are read; other `other:` uploads are kept for staff.
+  const customKeys = new Set(cfg.form.filter((f) => f.documentKind === "custom").map((f) => f.key));
+  const customKey = (kind: string) => (kind.startsWith("other:") ? kind.slice("other:".length) : null);
+  const idDocs = docs.filter(
+    (d) =>
+      ["emirates_id", "passport", "visa", "trade_licence"].includes(d.kind) || customKeys.has(customKey(d.kind) ?? ""),
+  );
   const today = ctx.clock.today();
   const readImage = async (docId: string) => {
     const d = idDocs.find((x) => x.id === docId);
@@ -790,11 +825,15 @@ async function runKyc(ctx: EngineContext, ev: InboundRow, attempt: number) {
       rules: cfg.rules,
       form: cfg.form,
       answers,
-      documents: idDocs.map((d) => ({
-        docId: d.id,
-        kind: d.kind as "emirates_id" | "passport" | "visa" | "trade_licence",
-        side: (d.side ?? "page") as "front" | "back" | "page",
-      })),
+      documents: idDocs.map((d) =>
+        customKey(d.kind)
+          ? { docId: d.id, kind: "custom" as const, side: "page" as const, fieldKey: customKey(d.kind)! }
+          : {
+              docId: d.id,
+              kind: d.kind as "emirates_id" | "passport" | "visa" | "trade_licence",
+              side: (d.side ?? "page") as "front" | "back" | "page",
+            },
+      ),
     },
     ctx.rulesVersion,
     helperRunId,
@@ -858,6 +897,24 @@ async function applyKyc(
   // A newer submission replaces any review still waiting on the earlier one.
   await cancelPending(ctx, tx, app.id, ["kyc_review"], "newer documents were submitted");
   const onFile = data ? await partyWithSameId(tx, app, data.identity) : null;
+  // A blocker set to email the applicant: a fresh upload link with the reasons, instead of a review nobody can
+  // approve. Capped per application; after that a person takes it from the review as usual.
+  const emailable = (data?.flags ?? []).filter((f) => f.blocking && f.emailApplicant && f.check);
+  let autoCapped = false;
+  if (emailable.length && !onFile) {
+    const sent = await autoReuploadsSent(tx, app.id);
+    if (sent < MAX_AUTO_REUPLOAD_EMAILS) {
+      const [unit] = await tx.db.select({ companyId: units.companyId }).from(units).where(eq(units.id, app.unitId));
+      const cfg = await kycConfigVersion(tx, unit!.companyId, app.formAnswers?.version ?? 0, ctx.clock.today());
+      const checks = [...new Set(emailable.map((f) => f.check!))];
+      const reasons = [
+        ...new Set(checks.map((c) => applicantReason(c, cfg.rules, cfg.form)).filter((r): r is string => !!r)),
+      ];
+      await requestDocuments(ctx, app.id, "helper:kyc", tx, { reasons, helperRunId, checks });
+      return { applied: true, detail: { action: "re-upload requested", helperRunId, checks } };
+    }
+    autoCapped = true;
+  }
   const pol = await getCompanyPolicyVersion(tx, ctx.clock.today());
   const autoVerify = pol.values.autopilot.auto_kyc_verify;
   if (data?.verdict === "verified" && !onFile && autoVerify) {
@@ -882,6 +939,14 @@ async function applyKyc(
     flags.push({
       kind: "manual_review" as const,
       message: "Automatic KYC verification is switched off.",
+      docId: null,
+      blocking: false,
+    });
+  }
+  if (autoCapped) {
+    flags.push({
+      kind: "manual_review" as const,
+      message: `The applicant was already emailed for new documents ${MAX_AUTO_REUPLOAD_EMAILS} times automatically; a person decides what happens next.`,
       docId: null,
       blocking: false,
     });
@@ -922,6 +987,26 @@ async function applyKyc(
     onApproveEvent: "KYC_VERIFIED",
   });
   return { applied: true, detail: { action: "kyc review requested", helperRunId, flags: flags.map((f) => f.kind) } };
+}
+
+/** Automatic re-upload requests already sent for this application. */
+async function autoReuploadsSent(tx: Tx, appId: string): Promise<number> {
+  const rows = await tx.db
+    .select({ payload: leaseEvents.payload })
+    .from(leaseEvents)
+    .where(and(eq(leaseEvents.entityId, appId), eq(leaseEvents.type, "DOCUMENTS_REQUESTED")));
+  return rows.filter((r) => (r.payload as { automatic?: boolean }).automatic === true).length;
+}
+
+/** The applicant-facing reasons of the document request behind email number `seq` (empty for a plain request). */
+async function docsRequestReasons(tx: Tx, appId: string, seq: number): Promise<string[]> {
+  const rows = await tx.db
+    .select({ type: leaseEvents.type, payload: leaseEvents.payload })
+    .from(leaseEvents)
+    .where(and(eq(leaseEvents.entityId, appId), inArray(leaseEvents.type, ["APPLIED", "DOCUMENTS_REQUESTED"])))
+    .orderBy(asc(leaseEvents.at), asc(leaseEvents.id));
+  const reasons = (rows[seq - 1]?.payload as { reasons?: unknown } | undefined)?.reasons;
+  return Array.isArray(reasons) ? reasons.filter((r): r is string => typeof r === "string").slice(0, 10) : [];
 }
 
 /** Another party already holding this Emirates ID (individuals only; a company's signatory ID never links). */
@@ -1976,6 +2061,7 @@ export async function sendApplicationMail(
         applicantName: first,
         unitLabel: unitLabel(unit),
         reference: appRef(app),
+        reasons: await docsRequestReasons(tx, app.id, seq),
         uploadUrl: upload.url,
         statusUrl: status.url,
         demo: ctx.demoMode,

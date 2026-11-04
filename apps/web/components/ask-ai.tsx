@@ -19,3 +19,34 @@ export function AskAi({ prompt, label }: { prompt: string; label: string }) {
     </button>
   );
 }
+
+/**
+ * "Ask AI" with a short list of request templates: picking one opens the copilot panel with it typed in, for the user
+ * to finish and send. Nothing is sent.
+ */
+export function AskAiMenu({ label, prompts }: { label: string; prompts: { label: string; prompt: string }[] }) {
+  return (
+    <details className="ask-ai-menu">
+      <summary className="btn small ghost ask-ai">
+        <IconSpark size={14} />
+        {label}
+      </summary>
+      <ul role="menu">
+        {prompts.map((p) => (
+          <li key={p.label}>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={(e) => {
+                e.currentTarget.closest("details")?.removeAttribute("open");
+                window.dispatchEvent(new CustomEvent(COPILOT_PREFILL_EVENT, { detail: { text: p.prompt } }));
+              }}
+            >
+              {p.label}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}

@@ -42,6 +42,7 @@ const ALLOWED = [
   /^\/api\/copilot\/pipeline$/,
   /^\/api\/copilot\/companies$/,
   /^\/api\/copilot\/company-settings\?company=[^&]{2,200}$/,
+  /^\/api\/copilot\/kyc-config\?company=[^&]{2,200}$/,
   /^\/api\/copilot\/contract-status\?ref=[^&]{2,200}$/,
   new RegExp(`^/api/copilot/records(\\?(${RK})(&(${RK}))*)?$`),
   /^\/api\/records\/(application|lease)\/[0-9a-fA-F-]{36}\/log$/,

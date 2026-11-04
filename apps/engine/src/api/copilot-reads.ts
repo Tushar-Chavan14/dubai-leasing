@@ -11,6 +11,7 @@ import {
 } from "../manager/copilot-reads.ts";
 import { notFound } from "../errors.ts";
 import { resolveCompany } from "../manager/availability.ts";
+import { kycCopilotView } from "../manager/kyc-config.ts";
 import { listRecordsCounted, pipelineSummary, STAGES } from "../manager/workspace.ts";
 import type { AuthEnv } from "./auth.ts";
 
@@ -27,6 +28,16 @@ export function registerCopilotReadRoutes(api: Hono<AuthEnv>, ctx: EngineContext
     const hit = await withTx(ctx.database, (tx) => resolveCompany(tx, ctx.clock.today(), text));
     if (!hit.ok) throw notFound(hit.reason === "ambiguous" ? `company (one of: ${hit.names.join(", ")})` : "company");
     return c.json({ company: hit.name, ...(await companySettings(ctx, hit.id)) });
+  });
+  /** A company's document form and KYC checks, draft first (D50). */
+  api.get("/copilot/kyc-config", async (c) => {
+    const text = z.string().trim().min(2).max(200).parse(c.req.query("company"));
+    const hit = await withTx(ctx.database, (tx) => resolveCompany(tx, ctx.clock.today(), text));
+    if (!hit.ok) throw notFound(hit.reason === "ambiguous" ? `company (one of: ${hit.names.join(", ")})` : "company");
+    return c.json({
+      company: hit.name,
+      ...(await withTx(ctx.database, (tx) => kycCopilotView(tx, hit.id, ctx.clock.today()))),
+    });
   });
   api.get("/copilot/contract-status", async (c) =>
     c.json(await contractStatus(ctx, z.string().trim().min(2).max(80).parse(c.req.query("ref")))),

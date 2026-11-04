@@ -48,6 +48,7 @@ const PROPOSE_TOOLS = new Set([
   "save_rent_rule",
   "save_contract_rule",
   "save_sri_value",
+  "edit_kyc_config",
 ]);
 const DRAFT_TOOLS = new Set(["draft_email", "draft_approval_note"]);
 

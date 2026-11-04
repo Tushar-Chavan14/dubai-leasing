@@ -37,6 +37,8 @@ import { proposeViewingInvite } from "./propose-viewing-invite.ts";
 import { viewingSlots } from "./viewing-slots.ts";
 import { addContractClause } from "./add-contract-clause.ts";
 import { getCompanySettings } from "./get-company-settings.ts";
+import { getKycConfig } from "./get-kyc-config.ts";
+import { editKycConfig } from "./edit-kyc-config.ts";
 import { saveContractRule } from "./save-contract-rule.ts";
 import { saveRentRule } from "./save-rent-rule.ts";
 import { saveSriValue } from "./save-sri-value.ts";
@@ -53,6 +55,7 @@ export const copilotTools: readonly CopilotTool[] = [
   contractStatus,
   listCompanies,
   getCompanySettings,
+  getKycConfig,
   listTasks,
   listEnquiries,
   getEnquiry,
@@ -79,6 +82,7 @@ export const copilotTools: readonly CopilotTool[] = [
   proposePrepareContract,
   addContractClause,
   saveRentRule,
+  editKycConfig,
   saveContractRule,
   saveSriValue,
   createTaskTool,

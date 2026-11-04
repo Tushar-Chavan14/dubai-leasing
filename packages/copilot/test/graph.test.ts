@@ -202,6 +202,7 @@ describe("registry and client", () => {
     expect(by("propose")).toEqual([
       "add_contract_clause",
       "create_task",
+      "edit_kyc_config",
       "propose_application",
       "propose_approval",
       "propose_prepare_contract",
@@ -236,6 +237,7 @@ describe("registry and client", () => {
     expect(names("admin")).toEqual([
       "add_contract_clause",
       "draft_approval_note",
+      "edit_kyc_config",
       "save_contract_rule",
       "save_rent_rule",
       "save_sri_value",

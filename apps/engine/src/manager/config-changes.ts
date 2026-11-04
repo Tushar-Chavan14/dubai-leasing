@@ -1,6 +1,11 @@
 import {
   type Actor,
+  applyKycOps,
+  fieldAliases,
+  findField,
   formatAed,
+  KycOp,
+  KycOpError,
   newId,
   PropertyCategory,
   PropertySubtype,
@@ -26,6 +31,14 @@ import { addCompanyClause } from "./contract-templates.ts";
 import { appendEvent } from "./events.ts";
 import { createContractRule, createRentRule, replaceContractRule, replaceRentRule } from "./portfolio.ts";
 import { saveSriValue } from "./sri-values.ts";
+import {
+  companyKycConfig,
+  kycDraft,
+  lockKycConfig,
+  publishKycDraft,
+  saveKycDraft,
+  validateKycConfig,
+} from "./kyc-config.ts";
 import { PROPOSAL_TTL_MS, proposalView } from "./copilot-proposals.ts";
 
 /**
@@ -68,6 +81,12 @@ export const ConfigChange = z.discriminatedUnion("kind", [
     bedrooms: z.number().int().min(0).max(10),
     avgAnnualRentFils: z.number().int().positive().max(100_000_000_00),
   }),
+  // D50: edits to the company's document form and KYC rules, applied to its draft (publish only when asked).
+  z.object({
+    kind: z.literal("kyc_config"),
+    company: z.string().trim().min(2).max(120),
+    ops: z.array(KycOp).min(1).max(20),
+  }),
 ]);
 export type ConfigChange = z.infer<typeof ConfigChange>;
 
@@ -77,6 +96,7 @@ const ROLES: Record<ConfigChange["kind"], StaffRole[]> = {
   rent_rule: ["admin"],
   contract_rule: ["admin"],
   sri_value: ["admin", "leasing_manager"],
+  kyc_config: ["admin"],
 };
 export function requireConfigRole(user: StaffUser, kind: ConfigChange["kind"]) {
   if (!ROLES[kind].includes(user.role)) throw forbidden(`${user.role} can't change this setting`);
@@ -99,6 +119,7 @@ const aed = (fils: number | null | undefined) => (fils === null || fils === unde
 
 /** What a suggested change would do, as label/value lines for the Confirm card (values formatted here, not by a model). */
 export function changeFacts(change: ConfigChange): [string, string][] {
+  if (change.kind === "kyc_config") return change.ops.map((op, i) => [`Change ${i + 1}`, describeKycOp(op)]);
   const rows: [string, string | null | undefined][] =
     change.kind === "add_clause"
       ? [
@@ -130,6 +151,67 @@ export function changeFacts(change: ConfigChange): [string, string][] {
               ["Average annual rent", formatAed(change.avgAnnualRentFils)],
             ];
   return rows.filter((r): r is [string, string] => typeof r[1] === "string");
+}
+
+const SEVERITY_WORD = { off: "Off", warning: "Warning", blocker: "Blocker" } as const;
+
+const yesNo = (b: boolean | undefined, yes: string, no: string) => (b === undefined ? null : b ? yes : no);
+const parts = (...xs: (string | null | undefined | false)[]) => xs.filter(Boolean).join(", ");
+
+/** One KYC edit in plain words for the Confirm card, with every value it sets. */
+export function describeKycOp(op: KycOp): string {
+  switch (op.op) {
+    case "set_check":
+      return `${op.field}: "${op.check}" → ${parts(op.severity && SEVERITY_WORD[op.severity], yesNo(op.emailApplicant, "email applicant", "no email"))}`;
+    case "set_number":
+      return `${op.field}: ${op.setting.replaceAll("_", " ")} → ${op.value}`;
+    case "set_name_match":
+      return `Applicant's name must match: ${op.mode}`;
+    case "add_document_field":
+      return `Add document "${op.label}" (${parts(
+        op.category === "custom" ? `custom: ${op.customName ?? op.label}` : op.category.replaceAll("_", " "),
+        op.customDescription && `described as "${op.customDescription}"`,
+        op.category === "custom" && (op.hasExpiry === false ? "no expiry date" : "has an expiry date"),
+        op.required ? "required" : "optional",
+        `shown to ${op.shownTo}`,
+        op.help && `help "${op.help}"`,
+      )})`;
+    case "add_question_field":
+      return `Add question "${op.label}" (${parts(
+        op.type,
+        op.required ? "required" : "optional",
+        `shown to ${op.shownTo}`,
+        !!op.options?.length && `choices: ${op.options.join(" / ")}`,
+        op.help && `help "${op.help}"`,
+      )})`;
+    case "update_field":
+      return `Change field "${op.field}": ${parts(
+        op.label && `label "${op.label}"`,
+        yesNo(op.required, "required", "optional"),
+        op.shownTo && `shown to ${op.shownTo}`,
+        op.help !== undefined && `help "${op.help}"`,
+      )}`;
+    case "add_rule": {
+      const r = op.rule;
+      return `Add custom check "${String(r.label ?? "")}" (${parts(
+        String(r.type ?? ""),
+        typeof r.severity === "string" ? SEVERITY_WORD[r.severity as keyof typeof SEVERITY_WORD] : "Warning",
+        r.emailApplicant === true && "emails the applicant",
+        typeof r.years === "number" && `${r.years} years`,
+        typeof r.pattern === "string" && `pattern ${r.pattern}`,
+        typeof r.instruction === "string" && `"${r.instruction}"`,
+        Array.isArray(r.allowed) && r.allowed.length > 0 && `accepts ${r.allowed.join(" / ")}`,
+      )})`;
+    }
+    case "set_rule":
+      return `Custom check "${op.rule}" → ${parts(op.severity && SEVERITY_WORD[op.severity], yesNo(op.emailApplicant, "email applicant", "no email"))}`;
+    case "remove_rule":
+      return `Remove custom check "${op.rule}"`;
+    case "remove_field":
+      return `Remove field "${op.field}"`;
+    case "publish":
+      return "Publish the whole draft (new uploads use it)";
+  }
 }
 
 /** Applies a change through the same managers (and validation) the settings forms use. */
@@ -188,6 +270,27 @@ export async function applyConfigChange(
         : await createContractRule(ctx, tx, { ...v, clauseIds, companyId: cid }, actor);
       return { id: row.id, entity: { kind: "company" as const, id: cid }, summary: "Contract rule saved" };
     }
+    case "kyc_config": {
+      const cid = await companyId(tx, change.company);
+      // Lock first so a concurrent edit (another turn, the settings page) can't be overwritten by this one.
+      await lockKycConfig(tx, cid);
+      // Edits land in the draft (a copy of the live version when none is open); publishing is its own step.
+      const start = (await kycDraft(tx, cid)) ?? (await companyKycConfig(tx, cid, ctx.clock.today()));
+      let next: ReturnType<typeof applyKycOps>;
+      try {
+        next = applyKycOps({ form: start.form, rules: start.rules }, change.ops);
+      } catch (e) {
+        if (e instanceof KycOpError) throw unprocessable(e.message, [], "bad_kyc_change");
+        throw e;
+      }
+      const draft = await saveKycDraft(ctx, tx, cid, { form: next.form, rules: next.rules }, actor, change.ops);
+      const done = next.publish ? await publishKycDraft(ctx, tx, cid, actor) : null;
+      return {
+        id: String(draft.version),
+        entity: { kind: "company" as const, id: cid },
+        summary: done ? `KYC settings published as version ${done.version}` : `KYC draft v${draft.version} saved`,
+      };
+    }
     case "sri_value": {
       const { kind: _k, ...v } = change;
       const row = await saveSriValue(ctx, tx, v, actor);
@@ -216,7 +319,12 @@ export function numbersIn(text: string): Set<number> {
  * The values of an explicit change that the user's message does not contain (D45): a change is made directly only
  * when its numbers (and a clause's wording) are the user's own. Anything else must go through a suggestion.
  */
-export function valuesNotSaid(change: ConfigChange, message: string): string[] {
+export function valuesNotSaid(
+  change: ConfigChange,
+  message: string,
+  /** KYC: other names the field an edit refers to is known by (label, key, category words), for the field check. */
+  fieldNames: (ref: string) => string[] = (ref) => [ref],
+): string[] {
   const said = numbersIn(message);
   // The company (and an area) the change is for must be named by the user too.
   const named = (label: string, v: string | null | undefined) => (!v || norm(message).includes(norm(v)) ? [] : [label]);
@@ -249,12 +357,118 @@ export function valuesNotSaid(change: ConfigChange, message: string): string[] {
         ...need("fewest cheques", change.minCheques),
         ...need("most cheques", change.maxCheques),
       ];
+    case "kyc_config":
+      return [...who, ...change.ops.flatMap((op) => kycValuesNotSaid(op, message, said, fieldNames))];
     case "sri_value":
       return [
         ...named("community", change.community),
         ...need("average rent", change.avgAnnualRentFils / 100),
         ...(change.bedrooms === 0 ? [] : need("bedrooms", change.bedrooms)),
       ];
+  }
+}
+
+/** Words that must appear for a severity to be the user's choice (only tightening severities can be explicit). */
+const SEVERITY_SAID: Record<string, RegExp> = { blocker: /\bblock(er|ing|s)?\b/i, warning: /\bwarn(ing|s)?\b/i };
+/** "don't publish", "do not block", "not yet": a negation never authorises a change. */
+const NEGATED = /\b(don'?t|do not|not|never|no need to|stop)\b[^.;!?]{0,30}\b(publish|block|remove|delete|live)/i;
+
+/**
+ * Why a KYC edit can't be made directly (D50): it is applied without a Confirm click only when it tightens or adds,
+ * names its field, and every number, severity, "email", new wording and "publish" is in the user's own message.
+ * Anything that loosens KYC (a check off or down to warning, a document optional or shown to fewer applicants, a
+ * removal, no expiry date, a check that emails applicants) always goes through a suggestion the user confirms.
+ */
+function kycValuesNotSaid(
+  op: KycOp,
+  message: string,
+  said: Set<number>,
+  fieldNames: (ref: string) => string[],
+): string[] {
+  const has = (re: RegExp) => re.test(message);
+  const text = (label: string, v: string | undefined) => (!v || norm(message).includes(norm(v)) ? [] : [label]);
+  // The field counts as named when the message uses any name it is known by ("passport" for "Passport data page").
+  const field = (ref: string) =>
+    fieldNames(ref).some((n) => n.length >= 3 && norm(message).includes(norm(n))) ? [] : [`which field ("${ref}")`];
+  const sev = (s: string | undefined) =>
+    !s
+      ? []
+      : s === "off"
+        ? ["turning a check off (needs Confirm)"]
+        : SEVERITY_SAID[s]!.test(message)
+          ? []
+          : [`severity ${s}`];
+  const mail = (e: boolean | undefined) => (e === undefined || has(/\be-?mail/i) ? [] : ["email applicant"]);
+  if (has(NEGATED)) return ["a negated request (needs Confirm)"];
+  switch (op.op) {
+    case "set_check":
+      return [
+        ...(op.severity === "warning" ? ["lowering a check to warning (needs Confirm)"] : []),
+        ...(op.severity === undefined && op.emailApplicant === undefined ? ["no change named"] : []),
+        ...(op.emailApplicant === false ? ["stopping applicant emails (needs Confirm)"] : []),
+        ...(norm(op.field) === "across documents" ? [] : field(op.field)),
+        ...sev(op.severity === "warning" ? undefined : op.severity),
+        ...mail(op.emailApplicant),
+      ];
+    case "set_rule":
+      return [
+        ...(op.severity === "warning" || op.severity === "off" ? ["lowering a custom check (needs Confirm)"] : []),
+        ...(op.emailApplicant === false ? ["stopping applicant emails (needs Confirm)"] : []),
+        ...text(`which custom check ("${op.rule}")`, op.rule),
+        ...sev(op.severity === "blocker" ? "blocker" : undefined),
+        ...mail(op.emailApplicant),
+      ];
+    case "set_number":
+      return [...field(op.field), ...(said.has(op.value) ? [] : [op.setting.replaceAll("_", " ")])];
+    case "set_name_match":
+      return op.mode === "exact" && has(/\bexact/i) ? [] : ["name match (lenient needs Confirm)"];
+    case "add_document_field":
+      return [
+        ...text("field label", op.label),
+        ...text("document name", op.customName),
+        ...text("document description", op.customDescription),
+        ...text("help text", op.help),
+        ...(op.hasExpiry === false ? ["a document without an expiry date (needs Confirm)"] : []),
+        ...(op.required === false ? ["an optional document (needs Confirm)"] : []),
+      ];
+    case "add_question_field":
+      return [
+        ...text("field label", op.label),
+        ...text("help text", op.help),
+        ...(op.options ?? []).flatMap((o) => text(`choice "${o}"`, o)),
+      ];
+    case "update_field":
+      return [
+        ...field(op.field),
+        ...text("new label", op.label),
+        ...text("help text", op.help),
+        ...(op.required === false ? ["making a field optional (needs Confirm)"] : []),
+        ...(op.required === true && !has(/\b(required|mandatory|must)\b/i) ? ["required"] : []),
+        ...(op.shownTo !== undefined ? ["who sees a field (needs Confirm)"] : []),
+      ];
+    case "add_rule": {
+      const r = op.rule;
+      const str = (k: string) => (typeof r[k] === "string" ? (r[k] as string) : undefined);
+      return [
+        ...text("check label", str("label")),
+        ...text("instruction", str("instruction")),
+        ...text("pattern", str("pattern")),
+        ...text("plain words", str("describe")),
+        ...(Array.isArray(r.allowed)
+          ? r.allowed.flatMap((x) => text(`accepted answer "${String(x)}"`, String(x)))
+          : []),
+        ...(typeof r.years === "number" && !said.has(r.years) ? ["years"] : []),
+        ...(r.emailApplicant === true ? ["a check that emails applicants (needs Confirm)"] : []),
+        ...(r.severity === "off"
+          ? ["a check that is off"]
+          : sev(str("severity") === "blocker" ? "blocker" : undefined)),
+      ];
+    }
+    case "remove_field":
+    case "remove_rule":
+      return ["removing a field or check (needs Confirm)"];
+    case "publish":
+      return has(/\b(publish|go live|make (it )?live)\b/i) ? [] : ["publish"];
   }
 }
 
@@ -284,7 +498,19 @@ export async function explicitConfigChange(
       .orderBy(desc(copilotMessages.at), desc(copilotMessages.id))
       .limit(1);
     const quote = norm(userQuote);
-    const missing = last ? valuesNotSaid(change, last.content) : [];
+    let fieldNames: ((ref: string) => string[]) | undefined;
+    if (change.kind === "kyc_config") {
+      const cid = await companyId(tx, change.company);
+      const cfg = (await kycDraft(tx, cid)) ?? (await companyKycConfig(tx, cid, ctx.clock.today()));
+      fieldNames = (ref) => {
+        try {
+          return [ref, ...fieldAliases(findField(cfg.form, ref))];
+        } catch {
+          return [ref];
+        }
+      };
+    }
+    const missing = last ? valuesNotSaid(change, last.content, fieldNames) : [];
     if (!last || quote.length < 8 || !norm(last.content).includes(quote) || missing.length) {
       throw unprocessable(
         "A setting is changed directly only when your own latest message asks for it with these values. Use a suggestion the user confirms instead.",
@@ -317,6 +543,18 @@ export async function proposeConfigChange(ctx: EngineContext, user: StaffUser, t
       .from(copilotThreads)
       .where(and(eq(copilotThreads.id, threadId), eq(copilotThreads.userId, user.id)));
     if (!thread) throw notFound("conversation");
+    // A KYC edit is tried on the current draft now, so a wrong field or check comes back to the copilot to fix
+    // instead of failing on Confirm.
+    if (change.kind === "kyc_config") {
+      const cid = await companyId(tx, change.company);
+      const start = (await kycDraft(tx, cid)) ?? (await companyKycConfig(tx, cid, ctx.clock.today()));
+      try {
+        validateKycConfig(applyKycOps({ form: start.form, rules: start.rules }, change.ops));
+      } catch (e) {
+        if (e instanceof KycOpError) throw unprocessable(e.message, [], "bad_kyc_change");
+        throw e;
+      }
+    }
     let company: string | null = null;
     if (change.kind !== "sri_value") {
       const id = await companyId(tx, change.company);

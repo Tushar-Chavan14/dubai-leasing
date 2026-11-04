@@ -26,7 +26,7 @@ export interface FormFieldView {
   required: boolean;
   appliesTo: "individual" | "company" | "both";
   options: string[];
-  documentKind?: "emirates_id_front" | "emirates_id_back" | "passport" | "visa" | "trade_licence" | "other";
+  documentKind?: "emirates_id_front" | "emirates_id_back" | "passport" | "visa" | "trade_licence" | "custom" | "other";
 }
 export interface DocumentFormView {
   version: number;
@@ -40,6 +40,7 @@ const DOC_KIND: Record<NonNullable<FormFieldView["documentKind"]>, { kind: strin
   passport: { kind: "passport", side: "page" },
   visa: { kind: "visa", side: "page" },
   trade_licence: { kind: "trade_licence", side: "page" },
+  custom: null,
   other: null,
 };
 
@@ -56,7 +57,9 @@ interface Doc {
 
 export function UploadDocuments({ token, initial, form }: { token: string; initial: Doc[]; form: DocumentFormView }) {
   const router = useRouter();
-  const fields = form.fields.filter((f) => f.appliesTo === "both" || f.appliesTo === form.applicantKind);
+  // Who is renting decides which fields apply ("Shown to" on the company's form); the applicant can change it.
+  const [applicantKind, setApplicantKind] = useState<"individual" | "company">(form.applicantKind);
+  const fields = form.fields.filter((f) => f.appliesTo === "both" || f.appliesTo === applicantKind);
   const slots: Slot[] = fields
     .filter((f) => f.type === "document" && f.documentKind)
     .map((f) => {
@@ -139,6 +142,27 @@ export function UploadDocuments({ token, initial, form }: { token: string; initi
 
   return (
     <div className="stack" style={{ gap: 16 }}>
+      <fieldset className="panel panel-pad renting-as">
+        <legend className="field-label">You are renting as</legend>
+        <label className="check-row">
+          <input
+            type="radio"
+            name="renting-as"
+            checked={applicantKind === "individual"}
+            onChange={() => setApplicantKind("individual")}
+          />
+          Myself (an individual)
+        </label>
+        <label className="check-row">
+          <input
+            type="radio"
+            name="renting-as"
+            checked={applicantKind === "company"}
+            onChange={() => setApplicantKind("company")}
+          />
+          A company (I sign for it)
+        </label>
+      </fieldset>
       <ul className="doc-slots">
         {slots.map((slot) => {
           const k = keyOf(slot);
@@ -204,6 +228,7 @@ export function UploadDocuments({ token, initial, form }: { token: string; initi
       <form action={submit} className="stack">
         <input type="hidden" name="token" value={token} />
         <input type="hidden" name="formVersion" value={form.version} />
+        <input type="hidden" name="applicantKind" value={applicantKind} />
         {answerFields.length > 0 && (
           <div className="panel panel-pad grid-fields">
             {answerFields.map((f) => (
@@ -237,9 +262,12 @@ export function UploadDocuments({ token, initial, form }: { token: string; initi
             ))}
           </div>
         )}
-        {docs.map((d) => (
-          <input key={d.id} type="hidden" name="documentId" value={d.id} />
-        ))}
+        {/* Only uploads for fields that apply to who is renting (a switch hides the others). */}
+        {docs
+          .filter((d) => slots.some((s) => keyOf(s) === keyOf(d)))
+          .map((d) => (
+            <input key={d.id} type="hidden" name="documentId" value={d.id} />
+          ))}
         {state.error && (
           <p className="alert" data-tone="bad" role="alert">
             <IconWarning size={15} /> {state.error}

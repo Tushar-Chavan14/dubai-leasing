@@ -1,13 +1,29 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { type ReactNode, useState, useTransition } from "react";
+import {
+  checksFor,
+  type CustomCategory,
+  defaultDocRules,
+  expiryFor,
+  issueFor,
+  LOCKED_SEVERITY,
+  type ReadDocKind,
+} from "@leasing/core";
+import { AskAiMenu } from "../../../../components/ask-ai";
 import { IconPlus, IconTrash, IconWarning } from "../../../../lib/icons";
 import type { RuleResult } from "../../../../lib/portfolio";
-import { saveKycConfig } from "./actions";
+import { discardKycDraft, publishKycDraft, saveKycDraft } from "./actions";
 
 type FieldType = "text" | "email" | "phone" | "date" | "number" | "select" | "document";
-type DocKind = "emirates_id_front" | "emirates_id_back" | "passport" | "visa" | "trade_licence" | "other";
+type DocKind = "emirates_id_front" | "emirates_id_back" | "passport" | "visa" | "trade_licence" | "custom" | "other";
 type AppliesTo = "individual" | "company" | "both";
+interface DocRules {
+  validityDays?: number | undefined;
+  issuedWithinDays?: number | undefined;
+  minConfidence: number;
+  checks: Record<string, Setting>;
+}
 interface Field {
   key: string;
   label: string;
@@ -19,8 +35,22 @@ interface Field {
   options: string[];
   documentKind?: DocKind;
   nameAsPerDocuments: boolean;
+  /** A read document field's own checks (D49). */
+  rules?: DocRules;
+  /** A custom document's name and description (D50). */
+  customCategory?: CustomCategory;
+}
+type Severity = "off" | "warning" | "blocker";
+interface Setting {
+  severity: Severity;
+  emailApplicant: boolean;
+}
+interface Checks {
+  cross: Record<string, Setting>;
+  applicantNameMode: "lenient" | "exact";
 }
 interface Base {
+  checks: Checks;
   validityDays: number;
   minConfidence: number;
   requiredDocuments: boolean;
@@ -31,12 +61,14 @@ interface Base {
   applicantName: "off" | "lenient" | "exact";
   idNumbersConsistent: boolean;
 }
-type Rule =
-  | { id: string; type: "answer_matches_document"; label: string; fieldKey: string; identityField: string }
-  | { id: string; type: "answer_required"; label: string; fieldKey: string; appliesTo: AppliesTo; allowed: string[] }
-  | { id: string; type: "document_required"; label: string; documentKind: DocKind; appliesTo: AppliesTo }
-  | { id: string; type: "min_age"; label: string; years: number }
-  | { id: string; type: "ai_check"; label: string; instruction: string };
+type Rule = Setting & { id: string; label: string } & (
+    | { type: "answer_matches_document"; fieldKey: string; identityField: string }
+    | { type: "answer_required"; fieldKey: string; appliesTo: AppliesTo; allowed: string[] }
+    | { type: "document_required"; documentKind: DocKind; appliesTo: AppliesTo }
+    | { type: "min_age"; years: number }
+    | { type: "document_value_pattern"; identityField: string; pattern: string; describe: string }
+    | { type: "ai_check"; instruction: string }
+  );
 export interface KycConfigView {
   version: number;
   form: Field[];
@@ -58,23 +90,65 @@ const DOC_LABEL: Record<DocKind, string> = {
   passport: "Passport data page",
   visa: "Residence visa",
   trade_licence: "Trade licence",
+  custom: "Custom document (AI reads it)",
   other: "Other (kept for staff, not read)",
 };
 const APPLIES: Record<AppliesTo, string> = { both: "Everyone", individual: "Individuals", company: "Companies" };
-const BASE_SWITCHES: { key: keyof Base; label: string }[] = [
-  { key: "requiredDocuments", label: "Required documents uploaded" },
-  { key: "emiratesIdFormat", label: "Emirates ID number valid" },
-  { key: "passportMrz", label: "Passport machine-readable zone matches the page" },
-  { key: "visaFormat", label: "Visa file number format" },
-  { key: "namesConsistent", label: "Same name on every document" },
-  { key: "idNumbersConsistent", label: "Passport number matches between passport and visa" },
-];
+/** Each check's question and what it looks at; `{days}`, `{pct}` and `{doc}` are filled in from the settings. */
+const CHECK_TEXT: Record<string, { q: string; what: string }> = {
+  issued_recently: {
+    q: "Issued recently?",
+    what: "Issued within the last {issued} days (the issue date must be readable).",
+  },
+  name_matches: { q: "Holder is the applicant?", what: "The name on it is the applicant's (or the company's)." },
+  expired: {
+    q: "Has it expired?",
+    what: "Expired, or expiring before the lease starts. Never passes, not even by approval.",
+  },
+  valid_long_enough: { q: "Valid long enough?", what: "Must stay valid at least {days} days after the lease starts." },
+  readable: { q: "Read clearly?", what: "Every needed field read with at least {pct}% confidence." },
+  right_document: { q: "Right document?", what: "The upload really is this document, not another one." },
+  id_number: { q: "ID number valid?", what: "The number has the 784 format and a correct check digit." },
+  birth_year: { q: "Birth year matches?", what: "The birth year inside the ID number matches the date of birth." },
+  mrz: { q: "Bottom two lines valid?", what: "The machine-readable lines pass their check digits." },
+  mrz_matches_page: {
+    q: "Bottom lines match the page?",
+    what: "Number, name and expiry printed on the page match the machine-readable lines.",
+  },
+  visa_number: { q: "Visa file number valid?", what: "The file number has the 000/0000/0000000 form." },
+  passport_matches: { q: "Same passport?", what: "The passport number on the visa matches the uploaded passport." },
+  required_documents: { q: "Everything uploaded?", what: "Every document the form marks required for this applicant." },
+  names_consistent: { q: "Same name everywhere?", what: "The name is the same on every document." },
+  applicant_name: {
+    q: "Applicant's name matches?",
+    what: "The name as per documents on the form matches the documents.",
+  },
+};
+const CROSS_CHECKS = ["required_documents", "names_consistent", "applicant_name"];
+const SEVERITY_LABEL: Record<Severity, string> = { off: "Off", warning: "Warning", blocker: "Blocker" };
+
+/** What happens when the check fails, in plain words. */
+function outcome(s: Setting): string {
+  if (s.severity === "off") return "Not checked.";
+  if (s.severity === "warning") return "If it fails: a person reviews it and can approve.";
+  return s.emailApplicant
+    ? "If it fails: it can't be approved, and the applicant is emailed a new upload link with the reason."
+    : "If it fails: it can't be approved; staff ask the applicant for a new document.";
+}
 const RULE_LABEL: Record<Rule["type"], string> = {
   answer_matches_document: "Answer matches a document",
   answer_required: "Answer required",
   document_required: "Document required",
   min_age: "Minimum age",
-  ai_check: "Custom check (AI, review only)",
+  document_value_pattern: "Document value matches a pattern",
+  ai_check: "Custom check (AI, warning only)",
+};
+const PATTERN_FIELD: Record<string, string> = {
+  emiratesIdNo: "Emirates ID number",
+  passportNo: "Passport number",
+  visaNo: "Visa number",
+  tradeLicenceNo: "Trade licence number",
+  companyName: "Company name (trade licence)",
 };
 const IDENTITY: Record<string, string> = {
   fullNameEn: "Full name",
@@ -94,32 +168,220 @@ const slug = (s: string) =>
 const ruleId = () => `r${Math.random().toString(36).slice(2, 10)}`;
 
 function newRule(type: Rule["type"], answerKeys: string[]): Rule {
-  const id = ruleId();
+  const c = { id: ruleId(), severity: "warning" as const, emailApplicant: false };
   switch (type) {
     case "answer_matches_document":
-      return { id, type, label: "Answer matches document", fieldKey: answerKeys[0] ?? "", identityField: "birthDate" };
+      return {
+        ...c,
+        type,
+        label: "Answer matches document",
+        fieldKey: answerKeys[0] ?? "",
+        identityField: "birthDate",
+      };
     case "answer_required":
-      return { id, type, label: "Answer required", fieldKey: answerKeys[0] ?? "", appliesTo: "both", allowed: [] };
+      return { ...c, type, label: "Answer required", fieldKey: answerKeys[0] ?? "", appliesTo: "both", allowed: [] };
     case "document_required":
-      return { id, type, label: "Document required", documentKind: "passport", appliesTo: "both" };
+      return { ...c, type, label: "Document required", documentKind: "passport", appliesTo: "both" };
     case "min_age":
-      return { id, type, label: "Minimum age", years: 21 };
+      return { ...c, type, label: "Minimum age", years: 21 };
+    case "document_value_pattern":
+      return {
+        ...c,
+        type,
+        label: "Licence number format",
+        identityField: "tradeLicenceNo",
+        pattern: "^\\d{6,7}$",
+        describe: "6 or 7 digits",
+      };
     case "ai_check":
-      return { id, type, label: "Custom check", instruction: "" };
+      return { ...c, type, label: "Custom check", instruction: "" };
   }
+}
+
+/** Off / Warning / Blocker, plus "email the applicant" on a blocker, and the plain-words outcome. */
+function SeverityControl({
+  value,
+  onChange,
+  locked = [],
+  disabled,
+}: {
+  value: Setting;
+  onChange: (s: Setting) => void;
+  locked?: Severity[];
+  disabled: boolean;
+}) {
+  return (
+    <div className="kyc-severity">
+      <select
+        aria-label="If it fails"
+        value={value.severity}
+        disabled={disabled}
+        onChange={(e) => {
+          const severity = e.target.value as Severity;
+          onChange({ severity, emailApplicant: severity === "blocker" && value.emailApplicant });
+        }}
+      >
+        {(Object.keys(SEVERITY_LABEL) as Severity[])
+          .filter((v) => !locked.includes(v) || v === value.severity)
+          .map((v) => (
+            <option key={v} value={v}>
+              {SEVERITY_LABEL[v]}
+            </option>
+          ))}
+      </select>
+      {value.severity === "blocker" && (
+        <label className="check-row">
+          <input
+            type="checkbox"
+            checked={value.emailApplicant}
+            disabled={disabled}
+            onChange={(e) => onChange({ ...value, emailApplicant: e.target.checked })}
+          />
+          Email applicant to re-upload
+        </label>
+      )}
+    </div>
+  );
+}
+
+/** One check: its question, what it looks at (with the current numbers), and what happens when it fails. */
+function CheckRow({
+  check,
+  fill,
+  value,
+  onChange,
+  disabled,
+  children,
+}: {
+  check: string;
+  fill: Record<string, string>;
+  value: Setting;
+  onChange: (s: Setting) => void;
+  disabled: boolean;
+  children?: ReactNode;
+}) {
+  const t = CHECK_TEXT[check]!;
+  const what = t.what.replace(/\{(\w+)\}/g, (_, k: string) => fill[k] ?? "");
+  return (
+    <li className="kyc-check" data-severity={value.severity}>
+      <div>
+        <strong>{t.q}</strong>
+        <p className="muted kyc-check-say">
+          {what} {outcome(value)}
+        </p>
+        {children}
+      </div>
+      <SeverityControl
+        value={value}
+        onChange={onChange}
+        locked={LOCKED_SEVERITY[check as keyof typeof LOCKED_SEVERITY] ?? []}
+        disabled={disabled}
+      />
+    </li>
+  );
+}
+
+/** A document field's own checks: its numbers, then each check with its severity. */
+function DocChecks({
+  kind,
+  custom,
+  rules,
+  onChange,
+  disabled,
+}: {
+  kind: ReadDocKind | "custom";
+  custom?: CustomCategory | undefined;
+  rules: DocRules;
+  onChange: (patch: Partial<DocRules>) => void;
+  disabled: boolean;
+}) {
+  const pct = Math.round(rules.minConfidence * 100);
+  const fill = { days: String(rules.validityDays ?? 0), pct: String(pct), issued: String(rules.issuedWithinDays ?? 0) };
+  const expiry = expiryFor(kind, custom);
+  const count = (sev: Severity) => Object.values(rules.checks).filter((c) => c.severity === sev).length;
+  return (
+    <details className="kyc-doc">
+      <summary>
+        <strong>Checks for this document</strong>
+        <span className="muted">
+          {expiry ? `valid ${rules.validityDays}+ days · ` : ""}read {pct}%+ · {count("blocker")} blocker
+          {count("blocker") === 1 ? "" : "s"}, {count("warning")} warning{count("warning") === 1 ? "" : "s"}
+        </span>
+      </summary>
+      <div className="grid-fields">
+        {expiry && (
+          <label className="field span-3">
+            <span className="field-label">Valid at least this many days after the lease starts</span>
+            <input
+              type="number"
+              min={0}
+              max={3650}
+              value={rules.validityDays ?? 0}
+              disabled={disabled}
+              onChange={(e) => onChange({ validityDays: Number(e.target.value) })}
+            />
+          </label>
+        )}
+        <label className="field span-3">
+          <span className="field-label">Minimum read confidence (%)</span>
+          <input
+            type="number"
+            min={50}
+            max={100}
+            step={5}
+            value={pct}
+            disabled={disabled}
+            onChange={(e) => onChange({ minConfidence: Number(e.target.value) / 100 })}
+          />
+        </label>
+        {issueFor(kind) && (
+          <label className="field span-3">
+            <span className="field-label">Issued within this many days (for &quot;Issued recently?&quot;)</span>
+            <input
+              type="number"
+              min={1}
+              max={3650}
+              value={rules.issuedWithinDays ?? 90}
+              disabled={disabled}
+              onChange={(e) => onChange({ issuedWithinDays: Number(e.target.value) })}
+            />
+          </label>
+        )}
+      </div>
+      <ul className="kyc-checks">
+        {checksFor(kind, custom).map((k) => (
+          <CheckRow
+            key={k}
+            check={k}
+            fill={fill}
+            value={rules.checks[k] ?? { severity: "off", emailApplicant: false }}
+            disabled={disabled}
+            onChange={(v) => onChange({ checks: { ...rules.checks, [k]: v } })}
+          />
+        ))}
+      </ul>
+    </details>
+  );
 }
 
 export function KycEditor({
   companyId,
   initial,
   canEdit,
+  hasDraft,
+  companyName,
 }: {
   companyId: string;
   initial: KycConfigView;
   canEdit: boolean;
+  hasDraft: boolean;
+  companyName: string;
 }) {
   const [fields, setFields] = useState<Field[]>(initial.form);
-  const [base, setBase] = useState<Base>(initial.rules.base);
+  const [base] = useState<Base>(initial.rules.base);
+  const [checks, setChecks] = useState<Checks>(initial.rules.base.checks);
+  const setDocRules = (i: number, patch: Partial<DocRules>) =>
+    setFields((fs) => fs.map((f, j) => (j === i && f.rules ? { ...f, rules: { ...f.rules, ...patch } } : f)));
   const [rules, setRules] = useState<Rule[]>(initial.rules.company);
   const [result, setResult] = useState<RuleResult>({});
   const [saving, start] = useTransition();
@@ -136,8 +398,23 @@ export function KycEditor({
           // Keep the field valid for its new type.
           if (patch.type === "document") next.documentKind = f.documentKind ?? "other";
           else delete next.documentKind;
+          delete next.rules;
           if (patch.type !== "text") next.nameAsPerDocuments = false;
           if (patch.type !== "select") next.options = [];
+        }
+        // A read category starts from its default checks; changing category starts again.
+        if (next.type === "document" && next.documentKind && next.documentKind !== "other") {
+          if (next.documentKind === "custom")
+            next.customCategory ??= { name: next.label, description: "", hasExpiry: true };
+          else delete next.customCategory;
+          const restart =
+            !next.rules ||
+            (patch.documentKind && patch.documentKind !== f.documentKind) ||
+            (patch.customCategory && patch.customCategory.hasExpiry !== f.customCategory?.hasExpiry);
+          if (restart) next.rules = defaultDocRules(next.documentKind, undefined, next.customCategory);
+        } else {
+          delete next.rules;
+          delete next.customCategory;
         }
         return next;
       }),
@@ -178,9 +455,27 @@ export function KycEditor({
   const setRule = (i: number, patch: Partial<Rule>) =>
     setRules((rs) => rs.map((r, j) => (j === i ? ({ ...r, ...patch } as Rule) : r)));
 
-  const save = () =>
+  const [done, setDone] = useState<string | null>(null);
+  const payload = () => ({ base: { ...base, checks }, company: rules });
+  const save = (publish: boolean) =>
     start(async () => {
-      setResult(await saveKycConfig(companyId, fields, { base, company: rules }));
+      setDone(null);
+      const r = await saveKycDraft(companyId, fields, payload());
+      if (!r.ok || !publish) {
+        setResult(r);
+        if (r.ok) setDone("Draft saved. Applicants still get the live version until you publish.");
+        return;
+      }
+      const p = await publishKycDraft(companyId);
+      setResult(p);
+      if (p.ok)
+        setDone("Published. New uploads use it; earlier applications keep the version they were checked against.");
+    });
+  const discard = () =>
+    start(async () => {
+      if (!window.confirm("Throw the draft away? The live version stays as it is.")) return;
+      setDone(null);
+      setResult(await discardKycDraft(companyId));
     });
 
   return (
@@ -340,71 +635,122 @@ export function KycEditor({
                   </>
                 )}
               </div>
+              {f.type === "document" && f.documentKind === "other" && (
+                <p className="muted kyc-check-say">Kept for staff; not read, so no document checks run on it.</p>
+              )}
+              {f.documentKind === "custom" && f.customCategory && (
+                <div className="grid-fields">
+                  <label className="field span-2">
+                    <span className="field-label">Document name</span>
+                    <input
+                      value={f.customCategory.name}
+                      disabled={ro}
+                      placeholder="For example: Salary certificate"
+                      onChange={(e) => setField(i, { customCategory: { ...f.customCategory!, name: e.target.value } })}
+                    />
+                  </label>
+                  <label className="field span-3">
+                    <span className="field-label">What it looks like (helps the AI recognise it)</span>
+                    <input
+                      value={f.customCategory.description}
+                      disabled={ro}
+                      placeholder="For example: a letter from the employer stating the monthly salary"
+                      onChange={(e) =>
+                        setField(i, { customCategory: { ...f.customCategory!, description: e.target.value } })
+                      }
+                    />
+                  </label>
+                  <label className="check-row span-6">
+                    <input
+                      type="checkbox"
+                      checked={f.customCategory.hasExpiry}
+                      disabled={ro}
+                      onChange={(e) =>
+                        setField(i, { customCategory: { ...f.customCategory!, hasExpiry: e.target.checked } })
+                      }
+                    />
+                    Has an expiry date
+                  </label>
+                </div>
+              )}
+              {canEdit && f.rules && f.documentKind && f.documentKind !== "other" && (
+                <div className="btn-row">
+                  <AskAiMenu
+                    label="Ask AI about this document"
+                    prompts={[
+                      {
+                        label: "How long it must be valid",
+                        prompt: `For ${companyName}: the "${f.label}" must be valid this many days after the lease starts: `,
+                      },
+                      {
+                        label: "Make a check a blocker",
+                        prompt: `For ${companyName}: make the "${f.label}" "Read clearly?" check a blocker and email the applicant`,
+                      },
+                      {
+                        label: "Issued within N days",
+                        prompt: `For ${companyName}: the "${f.label}" as a warning, it must have been issued within this many days: `,
+                      },
+                      {
+                        label: "Read confidence",
+                        prompt: `For ${companyName}: read the "${f.label}" with at least this % confidence: `,
+                      },
+                      { label: "Explain its checks", prompt: `What checks run on ${companyName}'s "${f.label}"?` },
+                    ]}
+                  />
+                </div>
+              )}
+              {f.rules && f.documentKind && f.documentKind !== "other" && (
+                <DocChecks
+                  kind={f.documentKind}
+                  custom={f.customCategory}
+                  rules={f.rules}
+                  disabled={ro}
+                  onChange={(patch) => setDocRules(i, patch)}
+                />
+              )}
             </li>
           ))}
         </ol>
       </section>
 
       <section className="panel panel-pad stack">
-        <h3 className="section-title">Base KYC checks</h3>
-        <div className="grid-fields">
-          <label className="field span-3">
-            <span className="field-label">IDs valid at least this many days after the lease starts</span>
-            <input
-              type="number"
-              min={0}
-              max={365}
-              value={base.validityDays}
-              disabled={ro}
-              onChange={(e) => setBase({ ...base, validityDays: Number(e.target.value) })}
-            />
-          </label>
-          <label className="field span-3">
-            <span className="field-label">Minimum read confidence (0.5 to 1)</span>
-            <input
-              type="number"
-              step={0.05}
-              min={0.5}
-              max={1}
-              value={base.minConfidence}
-              disabled={ro}
-              onChange={(e) => setBase({ ...base, minConfidence: Number(e.target.value) })}
-            />
-          </label>
-          <label className="field span-3">
-            <span className="field-label">Applicant name vs documents</span>
-            <select
-              value={base.applicantName}
-              disabled={ro}
-              onChange={(e) => setBase({ ...base, applicantName: e.target.value as Base["applicantName"] })}
-            >
-              <option value="lenient">Allow middle names and order</option>
-              <option value="exact">Exact</option>
-              <option value="off">Don&apos;t check</option>
-            </select>
-          </label>
-        </div>
-        <div className="check-col">
-          {BASE_SWITCHES.map((b) => (
-            <label key={b.key} className="check-row">
-              <input
-                type="checkbox"
-                checked={base[b.key] as boolean}
-                disabled={ro}
-                onChange={(e) => setBase({ ...base, [b.key]: e.target.checked })}
-              />
-              {b.label}
-            </label>
-          ))}
-        </div>
-        <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-          Expired documents, unreadable photos and wrong documents are always flagged.
+        <h3 className="section-title">Checks across documents</h3>
+        <p className="muted" style={{ margin: 0 }}>
+          Each document&apos;s own checks are on its field in the form above. Warning: a person reviews and can approve.
+          Blocker: it can&apos;t be approved, and you can have the applicant emailed a new upload link (at most twice
+          per application, then a person takes over).
         </p>
+        <ul className="kyc-checks">
+          {CROSS_CHECKS.map((k) => (
+            <CheckRow
+              key={k}
+              check={k}
+              fill={{}}
+              value={checks.cross[k]!}
+              disabled={ro}
+              onChange={(v) => setChecks({ ...checks, cross: { ...checks.cross, [k]: v } })}
+            >
+              {k === "applicant_name" && checks.cross[k]!.severity !== "off" && (
+                <select
+                  aria-label="How close"
+                  value={checks.applicantNameMode}
+                  disabled={ro}
+                  onChange={(e) =>
+                    setChecks({ ...checks, applicantNameMode: e.target.value as Checks["applicantNameMode"] })
+                  }
+                >
+                  <option value="lenient">Allow middle names and order</option>
+                  <option value="exact">Exact</option>
+                </select>
+              )}
+            </CheckRow>
+          ))}
+        </ul>
       </section>
 
       <section className="panel panel-pad stack">
         <div className="co-body-head">
-          <h3 className="section-title">Company KYC rules</h3>
+          <h3 className="section-title">Custom checks</h3>
           {canEdit && (
             <select
               className="btn small"
@@ -413,7 +759,7 @@ export function KycEditor({
                 if (e.target.value) setRules((rs) => [...rs, newRule(e.target.value as Rule["type"], answerKeys)]);
               }}
             >
-              <option value="">Add rule…</option>
+              <option value="">Add custom check…</option>
               {Object.entries(RULE_LABEL).map(([v, l]) => (
                 <option key={v} value={v}>
                   {l}
@@ -422,7 +768,7 @@ export function KycEditor({
             </select>
           )}
         </div>
-        {rules.length === 0 && <p className="muted">No company rules. Only the base checks apply.</p>}
+        {rules.length === 0 && <p className="muted">No custom checks. Only the document checks apply.</p>}
         {rules.map((r, i) => (
           <div key={r.id} className="kyc-field">
             <div className="grid-fields">
@@ -528,6 +874,42 @@ export function KycEditor({
                   />
                 </label>
               )}
+              {r.type === "document_value_pattern" && (
+                <>
+                  <label className="field span-2">
+                    <span className="field-label">Document value</span>
+                    <select
+                      value={r.identityField}
+                      disabled={ro}
+                      onChange={(e) => setRule(i, { identityField: e.target.value })}
+                    >
+                      {Object.entries(PATTERN_FIELD).map(([v, l]) => (
+                        <option key={v} value={v}>
+                          {l}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field span-2">
+                    <span className="field-label">Pattern (regular expression)</span>
+                    <input
+                      value={r.pattern}
+                      disabled={ro}
+                      spellCheck={false}
+                      onChange={(e) => setRule(i, { pattern: e.target.value })}
+                    />
+                  </label>
+                  <label className="field span-2">
+                    <span className="field-label">In plain words</span>
+                    <input
+                      value={r.describe}
+                      disabled={ro}
+                      placeholder="For example: 6 or 7 digits"
+                      onChange={(e) => setRule(i, { describe: e.target.value })}
+                    />
+                  </label>
+                </>
+              )}
               {r.type === "ai_check" && (
                 <label className="field span-6">
                   <span className="field-label">Instruction</span>
@@ -539,10 +921,19 @@ export function KycEditor({
                     onChange={(e) => setRule(i, { instruction: e.target.value })}
                   />
                   <span className="hint">
-                    The local AI can only send the application to a person; it never approves or rejects.
+                    The local AI can only send the application to a person; it never approves, rejects or emails.
                   </span>
                 </label>
               )}
+            </div>
+            <div className="kyc-check" data-severity={r.severity}>
+              <p className="muted kyc-check-say">{outcome(r)}</p>
+              <SeverityControl
+                value={r}
+                locked={r.type === "ai_check" ? ["blocker"] : []}
+                disabled={ro}
+                onChange={(v) => setRule(i, v as Partial<Rule>)}
+              />
             </div>
             {canEdit && (
               <button
@@ -575,14 +966,20 @@ export function KycEditor({
           </div>
         </div>
       )}
-      {result.ok && (
-        <p className="row-done">Saved as a new version. New uploads use it; earlier applications keep theirs.</p>
-      )}
+      {result.ok && done && <p className="row-done">{done}</p>}
       {canEdit && (
-        <div>
-          <button type="button" className="btn primary" onClick={save} disabled={saving}>
-            {saving ? "Saving…" : "Save form and rules"}
+        <div className="btn-row">
+          <button type="button" className="btn" onClick={() => save(false)} disabled={saving}>
+            {saving ? "Saving…" : "Save draft"}
           </button>
+          <button type="button" className="btn primary" onClick={() => save(true)} disabled={saving}>
+            Publish
+          </button>
+          {hasDraft && (
+            <button type="button" className="btn ghost" onClick={discard} disabled={saving}>
+              Discard draft
+            </button>
+          )}
         </div>
       )}
     </div>

@@ -91,6 +91,8 @@ export interface DocumentsRequestMail {
   applicantName: string;
   unitLabel: string;
   reference: string;
+  /** Set when a document check asked for a new upload: code-written lines, no personal data. */
+  reasons?: string[];
   uploadUrl: string;
   statusUrl: string;
   demo: boolean;
@@ -98,13 +100,23 @@ export interface DocumentsRequestMail {
 
 /** Step 3: a one-time link to upload ID documents (never by email attachment or chat). */
 export function documentsRequestEmail(d: DocumentsRequestMail): Rendered {
-  const subject = `Upload your ID documents: ${d.unitLabel}`;
-  const paras = [
-    `Dear ${d.applicantName},`,
-    `Thank you for applying for ${d.unitLabel} (reference ${d.reference}). To prepare your tenancy we need clear photos of your identity documents.`,
-    "Please upload both sides of your Emirates ID. If you don't have one yet, upload your passport data page and your residence visa. Companies: the trade licence and the signatory's Emirates ID.",
-    "The upload link is personal and works for one submission. Please don't send ID documents by email or chat.",
-  ];
+  const again = !!d.reasons?.length;
+  const subject = again
+    ? `Please upload your documents again: ${d.unitLabel}`
+    : `Upload your ID documents: ${d.unitLabel}`;
+  const paras = again
+    ? [
+        `Dear ${d.applicantName},`,
+        `We checked the documents for your application for ${d.unitLabel} (reference ${d.reference}) and need a new upload:`,
+        ...d.reasons!.map((r) => `• ${r}`),
+        "Please upload the documents again with the link below. The link is personal and works for one submission. Please don't send ID documents by email or chat.",
+      ]
+    : [
+        `Dear ${d.applicantName},`,
+        `Thank you for applying for ${d.unitLabel} (reference ${d.reference}). To prepare your tenancy we need clear photos of your identity documents.`,
+        "Please upload both sides of your Emirates ID. If you don't have one yet, upload your passport data page and your residence visa. Companies: the trade licence and the signatory's Emirates ID.",
+        "The upload link is personal and works for one submission. Please don't send ID documents by email or chat.",
+      ];
   const foot = footer(d.demo);
   const text = [...paras, "", `Upload documents: ${d.uploadUrl}`, `Your application: ${d.statusUrl}`, "", foot].join(
     "\n",

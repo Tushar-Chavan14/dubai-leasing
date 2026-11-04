@@ -211,6 +211,13 @@
       "when": 1793556528344,
       "tag": "0029_template_clause_link",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1793707362306,
+      "tag": "0030_kyc_draft",
+      "breakpoints": true
     }
   ]
 }

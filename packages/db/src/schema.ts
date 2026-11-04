@@ -802,11 +802,21 @@ export const companyKycConfigs = pgTable(
     form: jsonb("form").notNull(),
     /** `KycRules`. */
     rules: jsonb("rules").notNull(),
+    /** The published version in force (a draft is never active). */
     active: boolean("active").notNull().default(true),
+    /** D50: `draft` is the one editable copy per company (settings page and copilot); publishing makes it live. */
+    status: text("status").$type<"draft" | "published">().notNull().default("published"),
+    publishedAt: ts("published_at"),
+    publishedBy: text("published_by"),
     createdBy: text("created_by").notNull(),
     createdAt: createdAt(),
   },
-  (t) => [uniqueIndex("company_kyc_configs_version_uq").on(t.companyId, t.version)],
+  (t) => [
+    uniqueIndex("company_kyc_configs_version_uq").on(t.companyId, t.version),
+    uniqueIndex("company_kyc_configs_one_draft_uq")
+      .on(t.companyId)
+      .where(sql`status = 'draft'`),
+  ],
 );
 
 /** Clauses proposed from a company's sample contract. Only `approved` ones can reach a contract. */

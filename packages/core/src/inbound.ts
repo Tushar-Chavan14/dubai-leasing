@@ -22,6 +22,8 @@ export const DocsUploaded = z
     documentIds: z.array(z.uuid()).min(1).max(10),
     /** What the applicant typed in the company's document form (D46), with the form version answered. */
     answers: FormAnswers.optional(),
+    /** Who is renting, as the applicant said on the upload page: decides which fields apply and how KYC checks. */
+    applicantKind: z.enum(["individual", "company"]).optional(),
   })
   .strict();
 export type DocsUploaded = z.infer<typeof DocsUploaded>;

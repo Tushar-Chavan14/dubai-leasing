@@ -1,5 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { compareNames, makeTd3, mrzCheckDigit, normaliseName, OfferResponded, parseTd3 } from "../src/index.ts";
+import {
+  applicantReason,
+  compareNames,
+  defaultBaseRules,
+  defaultDocRules,
+  effectiveCross,
+  FormField,
+  KycRules,
+  makeTd3,
+  mrzCheckDigit,
+  normaliseName,
+  OfferResponded,
+  parseTd3,
+} from "../src/index.ts";
 
 // ICAO 9303 specimen values (fictional person "Anna Maria Eriksson", Utopia).
 const ICAO = ["P<UTOERIKSSON<<ANNA<MARIA<<<<<<<<<<<<<<<<<<<", "L898902C36UTO7408122F1204159ZE184226B<<<<<10"];
@@ -138,5 +151,121 @@ describe("offer response payload", () => {
       false,
     );
     expect(OfferResponded.safeParse({ revision: 1, choice: "accept", extra: 1 }).success).toBe(false);
+  });
+});
+
+describe("document field rules and checks across documents (D49)", () => {
+  const base = defaultBaseRules({ kycMinValidityDays: 30, kycMinConfidence: 0.8 });
+  const rulesWith = (patch: (c: ReturnType<typeof effectiveCross>) => void, company: unknown[] = []) => {
+    const c = structuredClone(effectiveCross(base));
+    patch(c);
+    return KycRules.safeParse({ base: { ...base, checks: c }, company });
+  };
+  const passportField = (patch: (r: ReturnType<typeof defaultDocRules>) => void = () => {}) => {
+    const rules = structuredClone(defaultDocRules("passport", base));
+    patch(rules);
+    return FormField.safeParse({
+      key: "passport",
+      label: "Passport",
+      type: "document",
+      required: true,
+      documentKind: "passport",
+      rules,
+    });
+  };
+
+  test("a document field's rules may only list its category's checks", () => {
+    expect(passportField().success).toBe(true);
+    // A check left out takes its default (rules saved before a check existed stay valid).
+    expect(passportField((r) => delete r.checks.mrz).success).toBe(true);
+    expect(passportField((r) => (r.checks.id_number = { severity: "warning", emailApplicant: false })).success).toBe(
+      false,
+    );
+    expect(passportField((r) => delete r.validityDays).success).toBe(false);
+    // The Emirates ID back has no expiry date and only two checks.
+    const back = defaultDocRules("emirates_id_back");
+    expect(Object.keys(back.checks)).toEqual(["readable", "right_document"]);
+    expect(back.validityDays).toBeUndefined();
+  });
+
+  test("rules only go on a document field that is read", () => {
+    const rules = defaultDocRules("passport");
+    expect(FormField.safeParse({ key: "n", label: "N", type: "text", required: false, rules }).success).toBe(false);
+    expect(
+      FormField.safeParse({ key: "o", label: "O", type: "document", documentKind: "other", required: false, rules })
+        .success,
+    ).toBe(false);
+  });
+
+  test("an expired document can't be anything but a blocker; wrong or unreadable can't be off", () => {
+    const set = (k: string, severity: "off" | "warning" | "blocker") =>
+      passportField((r) => (r.checks[k] = { severity, emailApplicant: false })).success;
+    expect(set("expired", "warning")).toBe(false);
+    expect(set("right_document", "off")).toBe(false);
+    expect(set("readable", "off")).toBe(false);
+    expect(set("readable", "blocker")).toBe(true);
+  });
+
+  test("checks across documents must all be present", () => {
+    expect(rulesWith(() => {}).success).toBe(true);
+    expect(rulesWith((c) => delete c.cross.names_consistent).success).toBe(false);
+    expect(rulesWith((c) => (c.cross.extra = { severity: "off", emailApplicant: false })).success).toBe(false);
+  });
+
+  test("an AI check can only warn", () => {
+    const ai = { id: "a", type: "ai_check", label: "L", instruction: "Check something here.", severity: "blocker" };
+    expect(rulesWith(() => {}, [ai]).success).toBe(false);
+    expect(rulesWith(() => {}, [{ ...ai, severity: "warning" }]).success).toBe(true);
+  });
+
+  test("older company rules parse as warnings", () => {
+    const r = KycRules.parse({ base, company: [{ id: "m", type: "min_age", label: "21+", years: 21 }] });
+    expect(r.company[0]).toMatchObject({ severity: "warning", emailApplicant: false });
+  });
+
+  test("a pattern must be a valid, bounded regular expression", () => {
+    const p = (pattern: string) => ({
+      id: "p",
+      type: "document_value_pattern",
+      label: "P",
+      identityField: "passportNo",
+      pattern,
+    });
+    expect(rulesWith(() => {}, [p("^[A-Z]\\d{7}$")]).success).toBe(true);
+    expect(rulesWith(() => {}, [p("([a-z")]).success).toBe(false);
+    expect(rulesWith(() => {}, [p("(a+)+$")]).success).toBe(false);
+    expect(rulesWith(() => {}, [p("(a|aa)+$")]).success).toBe(false);
+    expect(rulesWith(() => {}, [p("(\\d|\\d\\d)+x")]).success).toBe(false);
+    expect(rulesWith(() => {}, [p("^(\\d)\\1")]).success).toBe(false);
+    expect(rulesWith(() => {}, [p("^(CN|DED)-\\d{6}$")]).success).toBe(true);
+  });
+
+  test("applicant reasons come from code, name the field by its label, and carry no personal data", () => {
+    const rules = KycRules.parse({
+      base,
+      company: [{ id: "m", type: "min_age", label: "Applicants must be 21 or older", years: 21 }],
+    });
+    const form = [
+      {
+        key: "pp",
+        label: "Passport data page",
+        type: "document" as const,
+        required: true,
+        appliesTo: "both" as const,
+        options: [],
+        placeholder: "",
+        help: "",
+        nameAsPerDocuments: false,
+        documentKind: "passport" as const,
+        rules: { ...defaultDocRules("passport"), validityDays: 180 },
+      },
+    ];
+    expect(applicantReason("passport.valid_long_enough", rules, form)).toBe(
+      'Your "Passport data page" must be valid for at least 180 days after the move-in date.',
+    );
+    expect(applicantReason("emirates_id_back.readable", rules)).toContain("Emirates ID (back)");
+    expect(applicantReason("rule:m", rules)).toBe("Applicants must be 21 or older.");
+    expect(applicantReason("rule:missing", rules)).toBeNull();
+    expect(applicantReason("nonsense.key", rules)).toBeNull();
   });
 });

@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LocalDiskStore } from "@leasing/adapters";
-import { addDays, defaultBaseRules, defaultCompanyPolicy, newId, STARTER_FORM } from "@leasing/core";
+import { addDays, defaultBaseRules, defaultCompanyPolicy, defaultDocRules, newId, STARTER_FORM } from "@leasing/core";
 import {
   actionLinks,
   applications,
@@ -244,6 +244,103 @@ describe.skipIf(noDb)("applications: screening, KYC, offer, reservation (Postgre
       expect(r.status).toBe(200);
       return ((await r.json()) as { version: number }).version;
     };
+
+    test("a blocker set to email sends a new upload link with the reason, at most twice, then a person reviews", async () => {
+      const s = await setup();
+      const [u] = await database.db.select().from(units).where(eq(units.id, s.unitId));
+      const base = defaultBaseRules(defaultCompanyPolicy);
+      // Priya's Emirates ID expires in 2029: ten years of validity can't be met.
+      const rules = defaultDocRules("emirates_id_front", base);
+      rules.validityDays = 3650;
+      rules.checks.valid_long_enough = { severity: "blocker", emailApplicant: true };
+      const r = await s.staff(s.admin, `/api/companies/${u!.companyId}/kyc-config`, "PUT", {
+        form: STARTER_FORM.map((f) => (f.documentKind === "emirates_id_front" ? { ...f, rules } : f)),
+        rules: { base, company: [] },
+      });
+      expect(r.status).toBe(200);
+      const version = ((await r.json()) as { version: number }).version;
+      const { id } = await createWithViewing(s, { nameEn: "Priya Example Rao", requestedMoveInOn: "2026-12-01" });
+      await attended(s, id);
+      const submit = async () => {
+        const { upload } = s.tokens(s.lastMail().text);
+        const front = (await (await s.upload(upload!, png("priya-eid-front.png"), "emirates_id", "front")).json()) as {
+          id: string;
+        };
+        const back = (await (await s.upload(upload!, png("priya-eid-back.png"), "emirates_id", "back")).json()) as {
+          id: string;
+        };
+        const sub = await s.portal("/api/inbound", "POST", {
+          token: upload,
+          type: "DOCS_UPLOADED",
+          payload: {
+            documentIds: [front.id, back.id],
+            answers: { version, answers: { full_name: "Priya Example Rao" } },
+          },
+        });
+        expect(sub.status).toBe(202);
+        await s.drain();
+      };
+      const pending = async () =>
+        (await database.db.select().from(approvals).where(eq(approvals.entityId, id))).filter(
+          (a) => a.status === "pending",
+        );
+
+      for (let n = 1; n <= 2; n++) {
+        await submit();
+        const mail = s.lastMail();
+        expect(mail.subject).toContain("Please upload your documents again");
+        expect(mail.text).toContain(
+          'Your "Emirates ID, front" must be valid for at least 3650 days after the move-in date.',
+        );
+        expect(mail.text).not.toContain("4820193");
+        expect((await appRow(id)).state).toBe("SCREENING");
+        expect(await pending()).toHaveLength(0);
+      }
+      const requests = await database.db
+        .select()
+        .from(leaseEvents)
+        .where(and(eq(leaseEvents.entityId, id), eq(leaseEvents.type, "DOCUMENTS_REQUESTED")));
+      expect(requests.map((e) => e.actor)).toEqual(["helper:kyc", "helper:kyc"]);
+      expect(requests[0]!.payload).toMatchObject({ automatic: true, checks: ["emirates_id_front.valid_long_enough"] });
+
+      // The third failure goes to a person: a review that can't be approved past the blocker.
+      await submit();
+      const [review] = await pending();
+      expect(review!.gate).toBe("kyc_review");
+      const flags = (review!.proposal as { flags: { kind: string; blocking: boolean }[] }).flags;
+      expect(flags.find((f) => f.kind === "expires_too_soon")!.blocking).toBe(true);
+      expect(flags.map((f) => f.kind)).toContain("manual_review");
+    });
+
+    test("the applicant says they rent for a company: company fields apply, the party is updated and it is recorded", async () => {
+      const s = await setup();
+      const version = await saveConfig(s);
+      const { id } = await createWithViewing(s, { nameEn: "Priya", requestedMoveInOn: "2026-12-01" });
+      await attended(s, id);
+      const { upload } = s.tokens(s.lastMail().text);
+      const front = (await (await s.upload(upload!, png("priya-eid-front.png"), "emirates_id", "front")).json()) as {
+        id: string;
+      };
+      // "Employer" is shown to individuals only: as a company it isn't required.
+      const r = await s.portal("/api/inbound", "POST", {
+        token: upload,
+        type: "DOCS_UPLOADED",
+        payload: {
+          documentIds: [front.id],
+          answers: { version, answers: { full_name: "Priya Example Rao" } },
+          applicantKind: "company",
+        },
+      });
+      expect(r.status).toBe(202);
+      const a = await appRow(id);
+      const [party] = await database.db.select().from(parties).where(eq(parties.id, a.partyId));
+      expect(party!.kind).toBe("company");
+      const [ev] = await database.db
+        .select()
+        .from(leaseEvents)
+        .where(and(eq(leaseEvents.entityId, id), eq(leaseEvents.type, "APPLICANT_KIND_SET")));
+      expect(ev!.payload).toEqual({ from: "individual", to: "company" });
+    });
 
     test("the upload page gets the company's form; required answers are enforced; answers are stored", async () => {
       const s = await setup();

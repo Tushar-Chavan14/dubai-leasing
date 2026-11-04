@@ -1103,3 +1103,60 @@ The leasing assistant automates the work up to the contract. Staff should approv
   triggers one. Decisions are audited as the user, exactly as from the inbox.
 - **Not included.** Approving several items at once, edits (rent, note) — the card links to the full approval.
 
+## D49 — Per-document KYC settings, check severity and automatic re-upload emails
+
+- **Why.** Client feedback: one validity number and one confidence bar for every document is too generic, and when
+  the law changes (say passports now need 6 months left) an admin must be able to change it in Settings without a
+  release. The KYC helper follows whatever the company's current config says.
+- **On the document field.** The checks live on each document field of the form (D46): a field of type "Document
+  photo" with a read category (Emirates ID front, Emirates ID back, passport, visa, trade licence) carries its own
+  rules (`FormField.rules`): validity days after the planned lease start (categories with an expiry date), read
+  confidence, and every check of that category with its severity: expired, valid long enough, read clearly, right
+  document, plus the category's format checks (EID number and birth year; passport MRZ and MRZ vs page; visa number and
+  passport number on the visa; the EID back has read clearly and right document only). Picking a category starts from
+  its defaults; `other` uploads aren't read, so they have no checks. Checks across documents (everything uploaded, same
+  name everywhere, applicant's name lenient or exact) are in `base.checks`. Which documents are needed, and from whom,
+  stays on the field (required, shown to).
+- **Severity.** Every check and company rule is `off`, `warning` (today: a person reviews and can approve) or
+  `blocker` (a blocking flag that can't be approved past). On a blocker, "email applicant to re-upload" sends a new
+  upload link with plain reasons written by code, never by a model, and without names, numbers or dates. At most two
+  automatic emails per application, then the normal review opens. A warning never emails.
+- **Limits kept.** Expired documents (or an unreadable expiry) are always blockers; wrong and unreadable documents
+  can't be switched off; AI custom checks can only warn or be off, so a model never blocks or emails an applicant.
+  Nothing rejects an applicant automatically. The document request is the same route staff use (`requestDocuments`),
+  audited as `helper:kyc`.
+- **New company rule.** "Document value matches a pattern": a regular expression (120 characters, no nested
+  repeats) on a value read from the documents (EID, passport, visa or licence number, company name). The flag says
+  what was expected in plain words, never the value.
+- **Compatibility.** Configs saved before D49 parse unchanged and behave exactly as before (switch on = warning,
+  expiry = blocker); company rules without a severity are warnings. Saving stays one step: each save is a new
+  version, and an application keeps the version it answered (D46).
+- **Not included.** "Document issued within N days" needs the vision model to read issue dates; added in D50.
+
+## D50 — KYC drafts, custom documents, issue dates, and the copilot editing KYC settings
+
+- **Draft and publish.** Each company has at most one KYC draft (`company_kyc_configs.status = 'draft'`, never
+  active, one per company by a partial unique index). The settings page saves the draft, publishes it or discards it;
+  publishing re-validates it and makes it the live version. Applications and the upload page only ever use published
+  versions, and an application keeps the one it answered. The one-step save route stays (save then publish).
+- **Custom documents.** A document field can be a company-named category with a description and whether it has an
+  expiry date. The vision model reads only whether the image fits the description and the holder name, number, issue
+  and expiry dates; code decides: expired (always a blocker), valid long enough, issued recently, read clearly, right
+  document (can't be off), holder is the applicant. The description is admin-written and goes into the prompt as
+  quoted data; descriptions about nationality or similar traits are refused. Custom documents never change the
+  verified identity.
+- **Issued within N days.** Every category with an issue date (Emirates ID front, passport, visa, trade licence,
+  custom) has `issued_recently` with its own number of days, off by default. An unreadable issue date fails it.
+- **Copilot (amends AGENTS.md rule 11, like D45).** `get_kyc_config` reads a company's settings (draft first) for
+  any staff role. `edit_kyc_config` (admin) sends a list of edits: a check's severity and email switch, validity
+  days, read confidence, the issue-date window, the name match, adding, changing or removing fields (custom documents
+  included), adding, changing or removing custom checks, and publishing. Edits always land in the draft and are
+  validated like the settings form. They are applied directly only when the user's own latest message asks for them:
+  the engine checks the quote, that each edit names its field, and that every number, severity word, "email", new
+  label, description, choice and "publish" is in that message, with no negation ("don't publish"). Anything that
+  loosens KYC is never direct, only a suggestion the user confirms: a check off or lowered to warning, stopping
+  applicant emails, a field made optional or shown to fewer applicants, a removal, a custom document without an
+  expiry date, a lenient name match, a new check that emails applicants. The Confirm card lists every value each edit
+  sets; the edits are recorded with the draft (`KYC_DRAFT_SAVED.ops`), and the config is locked before it is read. After
+  untrusted text in the turn, it can only suggest. Audited as `copilot:<userId>` (`COPILOT_CONFIG_CHANGED`,
+  `KYC_DRAFT_SAVED`, `KYC_CONFIG_SAVED`).

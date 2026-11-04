@@ -65,8 +65,8 @@ tests pass.
     come from rulebook tools. Tenant-written text reaching the copilot is untrusted data.
     `propose` tools need the user's Confirm click. Seven confirmed actions exist (decisions D25, D26, D42): an application (with its viewing invitation email), a task, a pending approval request (`formal_reminder`, `vacate_notice`), a viewing invitation, a document request, a signing-link resend, and preparing a contract (it only prepares: the contract still waits at the `final_contract` gate). Each runs through the normal route, as the user, only when that user clicks Confirm in the chat. Decision cards (D48): asked to approve, reject or record a site visit, the copilot shows a card whose buttons run the inbox's or application page's own route as the user; the click is the decision. `draft` tools save text the user opens
     in the normal form and sends or posts themselves; the copilot never sends. The copilot's
-    client can store a proposal or a draft but can never confirm, send or post one. Amendment (D45): the copilot may change contract clauses, rent rules, contract rules and
-    Smart Rental Index values when the user's own latest message asks for that change (the engine checks the
+    client can store a proposal or a draft but can never confirm, send or post one. Amendment (D45, D50): the copilot may change contract clauses, rent rules, contract rules,
+    Smart Rental Index values and a company's KYC draft (publishing it too) when the user's own latest message asks for that change (the engine checks the
     quoted words); a change the copilot suggests on its own waits for Confirm. Same roles and validation as
     the settings forms.
 

@@ -1,7 +1,8 @@
-import { FormField, isCalendarDate, KycRules } from "@leasing/core";
+import { CustomCategory, FormField, isCalendarDate, KycRules } from "@leasing/core";
 import { z } from "zod";
 
-export const DocKind = z.enum(["emirates_id", "passport", "visa", "trade_licence"]);
+/** `custom`: a company-named document read against its description (D50). */
+export const DocKind = z.enum(["emirates_id", "passport", "visa", "trade_licence", "custom"]);
 export type DocKind = z.infer<typeof DocKind>;
 
 const calDate = z.string().refine(isCalendarDate, "expected YYYY-MM-DD");
@@ -15,7 +16,15 @@ export const KycContext = z.object({
   minValidityDays: z.number().int().min(0),
   minConfidence: z.number().min(0).max(1),
   documents: z
-    .array(z.object({ docId: z.string(), kind: DocKind, side: z.enum(["front", "back", "page"]) }))
+    .array(
+      z.object({
+        docId: z.string(),
+        kind: DocKind,
+        side: z.enum(["front", "back", "page"]),
+        /** `custom` only: the form field the upload is for. */
+        fieldKey: z.string().optional(),
+      }),
+    )
     .min(1)
     .max(10),
   /** The company's KYC rules and document form (D46). Absent: the built-in checks only (older applications). */
@@ -34,6 +43,8 @@ export const ReadField = z.object({
 export type ReadField = z.infer<typeof ReadField>;
 
 const f = ReadField.describe("value exactly as printed (null if not visible) and your confidence 0–1");
+/** Issue dates are read when printed; older readings without one still parse (the check then can't pass). */
+const issue = ReadField.optional().describe("issue date exactly as printed, if the document shows one");
 
 /** What the vision model must return per document kind. Dates as printed (e.g. 07/03/1991). */
 export const VisionRead = {
@@ -52,6 +63,7 @@ export const VisionRead = {
     birthDate: f,
     sex: f,
     expiryDate: f,
+    issueDate: issue,
   }),
   emirates_id_back: z.object({
     documentType: z.enum([
@@ -81,6 +93,7 @@ export const VisionRead = {
     birthDate: f,
     sex: f,
     expiryDate: f,
+    issueDate: issue,
     mrzLine1: f,
     mrzLine2: f,
   }),
@@ -98,6 +111,7 @@ export const VisionRead = {
     passportNo: f,
     nationality: f,
     expiryDate: f,
+    issueDate: issue,
   }),
   trade_licence: z.object({
     documentType: z.enum([
@@ -112,6 +126,17 @@ export const VisionRead = {
     tradeName: f,
     managerName: f,
     expiryDate: f,
+    issueDate: issue,
+  }),
+  /** A company-named document (D50): only what every such document has. Code decides everything else. */
+  custom: z.object({
+    matchesDescription: z
+      .enum(["yes", "no", "unsure"])
+      .describe("whether the image is the kind of document described (yes only when clearly so)"),
+    holderName: f,
+    documentNumber: f,
+    issueDate: f,
+    expiryDate: f,
   }),
 } as const;
 export type ReadKey = keyof typeof VisionRead;
@@ -119,12 +144,19 @@ export type DocRead = {
   docId: string;
   kind: DocKind;
   side: "front" | "back" | "page";
+  fieldKey?: string | undefined;
   read: Record<string, unknown> | null;
   error?: string;
 };
 
 export const readKeyOf = (kind: DocKind, side: string): ReadKey =>
   kind === "emirates_id" ? (side === "back" ? "emirates_id_back" : "emirates_id_front") : kind;
+
+/** A custom document's category, from the form field it was uploaded for. */
+export const customOf = (
+  form: readonly FormField[] | undefined,
+  fieldKey: string | undefined,
+): CustomCategory | undefined => form?.find((x) => x.key === fieldKey && x.documentKind === "custom")?.customCategory;
 
 export const FlagKind = z.enum([
   "missing_document",
@@ -142,6 +174,8 @@ export const FlagKind = z.enum([
   "expires_too_soon",
   "name_mismatch",
   "applicant_name_mismatch",
+  /** D50: issued longer ago than the field allows, or the issue date can't be read. */
+  "issued_too_long_ago",
   /** A company KYC rule (D46) failed; never blocking, a person decides. */
   "company_rule",
   /** Set by the Manager, not the helper: this Emirates ID already belongs to another party. */
@@ -153,8 +187,12 @@ export const KycFlag = z.object({
   kind: FlagKind,
   message: z.string(),
   docId: z.string().nullable(),
-  /** A blocking flag can't be approved past (an expired document). */
+  /** A blocking flag can't be approved past (an expired document, or a check the company set as a blocker). */
   blocking: z.boolean(),
+  /** The setting that raised it (`passport.readable`, `cross.names_consistent`, `rule:<id>`), when the company has rules. */
+  check: z.string().optional(),
+  /** A blocker whose setting asks the engine to email the applicant a new upload link. */
+  emailApplicant: z.boolean().optional(),
 });
 export type KycFlag = z.infer<typeof KycFlag>;
 

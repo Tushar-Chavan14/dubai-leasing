@@ -494,7 +494,7 @@ export function registerPortalRoutes(app: Hono<AuthEnv>, ctx: EngineContext, med
           ? await companyKycConfig(tx, unit.companyId, today).then((c) => ({
               version: c.version,
               applicantKind: row.kind,
-              fields: c.form,
+              fields: c.form.map(({ rules: _rules, customCategory: _custom, ...f }) => f), // check settings stay with staff
             }))
           : null,
       offer:

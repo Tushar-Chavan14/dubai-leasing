@@ -237,6 +237,7 @@ describe.skipIf(noDb)("staff copilot (Postgres, scripted model)", () => {
       contract_status: { ref: "TST-0101" },
       list_companies: {},
       get_company_settings: { company: "test-co" },
+      get_kyc_config: { company: "test-co" },
       show_decision: { action: "approval", record: "TST-0101" },
       offer_choices: {
         question: "Which one?",

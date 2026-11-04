@@ -40,13 +40,14 @@ export async function runConfigChange(
     });
     return { status: r.status, summary: r.summary, next: "Done. Tell the user what was changed." };
   }
-  const p = await engine.propose<{ id: string; status: string }>("/api/copilot/proposals", {
-    kind: "config_change",
-    change,
-  });
+  const p = await engine.propose<{ id: string; status: string; summary?: { facts?: [string, string][] } }>(
+    "/api/copilot/proposals",
+    { kind: "config_change", change },
+  );
+  const facts = (p.summary?.facts ?? []).map(([k, v]) => `${k}: ${v}`).join("; ");
   return {
     status: p.status,
-    summary: "Suggested change stored",
+    summary: facts ? `Suggested change, not saved yet: ${facts}` : "Suggested change stored",
     proposalId: p.id,
     next: "Waiting for the user to click Confirm on the card. Nothing has changed yet; never say it has.",
   };

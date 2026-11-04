@@ -55,7 +55,7 @@ export type ProposalView = ProposalBase &
     | {
         kind: "config_change";
         summary: {
-          change: "add_clause" | "rent_rule" | "contract_rule" | "sri_value";
+          change: "add_clause" | "rent_rule" | "contract_rule" | "sri_value" | "kyc_config";
           company?: string | null;
           /** Label/value lines formatted by the engine (older proposals have none). */
           facts?: [string, string][];

@@ -3,7 +3,7 @@ import { type Llm, ModelTimeoutError } from "@leasing/llm";
 import { assessKyc } from "./checks.ts";
 import { readPrompt } from "./prompt.ts";
 import { applyKycRules, kycAiChecks } from "./rules.ts";
-import { type DocRead, KycContext, KycData, readKeyOf, VisionRead } from "./schema.ts";
+import { customOf, type DocRead, KycContext, KycData, readKeyOf, VisionRead } from "./schema.ts";
 
 export { assessKyc, parseDocDate } from "./checks.ts";
 export { applyKycRules, kycAiChecks } from "./rules.ts";
@@ -73,7 +73,8 @@ export function kycHelper(
         index++;
         const key = readKeyOf(d.kind, d.side);
         const schema = VisionRead[key];
-        const label = docLabel(d);
+        const custom = d.kind === "custom" ? customOf(ctx.form, d.fieldKey) : undefined;
+        const label = custom?.name ?? docLabel(d);
         const began = performance.now();
         const at = { index, total: ctx.documents.length, doc: label };
         let read: Record<string, unknown> | null = null;
@@ -89,7 +90,7 @@ export function kycHelper(
         }
         for (let attempt = 0; attempt < 2 && !read; attempt++) {
           try {
-            const parsed = schema.safeParse(await llm.vision([image], readPrompt(key), schema, { timeoutMs }));
+            const parsed = schema.safeParse(await llm.vision([image], readPrompt(key, custom), schema, { timeoutMs }));
             if (parsed.success) read = parsed.data as Record<string, unknown>;
             else {
               error = "the reading didn't have the expected fields";

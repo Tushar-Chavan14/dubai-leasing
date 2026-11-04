@@ -57,9 +57,11 @@ export async function submitDocuments(_prev: PortalState, formData: FormData): P
     if (k.startsWith("answer:") && typeof v === "string" && v.trim()) answers[k.slice(7)] = v.trim().slice(0, 500);
   }
   const version = Number(formData.get("formVersion") ?? 0);
+  const kind = String(formData.get("applicantKind") ?? "");
   return submit(String(formData.get("token")), "DOCS_UPLOADED", {
     documentIds: ids,
     answers: { version: Number.isInteger(version) ? version : 0, answers },
+    ...(kind === "individual" || kind === "company" ? { applicantKind: kind } : {}),
   });
 }
 

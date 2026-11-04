@@ -282,3 +282,319 @@ describe.skipIf(noDb)("copilot settings changes (D45)", () => {
     expect((await database.db.select().from(companyClauses))[0]!.hasValues).toBe(true);
   });
 });
+
+describe.skipIf(noDb)("copilot KYC settings changes and drafts (D50)", () => {
+  beforeEach(async () => {
+    database = await freshDatabase();
+  });
+  const kyc = (ops: unknown[]) => ({ kind: "kyc_config", company: "Silverline", ops });
+  const req = (
+    s: Awaited<ReturnType<typeof setup>>,
+    user: { id: string },
+    path: string,
+    method = "GET",
+    body?: unknown,
+  ) =>
+    createApi(s.t.ctx, {
+      sessionSecret: SECRET,
+      mediaStore: new LocalDiskStore(mkdtempSync(join(tmpdir(), "m-"))),
+    }).request(path, {
+      method,
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${issueToken(SECRET, user.id, Date.now())}`,
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+  type Config = {
+    version: number;
+    form: {
+      key: string;
+      documentKind?: string;
+      rules?: { validityDays?: number; checks: Record<string, { severity: string; emailApplicant: boolean }> };
+    }[];
+    draft: null | { version: number; form: Config["form"] };
+  };
+  const config = async (s: Awaited<ReturnType<typeof setup>>) =>
+    (await (await req(s, s.admin, `/api/companies/${s.companyId}/kyc-config`)).json()) as Config;
+
+  test("explicit edit with the user's numbers goes to the draft; the live version is unchanged until publish", async () => {
+    const s = await setup();
+    const said = "Silverline: passport must be valid 180 days, make it a blocker and email the applicant";
+    const th = await s.thread(s.admin, said);
+    const ops = [
+      { op: "set_number", field: "passport", setting: "validity_days", value: 180 },
+      { op: "set_check", field: "passport", check: "valid_long_enough", severity: "blocker", emailApplicant: true },
+    ];
+    const r = await s.explicit(s.admin, th, "passport must be valid 180 days", kyc(ops));
+    expect(r.status).toBe(200);
+    const c = await config(s);
+    expect(c.version).toBe(0);
+    const pp = c.draft!.form.find((f) => f.documentKind === "passport")!;
+    expect(pp.rules!.validityDays).toBe(180);
+    expect(pp.rules!.checks.valid_long_enough).toEqual({ severity: "blocker", emailApplicant: true });
+    // Live (starter) still has the default.
+    expect(c.form.find((f) => f.documentKind === "passport")!.rules!.validityDays).toBe(30);
+
+    // Publishing needs the user to say so.
+    const th2 = await s.thread(s.admin, "Looks good for Silverline");
+    expect((await s.explicit(s.admin, th2, "Looks good for Silverline", kyc([{ op: "publish" }]))).status).toBe(422);
+    const th3 = await s.thread(s.admin, "Publish the Silverline KYC draft");
+    expect((await s.explicit(s.admin, th3, "Publish the Silverline KYC draft", kyc([{ op: "publish" }]))).status).toBe(
+      200,
+    );
+    const after = await config(s);
+    expect(after.draft).toBeNull();
+    expect(after.version).toBe(1);
+    expect(after.form.find((f) => f.documentKind === "passport")!.rules!.validityDays).toBe(180);
+  });
+
+  test("numbers or severities the user didn't say are refused as explicit, and stored as a suggestion instead", async () => {
+    const s = await setup();
+    const th = await s.thread(s.admin, "Make Silverline's passport check stricter");
+    const ops = [{ op: "set_number", field: "passport", setting: "validity_days", value: 365 }];
+    const r = await s.explicit(s.admin, th, "passport check stricter", kyc(ops));
+    expect(r.status).toBe(422);
+    expect((await config(s)).draft).toBeNull();
+    const p = await s.call(s.admin, "/api/copilot/proposals", th, { kind: "config_change", change: kyc(ops) });
+    expect(p.status).toBe(201);
+    expect((await config(s)).draft).toBeNull();
+    const { id } = (await p.json()) as { id: string };
+    expect((await s.call(s.admin, `/api/copilot/proposals/${id}/confirm`, th, {})).status).toBe(200);
+    expect((await config(s)).draft!.form.find((f) => f.documentKind === "passport")!.rules!.validityDays).toBe(365);
+  });
+
+  test("only admins edit KYC settings, through the copilot or the routes", async () => {
+    const s = await setup();
+    const said = "Silverline: passport valid 180 days";
+    const th = await s.thread(s.officer, said);
+    const ops = [{ op: "set_number", field: "passport", setting: "validity_days", value: 180 }];
+    expect((await s.explicit(s.officer, th, "passport valid 180 days", kyc(ops))).status).toBe(403);
+    expect(
+      (await s.call(s.officer, "/api/copilot/proposals", th, { kind: "config_change", change: kyc(ops) })).status,
+    ).toBe(403);
+    const c = await config(s);
+    expect((await req(s, s.officer, `/api/companies/${s.companyId}/kyc-config/draft`, "PUT", c)).status).toBe(403);
+    expect((await req(s, s.officer, `/api/companies/${s.companyId}/kyc-config/publish`, "POST")).status).toBe(403);
+    expect((await req(s, s.manager, `/api/companies/${s.companyId}/kyc-config/draft`, "DELETE")).status).toBe(403);
+  });
+
+  test("an edit that names an unknown field or check is refused with the reason", async () => {
+    const s = await setup();
+    const th = await s.thread(s.admin, "Silverline: make the salary slip check a blocker");
+    const r = await s.explicit(
+      s.admin,
+      th,
+      "make the salary slip check a blocker",
+      kyc([{ op: "set_check", field: "salary slip", check: "readable", severity: "blocker" }]),
+    );
+    expect(r.status).toBe(422);
+    expect(((await r.json()) as { error: string }).error).toContain('no field "salary slip"');
+  });
+
+  test("a custom document added through the copilot is read with its own checks; the KYC read route shows it", async () => {
+    const s = await setup();
+    const said =
+      'Silverline: add a required document "Salary certificate", a letter from the employer stating the salary';
+    const th = await s.thread(s.admin, said);
+    // A document without an expiry date loosens KYC: never direct, only a suggestion the admin confirms.
+    const direct = await s.explicit(
+      s.admin,
+      th,
+      "add a required document",
+      kyc([
+        {
+          op: "add_document_field",
+          label: "Salary certificate",
+          category: "custom",
+          customDescription: "a letter from the employer stating the salary",
+          hasExpiry: false,
+        },
+      ]),
+    );
+    expect(direct.status).toBe(422);
+    const p = await s.call(s.admin, "/api/copilot/proposals", th, {
+      kind: "config_change",
+      change: kyc([
+        {
+          op: "add_document_field",
+          label: "Salary certificate",
+          category: "custom",
+          customDescription: "a letter from the employer stating the salary",
+          hasExpiry: false,
+        },
+      ]),
+    });
+    const r = await s.call(
+      s.admin,
+      `/api/copilot/proposals/${((await p.json()) as { id: string }).id}/confirm`,
+      th,
+      {},
+    );
+    expect(r.status).toBe(200);
+    const view = (await (await req(s, s.officer, "/api/copilot/kyc-config?company=silverline")).json()) as {
+      showing: string;
+      fields: { label: string; category?: string; checks?: Record<string, string> }[];
+    };
+    expect(view.showing).toBe("draft");
+    const salary = view.fields.find((f) => f.label === "Salary certificate")!;
+    expect(salary.category).toBe("custom");
+    expect(Object.keys(salary.checks!).toSorted()).toEqual([
+      "issued_recently",
+      "name_matches",
+      "readable",
+      "right_document",
+    ]);
+  });
+
+  test("draft, publish and discard through the settings routes", async () => {
+    const s = await setup();
+    const c = await config(s);
+    const form = c.form.map((f) =>
+      f.documentKind === "visa" ? { ...f, rules: { ...f.rules!, validityDays: 60 } } : f,
+    );
+    const rules = (
+      (await (await req(s, s.admin, `/api/companies/${s.companyId}/kyc-config`)).json()) as { rules: unknown }
+    ).rules;
+    expect(
+      (await req(s, s.admin, `/api/companies/${s.companyId}/kyc-config/draft`, "PUT", { form, rules })).status,
+    ).toBe(200);
+    expect((await config(s)).draft!.version).toBe(1);
+    expect((await req(s, s.admin, `/api/companies/${s.companyId}/kyc-config/draft`, "DELETE")).status).toBe(200);
+    expect((await config(s)).draft).toBeNull();
+    expect((await req(s, s.admin, `/api/companies/${s.companyId}/kyc-config/publish`, "POST")).status).toBe(422);
+    await req(s, s.admin, `/api/companies/${s.companyId}/kyc-config/draft`, "PUT", { form, rules });
+    expect((await req(s, s.admin, `/api/companies/${s.companyId}/kyc-config/publish`, "POST")).status).toBe(200);
+    const live = await config(s);
+    expect(live.draft).toBeNull();
+    expect(live.form.find((f) => f.documentKind === "visa")!.rules!.validityDays).toBe(60);
+    const events = await database.db
+      .select({ type: leaseEvents.type })
+      .from(leaseEvents)
+      .where(eq(leaseEvents.entityId, s.companyId));
+    expect(events.map((e) => e.type)).toEqual(
+      expect.arrayContaining(["KYC_DRAFT_SAVED", "KYC_DRAFT_DISCARDED", "KYC_CONFIG_SAVED"]),
+    );
+  });
+
+  test("anything that loosens KYC, or isn't the user's own words for that field, is never made directly", async () => {
+    const s = await setup();
+    const refused = async (said: string, quote: string, ops: unknown[]) => {
+      const th = await s.thread(s.admin, said);
+      const r = await s.explicit(s.admin, th, quote, kyc(ops));
+      return [r.status, ((await r.json()) as { reasons?: string[] }).reasons ?? []] as const;
+    };
+    // Turning a check off, even when the message says "off".
+    expect(
+      (
+        await refused("Silverline: turn the visa number check off", "turn the visa number check off", [
+          { op: "set_check", field: "visa", check: "visa_number", severity: "off" },
+        ])
+      )[0],
+    ).toBe(422);
+    // A severity word elsewhere in the message doesn't cover another field.
+    expect(
+      (
+        await refused("Silverline: make the passport readable check a blocker", "passport readable check a blocker", [
+          { op: "set_check", field: "visa", check: "readable", severity: "blocker" },
+        ])
+      )[0],
+    ).toBe(422);
+    // Making a document optional or changing who sees it.
+    expect(
+      (
+        await refused("Silverline passport field please", "Silverline passport field", [
+          { op: "update_field", field: "passport", required: false },
+        ])
+      )[0],
+    ).toBe(422);
+    expect(
+      (
+        await refused("Silverline passport field please", "Silverline passport field", [
+          { op: "update_field", field: "passport", shownTo: "company" },
+        ])
+      )[0],
+    ).toBe(422);
+    // A check with nothing to change, removals, negations, and a new check that emails applicants.
+    expect(
+      (
+        await refused("Silverline passport expiry", "Silverline passport expiry", [
+          { op: "set_check", field: "passport", check: "valid_long_enough" },
+        ])
+      )[0],
+    ).toBe(422);
+    expect(
+      (
+        await refused("Silverline: remove the visa field", "remove the visa field", [
+          { op: "remove_field", field: "visa" },
+        ])
+      )[0],
+    ).toBe(422);
+    expect(
+      (await refused("Don't publish the Silverline draft yet", "publish the Silverline draft", [{ op: "publish" }]))[0],
+    ).toBe(422);
+    expect(
+      (
+        await refused("Silverline: block applicants under 21, email them", "block applicants under 21", [
+          {
+            op: "add_rule",
+            rule: { type: "min_age", label: "under 21", years: 21, severity: "blocker", emailApplicant: true },
+          },
+        ])
+      )[0],
+    ).toBe(422);
+    expect((await config(s)).draft).toBeNull();
+  });
+
+  test("locked severities hold through the copilot too", async () => {
+    const s = await setup();
+    const th = await s.thread(s.admin, "Silverline: passport expired check a warning");
+    const p = await s.call(s.admin, "/api/copilot/proposals", th, {
+      kind: "config_change",
+      change: kyc([{ op: "set_check", field: "passport", check: "expired", severity: "warning" }]),
+    });
+    // Refused when the suggestion is made, so the copilot hears why and nothing reaches a Confirm card.
+    expect(p.status).toBe(422);
+    const bad = await s.call(s.admin, "/api/copilot/proposals", th, {
+      kind: "config_change",
+      change: kyc([{ op: "set_number", field: "validity_days", setting: "validity_days", value: 20 }]),
+    });
+    expect(bad.status).toBe(422);
+    expect(((await bad.json()) as { error: string }).error).toContain('"Emirates ID, front"');
+    expect((await config(s)).draft).toBeNull();
+  });
+
+  test("the Confirm card lists every value an edit sets, and the edits are recorded with the draft", async () => {
+    const s = await setup();
+    const th = await s.thread(s.admin, "Silverline passport");
+    const ops = [
+      { op: "update_field", field: "passport", required: false, shownTo: "company" },
+      { op: "add_rule", rule: { type: "min_age", label: "21+", years: 21, severity: "blocker", emailApplicant: true } },
+    ];
+    const p = await s.call(s.admin, "/api/copilot/proposals", th, { kind: "config_change", change: kyc(ops) });
+    const card = JSON.stringify(await p.json());
+    expect(card).toContain("optional");
+    expect(card).toContain("shown to company");
+    expect(card).toContain("emails the applicant");
+    await s.call(s.admin, `/api/copilot/proposals/${JSON.parse(card).id}/confirm`, th, {});
+    const [saved] = await database.db
+      .select({ payload: leaseEvents.payload })
+      .from(leaseEvents)
+      .where(and(eq(leaseEvents.entityId, s.companyId), eq(leaseEvents.type, "KYC_DRAFT_SAVED")));
+    expect((saved!.payload as { ops: unknown[] }).ops).toEqual(ops);
+  });
+
+  test("a field named by its label counts when the user's message used another of its names", async () => {
+    const s = await setup();
+    const th = await s.thread(s.admin, "For Silverline Properties: make the passport read clearly check a blocker");
+    const r = await s.explicit(
+      s.admin,
+      th,
+      "make the passport read clearly check a blocker",
+      kyc([{ op: "set_check", field: "Passport data page", check: "Read clearly?", severity: "blocker" }]),
+    );
+    expect(r.status).toBe(200);
+    const pp = (await config(s)).draft!.form.find((f) => f.documentKind === "passport")!;
+    expect(pp.rules!.checks.readable!.severity).toBe("blocker");
+  });
+});

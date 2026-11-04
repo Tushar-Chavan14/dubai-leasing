@@ -2,11 +2,23 @@ import {
   addDays,
   type CalendarDate,
   compareNames,
+  effectiveDocRules,
+  fieldRules,
+  type ReadDocKind,
   isValidEmiratesId,
   normaliseEmiratesId,
   parseTd3,
 } from "@leasing/core";
-import type { DocKind, DocRead, KycContext, KycData, KycFlag, KycIdentity, ReadField } from "./schema.ts";
+import {
+  customOf,
+  type DocKind,
+  type DocRead,
+  type KycContext,
+  type KycData,
+  type KycFlag,
+  type KycIdentity,
+  type ReadField,
+} from "./schema.ts";
 
 /**
  * The KYC decision, in pure code: what the vision model read goes in, a verdict comes out.
@@ -57,7 +69,7 @@ const EXPECTED_TYPE: Record<string, string> = {
   visa: "residence_visa",
   trade_licence: "trade_licence",
 };
-const LABEL: Record<DocKind, string> = {
+const LABEL: Record<Exclude<DocKind, "custom">, string> = {
   emirates_id: "Emirates ID",
   passport: "passport",
   visa: "residence visa",
@@ -93,9 +105,13 @@ export function assessKyc(ctx: KycContext, reads: DocRead[]): KycData {
     sources[key] = { docId, via };
   };
   const names: { name: string; docId: string; where: string }[] = [];
-  const latestOk = addDays(ctx.leaseStartOn as CalendarDate, ctx.minValidityDays);
+  // Each document field's own numbers when the company set them (D49), else the single context values.
+  const perDoc = ctx.rules ? effectiveDocRules(ctx.rules.base, ctx.form) : null;
+  const validityDays = (k: ReadDocKind) => perDoc?.[k].validityDays ?? ctx.minValidityDays;
+  const minConfidence = (k: ReadDocKind) => perDoc?.[k].minConfidence ?? ctx.minConfidence;
 
-  const checkExpiry = (raw: ReadField | undefined, docId: string, what: string): CalendarDate | null => {
+  const checkExpiry = (raw: ReadField | undefined, docId: string, what: string, days: number): CalendarDate | null => {
+    const latestOk = addDays(ctx.leaseStartOn as CalendarDate, days);
     const d = parseDocDate(raw?.value);
     if (!d) {
       // Without a readable expiry date nobody can show the document is valid: ask for a new photo.
@@ -108,7 +124,7 @@ export function assessKyc(ctx: KycContext, reads: DocRead[]): KycData {
     } else if (d < latestOk) {
       flag(
         "expires_too_soon",
-        `The ${what} expires on ${d}, less than ${ctx.minValidityDays} days after the lease starts (${ctx.leaseStartOn}).`,
+        `The ${what} expires on ${d}, less than ${days} days after the lease starts (${ctx.leaseStartOn}).`,
         docId,
       );
     } else pass("in_date", docId);
@@ -117,26 +133,53 @@ export function assessKyc(ctx: KycContext, reads: DocRead[]): KycData {
 
   // Fixed order, so the identity always comes from the same document: the Emirates ID first,
   // then the passport, the visa and the trade licence (first value wins in `set`).
-  const PRIORITY = { emirates_id: 0, passport: 1, visa: 2, trade_licence: 3 } as const;
+  const PRIORITY = { emirates_id: 0, passport: 1, visa: 2, trade_licence: 3, custom: 4 } as const;
   const ordered = reads.toSorted((a, b) => PRIORITY[a.kind] - PRIORITY[b.kind] || a.side.localeCompare(b.side));
   for (const r of ordered) {
     const key = r.kind === "emirates_id" ? (r.side === "back" ? "emirates_id_back" : "emirates_id_front") : r.kind;
-    const what = r.kind === "emirates_id" ? `Emirates ID (${r.side})` : LABEL[r.kind];
+    const custom = r.kind === "custom" ? customOf(ctx.form, r.fieldKey) : undefined;
+    const what =
+      r.kind === "emirates_id"
+        ? `Emirates ID (${r.side})`
+        : r.kind === "custom"
+          ? (custom?.name ?? "document")
+          : LABEL[r.kind];
     if (!r.read) {
       flag("unreadable", `The ${what} could not be read${r.error ? ` (${r.error})` : ""}.`, r.docId);
       continue;
     }
+    if (r.kind === "custom") {
+      // A company-named document (D50): the model only says whether it fits the description and reads its fields.
+      const rules = fieldRules(
+        ctx.form?.find((x) => x.key === r.fieldKey),
+        "custom",
+        ctx.rules?.base,
+      );
+      if (r.read.matchesDescription !== "yes")
+        flag("wrong_document", `The ${what} upload doesn't clearly look like the described document.`, r.docId);
+      const need = ["holderName", ...(custom?.hasExpiry === false ? [] : ["expiryDate"])];
+      const unclear = need.filter((k) => {
+        const v = val(r.read, k);
+        return !v?.value || v.confidence < rules.minConfidence;
+      });
+      if (unclear.length)
+        flag("low_confidence", `On the ${what}, these weren't read clearly: ${unclear.join(", ")}.`, r.docId);
+      else pass("readable", r.docId);
+      if (custom?.hasExpiry !== false)
+        checkExpiry(val(r.read, "expiryDate"), r.docId, what, rules.validityDays ?? ctx.minValidityDays);
+      continue;
+    }
     const docType = String(r.read.documentType ?? "other");
-    if (docType !== EXPECTED_TYPE[key]) {
+    if (docType !== EXPECTED_TYPE[key as keyof typeof EXPECTED_TYPE]) {
       flag(
         "wrong_document",
         `The ${what} upload looks like a different document (${docType.replaceAll("_", " ")}).`,
         r.docId,
       );
     }
-    const unsure = REQUIRED[key]!.filter((k) => {
+    const unsure = REQUIRED[key as keyof typeof REQUIRED]!.filter((k) => {
       const v = val(r.read, k);
-      return !v?.value || v.confidence < ctx.minConfidence;
+      return !v?.value || v.confidence < minConfidence(key as ReadDocKind);
     });
     if (unsure.length)
       flag("low_confidence", `On the ${what}, these weren't read clearly: ${unsure.join(", ")}.`, r.docId);
@@ -160,7 +203,12 @@ export function assessKyc(ctx: KycContext, reads: DocRead[]): KycData {
           r.docId,
         );
       }
-      set("idExpiresOn", checkExpiry(val(r.read, "expiryDate"), r.docId, "Emirates ID"), r.docId, "printed");
+      set(
+        "idExpiresOn",
+        checkExpiry(val(r.read, "expiryDate"), r.docId, "Emirates ID", validityDays("emirates_id_front")),
+        r.docId,
+        "printed",
+      );
       const name = val(r.read, "name")?.value;
       if (name) {
         names.push({ name, docId: r.docId, where: "Emirates ID" });
@@ -200,7 +248,7 @@ export function assessKyc(ctx: KycContext, reads: DocRead[]): KycData {
       const expiry = mrz.ok ? mrz.data.expiresOn : printedExpiry;
       set(
         "passportExpiresOn",
-        checkExpiry({ value: expiry, confidence: 1 }, r.docId, "passport"),
+        checkExpiry({ value: expiry, confidence: 1 }, r.docId, "passport", validityDays("passport")),
         r.docId,
         mrz.ok ? "mrz" : "printed",
       );
@@ -223,7 +271,12 @@ export function assessKyc(ctx: KycContext, reads: DocRead[]): KycData {
         pass("visa_number_format", r.docId);
         set("visaNo", no, r.docId, "printed");
       }
-      set("visaExpiresOn", checkExpiry(val(r.read, "expiryDate"), r.docId, "visa"), r.docId, "printed");
+      set(
+        "visaExpiresOn",
+        checkExpiry(val(r.read, "expiryDate"), r.docId, "visa", validityDays("visa")),
+        r.docId,
+        "printed",
+      );
       const name = val(r.read, "name")?.value;
       if (name) names.push({ name, docId: r.docId, where: "visa" });
       const passportOnVisa = alnum(val(r.read, "passportNo")?.value);
@@ -240,7 +293,7 @@ export function assessKyc(ctx: KycContext, reads: DocRead[]): KycData {
       set("companyName", val(r.read, "tradeName")?.value?.trim() ?? null, r.docId, "printed");
       set(
         "tradeLicenceExpiresOn",
-        checkExpiry(val(r.read, "expiryDate"), r.docId, "trade licence"),
+        checkExpiry(val(r.read, "expiryDate"), r.docId, "trade licence", validityDays("trade_licence")),
         r.docId,
         "printed",
       );
