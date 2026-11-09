@@ -2,7 +2,7 @@
 
 import { formatAed, parseAed, SUBTYPES_BY_CATEGORY } from "@leasing/core";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { type ReactNode, useEffect, useMemo, useState, useTransition } from "react";
 import {
   type ActionResult,
   createUnitAction,
@@ -12,9 +12,11 @@ import {
 } from "../app/(staff)/units/actions";
 import { aedShort } from "../lib/format";
 import { uploadPhoto } from "../lib/images";
-import { IconWarning } from "../lib/icons";
+import { WarningIcon as IconWarning } from "@phosphor-icons/react";
 import { type Category, CATEGORIES, COMMUNITIES, subtypeLabel } from "../lib/portfolio";
 import type { CompanyRow, UnitRow } from "../lib/types";
+import { Button } from "./ui/button";
+import { Banner, FIELD, HINT, INPUT as BASE_INPUT, LABEL } from "./ui/form";
 import { moveItem, type PhotoItem, PhotoPicker } from "./photo-picker";
 
 interface Values {
@@ -189,7 +191,7 @@ export function UnitForm({
     };
   }
 
-  function submit(e: React.FormEvent) {
+  function submit(e: React.SubmitEvent<HTMLFormElement>) {
     e.preventDefault();
     const body = payload();
     if (!body) return;
@@ -225,36 +227,39 @@ export function UnitForm({
   }
 
   const locked = (k: string) => lockedFields.includes(k);
-  const err = (k: string) => (fe[k] ? <span className="err">{fe[k]}</span> : null);
+  const err = (k: string) => (fe[k] ? <span className="text-xs text-danger">{fe[k]}</span> : null);
   const inv = (k: string) => (fe[k] ? { "aria-invalid": true as const } : {});
 
   return (
-    <form onSubmit={submit} noValidate>
+    <form
+      onSubmit={submit}
+      noValidate
+      className={`@container grid max-w-[980px] ${mode === "edit" ? "" : "[&>section:first-child]:border-t-0 [&>section:first-child]:pt-0"}`}
+    >
       {result.error && (
-        <div className="alert" data-tone="bad" role="alert" style={{ marginBottom: 20 }}>
-          <IconWarning size={16} />
-          <div>
-            <strong>{result.error}</strong>
-            {result.reasons && result.reasons.length > 0 && (
-              <ul>
-                {result.reasons.map((r) => (
-                  <li key={r}>{r}</li>
-                ))}
-              </ul>
-            )}
-          </div>
+        <div className="mb-5">
+          <Banner tone="bad" role="alert">
+            <IconWarning size={16} className="mt-0.5 shrink-0" />
+            <div>
+              <strong>{result.error}</strong>
+              {result.reasons && result.reasons.length > 0 && (
+                <ul>
+                  {result.reasons.map((r) => (
+                    <li key={r}>{r}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </Banner>
         </div>
       )}
 
-      <section className="form-section">
-        <header>
-          <h2>The unit</h2>
-          <p>How staff find it. The code appears on leases and tasks.</p>
-        </header>
-        <div className="grid-fields">
-          <label className="field span-2">
-            <span className="field-label">Unit code</span>
+      <FormSection title="The unit" lede="How staff find it. The code appears on leases and tasks.">
+        <div className={`${S6} ${W2}`}>
+          <label className={FIELD}>
+            <span className={LABEL}>Unit code</span>
             <input
+              className={INPUT}
               value={v.code}
               onChange={set("code")}
               placeholder="MRN-1204"
@@ -263,14 +268,15 @@ export function UnitForm({
               {...inv("code")}
             />
             {err("code") ?? (
-              <span className="hint">
+              <span className={HINT}>
                 {locked("code") ? "Fixed while the unit has a lease" : "Letters, digits and dashes"}
               </span>
             )}
           </label>
-          <label className="field span-4">
-            <span className="field-label">Building</span>
+          <label className={`${FIELD} ${W4}`}>
+            <span className={LABEL}>Building</span>
             <input
+              className={INPUT}
               value={v.building}
               onChange={set("building")}
               placeholder="Marina Gate Tower 2"
@@ -279,9 +285,10 @@ export function UnitForm({
             />
             {err("building")}
           </label>
-          <label className="field span-3">
-            <span className="field-label">Community</span>
+          <label className={`${FIELD} ${W3}`}>
+            <span className={LABEL}>Community</span>
             <input
+              className={INPUT}
               value={v.community}
               onChange={set("community")}
               list="communities"
@@ -296,9 +303,10 @@ export function UnitForm({
             </datalist>
             {err("community")}
           </label>
-          <label className="field span-2">
-            <span className="field-label">Unit number</span>
+          <label className={`${FIELD} ${W2}`}>
+            <span className={LABEL}>Unit number</span>
             <input
+              className={INPUT}
               value={v.unitNo}
               onChange={set("unitNo")}
               placeholder="1204"
@@ -307,14 +315,21 @@ export function UnitForm({
             />
             {err("unitNo")}
           </label>
-          <label className="field">
-            <span className="field-label">Floor</span>
-            <input value={v.floor} onChange={set("floor")} inputMode="numeric" placeholder="12" {...inv("floor")} />
+          <label className={`${FIELD} ${W1}`}>
+            <span className={LABEL}>Floor</span>
+            <input
+              className={INPUT}
+              value={v.floor}
+              onChange={set("floor")}
+              inputMode="numeric"
+              placeholder="12"
+              {...inv("floor")}
+            />
             {err("floor")}
           </label>
-          <label className="field span-3">
-            <span className="field-label">Company</span>
-            <select value={v.companyId} onChange={set("companyId")} required {...inv("companyId")}>
+          <label className={`${FIELD} ${W3}`}>
+            <span className={LABEL}>Company</span>
+            <select className={INPUT} value={v.companyId} onChange={set("companyId")} required {...inv("companyId")}>
               {companies.length === 0 && <option value="">No companies yet</option>}
               {companies
                 .filter((c) => c.active || c.id === v.companyId)
@@ -326,28 +341,27 @@ export function UnitForm({
             </select>
             {err("companyId")}
           </label>
-          <div className="field span-3">
-            <span className="field-label">Category</span>
-            <div className="segmented" role="radiogroup" aria-label="Category">
+          <div className={`${FIELD} ${W3}`}>
+            <span className={LABEL}>Category</span>
+            <Choices label="Category">
               {CATEGORIES.map((c) => (
-                <label key={c.value}>
-                  <input
-                    type="radio"
-                    name="category"
-                    checked={v.category === c.value}
-                    disabled={locked("category")}
-                    onChange={() => setV((p) => ({ ...p, category: c.value, subtype: "" }))}
-                  />
-                  <span>{c.label}</span>
-                </label>
+                <Choice
+                  key={c.value}
+                  name="category"
+                  checked={v.category === c.value}
+                  disabled={locked("category")}
+                  onChange={() => setV((p) => ({ ...p, category: c.value, subtype: "" }))}
+                >
+                  {c.label}
+                </Choice>
               ))}
-            </div>
-            {locked("category") && <span className="hint">Fixed while the unit has a lease</span>}
+            </Choices>
+            {locked("category") && <span className={HINT}>Fixed while the unit has a lease</span>}
             {err("category")}
           </div>
-          <label className="field span-3">
-            <span className="field-label">Type</span>
-            <select value={v.subtype} onChange={set("subtype")} {...inv("subtype")}>
+          <label className={`${FIELD} ${W3}`}>
+            <span className={LABEL}>Type</span>
+            <select className={INPUT} value={v.subtype} onChange={set("subtype")} {...inv("subtype")}>
               <option value="">Not set</option>
               {SUBTYPES_BY_CATEGORY[v.category].map((t) => (
                 <option key={t} value={t}>
@@ -358,20 +372,17 @@ export function UnitForm({
             {err("subtype")}
           </label>
         </div>
-      </section>
+      </FormSection>
 
-      <section className="form-section">
-        <header>
-          <h2>Registration</h2>
-          <p>
-            Must match the title deed and DLD records exactly; Ejari rejects any mismatch. Required before the unit can
-            be marked ready.
-          </p>
-        </header>
-        <div className="grid-fields">
-          <label className="field span-3">
-            <span className="field-label">DLD property number</span>
+      <FormSection
+        title="Registration"
+        lede="Must match the title deed and DLD records exactly; Ejari rejects any mismatch. Required before the unit can be marked ready."
+      >
+        <div className={S6}>
+          <label className={`${FIELD} ${W3}`}>
+            <span className={LABEL}>DLD property number</span>
             <input
+              className={INPUT}
               value={v.dldPropertyNo}
               onChange={set("dldPropertyNo")}
               disabled={locked("dldPropertyNo")}
@@ -379,9 +390,10 @@ export function UnitForm({
             />
             {err("dldPropertyNo")}
           </label>
-          <label className="field span-3">
-            <span className="field-label">Makani number</span>
+          <label className={`${FIELD} ${W3}`}>
+            <span className={LABEL}>Makani number</span>
             <input
+              className={INPUT}
               value={v.makaniNo}
               onChange={set("makaniNo")}
               inputMode="numeric"
@@ -389,52 +401,57 @@ export function UnitForm({
               disabled={locked("makaniNo")}
               {...inv("makaniNo")}
             />
-            {err("makaniNo") ?? <span className="hint">The building entrance's geo-address code</span>}
+            {err("makaniNo") ?? <span className={HINT}>The building entrance's geo-address code</span>}
           </label>
-          <label className="field span-3">
-            <span className="field-label">
-              Plot number <em>(optional)</em>
+          <label className={`${FIELD} ${W3}`}>
+            <span className={LABEL}>
+              Plot number <em className="font-normal not-italic">(optional)</em>
             </span>
-            <input value={v.plotNo} onChange={set("plotNo")} disabled={locked("plotNo")} {...inv("plotNo")} />
+            <input
+              className={INPUT}
+              value={v.plotNo}
+              onChange={set("plotNo")}
+              disabled={locked("plotNo")}
+              {...inv("plotNo")}
+            />
             {err("plotNo")}
           </label>
-          <label className="field span-3">
-            <span className="field-label">DEWA premise number</span>
-            <input value={v.dewaPremiseNo} onChange={set("dewaPremiseNo")} {...inv("dewaPremiseNo")} />
+          <label className={`${FIELD} ${W3}`}>
+            <span className={LABEL}>DEWA premise number</span>
+            <input
+              className={INPUT}
+              value={v.dewaPremiseNo}
+              onChange={set("dewaPremiseNo")}
+              {...inv("dewaPremiseNo")}
+            />
             {err("dewaPremiseNo")}
           </label>
         </div>
-      </section>
+      </FormSection>
 
-      <section className="form-section">
-        <header>
-          <h2>Layout</h2>
-          <p>Used to match enquiries and to work out the allowed price range.</p>
-        </header>
-        <div className="grid-fields">
+      <FormSection title="Layout" lede="Used to match enquiries and to work out the allowed price range.">
+        <div className={S6}>
           {residential && (
-            <div className="field span-6">
-              <span className="field-label">Bedrooms</span>
-              <div className="segmented" role="radiogroup" aria-label="Bedrooms">
+            <div className={`${FIELD} col-span-6`}>
+              <span className={LABEL}>Bedrooms</span>
+              <Choices label="Bedrooms">
                 {["0", "1", "2", "3", "4", "5", "6"].map((b) => (
-                  <label key={b}>
-                    <input
-                      type="radio"
-                      name="bedrooms"
-                      checked={v.bedrooms === b}
-                      onChange={() => setV((p) => ({ ...p, bedrooms: b }))}
-                    />
-                    <span>{b === "0" ? "Studio" : b === "6" ? "6+" : b}</span>
-                  </label>
+                  <Choice
+                    key={b}
+                    name="bedrooms"
+                    checked={v.bedrooms === b}
+                    onChange={() => setV((p) => ({ ...p, bedrooms: b }))}
+                  >
+                    {b === "0" ? "Studio" : b === "6" ? "6+" : b}
+                  </Choice>
                 ))}
-              </div>
+              </Choices>
               {err("bedrooms")}
             </div>
           )}
-          <label className="field span-2">
-            <span className="field-label">Area</span>
-            <span className="affix">
-              <b>sq ft</b>
+          <label className={`${FIELD} ${W2}`}>
+            <span className={LABEL}>Area</span>
+            <Affix unit="sq ft">
               <input
                 value={v.areaSqft}
                 onChange={set("areaSqft")}
@@ -442,12 +459,13 @@ export function UnitForm({
                 placeholder="850"
                 {...inv("areaSqft")}
               />
-            </span>
+            </Affix>
             {err("areaSqft")}
           </label>
-          <label className="field span-2">
-            <span className="field-label">Bathrooms</span>
+          <label className={`${FIELD} ${W2}`}>
+            <span className={LABEL}>Bathrooms</span>
             <input
+              className={INPUT}
               value={v.bathrooms}
               onChange={set("bathrooms")}
               inputMode="numeric"
@@ -456,9 +474,10 @@ export function UnitForm({
             />
             {err("bathrooms")}
           </label>
-          <label className="field span-2">
-            <span className="field-label">Parking spaces</span>
+          <label className={`${FIELD} ${W2}`}>
+            <span className={LABEL}>Parking spaces</span>
             <input
+              className={INPUT}
               value={v.parkingSpaces}
               onChange={set("parkingSpaces")}
               inputMode="numeric"
@@ -467,9 +486,9 @@ export function UnitForm({
             />
             {err("parkingSpaces")}
           </label>
-          <div className="field span-6">
-            <span className="field-label">Furnishing</span>
-            <div className="segmented" role="radiogroup" aria-label="Furnishing">
+          <div className={`${FIELD} col-span-6`}>
+            <span className={LABEL}>Furnishing</span>
+            <Choices label="Furnishing">
               {(
                 [
                   ["no", "Unfurnished"],
@@ -477,31 +496,28 @@ export function UnitForm({
                   ["", "Not decided"],
                 ] as const
               ).map(([k, label]) => (
-                <label key={label}>
-                  <input
-                    type="radio"
-                    name="furnished"
-                    checked={v.furnished === k}
-                    onChange={() => setV((p) => ({ ...p, furnished: k }))}
-                  />
-                  <span>{label}</span>
-                </label>
+                <Choice
+                  key={label}
+                  name="furnished"
+                  checked={v.furnished === k}
+                  onChange={() => setV((p) => ({ ...p, furnished: k }))}
+                >
+                  {label}
+                </Choice>
               ))}
-            </div>
+            </Choices>
           </div>
         </div>
-      </section>
+      </FormSection>
 
-      <section className="form-section">
-        <header>
-          <h2>Asking rent</h2>
-          <p>Per year. Outside the allowed range, a leasing manager approves it before the unit can be marked ready.</p>
-        </header>
-        <div className="grid-fields">
-          <label className="field span-3">
-            <span className="field-label">Annual rent</span>
-            <span className="affix">
-              <b>AED</b>
+      <FormSection
+        title="Asking rent"
+        lede="Per year. Outside the allowed range, a leasing manager approves it before the unit can be marked ready."
+      >
+        <div className={S6}>
+          <label className={`${FIELD} ${W3}`}>
+            <span className={LABEL}>Annual rent</span>
+            <Affix unit="AED">
               <input
                 value={v.askingRent}
                 onChange={set("askingRent")}
@@ -509,23 +525,27 @@ export function UnitForm({
                 placeholder="85,000"
                 {...inv("askingRentFils")}
               />
-            </span>
+            </Affix>
             {err("askingRentFils") ??
               (view === "idle" ? (
-                <span className="hint">Choose a company and community to see the allowed range.</span>
+                <span className={HINT}>Choose a company and community to see the allowed range.</span>
               ) : view === "loading" ? (
-                <span className="hint">Checking the allowed range…</span>
+                <span className={HINT}>Checking the allowed range…</span>
               ) : view === null ? (
-                <span className="hint" aria-live="polite">
+                <span className={HINT} aria-live="polite">
                   Could not check the allowed range.
                 </span>
               ) : rangeText ? (
-                <span className="hint" aria-live="polite" {...(rentTone ? { "data-tone": rentTone } : {})}>
+                <span
+                  className={`${HINT} ${rentTone === "warn" ? "text-warning!" : ""}`}
+                  aria-live="polite"
+                  {...(rentTone ? { "data-tone": rentTone } : {})}
+                >
                   {rangeText}
                   {rentTone === "warn" ? ". This price is outside it, so it needs a manager's approval." : ""}
                 </span>
               ) : (
-                <span className="hint" aria-live="polite">
+                <span className={HINT} aria-live="polite">
                   {view.ruleId
                     ? "This rule gives no allowed range for this unit yet (no rent index row and no AED limits). Setting a price will need a manager's approval."
                     : "No rule covers this unit yet. Setting a price will need a manager's approval."}
@@ -533,49 +553,48 @@ export function UnitForm({
               ))}
           </label>
         </div>
-      </section>
+      </FormSection>
 
-      <section className="form-section">
-        <header>
-          <h2>Description</h2>
-          <p>What applicants read on the listing. Plain facts: view, layout, finishes, access.</p>
-        </header>
-        <label className="field">
-          <span className="sr-only">Description</span>
-          <textarea
-            value={v.description}
-            onChange={set("description")}
-            rows={5}
-            maxLength={4000}
-            placeholder="Corner unit with a full marina view, built-in wardrobes, one covered parking space."
-          />
-          <span className="hint">{v.description.length} / 4000</span>
-        </label>
-        <label className="field">
-          <span className="field-label">
-            Virtual tour link <em>(optional)</em>
-          </span>
-          <input
-            type="url"
-            value={v.virtualTourUrl}
-            onChange={set("virtualTourUrl")}
-            maxLength={500}
-            placeholder="https://"
-            {...inv("virtualTourUrl")}
-          />
-          <span className="hint">
-            Shown to applicants on the site visit invitation and the property page. https only.
-          </span>
-          {err("virtualTourUrl")}
-        </label>
-      </section>
+      <FormSection
+        title="Description"
+        lede="What applicants read on the listing. Plain facts: view, layout, finishes, access."
+      >
+        <div className="grid gap-4">
+          <label className={FIELD}>
+            <span className="sr-only">Description</span>
+            <textarea
+              className={INPUT}
+              value={v.description}
+              onChange={set("description")}
+              rows={5}
+              maxLength={4000}
+              placeholder="Corner unit with a full marina view, built-in wardrobes, one covered parking space."
+            />
+            <span className={HINT}>{v.description.length} / 4000</span>
+          </label>
+          <label className={FIELD}>
+            <span className={LABEL}>
+              Virtual tour link <em className="font-normal not-italic">(optional)</em>
+            </span>
+            <input
+              className={INPUT}
+              type="url"
+              value={v.virtualTourUrl}
+              onChange={set("virtualTourUrl")}
+              maxLength={500}
+              placeholder="https://"
+              {...inv("virtualTourUrl")}
+            />
+            <span className={HINT}>
+              Shown to applicants on the site visit invitation and the property page. https only.
+            </span>
+            {err("virtualTourUrl")}
+          </label>
+        </div>
+      </FormSection>
 
       {mode === "create" && (
-        <section className="form-section">
-          <header>
-            <h2>Photos</h2>
-            <p>The first photo is the cover. You can add more or reorder them later.</p>
-          </header>
+        <FormSection title="Photos" lede="The first photo is the cover. You can add more or reorder them later.">
           <PhotoPicker
             items={photos}
             disabled={busy}
@@ -602,19 +621,19 @@ export function UnitForm({
             }
             onCaption={(key, caption) => setPhotos((list) => list.map((p) => (p.key === key ? { ...p, caption } : p)))}
           />
-        </section>
+        </FormSection>
       )}
 
-      <div className="form-foot">
+      <div className="flex flex-wrap items-center justify-end gap-2 border-t border-line pt-5">
         {progress && busy && (
-          <span className="progress" role="status">
+          <span className="mr-auto text-sm text-muted" role="status">
             {progress}
           </span>
         )}
-        <button type="button" className="btn ghost" onClick={() => router.back()} disabled={busy}>
+        <Button variant="ghost" size="sm" onClick={() => router.back()} disabled={busy}>
           Cancel
-        </button>
-        <button type="submit" className="btn primary" disabled={busy}>
+        </Button>
+        <Button type="submit" variant="primary" size="sm" disabled={busy}>
           {busy
             ? "Saving…"
             : mode === "create"
@@ -622,8 +641,75 @@ export function UnitForm({
                 ? `Create unit and upload ${photos.length} photo${photos.length === 1 ? "" : "s"}`
                 : "Create unit"
               : "Save changes"}
-        </button>
+        </Button>
       </div>
     </form>
+  );
+}
+
+// Field widths on a six-column grid: full width when narrow, then 1, 2, 3 or 4 of 6 once the form has room.
+const S6 = "grid grid-cols-6 items-start gap-x-4 gap-y-4";
+const W1 = "col-span-6 @[560px]:col-span-1";
+const W2 = "col-span-6 @[560px]:col-span-2";
+const W3 = "col-span-6 @[560px]:col-span-3";
+const W4 = "col-span-6 @[560px]:col-span-4";
+const INPUT = `${BASE_INPUT} aria-[invalid=true]:border-danger disabled:cursor-not-allowed disabled:opacity-60`;
+
+/** A titled block of fields: the title and its note on the left once there is room, the fields on the right. */
+export function FormSection({ title, lede, children }: { title: string; lede: string; children: ReactNode }) {
+  return (
+    <section className="grid gap-4 border-t border-line py-7 @[760px]:grid-cols-[210px_minmax(0,1fr)] @[760px]:gap-10">
+      <header className="grid content-start gap-1">
+        <h2 className="m-0 font-sans text-[15px] font-semibold tracking-tight text-ink">{title}</h2>
+        <p className="m-0 text-[13px] text-muted">{lede}</p>
+      </header>
+      <div className="min-w-0">{children}</div>
+    </section>
+  );
+}
+
+/** A row of radio choices drawn as a pill group. */
+function Choices({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div
+      role="radiogroup"
+      aria-label={label}
+      className="flex w-fit max-w-full flex-wrap gap-1 rounded-full bg-raised p-[3px]"
+    >
+      {children}
+    </div>
+  );
+}
+
+function Choice({
+  name,
+  checked,
+  disabled,
+  onChange,
+  children,
+}: {
+  name: string;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <label className="cursor-pointer rounded-full px-3.5 py-1.5 font-sans text-[13px] text-muted has-[:checked]:bg-page has-[:checked]:font-semibold has-[:checked]:text-ink has-[:checked]:shadow-[0_1px_2px_rgb(0_0_0/0.08)] has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-ink">
+      <input type="radio" name={name} checked={checked} disabled={disabled} onChange={onChange} className="sr-only" />
+      <span>{children}</span>
+    </label>
+  );
+}
+
+/** An input with a unit label on its left (AED, sq ft). */
+function Affix({ unit, children }: { unit: string; children: ReactNode }) {
+  return (
+    <span className="flex items-stretch overflow-hidden rounded-input border border-line bg-page focus-within:border-ink hover:border-ink [&_input]:min-w-0 [&_input]:flex-1 [&_input]:border-0 [&_input]:bg-transparent [&_input]:px-3 [&_input]:py-2 [&_input]:text-sm [&_input]:text-ink [&_input]:outline-none [&_input]:placeholder:text-muted">
+      <b className="grid place-items-center border-r border-line bg-raised px-3 font-sans text-xs font-semibold text-muted">
+        {unit}
+      </b>
+      {children}
+    </span>
   );
 }

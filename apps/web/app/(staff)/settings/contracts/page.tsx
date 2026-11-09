@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
-import { AskAi } from "../../../../components/ask-ai";
+import { askPrompts } from "../../../../lib/ask-ai/prompts";
+import { AskAi, AskAiMenu } from "../../../../components/ask-ai";
 import { possessive } from "../../../../lib/format";
 import { CompanySplit, pickCompany } from "../../../../components/company-split";
 import { CategoryControl } from "../../../../components/settings-tabs";
-import { PageHead } from "../../../../components/ui";
+import { FormGrid, SetPage } from "../../../../components/ui/settings";
 import { get } from "../../../../lib/engine";
 import { categoryOf } from "../../../../lib/portfolio";
 import type {
@@ -17,6 +18,7 @@ import type {
 import { ClauseList } from "./clause-list";
 import { CompanyTemplatePanelView } from "./company-template";
 import { ContractRules } from "./rule-form";
+import { TemplatePreviewCard } from "./template-preview-card";
 
 export const metadata: Metadata = { title: "Contract rules" };
 
@@ -57,14 +59,12 @@ export default async function ContractRulesPage({
   }
   const showPanel = !!panel && (panel.templates.length > 0 || !!panel.extraction || !!panel.review);
   return (
-    <>
-      <PageHead
-        title="Contracts"
-        lede="Which tenures and how many cheques each company allows, by type. Offers and contracts follow the rule that fits the unit best."
-      />
-      <div className="settings-add">
-        <CategoryControl value={category} base="/settings/contracts" />
-      </div>
+    <SetPage
+      title="Contracts"
+      lede="Which tenures and how many cheques each company allows, by type, and the clauses its contracts carry. Offers and contracts follow the rule that fits the unit best. Signed contracts never change."
+      actions={<AskAiMenu label="Ask AI" prompts={askPrompts.settingsPage("Contracts")} />}
+    >
+      <CategoryControl value={category} base="/settings/contracts" />
       <CompanySplit
         companies={companies ?? []}
         selected={company}
@@ -74,37 +74,38 @@ export default async function ContractRulesPage({
       >
         {company && (
           <>
-            <div className="co-body-head">
-              <h2 className="section-title">{company.name}</h2>
-              {isAdmin && (
-                <div className="btn-row">
-                  <AskAi
-                    label="Ask AI to add a clause"
-                    prompt={`Add a clause to ${possessive(company.name)} contract: `}
-                  />
-                  <AskAi
-                    label="Ask AI to change a contract rule"
-                    prompt={`Change ${possessive(company.name)} ${category} contract rule: `}
-                  />
-                </div>
-              )}
-            </div>
-            <ContractRules
-              key={`${category}:${company.id}`}
-              rules={rules}
-              reviews={reviews}
-              company={company}
-              templates={approvedTemplates}
-              templateReady={templateReady}
-              category={category}
-              canEdit={isAdmin}
-            />
+            <FormGrid preview={<TemplatePreviewCard company={company} panel={panel ?? null} />}>
+              <ContractRules
+                key={`${category}:${company.id}`}
+                rules={rules}
+                reviews={reviews}
+                company={company}
+                templates={approvedTemplates}
+                templateReady={templateReady}
+                category={category}
+                canEdit={isAdmin}
+                askAi={
+                  isAdmin ? (
+                    <>
+                      <AskAi
+                        label="Ask AI to add a clause"
+                        prompt={`Add a clause to ${possessive(company.name)} contract: `}
+                      />
+                      <AskAi
+                        label="Ask AI to change a contract rule"
+                        prompt={`Change ${possessive(company.name)} ${category} contract rule: `}
+                      />
+                    </>
+                  ) : null
+                }
+              />
+              <ClauseList company={company} clauses={clauseList?.clauses ?? []} rules={rules} canEdit={isAdmin} />
+            </FormGrid>
             {showPanel && <CompanyTemplatePanelView company={company} panel={panel} canEdit={isAdmin} rules={rules} />}
-            <ClauseList company={company} clauses={clauseList?.clauses ?? []} rules={rules} canEdit={isAdmin} />
           </>
         )}
-        {!isAdmin && <p className="muted settings-note">Only admins can change rules.</p>}
+        {!isAdmin && <p className="m-0 text-[13px] text-muted">Only admins can change rules.</p>}
       </CompanySplit>
-    </>
+    </SetPage>
   );
 }

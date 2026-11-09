@@ -1,42 +1,46 @@
-import { type PublicUnitSummary, initials, photoSrc, placeholderStyle } from "../../lib/listings";
+import { BuildingsIcon } from "@phosphor-icons/react/dist/ssr";
+import { type PublicUnitSummary, hueOf, photoSrc } from "../../lib/listings";
 
-export function Arrow({ size = 18 }: { size?: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 20 20"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.6"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M6 14 14 6M7.5 6H14v6.5" />
-    </svg>
-  );
-}
-
-/** A unit photo, or the generated placeholder (decision P8) when it has none. */
+/**
+ * A unit photo, or, when it has none, a calm tinted tile with a building mark and the building's own name
+ * (decision P8: never a stock image). It fills its parent box.
+ */
 export function Cover({
   building,
   photo,
   className = "",
   alt,
+  label = true,
 }: {
   building: PublicUnitSummary["building"];
   photo: string | undefined;
   className?: string;
   alt?: string;
+  /** Show the small "no photo yet" caption (off for tiny thumbnails). */
+  label?: boolean;
 }) {
   const src = photoSrc(photo);
-  return src ? (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img src={src} alt={alt ?? building} className={className} loading="lazy" />
-  ) : (
-    <div className={`pub-ph ${className}`} style={placeholderStyle(building)} role="img" aria-label={alt ?? building}>
-      <span aria-hidden="true">{initials(building)}</span>
+  if (src)
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img src={src} alt={alt ?? building} className={`h-full w-full object-cover ${className}`} loading="lazy" />
+    );
+  const h = hueOf(building);
+  return (
+    <div
+      className={`relative grid h-full w-full place-items-center overflow-hidden bg-raised text-muted ${className}`}
+      style={{
+        backgroundImage: `radial-gradient(90% 80% at 80% 0%, hsl(${h} 35% 55% / 0.22), transparent 65%), radial-gradient(70% 60% at 0% 100%, hsl(${h + 30} 30% 55% / 0.14), transparent 70%)`,
+      }}
+      role="img"
+      aria-label={alt ?? building}
+    >
+      <BuildingsIcon size={44} weight="thin" aria-hidden="true" />
+      {label && (
+        <span className="absolute bottom-3 left-3.5 rounded-full border border-line bg-page/80 px-2.5 py-0.5 text-xs font-medium text-muted">
+          No photo yet
+        </span>
+      )}
     </div>
   );
 }

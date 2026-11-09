@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import { AskAiMenu } from "../../../../components/ask-ai";
+import { askPrompts } from "../../../../lib/ask-ai/prompts";
 import type { ReactNode } from "react";
-import { PageHead } from "../../../../components/ui";
+import { TabLinks } from "../../../../components/ui/page";
+import { FormGrid, Preview, SetPage } from "../../../../components/ui/settings";
 import { get } from "../../../../lib/engine";
 import type { CompanyRow } from "../../../../lib/types";
 import { type ImportKind, ImportForm } from "./import-form";
@@ -61,7 +63,7 @@ const PAGES: Record<ImportKind, { title: string; lede: string; columns: [string,
       <>
         Admins only. Give all of a company&apos;s required legal details together; empty cells never erase what is
         saved.{" "}
-        <a className="link" href="/samples/companies-sample.csv" download>
+        <a className="text-ink! underline" href="/samples/companies-sample.csv" download>
           Download a sample CSV
         </a>
         .
@@ -75,7 +77,7 @@ const PAGES: Record<ImportKind, { title: string; lede: string; columns: [string,
     note: (
       <>
         Add photos and a virtual tour link later from each unit&apos;s edit page.{" "}
-        <a className="link" href="/samples/units-sample.csv" download>
+        <a className="text-ink! underline" href="/samples/units-sample.csv" download>
           Download a sample CSV
         </a>
         .
@@ -90,41 +92,36 @@ export default async function ImportPage({ searchParams }: { searchParams: Promi
   const page = PAGES[kind];
   const companies = (await get<CompanyRow[]>("/api/companies")) ?? [];
   return (
-    <>
-      <PageHead title={page.title} lede={page.lede} />
-      <nav className="tabs" aria-label="What to import">
-        <Link href="/settings/import" aria-current={kind === "leases" ? "page" : undefined}>
-          Leases
-        </Link>
-        <Link href="/settings/import?kind=units" aria-current={kind === "units" ? "page" : undefined}>
-          Units
-        </Link>
-        <Link href="/settings/import?kind=companies" aria-current={kind === "companies" ? "page" : undefined}>
-          Companies
-        </Link>
-      </nav>
-      <div className="split">
+    <SetPage
+      title={page.title}
+      lede={page.lede}
+      actions={<AskAiMenu label="Ask AI" prompts={askPrompts.settingsPage("Import")} />}
+    >
+      <TabLinks
+        label="What to import"
+        items={[
+          { href: "/settings/import", label: "Leases", current: kind === "leases" },
+          { href: "/settings/import?kind=units", label: "Units", current: kind === "units" },
+          { href: "/settings/import?kind=companies", label: "Companies", current: kind === "companies" },
+        ]}
+      />
+      <FormGrid
+        preview={
+          <Preview title="Columns" lede="Name the columns in the first line of your file like this.">
+            <dl className="m-0 grid gap-3">
+              {page.columns.map(([cols, note]) => (
+                <div key={cols} className="grid gap-0.5">
+                  <dt className="font-mono text-xs [overflow-wrap:anywhere] text-ink">{cols}</dt>
+                  <dd className="m-0 text-[13px] text-muted">{note}</dd>
+                </div>
+              ))}
+            </dl>
+            <p className="m-0 border-t border-line pt-3 text-[13px] text-muted">{page.note}</p>
+          </Preview>
+        }
+      >
         <ImportForm key={kind} kind={kind} companies={companies} />
-        <aside className="panel panel-pad">
-          <h2 className="section-title">Columns</h2>
-          <dl className="facts" style={{ gridTemplateColumns: "1fr" }}>
-            {page.columns.map(([cols, note]) => (
-              <div key={cols}>
-                <dt className="ref" style={{ color: "var(--ink)" }}>
-                  {cols}
-                </dt>
-                <dd className="muted" style={{ fontSize: 13 }}>
-                  {note}
-                </dd>
-              </div>
-            ))}
-          </dl>
-          <div className="divider" />
-          <p className="muted" style={{ fontSize: 13.5 }}>
-            {page.note}
-          </p>
-        </aside>
-      </div>
-    </>
+      </FormGrid>
+    </SetPage>
   );
 }

@@ -1,7 +1,8 @@
 "use client";
 
-import { COPILOT_ASK_EVENT } from "../../../components/copilot/panel";
-import { IconSpark } from "../../../lib/icons";
+import { COPILOT_ASK_EVENT } from "../../../components/copilot/dock";
+import { SparkleIcon as IconSpark } from "@phosphor-icons/react";
+import { buttonClass } from "../../../components/ui/button";
 import type { RecordRow } from "../../../lib/types";
 
 /**
@@ -17,7 +18,7 @@ export function DraftReplyButton({ record }: { record: Pick<RecordRow, "kind" | 
   return (
     <button
       type="button"
-      className="btn small"
+      className={buttonClass("ghost", "sm")}
       onClick={() => window.dispatchEvent(new CustomEvent(COPILOT_ASK_EVENT, { detail: { text } }))}
     >
       <IconSpark size={14} />

@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import { AskAiMenu } from "../../../../components/ask-ai";
+import { askPrompts } from "../../../../lib/ask-ai/prompts";
 import {
   AUTOPILOT_GROUPS,
   AUTOPILOT_LIMIT_NUMBERS,
@@ -8,7 +10,7 @@ import {
   DEFAULT_AUTOPILOT_NUMBERS,
   LOCKED_STEPS,
 } from "@leasing/core";
-import { PageHead } from "../../../../components/ui";
+import { SetPage } from "../../../../components/ui/settings";
 import { get } from "../../../../lib/engine";
 import type { Me } from "../../../../lib/types";
 import { AgentForm } from "./agent-form";
@@ -21,11 +23,12 @@ export default async function AgentPage() {
     get<Me>("/api/me"),
   ]);
   return (
-    <>
-      <PageHead
-        title="Agent"
-        lede="What the leasing agent may do without asking you first. Anything you switch off waits for an officer instead."
-      />
+    <SetPage
+      title="Agent"
+      lede="Choose how much the agent does by itself. Anything you switch off waits for an officer instead. It never approves, sends or signs anything."
+      actions={<AskAiMenu label="Ask AI" prompts={askPrompts.settingsPage("Agent")} />}
+      max="max-w-[760px]"
+    >
       <AgentForm
         groups={AUTOPILOT_GROUPS}
         steps={AUTOPILOT_STEPS}
@@ -35,6 +38,6 @@ export default async function AgentPage() {
         values={{ ...DEFAULT_AUTOPILOT, ...DEFAULT_AUTOPILOT_NUMBERS, ...policy?.autopilot }}
         canEdit={me?.role === "admin"}
       />
-    </>
+    </SetPage>
   );
 }

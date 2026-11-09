@@ -1,26 +1,57 @@
 "use client";
 
 import type { ChannelReply } from "@leasing/core";
-import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { type KeyboardEvent, type SyntheticEvent, useEffect, useRef, useState } from "react";
 import { MicButton, useReadAloud } from "../voice/voice-controls";
 import { useHasLocalVoice, useStored } from "../voice/use-voice";
 import { StatusTracker } from "./status-tracker";
 import { ChoiceCardView } from "../chat-ui/choice-card";
-import { UnitCardView } from "../chat-ui/unit-card";
-import { Composer, VoiceMenu } from "../chat-ui/composer";
+import { CARD_RAIL, UnitCardView } from "../chat-ui/unit-card";
+import { FIELD_BARE, SEND_BTN, StaffComposer, TOOL_BTN, VoiceMenu } from "../chat-ui/composer";
 import { CUSTOMER_STARTERS, customerPills, type Pill } from "../chat-ui/quick-actions.ts";
-import { IconSpark } from "../../lib/icons";
+import { ArrowUpIcon, SparkleIcon } from "@phosphor-icons/react";
+import { Thinking } from "../chat-ui/thinking";
+import { buttonClass } from "../ui/button";
 import { type ChatController, isArabicChat } from "./use-chat";
+
+/** The visitor's wait for a reply: the light "Working" block with a seconds counter (the public chat has no tool steps to show). */
+function Waiting({ ar }: { ar: boolean }) {
+  const [startedAt] = useState(() => performance.now());
+  return (
+    <Thinking
+      tools={[]}
+      streaming
+      answerStarted={false}
+      startedAt={startedAt}
+      {...(ar ? { labels: { working: "جارٍ العمل", seconds: (n: number) => `${n} ثانية` } } : {})}
+    />
+  );
+}
+
+/** The small accent mark that starts an assistant message. */
+function Mark() {
+  return (
+    <span
+      className="flex size-7 flex-none items-center justify-center rounded-lg bg-accent text-on-accent"
+      aria-hidden="true"
+    >
+      <SparkleIcon size={14} weight="bold" />
+    </span>
+  );
+}
 
 /** The chat view. The parent holds the state (`useChat`), so it can also send a button on load. */
 export function ChatView({
   chat,
   onNavigate,
   inputId = "cc-input",
+  compact = false,
 }: {
   chat: ChatController;
   onNavigate?: (() => void) | undefined;
   inputId?: string;
+  /** The narrow launcher panel: tighter padding. */
+  compact?: boolean | undefined;
 }) {
   const { bubbles, loading, loadFailed, reload, typing, notice, sendText, press, retry } = chat;
   const [draft, setDraft] = useState("");
@@ -49,7 +80,7 @@ export function ChatView({
   const pick = (p: Pill) =>
     p.action.kind === "press" ? press({ label: p.label, data: p.action.data }) : sendText(p.action.text);
 
-  const submit = (e?: FormEvent) => {
+  const submit = (e?: SyntheticEvent) => {
     e?.preventDefault();
     const text = draft.trim();
     if (!text || typing) return;
@@ -67,7 +98,7 @@ export function ChatView({
   const askingCode =
     !!last && lastIsLast && !last.reply?.status && last.reply?.input === "code" && codeOff !== last.key;
 
-  const submitCode = (e: FormEvent) => {
+  const submitCode = (e: SyntheticEvent) => {
     e.preventDefault();
     const digits = code.replace(/\s+/g, "");
     if (!/^\d{6}$/.test(digits) || typing) return;
@@ -76,34 +107,37 @@ export function ChatView({
   };
 
   return (
-    <div className="cc">
-      <div ref={scroller} className="cc-scroll" role="log" aria-live="polite">
-        <div className="cc-thread">
-          {loading && <p className="muted cc-center">Loading…</p>}
+    <div className="flex h-full min-h-0 flex-col bg-page text-ink">
+      <div
+        ref={scroller}
+        className={`min-h-0 flex-1 overflow-y-auto overscroll-contain ${compact ? "p-3.5" : "px-5 py-5"}`}
+        role="log"
+        aria-live="polite"
+      >
+        <div className="grid gap-5">
+          {loading && <p className="text-center text-sm text-muted">Loading…</p>}
           {loadFailed && (
-            <p className="muted cc-center">
+            <p className="text-center text-sm text-muted">
               Couldn&apos;t load your chat.{" "}
-              <button type="button" className="btn small" onClick={reload}>
+              <button type="button" className={buttonClass("ghost", "sm")} onClick={reload}>
                 Retry
               </button>
             </p>
           )}
           {!loading && !loadFailed && bubbles.length === 0 && (
-            <div className="cp-empty cc-welcome">
-              <div className="cp-mark" aria-hidden="true">
-                <IconSpark size={18} />
-              </div>
-              <p>
+            <div className={`grid max-w-[640px] justify-items-start gap-4 ${compact ? "py-2" : "py-4"}`}>
+              <Mark />
+              <p className="m-0 text-base leading-relaxed">
                 <strong>Hello, welcome to Dubai Leasing.</strong> I can find homes that suit you, book a site visit,
                 start your application and tell you where an application stands. Ask in English or Arabic.
               </p>
-              <div className="cp-starters" role="list" aria-label="Things you can ask">
+              <div className="flex flex-wrap gap-2" role="list" aria-label="Things you can ask">
                 {CUSTOMER_STARTERS.map((p) => (
                   <button
                     key={p.key}
                     type="button"
                     role="listitem"
-                    className="cp-starter"
+                    className={buttonClass("ghost", "sm")}
                     disabled={typing}
                     onClick={() => pick(p)}
                   >
@@ -111,19 +145,33 @@ export function ChatView({
                   </button>
                 ))}
               </div>
-              <p className="muted tpl-note">
+              <p className="m-0 text-[12.5px] text-muted">
                 Prices, dates and documents always come from our records. Documents are only ever uploaded through a
                 secure link we email you.
               </p>
             </div>
           )}
           {bubbles.map((b, i) => (
-            <div key={b.key} className="cc-row" data-role={b.role}>
-              <div className="cc-bubble" dir="auto" data-failed={b.status === "failed" || undefined}>
-                {b.reply?.status ? (b.text.split("\n")[0] ?? b.text) : b.text}
+            <div
+              key={b.key}
+              className={`grid gap-2 ${b.role === "user" ? "justify-items-end" : "justify-items-start"}`}
+            >
+              <div className={`flex max-w-[88%] items-start gap-2.5 ${b.role === "user" ? "flex-row-reverse" : ""}`}>
+                {b.role === "bot" && <Mark />}
+                <div
+                  className={`text-[15px] leading-relaxed break-words whitespace-pre-wrap ${
+                    b.role === "user"
+                      ? "rounded-[16px_16px_4px_16px] bg-raised px-3.5 py-2.5 text-ink"
+                      : "pt-0.5 text-ink"
+                  } ${b.status === "failed" ? "outline-2 outline-danger" : ""}`}
+                  dir="auto"
+                  data-failed={b.status === "failed" || undefined}
+                >
+                  {b.reply?.status ? (b.text.split("\n")[0] ?? b.text) : b.text}
+                </div>
               </div>
               {b.status === "failed" && (
-                <button type="button" className="btn small" onClick={() => retry(b.key)}>
+                <button type="button" className={buttonClass("ghost", "sm")} onClick={() => retry(b.key)}>
                   Not sent. Retry
                 </button>
               )}
@@ -131,7 +179,7 @@ export function ChatView({
                 <StatusTracker status={b.reply.status} disabled={i !== lastBot || typing} onPress={press} />
               ) : null}
               {b.reply?.cards?.length ? (
-                <div className="cc-cards">
+                <div className={CARD_RAIL}>
                   {b.reply.cards.map((c) => (
                     <UnitCardView
                       key={c.unitId}
@@ -158,12 +206,12 @@ export function ChatView({
                 />
               ) : null}
               {chips(b.reply).length ? (
-                <div className="cc-buttons">
+                <div className="flex max-w-full flex-wrap gap-2">
                   {chips(b.reply).map((btn) => (
                     <button
                       key={btn.data}
                       type="button"
-                      className="cc-chip"
+                      className={`${buttonClass("ghost", "sm")} disabled:opacity-60`}
                       dir="auto"
                       disabled={i !== lastBot || typing || btn.disabled}
                       {...(btn.disabled ? { title: "Coming soon" } : {})}
@@ -177,41 +225,36 @@ export function ChatView({
             </div>
           ))}
           {typing && (
-            <div className="cc-row" data-role="bot">
-              <div
-                className="cc-bubble cc-typing"
-                aria-label={ar ? "المساعد يفكر" : "Assistant is working on it"}
-                role="status"
-              >
-                <i />
-                <i />
-                <i />
-              </div>
+            <div
+              className="flex max-w-[88%] items-start gap-2.5"
+              role="status"
+              aria-label={ar ? "المساعد يفكر" : "Assistant is working on it"}
+            >
+              <Mark />
+              <Waiting ar={ar} />
             </div>
           )}
         </div>
       </div>
 
       {notice && (
-        <p className="cc-notice" role="alert">
+        <p className="m-0 border-t border-line bg-raised px-4 py-2 text-sm text-danger" role="alert">
           {notice}
         </p>
       )}
-      <div className="cc-composer">
-        <Composer
+      <div className="bg-page px-1 pb-2">
+        <StaffComposer
           pills={customerPills(ar)}
           pillsLabel={ar ? "إجراءات سريعة" : "Quick actions"}
           pillsDisabled={typing}
           onPick={pick}
           onSubmit={askingCode ? submitCode : submit}
-          className={askingCode ? "cc-code" : undefined}
-        >
-          {askingCode ? (
-            <div className="field">
-              <label className="field-label" htmlFor={`${inputId}-code`}>
-                {ar ? "الرمز المكون من 6 أرقام من بريدك الإلكتروني" : "6-digit code from your email"}
-              </label>
-              <div className="cc-code-row">
+          field={
+            askingCode ? (
+              <div className="grid gap-1.5">
+                <label className="text-xs font-semibold text-muted" htmlFor={`${inputId}-code`}>
+                  {ar ? "الرمز المكون من 6 أرقام من بريدك الإلكتروني" : "6-digit code from your email"}
+                </label>
                 <input
                   id={`${inputId}-code`}
                   type="text"
@@ -220,40 +263,71 @@ export function ChatView({
                   pattern="[0-9]*"
                   maxLength={6}
                   dir="ltr"
+                  placeholder="000000"
                   value={code}
                   onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  className="w-full !rounded-none !border-0 !bg-transparent !p-0 font-mono text-xl tracking-[0.3em] text-ink !shadow-none !outline-none placeholder:text-muted/50"
                 />
-                <button type="submit" className="btn primary" disabled={code.length !== 6 || typing}>
-                  {ar ? "تحقق" : "Verify"}
-                </button>
               </div>
-              <button type="button" className="btn ghost small" onClick={() => setCodeOff(last?.key ?? null)}>
+            ) : (
+              <>
+                <label className="sr-only" htmlFor={inputId}>
+                  Message
+                </label>
+                <textarea
+                  id={inputId}
+                  rows={1}
+                  dir="auto"
+                  maxLength={1000}
+                  placeholder={ar ? "اكتب رسالة" : "Type or hold the mic"}
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={onKey}
+                  className={FIELD_BARE}
+                />
+              </>
+            )
+          }
+          tools={
+            askingCode ? (
+              <button
+                type="button"
+                className="cursor-pointer border-0 bg-transparent px-1.5 py-1 font-sans text-[13px] font-medium text-muted underline underline-offset-4 hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
+                onClick={() => setCodeOff(last?.key ?? null)}
+              >
                 {ar ? "اكتب رسالة بدلاً من ذلك" : "Type a message instead"}
               </button>
-            </div>
-          ) : (
-            <>
-              <label className="sr-only" htmlFor={inputId}>
-                Message
-              </label>
-              <textarea
-                id={inputId}
-                rows={1}
-                dir="auto"
-                maxLength={1000}
-                placeholder="Type a message"
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={onKey}
-              />
-              <MicButton endpoint="/api/public/voice" onText={heard} disabled={typing} />
-              <VoiceMenu auto={auto} setAuto={setAuto} read={read} setRead={setRead} canRead={canRead} />
-              <button type="submit" className="btn primary small" disabled={!draft.trim() || typing}>
-                Send
+            ) : (
+              <>
+                <MicButton endpoint="/api/public/voice" onText={heard} disabled={typing} className={TOOL_BTN} />
+                <VoiceMenu
+                  auto={auto}
+                  setAuto={setAuto}
+                  read={read}
+                  setRead={setRead}
+                  canRead={canRead}
+                  buttonClassName={TOOL_BTN}
+                />
+              </>
+            )
+          }
+          send={
+            askingCode ? (
+              <button type="submit" className={buttonClass("primary", "sm")} disabled={code.length !== 6 || typing}>
+                {ar ? "تحقق" : "Verify"}
               </button>
-            </>
-          )}
-        </Composer>
+            ) : (
+              <button
+                type="submit"
+                className={SEND_BTN}
+                disabled={!draft.trim() || typing}
+                aria-label={ar ? "إرسال" : "Send"}
+              >
+                <ArrowUpIcon size={16} weight="bold" aria-hidden />
+              </button>
+            )
+          }
+        />
       </div>
     </div>
   );

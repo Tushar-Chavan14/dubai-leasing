@@ -1,14 +1,27 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { AskAiMenu } from "../../../../components/ask-ai";
+import { buttonClass } from "../../../../components/ui/button";
+import { Pill } from "../../../../components/ui/pill";
+import { FactKey, FactList, FactVal, Section, Sub, ROW_CARD } from "../../../../components/ui/record";
+import { RecordStepper } from "../../../../components/ui/stepper";
+import { askPrompts } from "../../../../lib/ask-ai/prompts";
+import { canSeeUnits } from "../../../../lib/shell/nav";
+import { NotAllowed } from "../not-allowed";
 import { UnitActions } from "../../../../components/unit-actions";
 import { UnitGallery } from "../../../../components/unit-gallery";
-import { PageHead, Status } from "../../../../components/ui";
+import { Status } from "../../../../components/ui";
 import { get } from "../../../../lib/engine";
 import { actorLabel, aedShort, bedroomsLabel, dateTime, eventLabel, longDate, shortDate } from "../../../../lib/format";
-import { IconCheck, IconCircle } from "../../../../lib/icons";
+import {
+  ArrowLeftIcon as IconBack,
+  CheckIcon as IconCheck,
+  PencilSimpleIcon as IconEdit,
+} from "@phosphor-icons/react/dist/ssr";
 import { CATEGORIES, subtypeLabel } from "../../../../lib/portfolio";
-import type { Me, UnitDetail } from "../../../../lib/types";
+import type { StaffRole } from "@leasing/core";
+import type { Me, RecordRow, UnitDetail } from "../../../../lib/types";
 
 export const metadata: Metadata = { title: "Unit" };
 
@@ -27,6 +40,14 @@ const CHECKLIST: { key: string; label: string; ok: (u: UnitDetail) => boolean }[
   },
   { key: "photos", label: "At least one photo (recommended)", ok: (u) => u.photos.length > 0 },
 ];
+const STEPS = [
+  { state: "PREP", label: "Prep" },
+  { state: "READY", label: "Ready" },
+  { state: "LISTED", label: "Listed" },
+  { state: "OCCUPIED", label: "Occupied" },
+] as const;
+const CARD = "grid gap-2 rounded-2xl border border-line bg-page p-5";
+const CARD_TITLE = "m-0 font-sans text-[15px] font-semibold tracking-tight text-ink";
 const EDITORS = ["admin", "leasing_manager", "leasing_officer"];
 
 /** A null side is no limit: "AED 95,000 to 110,000", "AED 95,000 or more", "up to AED 110,000". */
@@ -39,8 +60,15 @@ function rangeLabel({ min, max }: { min: number | null; max: number | null }): s
 
 export default async function UnitPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const [u, me] = await Promise.all([get<UnitDetail>(`/api/units/${id}`), get<Me>("/api/me")]);
+  const [u, me, records] = await Promise.all([
+    get<UnitDetail>(`/api/units/${id}`),
+    get<Me>("/api/me"),
+    get<RecordRow[]>("/api/records"),
+  ]);
+  if (me && !canSeeUnits(me.role as StaffRole)) return <NotAllowed />;
   if (!u) notFound();
+  const applications = (records ?? []).filter((r) => r.kind === "application" && r.unitCode === u.code);
+  const stageLabel = STEPS.find((s) => s.state === u.state)?.label ?? "";
   const canEdit = !!me && EDITORS.includes(me.role);
   const checks = CHECKLIST.map((c) => ({ ...c, done: c.ok(u) }));
   const required = checks.filter((c) => c.key !== "photos");
@@ -50,143 +78,173 @@ export default async function UnitPage({ params }: { params: Promise<{ id: strin
   const live = u.leases.find((l) => l.state !== "CLOSED");
 
   return (
-    <>
-      <PageHead
-        back={{ href: "/units", label: "Units" }}
-        title={u.code}
-        badge={<Status value={u.state} />}
-        lede={`${u.building}, ${u.community}${u.floor !== null ? `, floor ${u.floor}` : ""}`}
-        actions={
-          <>
-            {u.state === "LISTED" && (
-              <Link href={`/applications/new?unit=${u.id}`} className="btn primary">
-                New application
-              </Link>
-            )}
-            {canEdit ? (
-              <Link href={`/units/${u.id}/edit`} className="btn">
-                Edit unit
-              </Link>
-            ) : null}
-          </>
-        }
-      />
+    <div className="mx-auto grid w-full max-w-[1200px] gap-6 @container">
+      <Link
+        href="/units"
+        className="inline-flex h-9 w-fit items-center gap-1.5 rounded-full border border-line px-3.5 font-sans text-[13px] font-semibold text-ink! no-underline hover:border-ink"
+      >
+        <IconBack size={14} aria-hidden />
+        All units
+      </Link>
 
-      <div className="split">
-        <div className="stack">
+      <div className="grid items-start gap-x-[26px] gap-y-6 @[880px]:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="grid min-w-0 gap-6">
           <UnitGallery unitId={u.id} code={u.code} photos={u.photos} bedrooms={u.bedrooms} />
 
+          <header className="grid gap-4">
+            <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <h1 className="m-0 font-sans text-[26px] font-semibold leading-tight tracking-tight text-ink">
+                    {u.code}
+                  </h1>
+                  <Status value={u.state} />
+                </div>
+                <p className="m-0 mt-1 text-sm text-muted">
+                  {u.building}, {u.community}
+                  {u.floor !== null ? `, floor ${u.floor}` : ""}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <AskAiMenu label="Ask AI" prompts={askPrompts.unit(u.code)} page={{ kind: "unit", id: u.id }} />
+                {u.state === "LISTED" && (
+                  <Link href={`/applications/new?unit=${u.id}`} className={buttonClass("primary", "sm")}>
+                    New application
+                  </Link>
+                )}
+                {canEdit ? (
+                  <Link href={`/units/${u.id}/edit`} className={buttonClass("ghost", "sm")}>
+                    <IconEdit size={15} aria-hidden />
+                    Edit unit
+                  </Link>
+                ) : null}
+              </div>
+            </div>
+            <div aria-label={`Unit stage: ${stageLabel}`} role="group">
+              <RecordStepper stages={STEPS.map((x) => x.label)} current={stageLabel} />
+            </div>
+          </header>
+
+          <Section id="ready-h" title="Ready-to-list checklist" hint={`${doneCount} of ${required.length} done`}>
+            <ul className="m-0 grid list-none gap-2 p-0">
+              {checks.map((c) => (
+                <li
+                  key={c.key}
+                  data-ok={c.done}
+                  className={`${ROW_CARD} flex items-center justify-between gap-3 text-sm`}
+                >
+                  <span>{c.label}</span>
+                  {c.done ? (
+                    <Pill tone="accent">
+                      <IconCheck size={12} weight="bold" aria-hidden />
+                      Done
+                    </Pill>
+                  ) : (
+                    <Pill tone="neutral">To do</Pill>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </Section>
+
           {u.description && (
-            <section className="panel panel-pad">
-              <h2 className="section-title">Description</h2>
-              <p className="prose">{u.description}</p>
-            </section>
+            <Section id="desc-h" title="Description">
+              <p className="m-0 max-w-[68ch] whitespace-pre-line text-sm leading-relaxed text-ink">{u.description}</p>
+            </Section>
           )}
 
-          <section className="panel panel-pad" aria-labelledby="facts-h">
-            <h2 id="facts-h" className="section-title">
-              Details
-            </h2>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 24 }}>
-              <dl className="facts">
-                <dt>Landlord</dt>
-                <dd>
-                  <Link href={`/settings/companies/${u.landlord.companyId}`}>{u.landlord.name}</Link>
-                </dd>
-                <dt>Layout</dt>
-                <dd>
+          <Section id="facts-h" title="Details">
+            <div className="grid gap-x-8 gap-y-5 @[640px]:grid-cols-2">
+              <FactList>
+                <FactKey>Layout</FactKey>
+                <FactVal>
                   {bedroomsLabel(u.bedrooms)}
                   {u.bathrooms !== null ? `, ${u.bathrooms} bath` : ""}
-                </dd>
-                <dt>Area</dt>
-                <dd className="num">{u.areaSqft ? `${u.areaSqft.toLocaleString("en-US")} sq ft` : "—"}</dd>
-                <dt>Furnishing</dt>
-                <dd>{u.furnished === null ? "Not decided" : u.furnished ? "Furnished" : "Unfurnished"}</dd>
-                <dt>Parking</dt>
-                <dd>{u.parkingSpaces ?? "—"}</dd>
-                <dt>Category</dt>
-                <dd>{CATEGORIES.find((c) => c.value === u.category)?.label ?? u.category}</dd>
-                <dt>Type</dt>
-                <dd>{u.subtype ? subtypeLabel(u.subtype) : "Not set"}</dd>
-              </dl>
-              <dl className="facts">
-                <dt>Unit number</dt>
-                <dd className="ref">{u.unitNo ?? "—"}</dd>
-                <dt>DLD property</dt>
-                <dd className="ref">{u.dldPropertyNo ?? "—"}</dd>
-                <dt>Makani</dt>
-                <dd className="ref">{u.makaniNo ?? "—"}</dd>
-                <dt>Plot</dt>
-                <dd className="ref">{u.plotNo ?? "—"}</dd>
-                <dt>DEWA premise</dt>
-                <dd className="ref">{u.dewaPremiseNo ?? "—"}</dd>
-              </dl>
+                </FactVal>
+                <FactKey>Area</FactKey>
+                <FactVal>{u.areaSqft ? `${u.areaSqft.toLocaleString("en-US")} sq ft` : "—"}</FactVal>
+                <FactKey>Furnishing</FactKey>
+                <FactVal>{u.furnished === null ? "Not decided" : u.furnished ? "Furnished" : "Unfurnished"}</FactVal>
+                <FactKey>Parking</FactKey>
+                <FactVal>{u.parkingSpaces ?? "—"}</FactVal>
+                <FactKey>Category</FactKey>
+                <FactVal>{CATEGORIES.find((c) => c.value === u.category)?.label ?? u.category}</FactVal>
+                <FactKey>Type</FactKey>
+                <FactVal>{u.subtype ? subtypeLabel(u.subtype) : "Not set"}</FactVal>
+              </FactList>
+              <FactList>
+                <FactKey>Unit number</FactKey>
+                <FactVal className="font-mono text-[13px]">{u.unitNo ?? "—"}</FactVal>
+                <FactKey>DLD property</FactKey>
+                <FactVal className="font-mono text-[13px]">{u.dldPropertyNo ?? "—"}</FactVal>
+                <FactKey>Makani</FactKey>
+                <FactVal className="font-mono text-[13px]">{u.makaniNo ?? "—"}</FactVal>
+                <FactKey>Plot</FactKey>
+                <FactVal className="font-mono text-[13px]">{u.plotNo ?? "—"}</FactVal>
+                <FactKey>DEWA premise</FactKey>
+                <FactVal className="font-mono text-[13px]">{u.dewaPremiseNo ?? "—"}</FactVal>
+              </FactList>
             </div>
             {u.ownUseLockUntil && (
-              <p className="muted" style={{ marginTop: 16, fontSize: 14 }}>
+              <p className="m-0 text-sm text-muted">
                 Own-use lock: can&apos;t be re-let before {longDate(u.ownUseLockUntil)}.
               </p>
             )}
-          </section>
+          </Section>
 
-          <section className="panel" aria-labelledby="hist-h">
-            <div className="panel-head">
-              <h2 id="hist-h">Leases</h2>
-            </div>
+          <Section id="hist-h" title="Leases">
             {u.leases.length === 0 ? (
-              <p className="muted panel-pad">No leases on this unit yet.</p>
+              <p className="m-0 text-sm text-muted">No leases on this unit yet.</p>
             ) : (
-              <ul className="list" style={{ marginTop: 6 }}>
+              <ul className="m-0 grid list-none gap-2 p-0">
                 {u.leases.map((l) => (
                   <li key={l.id}>
-                    <Link href={`/work?kind=lease&id=${l.id}`} className="list-row">
-                      <div>
-                        <div className="title">{l.tenantName ?? "Tenant"}</div>
-                        <div className="meta">
-                          <span className="ref">{l.ref}</span>
-                          <span>
-                            {shortDate(l.startOn)} to {longDate(l.endOn)}
-                          </span>
-                          <span className="num">{aedShort(l.annualRentFils)} / yr</span>
-                        </div>
-                      </div>
+                    <Link
+                      href={`/work?kind=lease&id=${l.id}`}
+                      className={`${ROW_CARD} flex flex-wrap items-center justify-between gap-2 text-ink! no-underline hover:border-ink`}
+                    >
+                      <span className="min-w-0">
+                        <b className="block text-sm font-semibold">{l.tenantName ?? "Tenant"}</b>
+                        <Sub>
+                          <span className="font-mono text-xs">{l.ref}</span> · {shortDate(l.startOn)} to{" "}
+                          {longDate(l.endOn)} · {aedShort(l.annualRentFils)} / yr
+                        </Sub>
+                      </span>
                       <Status value={l.state} />
                     </Link>
                   </li>
                 ))}
               </ul>
             )}
-          </section>
+          </Section>
 
-          <section className="panel" aria-labelledby="act-h">
-            <div className="panel-head">
-              <h2 id="act-h">Activity</h2>
-              <span className="hint">append-only audit trail</span>
-            </div>
-            <ul className="feed">
+          <Section id="act-h" title="Activity" hint="append-only audit trail">
+            <ul className="m-0 grid list-none gap-2.5 p-0">
               {u.events.toReversed().map((e) => (
-                <li key={e.id}>
-                  <span className="dot" {...(e.toState ? { "data-tone": "good" } : {})} />
-                  <span className="what">
-                    <b>{eventLabel(e.type)}</b>
-                    <span>, {actorLabel(e.actor).toLowerCase()}</span>
+                <li key={e.id} className="grid grid-cols-[8.5rem_1fr] gap-3 text-sm">
+                  <time dateTime={e.at} className="font-mono text-xs leading-5 text-muted">
+                    {dateTime(e.at)}
+                  </time>
+                  <span>
+                    <b className="font-semibold">{eventLabel(e.type)}</b>
+                    <span className="text-muted">, {actorLabel(e.actor).toLowerCase()}</span>
                   </span>
-                  <time dateTime={e.at}>{dateTime(e.at)}</time>
                 </li>
               ))}
             </ul>
-          </section>
+          </Section>
         </div>
 
-        <aside className="stack sticky">
-          <section className="panel panel-pad" aria-labelledby="price-h">
-            <h2 id="price-h" className="sr-only">
+        <aside className="grid min-w-0 gap-4 @[880px]:sticky @[880px]:top-6">
+          <section className={CARD} aria-labelledby="price-h">
+            <h2 id="price-h" className={CARD_TITLE}>
               Asking rent
             </h2>
-            <div className="price">
-              {u.askingRentFils ? aedShort(u.askingRentFils) : "No price"} {u.askingRentFils && <small>per year</small>}
+            <div className="font-sans text-[26px] font-semibold leading-tight tracking-tight text-ink">
+              {u.askingRentFils ? aedShort(u.askingRentFils) : "No price"}{" "}
+              {u.askingRentFils && <small className="text-sm font-normal text-muted">per year</small>}
             </div>
-            <p className="muted" style={{ marginTop: 6, fontSize: 13.5 }}>
+            <p className="m-0 text-[13px] text-muted">
               {!u.askingRentFils
                 ? "Set an asking rent before the unit can be marked ready."
                 : u.priceApprovedAt
@@ -200,17 +258,16 @@ export default async function UnitPage({ params }: { params: Promise<{ id: strin
                         : "No rule covers this unit yet; setting a price needs a manager's approval."}
             </p>
             {live && (
-              <p style={{ marginTop: 12, fontSize: 14 }}>
+              <p className="m-0 text-sm text-ink">
                 Let on lease{" "}
-                <Link className="link" href={`/work?kind=lease&id=${live.id}`}>
+                <Link className="font-semibold underline" href={`/work?kind=lease&id=${live.id}`}>
                   {live.ref}
                 </Link>{" "}
                 until {longDate(live.endOn)}.
               </p>
             )}
             {u.actions.length > 0 || needsPriceApproval ? (
-              <>
-                <div className="divider" />
+              <div className="mt-2 border-t border-line pt-4">
                 <UnitActions
                   unitId={u.id}
                   actions={u.actions}
@@ -218,34 +275,61 @@ export default async function UnitPage({ params }: { params: Promise<{ id: strin
                   needsPriceApproval={needsPriceApproval}
                   pendingPriceApprovalId={pendingPrice?.id ?? null}
                 />
-              </>
+              </div>
             ) : null}
           </section>
 
-          <section className="panel panel-pad" aria-labelledby="ready-h">
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-              <h2 id="ready-h" className="section-title" style={{ margin: 0 }}>
-                Readiness
-              </h2>
-              <span className="muted num" style={{ fontSize: 13 }}>
-                {doneCount} of {required.length}
-              </span>
-            </div>
-            <div className="meter" aria-hidden="true">
-              <i style={{ width: `${(doneCount / required.length) * 100}%` }} />
-            </div>
-            <ul className="checks">
-              {checks.map((c) => (
-                <li key={c.key} data-ok={c.done}>
-                  {c.done ? <IconCheck size={16} /> : <IconCircle size={16} />}
-                  {c.label}
-                  <span className="sr-only">{c.done ? "done" : "missing"}</span>
-                </li>
-              ))}
-            </ul>
+          <section className={CARD} aria-labelledby="sri-h">
+            <h2 id="sri-h" className={CARD_TITLE}>
+              From the published Smart Rental Index
+            </h2>
+            <p className="m-0 text-sm font-semibold text-ink">
+              {u.priceRange
+                ? `Allowed range: ${rangeLabel(u.priceRange)} a year.`
+                : "No allowed range for this unit yet."}
+            </p>
+            <p className="m-0 text-[13px] text-muted">
+              {u.priceBasis?.sriLabel ?? "No index row covers this unit yet."}
+            </p>
+          </section>
+
+          <section className={CARD} aria-labelledby="apps-h">
+            <h2 id="apps-h" className={CARD_TITLE}>
+              Applications on this unit
+            </h2>
+            {applications.length === 0 ? (
+              <p className="m-0 text-sm text-muted">No applications on this unit yet.</p>
+            ) : (
+              <ul className="m-0 grid list-none gap-2 p-0">
+                {applications.map((a) => (
+                  <li key={a.id}>
+                    <Link
+                      href={`/work?kind=application&id=${a.id}`}
+                      className="flex flex-wrap items-center justify-between gap-2 text-sm text-ink! no-underline hover:underline"
+                    >
+                      <span>
+                        <b>{a.title}</b> <span className="text-muted">{a.ref}</span>
+                      </span>
+                      <Pill tone="neutral">{a.nextStep}</Pill>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section className={CARD} aria-labelledby="landlord-h">
+            <h2 id="landlord-h" className={CARD_TITLE}>
+              Landlord
+            </h2>
+            <p className="m-0 text-sm text-muted">
+              <Link className="font-semibold text-ink! underline" href={`/settings/companies/${u.landlord.companyId}`}>
+                {u.landlord.name}
+              </Link>
+            </p>
           </section>
         </aside>
       </div>
-    </>
+    </div>
   );
 }

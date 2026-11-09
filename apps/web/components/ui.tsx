@@ -1,7 +1,5 @@
-import Link from "next/link";
-import type { ReactNode } from "react";
 import { daysUntil, relativeDays, stateLabel } from "../lib/format";
-import { IconChevronLeft } from "../lib/icons";
+import { Pill } from "./ui/pill";
 
 const TONES: Record<string, "good" | "warn" | "bad" | "quiet" | undefined> = {
   // units
@@ -58,13 +56,16 @@ const TONES: Record<string, "good" | "warn" | "bad" | "quiet" | undefined> = {
   error: "bad",
 };
 
+const STATUS_TONE = {
+  good: "accent",
+  warn: "waiting",
+  bad: "danger",
+  quiet: "neutral",
+} as const;
+
 export function Status({ value, label }: { value: string; label?: string }) {
   const tone = TONES[value];
-  return (
-    <span className="status" {...(tone ? { "data-tone": tone } : {})}>
-      {label ?? stateLabel(value)}
-    </span>
-  );
+  return <Pill tone={tone ? STATUS_TONE[tone] : "neutral"}>{label ?? stateLabel(value)}</Pill>;
 }
 
 /** "in 9 days" — saffron inside two weeks, brick when overdue. */
@@ -72,90 +73,33 @@ export function Due({ today, on, warnWithin = 14 }: { today: string; on: string;
   const n = daysUntil(today, on);
   const tone = n < 0 ? "bad" : n <= warnWithin ? "warn" : undefined;
   return (
-    <span className="due" {...(tone ? { "data-tone": tone } : {})}>
+    <span
+      className={`whitespace-nowrap text-[13px] tabular-nums ${tone === "bad" ? "font-semibold text-danger" : tone === "warn" ? "font-medium text-warning" : "text-muted"}`}
+      {...(tone ? { "data-tone": tone } : {})}
+    >
       {relativeDays(today, on)}
     </span>
   );
 }
 
-export function PageHead({
-  title,
-  lede,
-  actions,
-  back,
-  badge,
-  embedded = false,
-}: {
-  title: ReactNode;
-  lede?: ReactNode;
-  actions?: ReactNode;
-  back?: { href: string; label: string };
-  badge?: ReactNode;
-  /** Inside the Workspace pane, whose record header already holds the page's only h1. */
-  embedded?: boolean;
-}) {
-  const Heading = embedded ? "h2" : "h1";
-  return (
-    <>
-      {back && (
-        <Link href={back.href} className="back">
-          <IconChevronLeft size={16} />
-          {back.label}
-        </Link>
-      )}
-      <header className="page-head">
-        <div>
-          <div className="title-row">
-            <Heading>{title}</Heading>
-            {badge}
-          </div>
-          {lede && <p className="lede">{lede}</p>}
-        </div>
-        {actions && <div className="actions">{actions}</div>}
-      </header>
-    </>
-  );
-}
-
-export function Empty({
-  icon,
-  title,
-  children,
-  action,
-  compact,
-}: {
-  icon?: ReactNode;
-  title: string;
-  children?: ReactNode;
-  action?: ReactNode;
-  compact?: boolean;
-}) {
-  return (
-    <div className={compact ? "empty compact" : "empty"}>
-      {icon && <div className="glyph">{icon}</div>}
-      <h3>{title}</h3>
-      {children && <p>{children}</p>}
-      {action}
-    </div>
-  );
-}
-
-/** Drawn when a unit has no photo yet: a simple floor plan that changes with the bedroom count. */
+/**
+ * Drawn when a unit has no photo yet: a faint floor plan that changes with the bedroom count, on a quiet tile.
+ * Fills its parent, which sets the height.
+ */
 export function PlanPlaceholder({ bedrooms, label }: { bedrooms: number | null; label?: string }) {
   const rooms = Math.max(1, Math.min(4, bedrooms ?? 1));
   const w = 120 / rooms;
   return (
-    <div className="plan-placeholder" aria-hidden="true">
-      <svg viewBox="0 0 200 130" fill="none" stroke="currentColor" strokeWidth="2.5">
-        <rect x="6" y="6" width="188" height="118" rx="3" />
+    <div aria-hidden="true" className="relative grid h-full w-full place-items-center bg-raised text-line">
+      <svg viewBox="0 0 200 130" fill="none" stroke="currentColor" strokeWidth="3" className="h-2/5 max-h-36 w-auto">
+        <rect x="6" y="6" width="188" height="118" rx="6" />
         <path d="M126 6v70M126 96v28M6 76h70M96 76h30" />
         {Array.from({ length: rooms - 1 }, (_, i) => (
           <path key={i} d={`M${6 + w * (i + 1)} 76v48`} />
         ))}
-        <path d="M150 124a18 18 0 0 1 18-18" strokeWidth="1.5" />
-        <path d="M140 30h40M140 44h40" strokeWidth="1.5" opacity=".6" />
+        <path d="M150 124a18 18 0 0 1 18-18" strokeWidth="2" />
       </svg>
-      {label && <span>{label}</span>}
+      {label && <span className="absolute bottom-2.5 left-3.5 font-sans text-xs text-muted">{label}</span>}
     </div>
   );
 }

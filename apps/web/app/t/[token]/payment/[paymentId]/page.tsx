@@ -1,8 +1,10 @@
-import { notFound } from "next/navigation";
-import { TENANCY_OPS } from "../../../../../lib/env";
 import { formatAed } from "@leasing/core";
-import { publicGet } from "../../../../../lib/engine";
+import { notFound } from "next/navigation";
+import { PAGE, PortalTitle } from "../../../../../components/ui/portal";
+import { portalView } from "../../../../../lib/engine";
+import { TENANCY_OPS } from "../../../../../lib/env";
 import { longDate } from "../../../../../lib/format";
+import { LinkGone } from "../../link-gone";
 import { PaymentReplyForm } from "../../tenancy-forms";
 
 interface View {
@@ -19,29 +21,20 @@ interface View {
 export default async function PaymentPage({ params }: { params: Promise<{ token: string; paymentId: string }> }) {
   if (!TENANCY_OPS) notFound();
   const { token, paymentId } = await params;
-  const v = await publicGet<View>(`/api/portal/${encodeURIComponent(token)}`);
+  const v = await portalView<View>(token);
   const p = v?.tenancy.openPayments.find((x) => x.id === paymentId);
   if (!v || !p) {
     return (
-      <section className="panel panel-pad">
-        <p className="muted">
-          There's nothing to reply about for this payment now (it may already be confirmed). Thank you.
-        </p>
-      </section>
+      <LinkGone message="There's nothing to reply about for this payment now (it may already be confirmed). Thank you." />
     );
   }
   return (
-    <div className="stack" style={{ gap: 22 }}>
-      <div>
-        <h1 className="portal-title">Payment {p.seq}</h1>
-        <p className="muted">
-          {formatAed(p.amountFils)}, due {longDate(p.dueOn)}
-          {p.status === "bounced" ? " · the bank returned the cheque" : ""}
-        </p>
-      </div>
-      <section className="panel panel-pad">
-        <PaymentReplyForm token={token} paymentId={p.id} today={v.tenancy.today} maxDate={v.tenancy.latestPayBy} />
-      </section>
+    <div className={PAGE}>
+      <PortalTitle
+        title={`Payment ${p.seq}`}
+        sub={`${formatAed(p.amountFils)}, due ${longDate(p.dueOn)}${p.status === "bounced" ? " · the bank returned the cheque" : ""}`}
+      />
+      <PaymentReplyForm token={token} paymentId={p.id} today={v.tenancy.today} maxDate={v.tenancy.latestPayBy} />
     </div>
   );
 }

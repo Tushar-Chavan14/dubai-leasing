@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Empty, PageHead, Status } from "../../../components/ui";
+import { buttonClass } from "../../../components/ui/button";
+import { Status } from "../../../components/ui";
+import { EmptyState } from "../../../components/ui/empty-state";
+import { PageTitle, ROW_LINK, TabLinks, TableFrame } from "../../../components/ui/page";
 import { get } from "../../../lib/engine";
 import { aedShort, dateTime } from "../../../lib/format";
-import { IconPeople } from "../../../lib/icons";
 
 export const metadata: Metadata = { title: "Applicants" };
 
@@ -43,86 +45,81 @@ export default async function ApplicationsPage({ searchParams }: { searchParams:
   const all = (await get<Row[]>("/api/applications")) ?? [];
   const rows = all.filter(filter.test);
   return (
-    <>
-      <PageHead
+    <div className="grid gap-5">
+      <PageTitle
         title="Applicants"
         lede="People applying for listed units: ID checks, offers and reservations, up to the lease being created."
         actions={
-          <Link href="/applications/new" className="btn primary">
+          <Link href="/applications/new" className={buttonClass("primary", "sm")}>
             New application
           </Link>
         }
       />
-      <nav className="tabs" aria-label="Filter applications">
-        {FILTERS.map((f) => (
-          <Link
-            key={f.key}
-            href={`/applications?show=${f.key}`}
-            aria-current={f.key === filter.key ? "page" : undefined}
-          >
-            {f.label}
-            <span className="n">{all.filter(f.test).length}</span>
-          </Link>
-        ))}
-      </nav>
-      <section className="panel">
-        {rows.length === 0 ? (
-          <Empty
-            icon={<IconPeople />}
-            title={all.length ? "Nothing in progress" : "No applications yet"}
-            action={
-              <Link href="/applications/new" className="btn primary">
-                New application
-              </Link>
-            }
-          >
-            Enter an applicant for a listed unit. They get a secure link to upload their ID documents.
-          </Empty>
-        ) : (
-          <div className="table-wrap">
-            <table className="data">
-              <thead>
-                <tr>
-                  <th>Applicant</th>
-                  <th>Unit</th>
-                  <th>State</th>
-                  <th className="num">Offer</th>
-                  <th>Next</th>
-                  <th>Updated</th>
+      <TabLinks
+        label="Filter applications"
+        items={FILTERS.map((f) => ({
+          href: `/applications?show=${f.key}`,
+          label: f.label,
+          count: all.filter(f.test).length,
+          current: f.key === filter.key,
+        }))}
+      />
+      {rows.length === 0 ? (
+        <EmptyState
+          title={all.length ? "Nothing in progress" : "No applications yet"}
+          body="Enter an applicant for a listed unit. They get a secure link to upload their ID documents."
+          action={
+            <Link href="/applications/new" className={buttonClass("primary", "sm")}>
+              New application
+            </Link>
+          }
+        />
+      ) : (
+        <TableFrame>
+          <table className="data">
+            <thead>
+              <tr>
+                <th>Applicant</th>
+                <th>Unit</th>
+                <th>State</th>
+                <th className="num">Offer</th>
+                <th>Next</th>
+                <th>Updated</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id}>
+                  <td>
+                    <Link href={`/work?kind=application&id=${r.id}`} className={ROW_LINK}>
+                      {r.applicant}
+                    </Link>
+                    <div className="text-[12.5px] text-muted">
+                      <span className="font-mono text-xs">{r.ref}</span>
+                      {r.kind === "company" ? " · company" : ""}
+                    </div>
+                  </td>
+                  <td>
+                    {r.unitCode}
+                    <div className="text-[12.5px] text-muted">{r.building}</div>
+                  </td>
+                  <td>
+                    <Status value={r.state} />
+                  </td>
+                  <td className="num">
+                    {r.offer ? aedShort(r.offer.annualRentFils) : <span className="text-muted">—</span>}
+                    {r.offer && r.offer.revision > 1 && (
+                      <div className="text-[12.5px] text-muted">revision {r.offer.revision}</div>
+                    )}
+                  </td>
+                  <td>{next(r)}</td>
+                  <td className="nowrap text-muted">{dateTime(r.updatedAt)}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.id}>
-                    <td>
-                      <Link href={`/work?kind=application&id=${r.id}`} className="row-title">
-                        {r.applicant}
-                      </Link>
-                      <div className="row-sub">
-                        <span className="ref">{r.ref}</span>
-                        {r.kind === "company" ? " · company" : ""}
-                      </div>
-                    </td>
-                    <td>
-                      {r.unitCode}
-                      <div className="row-sub">{r.building}</div>
-                    </td>
-                    <td>
-                      <Status value={r.state} />
-                    </td>
-                    <td className="num">
-                      {r.offer ? aedShort(r.offer.annualRentFils) : <span className="muted">—</span>}
-                      {r.offer && r.offer.revision > 1 && <div className="row-sub">revision {r.offer.revision}</div>}
-                    </td>
-                    <td>{next(r)}</td>
-                    <td className="nowrap muted">{dateTime(r.updatedAt)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-    </>
+              ))}
+            </tbody>
+          </table>
+        </TableFrame>
+      )}
+    </div>
   );
 }

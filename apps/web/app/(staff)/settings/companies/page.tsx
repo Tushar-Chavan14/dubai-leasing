@@ -1,9 +1,14 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { BuildingsIcon as IconBuilding } from "@phosphor-icons/react/dist/ssr";
+import { AskAiMenu } from "../../../../components/ask-ai";
 import { RowAction } from "../../../../components/row-action";
-import { Empty, PageHead } from "../../../../components/ui";
+import { EmptyState } from "../../../../components/ui/empty-state";
+import { Pill } from "../../../../components/ui/pill";
+import { ROW_CARD, Sub } from "../../../../components/ui/record";
+import { SetPage } from "../../../../components/ui/settings";
+import { askPrompts } from "../../../../lib/ask-ai/prompts";
 import { get } from "../../../../lib/engine";
-import { IconBuilding } from "../../../../lib/icons";
 import { KIND_LABEL } from "../../../../lib/portfolio";
 import type { CompanyRow, Me } from "../../../../lib/types";
 import { setCompanyActive } from "./actions";
@@ -16,62 +21,55 @@ export default async function CompaniesPage() {
   const isAdmin = me?.role === "admin";
   const list = rows ?? [];
   return (
-    <>
-      <PageHead
-        title="Settings"
-        lede="Companies own units. Rent rules and contract rules are set per company, so each one can price and contract in its own way."
-      />
-      {isAdmin && (
-        <div className="settings-add">
-          <CompanyForm />
-        </div>
+    <SetPage
+      title="Companies"
+      lede="Companies own units. Rent rules and contract rules are set per company, so each one can price and contract in its own way. A contract can't be prepared until the company's legal details are complete."
+      actions={<AskAiMenu label="Ask AI" prompts={askPrompts.settingsPage("Companies")} />}
+    >
+      {isAdmin && <CompanyForm />}
+      {list.length === 0 ? (
+        <EmptyState
+          title="No companies yet"
+          body={isAdmin ? "Add the first company, then give it rent rules." : "An admin adds companies here."}
+        />
+      ) : (
+        <ul className="m-0 grid list-none gap-2 p-0" aria-label="Companies">
+          {list.map((c) => (
+            <li
+              key={c.id}
+              className={`${ROW_CARD} flex flex-wrap items-center gap-3 p-3 ${c.active ? "" : "opacity-70"}`}
+            >
+              <span aria-hidden className="grid size-10 flex-none place-items-center rounded-xl bg-raised text-ink">
+                <IconBuilding size={20} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <b className="block truncate text-[15px] font-semibold text-ink">{c.name}</b>
+                <Sub>
+                  {KIND_LABEL[c.kind] ?? c.kind} · {c.unitCount} {c.unitCount === 1 ? "unit" : "units"}
+                  {c.active ? "" : " · Inactive"}
+                </Sub>
+              </div>
+              <Link
+                href={`/settings/companies/${c.id}`}
+                className="text-ink! no-underline"
+                aria-label={`Legal details for ${c.name}: ${c.legalComplete ? "complete" : "incomplete"}`}
+              >
+                <Pill tone={c.legalComplete ? "accent" : "waiting"}>
+                  {c.legalComplete ? "Legal details complete" : "Incomplete: add legal details"}
+                </Pill>
+              </Link>
+              {isAdmin && (
+                <RowAction
+                  action={setCompanyActive}
+                  fields={{ id: c.id, active: String(!c.active) }}
+                  label={c.active ? "Deactivate" : "Reactivate"}
+                />
+              )}
+            </li>
+          ))}
+        </ul>
       )}
-      <section className="panel">
-        {list.length === 0 ? (
-          <Empty icon={<IconBuilding />} title="No companies yet">
-            {isAdmin ? "Add the first company, then give it rent rules." : "An admin adds companies here."}
-          </Empty>
-        ) : (
-          <div className="table-wrap">
-            <table className="data">
-              <thead>
-                <tr>
-                  <th>Company</th>
-                  <th>Kind</th>
-                  <th>Legal details</th>
-                  <th className="num">Units</th>
-                  <th>Status</th>
-                  {isAdmin && <th />}
-                </tr>
-              </thead>
-              <tbody>
-                {list.map((c) => (
-                  <tr key={c.id}>
-                    <td>{c.name}</td>
-                    <td>{KIND_LABEL[c.kind] ?? c.kind}</td>
-                    <td className={c.legalComplete ? undefined : "muted"}>
-                      <Link href={`/settings/companies/${c.id}`}>
-                        {c.legalComplete ? "Complete" : "Incomplete: add"}
-                      </Link>
-                    </td>
-                    <td className="num">{c.unitCount}</td>
-                    <td className={c.active ? undefined : "muted"}>{c.active ? "Active" : "Inactive"}</td>
-                    {isAdmin && (
-                      <td className="nowrap">
-                        <RowAction
-                          action={setCompanyActive}
-                          fields={{ id: c.id, active: String(!c.active) }}
-                          label={c.active ? "Deactivate" : "Reactivate"}
-                        />
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-    </>
+      {!isAdmin && <p className="m-0 text-[13px] text-muted">Only admins can add or change companies.</p>}
+    </SetPage>
   );
 }

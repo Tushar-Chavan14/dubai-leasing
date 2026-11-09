@@ -9,20 +9,25 @@ import {
   proposeEjari,
   resendSignLink,
 } from "../app/(staff)/leases/[id]/actions";
-import { IconCheck, IconWarning } from "../lib/icons";
+import { CheckIcon as IconCheck, WarningIcon as IconWarning } from "@phosphor-icons/react";
+import { buttonClass } from "./ui/button";
+import { Banner, FIELD, INPUT, LABEL as FIELD_LABEL } from "./ui/form";
+
+const CHOICE =
+  "flex cursor-pointer items-start gap-2.5 rounded-xl border border-line px-3 py-2 text-sm has-[:checked]:border-ink";
 
 function Result({ s }: { s: LeaseActionState }) {
   if (s.ok)
     return (
-      <div className="alert" data-tone="good" role="status">
-        <IconCheck size={16} />
+      <Banner tone="good" role="status">
+        <IconCheck size={16} className="mt-0.5 shrink-0" />
         {s.ok}
-      </div>
+      </Banner>
     );
   if (s.error)
     return (
-      <div className="alert" data-tone="bad" role="alert">
-        <IconWarning size={16} />
+      <Banner tone="bad" role="alert">
+        <IconWarning size={16} className="mt-0.5 shrink-0" />
         <div>
           <strong>{s.error}</strong>
           {s.reasons?.length ? (
@@ -33,7 +38,7 @@ function Result({ s }: { s: LeaseActionState }) {
             </ul>
           ) : null}
         </div>
-      </div>
+      </Banner>
     );
   return null;
 }
@@ -54,43 +59,46 @@ export function PrepareContractForm({
 }) {
   const [state, action, pending] = useActionState<LeaseActionState, FormData>(prepareContract, {});
   return (
-    <form action={action} className="stack">
+    <form action={action} className="grid gap-3">
       <input type="hidden" name="leaseId" value={leaseId} />
-      <fieldset className="choice-list">
-        <legend className="field-label">Standard clauses</legend>
+      <fieldset className="m-0 grid min-w-0 gap-2 border-0 p-0">
+        <legend className={`${FIELD_LABEL} mb-1.5 p-0`}>Standard clauses</legend>
         {(Object.keys(CONTRACT_CLAUSES) as ContractClauseId[]).map((c) => (
-          <label key={c} className="choice">
+          <label key={c} className={CHOICE}>
             <input type="checkbox" name="clause" value={c} defaultChecked={clauses.includes(c)} />
-            <span>
-              <b>{CONTRACT_CLAUSES[c].title}</b>
-              <small>{CONTRACT_CLAUSES[c].text}</small>
+            <span className="grid gap-0.5">
+              <b className="font-semibold">{CONTRACT_CLAUSES[c].title}</b>
+              <small className="text-[12.5px] text-muted">{CONTRACT_CLAUSES[c].text}</small>
             </span>
           </label>
         ))}
       </fieldset>
       {companyClauses.length > 0 && (
-        <fieldset className="choice-list">
-          <legend className="field-label">Company clauses</legend>
+        <fieldset className="m-0 grid min-w-0 gap-2 border-0 p-0">
+          <legend className={`${FIELD_LABEL} mb-1.5 p-0`}>Company clauses</legend>
           {companyClauses.map((c) => (
-            <label key={c.ref} className="choice">
+            <label key={c.ref} className={CHOICE}>
               <input type="checkbox" name="clause" value={c.ref} defaultChecked={clauses.includes(c.ref)} />
-              <span>
-                <b>{c.title}</b>
-                <small>{c.text}</small>
+              <span className="grid gap-0.5">
+                <b className="font-semibold">{c.title}</b>
+                <small className="text-[12.5px] text-muted">{c.text}</small>
               </span>
             </label>
           ))}
         </fieldset>
       )}
-      <label className="field">
-        <span className="field-label">
-          Extra terms <em>(optional; checked by the review model for conflicts, never rewritten)</em>
+      <label className={FIELD}>
+        <span className={FIELD_LABEL}>
+          Extra terms{" "}
+          <em className="font-normal not-italic">
+            (optional; checked by the review model for conflicts, never rewritten)
+          </em>
         </span>
-        <textarea name="freeText" rows={3} maxLength={4000} defaultValue={freeText ?? ""} />
+        <textarea className={INPUT} name="freeText" rows={3} maxLength={4000} defaultValue={freeText ?? ""} />
       </label>
       <Result s={state} />
-      <div className="btn-row">
-        <button type="submit" className="btn primary" disabled={pending}>
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="submit" className={buttonClass("primary", "sm")} disabled={pending}>
           {pending ? "Preparing…" : label}
         </button>
       </div>
@@ -101,10 +109,10 @@ export function PrepareContractForm({
 export function ResendSignLinkButton({ leaseId, signerId }: { leaseId: string; signerId: string }) {
   const [state, action, pending] = useActionState<LeaseActionState, FormData>(resendSignLink, {});
   return (
-    <form action={action} className="stack" style={{ gap: 6 }}>
+    <form action={action} className="grid gap-1.5">
       <input type="hidden" name="leaseId" value={leaseId} />
       <input type="hidden" name="signerId" value={signerId} />
-      <button type="submit" className="btn small" disabled={pending}>
+      <button type="submit" className={buttonClass("ghost", "sm")} disabled={pending}>
         {pending ? "Sending…" : "Send a new link"}
       </button>
       <Result s={state} />
@@ -115,10 +123,10 @@ export function ResendSignLinkButton({ leaseId, signerId }: { leaseId: string; s
 export function ProposeEjariButton({ leaseId }: { leaseId: string }) {
   const [state, action, pending] = useActionState<LeaseActionState, FormData>(proposeEjari, {});
   return (
-    <form action={action} className="stack" style={{ gap: 8 }}>
+    <form action={action} className="grid gap-2">
       <input type="hidden" name="leaseId" value={leaseId} />
       <div>
-        <button type="submit" className="btn small" disabled={pending}>
+        <button type="submit" className={buttonClass("ghost", "sm")} disabled={pending}>
           {pending ? "Proposing…" : "Propose the submission again"}
         </button>
       </div>
@@ -159,13 +167,13 @@ export function ReprepareContractButton({
     {},
   );
   return (
-    <form action={action} className="stack" style={{ gap: 6 }}>
+    <form action={action} className="grid gap-1.5">
       <input type="hidden" name="leaseId" value={leaseId} />
       {reason !== "rules_changed" && clauses.map((c) => <input key={c} type="hidden" name="clause" value={c} />)}
-      <button type="submit" className="btn small" disabled={pending}>
+      <button type="submit" className={buttonClass("ghost", "sm")} disabled={pending}>
         {pending ? "Preparing…" : LABEL[reason]}
       </button>
-      <small className="muted">{HINT[reason]}</small>
+      <small className="text-[12.5px] text-muted">{HINT[reason]}</small>
       <Result s={state} />
     </form>
   );

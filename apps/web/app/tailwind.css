@@ -1,0 +1,77 @@
+/* Tailwind v4 for the redesign. Preflight is skipped on purpose: globals.css already owns the
+   base reset, and preflight would restyle existing pages. Theme and utilities layers only. */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+/* dark: variant follows the same data-theme attribute as globals.css. */
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+
+/* Palette values mirror lib/design/tokens.ts. */
+:root {
+  --ds-page: #ffffff;
+  --ds-raised: #f4f6f1;
+  --ds-ink: #0b0b0b;
+  --ds-muted: #5b6157;
+  --ds-line: #e2e6dc;
+  --ds-accent: #dbe6cf;
+  --ds-on-accent: #0b0b0b;
+  --ds-primary: #0b0b0b;
+  --ds-on-primary: #ffffff;
+  --ds-danger: #b42318;
+  --ds-warning: #8a5200;
+}
+:root[data-theme="dark"] {
+  --ds-page: #0b0b0b;
+  --ds-raised: #151714;
+  --ds-ink: #f4f6f1;
+  --ds-muted: #a1a89b;
+  --ds-line: #2a2d27;
+  --ds-accent: #dbe6cf;
+  --ds-on-accent: #0b0b0b;
+  --ds-primary: #dbe6cf;
+  --ds-on-primary: #0b0b0b;
+  --ds-danger: #f97066;
+  --ds-warning: #f5b942;
+}
+/* "system" follows the OS, same as color-scheme: light dark in globals.css. */
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="system"] {
+    --ds-page: #0b0b0b;
+    --ds-raised: #151714;
+    --ds-ink: #f4f6f1;
+    --ds-muted: #a1a89b;
+    --ds-line: #2a2d27;
+    --ds-accent: #dbe6cf;
+    --ds-on-accent: #0b0b0b;
+    --ds-primary: #dbe6cf;
+    --ds-on-primary: #0b0b0b;
+    --ds-danger: #f97066;
+    --ds-warning: #f5b942;
+  }
+}
+
+@theme inline {
+  --color-page: var(--ds-page);
+  --color-raised: var(--ds-raised);
+  --color-ink: var(--ds-ink);
+  --color-muted: var(--ds-muted);
+  --color-line: var(--ds-line);
+  --color-accent: var(--ds-accent);
+  --color-on-accent: var(--ds-on-accent);
+  --color-primary: var(--ds-primary);
+  --color-on-primary: var(--ds-on-primary);
+  --color-danger: var(--ds-danger);
+  --color-warning: var(--ds-warning);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --radius-card: 16px;
+  --radius-input: 10px;
+}
+
+/* Shimmer for the label of a running "thinking" block. */
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}

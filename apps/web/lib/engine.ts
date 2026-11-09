@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { cache } from "react";
 
 /** Server-side only: calls the engine API with the staff session from the httpOnly cookie. */
 export const ENGINE_URL = process.env.ENGINE_URL ?? "http://localhost:4000";
@@ -46,6 +47,13 @@ export async function get<T>(path: string): Promise<T | null> {
 export async function publicGet<T>(path: string): Promise<T | null> {
   const res = await fetch(`${ENGINE_URL}${path}`, { cache: "no-store" }).catch(() => null);
   return res?.ok ? ((await res.json()) as T) : null;
+}
+
+const portalOnce = cache((token: string) => publicGet<unknown>(`/api/portal/${encodeURIComponent(token)}`));
+
+/** The portal view for a link. One request per render, shared by the layout (stepper) and the page: the engine limits each token to 30 requests a minute. */
+export function portalView<T>(token: string): Promise<T | null> {
+  return portalOnce(token) as Promise<T | null>;
 }
 
 const sentence = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);

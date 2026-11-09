@@ -1,64 +1,87 @@
 "use client";
 
-import { useActionState, useState } from "react";
-import { IconCheck, IconWarning } from "../../../../lib/icons";
+import { type ReactNode, useActionState, useState } from "react";
+import { WarningIcon as IconWarning } from "@phosphor-icons/react";
+import { Banner } from "../../../../components/ui/form";
+import { Choice, Cta, Done, FORM, Note, P_INPUT, PField, PRIMARY } from "../../../../components/ui/portal";
 import { type PortalState, respondOffer } from "../actions";
 
-const CHOICES = [
+/** What the tenant chose: the offer as it stands, a counter-proposal, or a decline. */
+type Mode = "accept" | "counter" | "decline";
+const OPTIONS: { value: Mode; title: string; help: string }[] = [
   {
     value: "accept",
-    label: "Accept",
+    title: "Accept",
     help: "Take the unit on these terms. Next, the leasing team arranges the reservation payment.",
   },
-  { value: "counter", label: "Propose different terms", help: "Change the rent, number of cheques or move-in date." },
-  { value: "decline", label: "Decline", help: "You don't want the unit." },
-] as const;
+  { value: "counter", title: "Ask for changes", help: "Change the rent, number of cheques or move-in date." },
+  { value: "decline", title: "Decline", help: "You don't want the unit." },
+];
+const SUBMIT: Record<Mode, string> = {
+  accept: "Accept offer",
+  counter: "Send my proposal",
+  decline: "Decline the offer",
+};
 
-export function OfferForm(p: { token: string; revision: number; rentAed: number; cheques: number; moveInOn: string }) {
+export function OfferForm(p: {
+  token: string;
+  revision: number;
+  rentAed: number;
+  cheques: number;
+  moveInOn: string;
+  /** False once the link is spent. The thank-you still shows after the tenant's own answer. */
+  canRespond: boolean;
+  /** Shown instead of the form when the offer can't be answered and nothing was just sent. */
+  closed: ReactNode;
+}) {
   const [state, action, pending] = useActionState<PortalState, FormData>(respondOffer, {});
-  const [choice, setChoice] = useState<string>("");
+  // No default: the tenant must pick one before the submit button enables.
+  const [mode, setMode] = useState<Mode | "">("");
   if (state.ref) {
     return (
-      <section className="panel panel-pad" role="status">
-        <p className="row-done" style={{ margin: 0 }}>
-          <IconCheck size={16} /> Thank you, we&apos;ve received your answer. Reference{" "}
-          <span className="ref">{state.ref}</span>. We&apos;ll email you the next step.
+      <Done title="Thank you, we've received your answer">
+        <p className="m-0">
+          Reference <span className="font-mono text-[13px]">{state.ref}</span>.
         </p>
-      </section>
+        <p className="m-0">We&apos;ll email you the next step.</p>
+      </Done>
     );
   }
+  if (!p.canRespond) return <>{p.closed}</>;
   return (
-    <form action={action} className="panel panel-pad stack">
+    <form action={action} className={FORM}>
       <input type="hidden" name="token" value={p.token} />
       <input type="hidden" name="revision" value={p.revision} />
-      <fieldset className="choice-list">
-        <legend className="field-label">Your answer</legend>
-        {CHOICES.map((c) => (
-          <label key={c.value} className="choice">
-            <input
-              type="radio"
-              name="choice"
-              value={c.value}
-              required
-              checked={choice === c.value}
-              onChange={() => setChoice(c.value)}
-            />
-            <span>
-              <b>{c.label}</b>
-              <small>{c.help}</small>
-            </span>
-          </label>
+      <fieldset className="m-0 grid gap-2 border-0 p-0">
+        <legend className="mb-2 p-0 text-sm font-semibold">Your answer</legend>
+        {OPTIONS.map((o) => (
+          <Choice
+            key={o.value}
+            name="choice"
+            value={o.value}
+            required
+            checked={mode === o.value}
+            onChange={() => setMode(o.value)}
+            title={o.title}
+            help={o.help}
+          />
         ))}
       </fieldset>
-      {choice === "counter" && (
-        <div className="grid-fields">
-          <label className="field span-2">
-            <span className="field-label">Annual rent you propose (AED)</span>
-            <input name="rentAed" inputMode="decimal" placeholder={p.rentAed.toLocaleString("en-US")} />
-          </label>
-          <label className="field span-2">
-            <span className="field-label">Cheques</span>
-            <select name="cheques" defaultValue="">
+      {mode === "counter" && (
+        <div className="grid gap-3.5 rounded-card border border-line bg-raised p-4">
+          <p className="m-0 text-[15px] font-semibold">Ask for changes</p>
+          <PField label="Annual rent you propose (AED)">
+            <input
+              name="rentAed"
+              type="text"
+              inputMode="decimal"
+              autoComplete="off"
+              placeholder={p.rentAed.toLocaleString("en-US")}
+              className={P_INPUT}
+            />
+          </PField>
+          <PField label="Cheques">
+            <select name="cheques" defaultValue="" className={P_INPUT}>
               <option value="">Keep {p.cheques}</option>
               {[1, 2, 3, 4, 6, 12].map((n) => (
                 <option key={n} value={n}>
@@ -66,35 +89,27 @@ export function OfferForm(p: { token: string; revision: number; rentAed: number;
                 </option>
               ))}
             </select>
-          </label>
-          <label className="field span-2">
-            <span className="field-label">Move-in date</span>
-            <input name="moveInOn" type="date" />
-          </label>
+          </PField>
+          <PField label="Move-in date">
+            <input name="moveInOn" type="date" autoComplete="off" className={P_INPUT} />
+          </PField>
         </div>
       )}
-      <label className="field">
-        <span className="field-label">
-          Anything you&apos;d like to add? <em>(optional)</em>
-        </span>
-        <textarea name="comment" rows={3} maxLength={2000} />
-      </label>
+      {mode === "decline" && <Note>Tell us why below if you like.</Note>}
+      <PField label="Anything you'd like to add?" optional>
+        <textarea name="comment" rows={2} maxLength={2000} className={`${P_INPUT} resize-y`} />
+      </PField>
       {state.error && (
-        <p className="alert" data-tone="bad" role="alert">
-          <IconWarning size={15} /> {state.error}
-        </p>
+        <Banner tone="bad" role="alert">
+          <IconWarning size={16} className="mt-0.5 shrink-0" aria-hidden />
+          <span>{state.error}</span>
+        </Banner>
       )}
-      <div>
-        <button type="submit" className="btn primary" disabled={!choice || pending}>
-          {pending
-            ? "Sending…"
-            : choice === "accept"
-              ? "Accept the offer"
-              : choice === "decline"
-                ? "Decline the offer"
-                : "Send my answer"}
+      <Cta>
+        <button type="submit" className={PRIMARY} disabled={!mode || pending}>
+          {pending ? "Sending…" : mode ? SUBMIT[mode] : "Choose an answer"}
         </button>
-      </div>
+      </Cta>
     </form>
   );
 }

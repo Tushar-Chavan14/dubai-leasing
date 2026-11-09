@@ -2,34 +2,11 @@
 
 import { useActionState, useState } from "react";
 import { type LeaseActionState, recordResponse, recordSri, renewLease } from "../app/(staff)/leases/[id]/actions";
-import { IconCheck, IconWarning } from "../lib/icons";
-
-function Result({ s }: { s: LeaseActionState }) {
-  if (s.ok)
-    return (
-      <div className="alert" data-tone="good" role="status">
-        <IconCheck size={16} />
-        {s.ok}
-      </div>
-    );
-  if (s.error)
-    return (
-      <div className="alert" data-tone="bad" role="alert">
-        <IconWarning size={16} />
-        <div>
-          <strong>{s.error}</strong>
-          {s.reasons?.length ? (
-            <ul>
-              {s.reasons.map((r) => (
-                <li key={r}>{r}</li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
-      </div>
-    );
-  return null;
-}
+import { buttonClass } from "./ui/button";
+import { FIELD, LABEL } from "./ui/form";
+import { Result } from "./ui/result";
+import { SET_INPUT, SET_SELECT, SET_TEXTAREA } from "./ui/settings";
+import { FORM_ROW, NOTE } from "./ui/tenancy";
 
 /** Staff actions on a renewal: record what the tenant said, renew, or record an SRI value. */
 export function RenewalForms({
@@ -50,14 +27,15 @@ export function RenewalForms({
   const [sriState, saveSri, saving] = useActionState<LeaseActionState, FormData>(recordSri, {});
   const [open, setOpen] = useState<"respond" | "sri" | null>(null);
 
+  const BOX = "grid gap-3 rounded-xl border border-line p-3.5";
   return (
-    <div className="renewal-forms">
+    <div className="grid gap-3">
       {readyToRenew && (
-        <form action={renew} className="stack">
+        <form action={renew} className={`${BOX} bg-raised`}>
           <input type="hidden" name="leaseId" value={leaseId} />
-          <p style={{ margin: 0 }}>The tenant accepted. Renewing applies the new term and rent from the notice.</p>
+          <p className="m-0 text-sm">The tenant accepted. Renewing applies the new term and rent from the notice.</p>
           <div>
-            <button type="submit" className="btn primary" disabled={renewing}>
+            <button type="submit" className={buttonClass("primary", "sm")} disabled={renewing}>
               {renewing ? "Renewing…" : "Renew lease"}
             </button>
           </div>
@@ -65,11 +43,11 @@ export function RenewalForms({
         </form>
       )}
 
-      <div className="btn-row">
+      <div className={FORM_ROW}>
         {canRecord && (!replied || !acknowledged) && (
           <button
             type="button"
-            className="btn small"
+            className={buttonClass("ghost", "sm")}
             onClick={() => setOpen(open === "respond" ? null : "respond")}
             aria-expanded={open === "respond"}
           >
@@ -78,7 +56,7 @@ export function RenewalForms({
         )}
         <button
           type="button"
-          className="btn small ghost"
+          className={buttonClass("ghost", "sm")}
           onClick={() => setOpen(open === "sri" ? null : "sri")}
           aria-expanded={open === "sri"}
         >
@@ -87,15 +65,15 @@ export function RenewalForms({
       </div>
 
       {open === "respond" && (
-        <form action={respond} className="stack inline-form">
+        <form action={respond} className={BOX}>
           <input type="hidden" name="leaseId" value={leaseId} />
-          <p className="muted" style={{ margin: 0, fontSize: 13.5 }}>
+          <p className={NOTE}>
             For answers given by phone or in person. It goes through the same steps as a portal reply and is marked as
             recorded by you.
           </p>
-          <label className="field">
-            <span className="field-label">The tenant</span>
-            <select name="kind" defaultValue={acknowledged ? "renew" : "ack"} required>
+          <label className={FIELD}>
+            <span className={LABEL}>The tenant</span>
+            <select name="kind" defaultValue={acknowledged ? "renew" : "ack"} required className={SET_SELECT}>
               {!acknowledged && <option value="ack">Confirmed they received the notice</option>}
               {!replied && (
                 <>
@@ -106,14 +84,14 @@ export function RenewalForms({
               )}
             </select>
           </label>
-          <label className="field">
-            <span className="field-label">
-              What they said <em>(optional)</em>
+          <label className={FIELD}>
+            <span className={LABEL}>
+              What they said <span className="font-normal">(optional)</span>
             </span>
-            <textarea name="comment" rows={2} maxLength={2000} />
+            <textarea name="comment" rows={2} maxLength={2000} className={SET_TEXTAREA} />
           </label>
           <div>
-            <button type="submit" className="btn primary small" disabled={responding}>
+            <button type="submit" className={buttonClass("primary", "sm")} disabled={responding}>
               Record
             </button>
           </div>
@@ -122,33 +100,34 @@ export function RenewalForms({
       )}
 
       {open === "sri" && (
-        <form action={saveSri} className="stack inline-form">
+        <form action={saveSri} className={BOX}>
           <input type="hidden" name="leaseId" value={leaseId} />
-          <p className="muted" style={{ margin: 0, fontSize: 13.5 }}>
+          <p className={NOTE}>
             The Smart Rental Index average for this unit, e.g. from the DLD calculator. A pending notice is re-drafted
             at the new legal cap. Approved notices are not changed.
           </p>
-          <div className="grid-fields">
-            <label className="field span-2">
-              <span className="field-label">SRI average per year</span>
-              <span className="affix">
-                <b>AED</b>
-                <input name="sriAed" inputMode="decimal" required placeholder="100,000" />
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,4fr)]">
+            <label className={FIELD}>
+              <span className={LABEL}>SRI average per year</span>
+              <span className="flex items-center gap-2">
+                <b className="text-xs font-semibold text-muted">AED</b>
+                <input name="sriAed" inputMode="decimal" required placeholder="100,000" className={SET_INPUT} />
               </span>
             </label>
-            <label className="field span-4">
-              <span className="field-label">Where it comes from</span>
+            <label className={FIELD}>
+              <span className={LABEL}>Where it comes from</span>
               <input
                 name="reason"
                 required
                 minLength={3}
                 maxLength={300}
                 placeholder="DLD Smart Rental Index, checked 31 Jan"
+                className={SET_INPUT}
               />
             </label>
           </div>
           <div>
-            <button type="submit" className="btn primary small" disabled={saving}>
+            <button type="submit" className={buttonClass("primary", "sm")} disabled={saving}>
               Save SRI value
             </button>
           </div>

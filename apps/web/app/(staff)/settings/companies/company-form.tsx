@@ -1,7 +1,10 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { IconPlus, IconWarning } from "../../../../lib/icons";
+import { PlusIcon as IconPlus, WarningIcon as IconWarning } from "@phosphor-icons/react";
+import { Button } from "../../../../components/ui/button";
+import { Banner } from "../../../../components/ui/form";
+import { Block, GRID6, SaveBar, SET_INPUT, SET_SELECT, SField, SPAN } from "../../../../components/ui/settings";
 import { KIND_LABEL, type RuleResult } from "../../../../lib/portfolio";
 import { createCompany } from "./actions";
 import { LegalFields } from "./legal-fields";
@@ -15,47 +18,53 @@ export function CompanyForm() {
   }, {});
   if (!open)
     return (
-      <button type="button" className="btn primary" onClick={() => setOpen(true)}>
-        <IconPlus size={16} />
-        Add company
-      </button>
+      <div>
+        <Button variant="primary" size="sm" onClick={() => setOpen(true)}>
+          <IconPlus size={16} />
+          Add company
+        </Button>
+      </div>
     );
   const nameErr = state.fieldErrors?.name;
   return (
-    <form action={action} className="panel panel-pad rule-form" noValidate>
+    <form action={action} className="grid gap-6 rounded-card border border-line bg-page p-5" noValidate>
       {state.error && !nameErr && (
-        <div className="alert" data-tone="bad" role="alert">
-          <IconWarning size={16} />
+        <Banner tone="bad" role="alert">
+          <IconWarning size={16} className="mt-0.5 shrink-0" />
           {state.error}
-        </div>
+        </Banner>
       )}
-      <h3 className="section-title">Company</h3>
-      <div className="grid-fields">
-        <label className="field span-3">
-          <span className="field-label">Company name</span>
-          <input name="name" required maxLength={120} {...(nameErr ? { "aria-invalid": true } : {})} />
-          {nameErr && <span className="err">{nameErr}</span>}
-        </label>
-        <label className="field span-3">
-          <span className="field-label">Kind</span>
-          <select name="kind" defaultValue="realty">
-            {Object.entries(KIND_LABEL).map(([v, l]) => (
-              <option key={v} value={v}>
-                {l}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
+      <Block title="Company" lede="The name staff see everywhere, and what kind of company it is.">
+        <div className={GRID6}>
+          <SField label="Company name" error={nameErr} className={SPAN[3]}>
+            <input
+              name="name"
+              required
+              maxLength={120}
+              className={SET_INPUT}
+              {...(nameErr ? { "aria-invalid": true } : {})}
+            />
+          </SField>
+          <SField label="Kind" className={SPAN[3]}>
+            <select name="kind" defaultValue="realty" className={SET_SELECT}>
+              {Object.entries(KIND_LABEL).map(([v, l]) => (
+                <option key={v} value={v}>
+                  {l}
+                </option>
+              ))}
+            </select>
+          </SField>
+        </div>
+      </Block>
       <LegalFields legal={{}} errors={state.fieldErrors} />
-      <div className="btn-row">
-        <button type="submit" className="btn primary" disabled={pending}>
-          {pending ? "Saving…" : "Save company"}
-        </button>
-        <button type="button" className="btn ghost" onClick={() => setOpen(false)}>
+      <SaveBar>
+        <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>
           Cancel
-        </button>
-      </div>
+        </Button>
+        <Button type="submit" variant="primary" size="sm" disabled={pending}>
+          {pending ? "Saving…" : "Save company"}
+        </Button>
+      </SaveBar>
     </form>
   );
 }

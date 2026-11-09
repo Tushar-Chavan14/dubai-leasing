@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { IconCheck, IconWarning } from "../lib/icons";
+import { CheckIcon as IconCheck, WarningIcon as IconWarning } from "@phosphor-icons/react";
 import { viewingTime } from "../lib/format";
 import {
   type AppActionState,
@@ -11,19 +11,22 @@ import {
   rejectApplicant,
   requestDocuments,
 } from "../app/(staff)/applications/actions";
+import { buttonClass } from "./ui/button";
+import { Banner, FIELD, INPUT, LABEL } from "./ui/form";
+import { Section } from "./ui/record";
 
 function Result({ s }: { s: AppActionState }) {
   if (s.ok)
     return (
-      <div className="alert" data-tone="good" role="status">
-        <IconCheck size={16} />
+      <Banner tone="good" role="status">
+        <IconCheck size={16} className="mt-0.5 shrink-0" />
         {s.ok}
-      </div>
+      </Banner>
     );
   if (s.error)
     return (
-      <div className="alert" data-tone="bad" role="alert">
-        <IconWarning size={16} />
+      <Banner tone="bad" role="alert">
+        <IconWarning size={16} className="mt-0.5 shrink-0" />
         <div>
           <strong>{s.error}</strong>
           {s.reasons?.length ? (
@@ -34,7 +37,7 @@ function Result({ s }: { s: AppActionState }) {
             </ul>
           ) : null}
         </div>
-      </div>
+      </Banner>
     );
   return null;
 }
@@ -58,20 +61,18 @@ export function ApplicationActions(p: {
   const open = ["ENQUIRY", "VIEWING", "SCREENING", "OFFER"].includes(p.state);
   if (!open) return null;
   return (
-    <section className="panel panel-pad stack" aria-labelledby="next-h">
-      <h2 id="next-h" className="section-title" style={{ margin: 0 }}>
-        Next step
-      </h2>
+    <Section id="next-h" title="Next step">
       {p.state === "ENQUIRY" && (
-        <form action={book} className="stack">
+        <form action={book} className="grid gap-3">
           <input type="hidden" name="id" value={p.id} />
-          <p style={{ margin: 0 }}>
+          <p className="m-0 text-sm">
             Book a site visit. The applicant gets an invitation with the time, the address and a page to view the
             property online.
           </p>
-          <label className="field">
-            <span className="field-label">Site visit date &amp; time (Dubai)</span>
+          <label className={FIELD}>
+            <span className={LABEL}>Site visit date &amp; time (Dubai)</span>
             <input
+              className={INPUT}
               name="viewingAt"
               type="datetime-local"
               required
@@ -80,7 +81,7 @@ export function ApplicationActions(p: {
             />
           </label>
           <div>
-            <button className="btn primary" disabled={booking}>
+            <button className={buttonClass("primary", "sm")} disabled={booking}>
               {booking ? "Booking…" : "Book site visit"}
             </button>
           </div>
@@ -88,8 +89,8 @@ export function ApplicationActions(p: {
         </form>
       )}
       {p.state === "VIEWING" && (
-        <div className="stack">
-          <p style={{ margin: 0 }}>
+        <div className="grid gap-3">
+          <p className="m-0 text-sm">
             {p.viewingAt ? (
               <>
                 Site visit booked for <b>{viewingTime(p.viewingAt)}</b> (Dubai). Record what happened.
@@ -98,31 +99,31 @@ export function ApplicationActions(p: {
               "Site visit booked. Record what happened."
             )}
           </p>
-          <form action={came} className="stack">
+          <form action={came} className="grid gap-3">
             <input type="hidden" name="id" value={p.id} />
             <input type="hidden" name="outcome" value="attended" />
             <div>
-              <button className="btn primary" disabled={recordingCame}>
+              <button className={buttonClass("primary", "sm")} disabled={recordingCame}>
                 {recordingCame ? "Sending…" : "Showed up — send document link"}
               </button>
             </div>
             <Result s={cameS} />
           </form>
-          <form action={noShow} className="stack inline-form">
+          <form action={noShow} className="grid gap-3 rounded-xl border border-line p-3.5">
             <input type="hidden" name="id" value={p.id} />
             <input type="hidden" name="outcome" value="no_show" />
-            <label className="field">
-              <span className="field-label">
-                Note <em>(optional, kept in the audit trail)</em>
+            <label className={FIELD}>
+              <span className={LABEL}>
+                Note <em className="font-normal not-italic">(optional, kept in the audit trail)</em>
               </span>
-              <textarea name="note" rows={2} maxLength={500} />
+              <textarea name="note" rows={2} maxLength={500} className={INPUT} />
             </label>
             <div>
-              <button className="btn small danger" disabled={recordingNoShow}>
+              <button className={buttonClass("danger", "sm")} disabled={recordingNoShow}>
                 {recordingNoShow ? "Closing…" : "No-show — close application"}
               </button>
             </div>
-            <p className="muted" style={{ margin: 0, fontSize: 12.5 }}>
+            <p className="m-0 text-[12.5px] text-muted">
               Only once the site visit time has passed. The applicant must apply again.
             </p>
             <Result s={noShowS} />
@@ -130,14 +131,14 @@ export function ApplicationActions(p: {
         </div>
       )}
       {p.state === "SCREENING" && (
-        <form action={docs} className="stack">
+        <form action={docs} className="grid gap-3">
           <input type="hidden" name="id" value={p.id} />
-          <p style={{ margin: 0 }}>
+          <p className="m-0 text-sm">
             Waiting for documents or for the check. If the applicant needs a new link (lost email, new documents), send
             one.
           </p>
           <div>
-            <button className="btn" disabled={sendingDocs}>
+            <button className={buttonClass("ghost", "sm")} disabled={sendingDocs}>
               {sendingDocs ? "Sending…" : "Send a new upload link"}
             </button>
           </div>
@@ -146,31 +147,38 @@ export function ApplicationActions(p: {
       )}
       {p.state === "OFFER" &&
         (p.accepted ? (
-          <form action={reserve} className="stack">
+          <form action={reserve} className="grid gap-3">
             <input type="hidden" name="id" value={p.id} />
-            <p style={{ margin: 0 }}>
+            <p className="m-0 text-sm">
               The applicant accepted. Record the reservation of <b>{p.reservation}</b> once it&apos;s received; the
               lease is then created for the contract.
             </p>
-            <div className="grid-fields">
-              <label className="field span-3">
-                <span className="field-label">Paid on</span>
-                <input name="paidOn" type="date" required max={p.today} defaultValue={p.today} />
+            <div className="grid gap-3 @[480px]:grid-cols-2">
+              <label className={FIELD}>
+                <span className={LABEL}>Paid on</span>
+                <input className={INPUT} name="paidOn" type="date" required max={p.today} defaultValue={p.today} />
               </label>
-              <label className="field span-3">
-                <span className="field-label">Payment reference</span>
-                <input name="reference" required minLength={2} maxLength={80} placeholder="Receipt or transfer no." />
+              <label className={FIELD}>
+                <span className={LABEL}>Payment reference</span>
+                <input
+                  className={INPUT}
+                  name="reference"
+                  required
+                  minLength={2}
+                  maxLength={80}
+                  placeholder="Receipt or transfer no."
+                />
               </label>
             </div>
             <div>
-              <button className="btn primary" disabled={reserving}>
+              <button className={buttonClass("primary", "sm")} disabled={reserving}>
                 {reserving ? "Recording…" : "Record reservation"}
               </button>
             </div>
             <Result s={resS} />
           </form>
         ) : (
-          <p className="muted" style={{ margin: 0 }}>
+          <p className="m-0 text-sm text-muted">
             The offer is with the applicant. Counter-offers inside company limits go back to them automatically;
             anything outside goes to a leasing manager&apos;s inbox.
           </p>
@@ -178,7 +186,7 @@ export function ApplicationActions(p: {
       <div>
         <button
           type="button"
-          className="btn small ghost"
+          className={buttonClass("ghost", "sm")}
           onClick={() => setRejectOpen(!rejectOpen)}
           aria-expanded={rejectOpen}
         >
@@ -186,20 +194,20 @@ export function ApplicationActions(p: {
         </button>
       </div>
       {rejectOpen && (
-        <form action={reject} className="stack inline-form">
+        <form action={reject} className="grid gap-3 rounded-xl border border-line p-3.5">
           <input type="hidden" name="id" value={p.id} />
-          <label className="field">
-            <span className="field-label">Reason (kept in the audit trail)</span>
-            <textarea name="reason" rows={2} required minLength={3} maxLength={500} />
+          <label className={FIELD}>
+            <span className={LABEL}>Reason (kept in the audit trail)</span>
+            <textarea name="reason" rows={2} required minLength={3} maxLength={500} className={INPUT} />
           </label>
           <div>
-            <button className="btn small danger" disabled={rejecting}>
+            <button className={buttonClass("danger", "sm")} disabled={rejecting}>
               {rejecting ? "Closing…" : p.state === "SCREENING" ? "Reject at checks" : "Withdraw application"}
             </button>
           </div>
           <Result s={rejS} />
         </form>
       )}
-    </section>
+    </Section>
   );
 }

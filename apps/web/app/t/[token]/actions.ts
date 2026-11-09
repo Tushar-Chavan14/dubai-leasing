@@ -1,5 +1,6 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { ENGINE_URL } from "../../../lib/engine";
 
@@ -28,6 +29,8 @@ async function submit(token: string, type: string, payload: unknown): Promise<Po
     const details = (body.reasons ?? []).map((r) => r.replace(/^[a-z0-9_]+: /, "")).join(" ");
     return { error: [body.error ?? "Something went wrong. Please try again.", details].filter(Boolean).join(" ") };
   }
+  // The stepper lives in the layout, which stays mounted: refresh it so the step moves on.
+  revalidatePath(`/t/${token}`, "layout");
   return { ref: body.ref ?? "", duplicate: !!body.duplicate };
 }
 
@@ -124,6 +127,7 @@ export async function signContract(_prev: PortalState, formData: FormData): Prom
   if (!res) return { error: "We couldn't reach the leasing system. Please try again in a few minutes." };
   const body = (await res.json().catch(() => ({}))) as { ref?: string; error?: string };
   if (!res.ok) return { error: body.error ?? "Something went wrong. Please try again." };
+  revalidatePath(`/t/${token}`, "layout");
   return { ref: body.ref ?? "" };
 }
 

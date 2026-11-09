@@ -9,6 +9,8 @@ export interface WorkQuery {
   pane?: "open" | "closed" | undefined;
   wide?: boolean | undefined;
   draft?: string | undefined;
+  /** Opens the New application sheet. */
+  new?: true | undefined;
 }
 
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -31,6 +33,7 @@ export function parseQuery(raw: Record<string, string | string[] | undefined>): 
     pane: pane === "open" || pane === "closed" ? pane : undefined,
     wide: first(raw.wide) === "1",
     draft: first(raw.draft),
+    new: first(raw.new) === "1" ? true : undefined,
     ...(approval && UUID_RE.test(approval) ? { approval } : {}),
   };
 }
@@ -44,6 +47,7 @@ export function workHref(current: WorkQuery, change: Partial<Record<keyof WorkQu
     if (typeof v === "string" && v) p.set(k, v);
   }
   if (merged.wide) p.set("wide", "1");
+  if (merged.new === true) p.set("new", "1");
   const qs = p.toString();
   return qs ? `/work?${qs}` : "/work";
 }

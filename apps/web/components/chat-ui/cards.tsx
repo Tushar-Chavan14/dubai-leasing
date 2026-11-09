@@ -3,7 +3,7 @@
 import type { UnitCard } from "@leasing/core";
 import { DecisionCardView, type DecisionCardData } from "./decision-card";
 import { RecordCardView, type RecordCardData } from "./record-card";
-import { UnitCardView } from "./unit-card";
+import { CARD_RAIL, UnitCardView } from "./unit-card";
 
 /** The cards under a staff copilot answer (the engine streams them; see packages/copilot ui.ts). */
 export type CopilotCardData =
@@ -26,17 +26,31 @@ export function CardRow({
   onSend?: (text: string) => void;
   disabled?: boolean;
 }) {
+  // Two tools in one answer can return the same record; show each card once.
+  const seen = new Set<string>();
+  const unique = cards.filter((c) => {
+    const key = cardKey(c);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
   return (
-    <div className="cc-cards">
-      {cards.map((c) =>
+    <div className={`${CARD_RAIL} mt-2.5`}>
+      {unique.map((c) =>
         c.kind === "record" ? (
-          <RecordCardView key={`r-${c.ref}`} card={c} disabled={disabled} {...(onSend ? { onSend } : {})} />
+          <RecordCardView key={cardKey(c)} card={c} disabled={disabled} {...(onSend ? { onSend } : {})} />
         ) : c.kind === "decision" ? (
-          <DecisionCardView key={`d-${c.decision === "approval" ? c.approvalId : c.applicationId}`} card={c} />
+          <DecisionCardView key={cardKey(c)} card={c} />
         ) : (
-          <UnitCardView key={`u-${c.card.unitId}`} card={c.card} detailsHref={c.href} disabled={false} />
+          <UnitCardView key={cardKey(c)} card={c.card} detailsHref={c.href} disabled={false} />
         ),
       )}
     </div>
   );
+}
+
+function cardKey(c: CopilotCardData): string {
+  if (c.kind === "record") return `r-${c.ref}`;
+  if (c.kind === "decision") return `d-${c.decision}-${c.decision === "approval" ? c.approvalId : c.applicationId}`;
+  return `u-${c.card.unitId}`;
 }

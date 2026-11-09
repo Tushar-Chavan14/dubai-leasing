@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { buttonClass } from "../ui/button";
+import { Pill } from "../ui/pill";
 import { StageStepper } from "./stage-stepper";
 import { stagesForStaffStage } from "./stages.ts";
 
@@ -38,36 +40,38 @@ export function RecordCardView({
     ? card.actions
     : ([{ type: "link", key: "open", label: "Open in the Workspace", href: card.href }] as RecordActionData[]);
   return (
-    <article className="cc-card cp-record">
-      <div className="cc-card-body">
-        <span className="cc-card-type">{card.stage}</span>
-        <b>{card.name}</b>
-        <span className="muted">
-          <span className="ref">{card.ref}</span> · {card.unit}
-        </span>
-        <StageStepper stages={stagesForStaffStage(card.stage)} />
-        <span>{card.nextStep}</span>
-        <div className="btn-row">
-          {actions.map((a) =>
-            a.type === "link" ? (
-              <Link key={a.key} href={a.href} className="btn small primary">
-                {a.label}
-              </Link>
-            ) : (
-              <button
-                key={a.key}
-                type="button"
-                className="btn small"
-                disabled={disabled || !onSend || !!a.blocked}
-                title={a.blocked}
-                aria-description={a.blocked}
-                onClick={() => onSend?.(a.prompt)}
-              >
-                {a.label}
-              </button>
-            ),
-          )}
-        </div>
+    <article className="grid w-[min(300px,86%)] flex-none snap-start gap-2.5 rounded-card border border-line bg-page p-3.5 font-sans text-sm text-ink">
+      <div className="flex items-start justify-between gap-2">
+        <b className="text-[15px] leading-snug font-semibold tracking-tight">{card.name}</b>
+        <Pill tone="waiting" className="flex-none">
+          {card.stage}
+        </Pill>
+      </div>
+      <span className="text-muted">
+        <span className="font-mono text-xs">{card.ref}</span> · {card.unit}
+      </span>
+      <StageStepper stages={stagesForStaffStage(card.stage)} />
+      <p className="m-0">{card.nextStep}</p>
+      <div className="mt-0.5 flex flex-wrap gap-2">
+        {actions.map((a) =>
+          a.type === "link" ? (
+            <Link key={a.key} href={a.href} className={buttonClass("primary", "sm")}>
+              {a.label}
+            </Link>
+          ) : (
+            <button
+              key={a.key}
+              type="button"
+              className={buttonClass("ghost", "sm")}
+              disabled={disabled || !onSend || !!a.blocked}
+              title={a.blocked}
+              aria-description={a.blocked}
+              onClick={() => onSend?.(a.prompt)}
+            >
+              {a.label}
+            </button>
+          ),
+        )}
       </div>
     </article>
   );

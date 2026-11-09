@@ -1,9 +1,16 @@
 import { TENANCY_OPS } from "../../../lib/env";
 import { formatAed } from "@leasing/core";
 import { redirect } from "next/navigation";
-import { publicGet } from "../../../lib/engine";
+import type { ReactNode } from "react";
+import { portalView } from "../../../lib/engine";
 import { longDate } from "../../../lib/format";
-import { IconCheck, IconWarning } from "../../../lib/icons";
+import {
+  CheckIcon as IconCheck,
+  FilePdfIcon as IconPdf,
+  WarningIcon as IconWarning,
+} from "@phosphor-icons/react/dist/ssr";
+import { Banner } from "../../../components/ui/form";
+import { Note, PAGE, PortalTitle, PRIMARY, Section, SMALL_GHOST, Tiles } from "../../../components/ui/portal";
 import type { ApplicationPortalView } from "../../../lib/portal";
 import type { MoveOutView } from "../../../lib/portal";
 import { ApplicationStatus } from "./application-status";
@@ -43,7 +50,7 @@ const CHOICE_TEXT: Record<string, string> = { renew: "renew", vacate: "move out"
 
 export default async function TenancyPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
-  const view = await publicGet<PortalView | ApplicationPortalView>(`/api/portal/${encodeURIComponent(token)}`);
+  const view = await portalView<PortalView | ApplicationPortalView>(token);
   if (!view) return <ExpiredLink />;
   if ("kind" in view && view.kind === "application") return <ApplicationStatus v={view} token={token} />;
   if ("kind" in view && (view as { kind: string }).kind === "sign") redirect(`/t/${token}/sign`);
@@ -51,51 +58,53 @@ export default async function TenancyPage({ params }: { params: Promise<{ token:
   // Move-in through move-out is off: the renewal, payment, issue and move-out forms don't exist.
   if (!TENANCY_OPS)
     return (
-      <section className="panel panel-pad">
-        <p className="muted">
-          There&apos;s nothing for you to do here right now. Contact the leasing team with any question.
-        </p>
-      </section>
+      <div className={PAGE}>
+        <PortalTitle
+          title="Nothing to do right now"
+          sub="There's nothing for you to do here right now. Contact the leasing team with any question."
+        />
+      </div>
     );
   const increase = v.notice && v.notice.proposedRentFils > v.notice.currentRentFils;
+  const done = (text: ReactNode) => (
+    <Banner tone="good" role="status">
+      <IconCheck size={16} className="mt-0.5 shrink-0" aria-hidden />
+      <span>{text}</span>
+    </Banner>
+  );
 
   return (
-    <div className="stack" style={{ gap: 22 }}>
-      <div>
-        <h1 className="portal-title">Hello{v.tenantFirstName ? `, ${v.tenantFirstName}` : ""}</h1>
-        <p className="muted">
-          {v.unit ? `${v.unit.label}, ${v.unit.community}` : "Your tenancy"}. Tenancy until {longDate(v.lease.endOn)}.
-        </p>
-      </div>
+    <div className={PAGE}>
+      <PortalTitle
+        title={`Hello${v.tenantFirstName ? `, ${v.tenantFirstName}` : ""}`}
+        sub={`${v.unit ? `${v.unit.label}, ${v.unit.community}` : "Your tenancy"}. Tenancy until ${longDate(v.lease.endOn)}.`}
+      />
 
       {v.purpose === "move_in_ack" && redirectTo(`/t/${token}/move-in`)}
       {v.purpose === "deposit_response" && redirectTo(`/t/${token}/deposit`)}
 
       {v.purpose === "tenancy" &&
         (v.tenancy.moveOut.canGiveNotice || v.tenancy.moveOut.booking || v.tenancy.moveOut.statement) && (
-          <section className="panel panel-pad stack">
-            <h2 className="section-title" style={{ margin: 0 }}>
-              Moving out
-            </h2>
+          <Section title="Moving out">
             {v.tenancy.moveOut.canGiveNotice && (
-              <a className="btn" style={{ width: "fit-content" }} href={`/t/${token}/vacate`}>
+              <a className={`${SMALL_GHOST} w-fit`} href={`/t/${token}/vacate`}>
                 Give notice to move out
               </a>
             )}
             {v.tenancy.moveOut.booking && (
-              <p style={{ margin: 0 }}>
+              <p className="m-0 text-[15px]">
                 Moving out on <b>{longDate(v.tenancy.moveOut.booking.moveOutOn)}</b>.{" "}
                 {v.tenancy.moveOut.booking.done ? (
                   "The inspection is done."
                 ) : (
-                  <a href={`/t/${token}/inspection`}>
+                  <a className="font-semibold underline" href={`/t/${token}/inspection`}>
                     {v.tenancy.moveOut.booking.scheduledAt ? "Change the inspection time" : "Book the inspection"}
                   </a>
                 )}
               </p>
             )}
             {v.tenancy.moveOut.statement && (
-              <p style={{ margin: 0 }}>
+              <p className="m-0 text-[15px]">
                 Deposit statement {v.tenancy.moveOut.statement.revision}: refund{" "}
                 <b>{formatAed(v.tenancy.moveOut.statement.refundFils)}</b>
                 {v.tenancy.moveOut.statement.paidOn
@@ -104,125 +113,115 @@ export default async function TenancyPage({ params }: { params: Promise<{ token:
                 .
               </p>
             )}
-          </section>
+          </Section>
         )}
 
       {v.tenancy.openPayments.length > 0 && (
-        <section className="panel panel-pad stack">
-          <h2 className="section-title" style={{ margin: 0 }}>
-            Payments that need your attention
-          </h2>
-          <ul className="list">
+        <Section title="Payments that need your attention">
+          <ul className="m-0 grid list-none gap-2 p-0">
             {v.tenancy.openPayments.map((p) => (
-              <li key={p.id} className="list-row">
+              <li
+                key={p.id}
+                className="flex items-center justify-between gap-3 rounded-xl border border-line bg-page px-3.5 py-3 text-[15px]"
+              >
                 <span>
                   Payment {p.seq}: {formatAed(p.amountFils)}, due {longDate(p.dueOn)}
                   {p.status === "bounced" ? " (cheque returned)" : ""}
                 </span>
                 {v.purpose === "tenancy" && (
-                  <a className="btn small" href={`/t/${token}/payment/${p.id}`}>
+                  <a className={`${SMALL_GHOST} shrink-0`} href={`/t/${token}/payment/${p.id}`}>
                     Reply
                   </a>
                 )}
               </li>
             ))}
           </ul>
-        </section>
+        </Section>
       )}
 
       {v.tenancy.canReportIssue && v.purpose === "tenancy" && (
-        <section className="panel panel-pad stack">
-          <h2 className="section-title" style={{ margin: 0 }}>
-            Something wrong at home?
-          </h2>
-          <a className="btn primary" style={{ width: "fit-content" }} href={`/t/${token}/report`}>
+        <Section title="Something wrong at home?">
+          <a className={`${PRIMARY} !w-fit px-6`} href={`/t/${token}/report`}>
             Report an issue
           </a>
           {v.tenancy.reports.length > 0 && (
-            <ul className="list">
+            <ul className="m-0 grid list-none gap-2 p-0">
               {v.tenancy.reports.map((r) => (
-                <li key={r.ref ?? r.createdAt} className="list-row">
+                <li
+                  key={r.ref ?? r.createdAt}
+                  className="flex items-center justify-between gap-3 rounded-xl border border-line bg-page px-3.5 py-3 text-[15px]"
+                >
                   <span>
-                    <span className="ref">{r.ref}</span> {r.category ?? "being read"}
+                    <span className="font-mono text-[13px]">{r.ref}</span> {r.category ?? "being read"}
                   </span>
-                  <span className="muted">
+                  <span className="text-[13px] text-muted">
                     {r.ticketStatus ? `repair ${r.ticketStatus.replace("_", " ")}` : r.status}
                   </span>
                 </li>
               ))}
             </ul>
           )}
-        </section>
+        </Section>
       )}
 
       {v.notice ? (
-        <section className="panel panel-pad stack">
-          <h2 className="section-title" style={{ margin: 0 }}>
-            Your renewal offer
-          </h2>
-          <dl className="facts">
-            <dt>Current annual rent</dt>
-            <dd className="num">{formatAed(v.notice.currentRentFils)}</dd>
-            <dt>New annual rent</dt>
-            <dd className="num">
-              <b>{formatAed(v.notice.proposedRentFils)}</b> {increase ? "" : "(no change)"}
-            </dd>
-            <dt>New term</dt>
-            <dd>
-              {longDate(v.notice.newTermStartOn)} to {longDate(v.notice.newTermEndOn)}
-            </dd>
-          </dl>
-          <a className="link" href={`/t/${token}/notice.pdf`} target="_blank" rel="noreferrer">
+        <Section title="Your renewal offer">
+          <Tiles
+            items={[
+              { label: "Current annual rent", value: formatAed(v.notice.currentRentFils) },
+              {
+                label: increase ? "New annual rent" : "New annual rent (no change)",
+                value: formatAed(v.notice.proposedRentFils),
+              },
+              {
+                label: "New term",
+                value: `${longDate(v.notice.newTermStartOn)} to ${longDate(v.notice.newTermEndOn)}`,
+                wide: true,
+              },
+            ]}
+          />
+          <a
+            className="flex min-h-12 items-center gap-2.5 rounded-xl border border-line bg-page px-3.5 py-3 text-[15px] text-ink!"
+            href={`/t/${token}/notice.pdf`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            <IconPdf size={22} aria-hidden />
             Read the full notice (PDF)
           </a>
-        </section>
+        </Section>
       ) : v.tenancy.openPayments.length === 0 && !v.tenancy.canReportIssue ? (
-        <section className="panel panel-pad">
-          <p className="muted">There&apos;s nothing for you to do right now. We&apos;ll email you when there is.</p>
-        </section>
+        <Note>There&apos;s nothing for you to do right now. We&apos;ll email you when there is.</Note>
       ) : null}
 
       {v.notice && (
-        <section className="panel panel-pad stack">
-          <h2 className="section-title" style={{ margin: 0 }}>
-            1. Confirm you received the notice
-          </h2>
-          {v.canAcknowledge ? (
-            <AcknowledgeForm token={token} />
-          ) : (
-            <p className="row-done">
-              <IconCheck size={16} /> Confirmed. Thank you.
-            </p>
-          )}
-        </section>
+        <Section title="1. Confirm you received the notice">
+          {v.canAcknowledge ? <AcknowledgeForm token={token} /> : done("Confirmed. Thank you.")}
+        </Section>
       )}
 
       {v.notice && (
-        <section className="panel panel-pad stack">
-          <h2 className="section-title" style={{ margin: 0 }}>
-            2. Tell us your plans
-          </h2>
-          {v.reply && (
-            <p className="row-done">
-              <IconCheck size={16} /> You told us you want to {CHOICE_TEXT[v.reply.choice ?? ""] ?? "reply"} (reference{" "}
-              <span className="ref">{v.reply.ref}</span>).
-            </p>
-          )}
+        <Section title="2. Tell us your plans">
+          {v.reply &&
+            done(
+              <>
+                You told us you want to {CHOICE_TEXT[v.reply.choice ?? ""] ?? "reply"} (reference{" "}
+                <span className="font-mono text-[13px]">{v.reply.ref}</span>).
+              </>,
+            )}
           {v.reply && v.canReply && (
-            <p className="muted" style={{ margin: 0 }}>
-              When you&apos;re ready, you can still tell us whether you&apos;ll renew or move out.
-            </p>
+            <Note>When you&apos;re ready, you can still tell us whether you&apos;ll renew or move out.</Note>
           )}
           {v.reply && !v.canReply ? null : v.canReply ? (
             v.purpose === "tenancy" ? (
               <ReplyForm token={token} />
             ) : (
-              <p className="muted">Use the &ldquo;Reply&rdquo; button in the notice email to answer.</p>
+              <Note>Use the &ldquo;Reply&rdquo; button in the notice email to answer.</Note>
             )
           ) : (
-            <p className="muted">This offer can no longer be answered online. Please contact the leasing team.</p>
+            <Note>This offer can no longer be answered online. Please contact the leasing team.</Note>
           )}
-        </section>
+        </Section>
       )}
     </div>
   );
@@ -234,14 +233,15 @@ function redirectTo(path: string): never {
 
 function ExpiredLink() {
   return (
-    <section className="panel panel-pad stack">
-      <h1 className="portal-title" style={{ fontSize: 22 }}>
-        This link has expired
-      </h1>
-      <p className="muted">
-        <IconWarning size={15} /> Links in our emails work for a limited time. Open the newest email from us, or reply
-        to it and we&apos;ll send you a fresh link.
-      </p>
-    </section>
+    <div className={PAGE}>
+      <PortalTitle title="This link has expired" />
+      <Banner tone="warn">
+        <IconWarning size={16} className="mt-0.5 shrink-0" aria-hidden />
+        <span>
+          Links in our emails work for a limited time. Open the newest email from us, or reply to it and we&apos;ll send
+          you a fresh link.
+        </span>
+      </Banner>
+    </div>
   );
 }

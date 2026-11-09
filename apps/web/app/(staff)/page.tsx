@@ -1,24 +1,23 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { HomeTiles } from "../../components/live/home-tiles";
-import { CopilotWorkspace } from "../../components/copilot/workspace";
-import { type ThreadDetail, type ThreadRow, toChat } from "../../components/copilot/thread";
 import { get, publicGet } from "../../lib/engine";
-import { dateTime, possessive, relativeTime, weekdayDate } from "../../lib/format";
-import type { HomeView } from "../../lib/types";
+import { clockTime, possessive, relativeTime, weekdayDate } from "../../lib/format";
+import type { HomeView, Me, RecordRow, TaskRow } from "../../lib/types";
+import { HomeQueue } from "./home-queue";
+import { HomeStarters } from "./home-starters";
 
 export const metadata: Metadata = { title: "Home" };
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-export default async function HomePage({ searchParams }: { searchParams: Promise<{ thread?: string; ask?: string }> }) {
-  const { thread, ask } = await searchParams;
-  const [home, health, threads, companyList, current] = await Promise.all([
+export default async function HomePage() {
+  const [home, health, companyList, me, records, tasks] = await Promise.all([
     get<HomeView>("/api/home"),
     publicGet<{ today: string }>("/health"),
-    get<ThreadRow[]>("/api/copilot/threads"),
     get<{ name: string; active: boolean }[]>("/api/companies"),
-    thread ? get<ThreadDetail>(`/api/copilot/threads/${encodeURIComponent(thread)}`) : Promise.resolve(null),
+    get<Me>("/api/me"),
+    get<RecordRow[]>("/api/records?mine=1"),
+    get<TaskRow[]>("/api/tasks"),
   ]);
   const today = health?.today ?? "";
   const h: HomeView = home ?? {
@@ -51,49 +50,44 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
     .filter((s): s is string => !!s)
     .slice(0, 12);
 
+  const first = me?.name.trim().split(/\s+/)[0];
+  const top = (records ?? [])
+    .filter((r) => r.waitingForMe)
+    .slice(0, 3)
+    .map((r) => ({ key: `${r.kind}:${r.id}`, text: `${r.nextStep} ${r.title}` }));
+
   return (
-    <div className="home">
-      {today && <p className="home-date">{weekdayDate(today)} in Dubai</p>}
-      <HomeTiles initial={h} />
+    <div className="mx-auto flex max-w-[820px] flex-col px-1.5 pb-6 pt-5 font-sans text-ink">
+      <header>
+        <h1 className="m-0 text-[26px] font-semibold tracking-[-0.025em] text-ink">
+          Hello
+          {first ? `, ${first}` : ""}
+        </h1>
+        {today && <p className="m-0 mt-1 text-sm text-muted">{weekdayDate(today)} in Dubai</p>}
+      </header>
+      <HomeStarters suggestions={suggestions} />
+      <HomeTiles initial={h} top={top} />
 
-      <section className="home-chat panel" aria-label="Copilot">
-        <CopilotWorkspace
-          key={current?.id ?? "new"}
-          heading="What needs your attention today?"
-          suggestions={suggestions}
-          {...(ask && !current ? { initialDraft: ask } : {})}
-          {...(current ? { threadId: current.id, initial: toChat(current) } : {})}
-        />
-      </section>
-      {threads && threads.length > 0 && (
-        <details className="home-threads">
-          <summary>Earlier conversations</summary>
-          <ul>
-            {threads.slice(0, 8).map((t) => (
-              <li key={t.id}>
-                <Link href={`/?thread=${t.id}`} aria-current={t.id === current?.id ? "page" : undefined}>
-                  <span>{t.title}</span>
-                  <time dateTime={t.createdAt}>{dateTime(t.createdAt)}</time>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
+      <HomeQueue records={records ?? []} tasks={tasks ?? []} today={today} role={me?.role} />
 
-      <section aria-labelledby="did-h" className="home-did">
-        <h2 id="did-h">Agent activity today</h2>
+      <section aria-labelledby="did-h" className="mt-7">
+        <h2 id="did-h" className="m-0 text-base font-semibold tracking-tight text-ink">
+          Agent activity today
+        </h2>
         {h.agentToday.length === 0 ? (
-          <p className="muted">Nothing yet today.</p>
+          <p className="m-0 mt-2 text-sm text-muted">Nothing yet today.</p>
         ) : (
-          <ul>
+          <ul className="m-0 mt-2 grid list-none p-0">
             {h.agentToday.slice(0, 8).map((e) => (
-              <li key={`${e.source}:${e.refId}`}>
-                <span className="wk-actor" data-kind="agent">
-                  Agent
-                </span>
-                <span className="wk-text">{e.text}</span>
-                <time dateTime={e.at}>{relativeTime(today, e.at)}</time>
+              <li key={`${e.source}:${e.refId}`} className="flex gap-2.5 py-[7px] text-[13px] text-ink">
+                <time
+                  dateTime={e.at}
+                  title={relativeTime(today, e.at)}
+                  className="w-[62px] flex-none font-mono text-muted"
+                >
+                  {clockTime(e.at)}
+                </time>
+                <span>{e.text}</span>
               </li>
             ))}
           </ul>

@@ -1,12 +1,31 @@
 "use client";
 
-import { Fragment, useActionState, useState } from "react";
+import { Fragment, type ReactNode, useActionState, useState } from "react";
 import { RowAction } from "../../../../components/row-action";
-import { IconPlus, IconWarning } from "../../../../lib/icons";
+import {
+  PencilSimpleIcon as IconPencil,
+  PlusIcon as IconPlus,
+  TrashIcon as IconTrash,
+  WarningIcon as IconWarning,
+} from "@phosphor-icons/react";
 import { type Category, type RuleResult, subtypeLabel, subtypesFor, TENURE_LABEL } from "../../../../lib/portfolio";
 import type { CompanyRow, ContractRuleRow, RuleReview } from "../../../../lib/types";
 import { ClauseReview, UploadSample } from "./clause-review";
 import { removeContractRule, saveContractRule } from "./actions";
+import { FIELD, LABEL } from "../../../../components/ui/form";
+import {
+  ALERT,
+  BTN,
+  CHECK_ROW,
+  GRID6,
+  SPAN,
+  SET_INPUT,
+  SET_SELECT,
+  TABLE,
+  TD,
+  TH,
+} from "../../../../components/ui/settings";
+import { Button, iconButtonClass } from "../../../../components/ui/button";
 
 type ApprovedTemplates = { id: string; version: number }[];
 
@@ -29,12 +48,12 @@ function RuleEditor({
     return r;
   }, {});
   const fe = state.fieldErrors ?? {};
-  const err = (k: string) => (fe[k] ? <span className="err">{fe[k]}</span> : null);
+  const err = (k: string) => (fe[k] ? <span className="text-xs text-danger">{fe[k]}</span> : null);
   const inv = (k: string) => (fe[k] ? { "aria-invalid": true as const } : {});
   return (
-    <form action={action} className="rule-form" noValidate>
+    <form action={action} className="grid gap-4" noValidate>
       {state.error && (
-        <div className="alert" data-tone="bad" role="alert">
+        <div className={ALERT.bad} role="alert">
           <IconWarning size={16} />
           <div>
             <strong>{state.error}</strong>
@@ -53,10 +72,10 @@ function RuleEditor({
       {rule?.sampleDocumentId && <input type="hidden" name="sampleDocumentId" value={rule.sampleDocumentId} />}
       <input type="hidden" name="category" value={category} />
       <input type="hidden" name="companyId" value={rule?.companyId ?? company.id} />
-      <div className="grid-fields">
-        <label className="field span-3">
-          <span className="field-label">Contract template</span>
-          <select name="templateId" defaultValue={rule?.templateId ?? ""}>
+      <div className={GRID6}>
+        <label className={`${FIELD} ${SPAN[3]}`}>
+          <span className={LABEL}>Contract template</span>
+          <select className={SET_SELECT} name="templateId" defaultValue={rule?.templateId ?? ""}>
             <option value="">Standard contract</option>
             {templates.map((t) => (
               <option key={t.id} value={t.id}>
@@ -65,9 +84,9 @@ function RuleEditor({
             ))}
           </select>
         </label>
-        <label className="field span-3">
-          <span className="field-label">Type</span>
-          <select name="subtype" defaultValue={rule?.subtype ?? ""}>
+        <label className={`${FIELD} ${SPAN[3]}`}>
+          <span className={LABEL}>Type</span>
+          <select className={SET_SELECT} name="subtype" defaultValue={rule?.subtype ?? ""}>
             <option value="">All types</option>
             {subtypesFor(category).map((s) => (
               <option key={s.value} value={s.value}>
@@ -77,9 +96,9 @@ function RuleEditor({
           </select>
           {err("subtype")}
         </label>
-        <fieldset className="field span-2">
-          <legend className="field-label">Tenure</legend>
-          <div className="check-row">
+        <fieldset className={`${FIELD} ${SPAN[2]} m-0 min-w-0 border-0 p-0`}>
+          <legend className={`${LABEL} p-0`}>Tenure</legend>
+          <div className={CHECK_ROW}>
             {Object.entries(TENURE_LABEL).map(([v, l]) => (
               <label key={v}>
                 <input
@@ -94,22 +113,34 @@ function RuleEditor({
           </div>
           {err("tenures")}
         </fieldset>
-        <label className="field">
-          <span className="field-label">Fewest cheques</span>
-          <input name="minCheques" inputMode="numeric" defaultValue={rule?.minCheques ?? 1} {...inv("minCheques")} />
+        <label className={`${FIELD} ${SPAN[2]}`}>
+          <span className={LABEL}>Fewest cheques</span>
+          <input
+            className={SET_INPUT}
+            name="minCheques"
+            inputMode="numeric"
+            defaultValue={rule?.minCheques ?? 1}
+            {...inv("minCheques")}
+          />
           {err("minCheques")}
         </label>
-        <label className="field">
-          <span className="field-label">Most cheques</span>
-          <input name="maxCheques" inputMode="numeric" defaultValue={rule?.maxCheques ?? 4} {...inv("maxCheques")} />
+        <label className={`${FIELD} ${SPAN[2]}`}>
+          <span className={LABEL}>Most cheques</span>
+          <input
+            className={SET_INPUT}
+            name="maxCheques"
+            inputMode="numeric"
+            defaultValue={rule?.maxCheques ?? 4}
+            {...inv("maxCheques")}
+          />
           {err("maxCheques")}
         </label>
       </div>
-      <div className="btn-row">
-        <button type="submit" className="btn primary" disabled={pending}>
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="submit" className={BTN.primary} disabled={pending}>
           {pending ? "Saving…" : rule ? "Save changes" : "Save rule"}
         </button>
-        <button type="button" className="btn ghost" onClick={onDone}>
+        <button type="button" className={BTN.ghost} onClick={onDone}>
           Cancel
         </button>
       </div>
@@ -131,6 +162,7 @@ export function ContractRules({
   category,
   canEdit,
   templateReady = {},
+  askAi,
 }: {
   rules: ContractRuleRow[];
   /** Rule id to true when a company template was read from the rule's sample. */
@@ -140,49 +172,60 @@ export function ContractRules({
   templates: ApprovedTemplates;
   category: Category;
   canEdit: boolean;
+  askAi?: ReactNode;
 }) {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const closeAdd = () => setAdding(false);
   const closeEdit = () => setEditing(null);
   return (
-    <>
-      {canEdit && (
-        <div className="settings-add">
-          {adding ? (
-            <div className="panel panel-pad">
-              <RuleEditor company={company} templates={templates} category={category} onDone={closeAdd} />
-            </div>
-          ) : (
-            <button type="button" className="btn primary" onClick={() => setAdding(true)}>
+    <section aria-labelledby="rules-h" className="grid gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 id="rules-h" className="m-0 font-sans text-[15px] font-semibold tracking-tight text-ink">
+            Contract rules
+          </h2>
+          <p className="m-0 mt-0.5 text-[13px] text-muted">
+            Which tenures and how many cheques {company.name} allows, by unit type.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {askAi}
+          {canEdit && !adding && (
+            <Button variant="primary" size="sm" onClick={() => setAdding(true)}>
               <IconPlus size={16} />
               Add rule
-            </button>
+            </Button>
           )}
         </div>
+      </div>
+      {canEdit && adding && (
+        <div className="rounded-card border border-line bg-page p-5">
+          <RuleEditor company={company} templates={templates} category={category} onDone={closeAdd} />
+        </div>
       )}
-      <section className="panel">
+      <div className="rounded-card border border-line bg-page">
         {rules.length === 0 ? (
-          <p className="muted panel-pad">
+          <p className="m-0 p-5 text-sm text-muted">
             No {category} contract rules for {company.name} yet. Offers use the company defaults.
           </p>
         ) : (
-          <div className="table-wrap">
-            <table className="data">
+          <div className="overflow-x-auto">
+            <table className={TABLE}>
               <thead>
                 <tr>
-                  <th>Type</th>
-                  <th>Tenure</th>
-                  <th>Cheques</th>
-                  <th>Contract</th>
-                  {canEdit && <th />}
+                  <th className={TH}>Type</th>
+                  <th className={TH}>Tenure</th>
+                  <th className={TH}>Cheques</th>
+                  <th className={TH}>Contract</th>
+                  {canEdit && <th className={TH} />}
                 </tr>
               </thead>
               <tbody>
                 {rules.map((r) =>
                   editing === r.id ? (
-                    <tr key={r.id}>
-                      <td colSpan={canEdit ? 5 : 4}>
+                    <tr key={r.id} className="group">
+                      <td className={TD} colSpan={canEdit ? 5 : 4}>
                         <RuleEditor
                           rule={r}
                           company={company}
@@ -194,24 +237,31 @@ export function ContractRules({
                     </tr>
                   ) : (
                     <Fragment key={r.id}>
-                      <tr>
-                        <td>{subtypeLabel(r.subtype)}</td>
-                        <td>{r.tenures.map((t) => TENURE_LABEL[t] ?? t).join(", ")}</td>
-                        <td className="num nowrap">
+                      <tr className="group">
+                        <td className={`${TD} whitespace-nowrap font-semibold`}>{subtypeLabel(r.subtype)}</td>
+                        <td className={TD}>{r.tenures.map((t) => TENURE_LABEL[t] ?? t).join(", ")}</td>
+                        <td className={`${TD} whitespace-nowrap font-mono tabular-nums`}>
                           {r.minCheques} to {r.maxCheques}
                         </td>
-                        <td>{templateLabel(r, templates)}</td>
+                        <td className={TD}>{templateLabel(r, templates)}</td>
                         {canEdit && (
-                          <td className="nowrap">
-                            <div className="btn-row">
-                              <UploadSample rule={r} />
-                              <button type="button" className="btn small" onClick={() => setEditing(r.id)}>
-                                Edit
+                          <td className={`${TD} whitespace-nowrap`}>
+                            <div className="flex items-start gap-2">
+                              <UploadSample rule={r} label="Upload sample" />
+                              <button
+                                type="button"
+                                className={iconButtonClass()}
+                                aria-label={`Edit ${subtypeLabel(r.subtype)} rule`}
+                                title="Edit"
+                                onClick={() => setEditing(r.id)}
+                              >
+                                <IconPencil size={16} />
                               </button>
                               <RowAction
                                 action={removeContractRule}
                                 fields={{ id: r.id }}
-                                label="Remove"
+                                label={`Remove ${subtypeLabel(r.subtype)} rule`}
+                                icon={<IconTrash size={16} />}
                                 danger
                                 confirmText="Remove this rule? It stops applying to units straight away."
                               />
@@ -220,8 +270,8 @@ export function ContractRules({
                         )}
                       </tr>
                       {reviews[r.id]?.sample && (
-                        <tr>
-                          <td colSpan={canEdit ? 5 : 4}>
+                        <tr className="group">
+                          <td className={TD} colSpan={canEdit ? 5 : 4}>
                             <ClauseReview
                               rule={r}
                               review={reviews[r.id]}
@@ -238,7 +288,7 @@ export function ContractRules({
             </table>
           </div>
         )}
-      </section>
-    </>
+      </div>
+    </section>
   );
 }

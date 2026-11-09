@@ -4,6 +4,7 @@ export interface ThreadRow {
   id: string;
   title: string;
   contextKind: string | null;
+  contextId?: string | null;
   createdAt: string;
 }
 export interface ThreadDetail extends ThreadRow {

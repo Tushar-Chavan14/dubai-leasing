@@ -45,6 +45,8 @@ export interface RecordRowDto {
   contractHeld?: boolean;
   /** The contract is out with the signers. */
   contractSent?: boolean;
+  /** The applicant accepted; the reservation (fils, from the accepted offer) waits to be recorded. */
+  reservationDueFils?: number | null;
 }
 
 /**

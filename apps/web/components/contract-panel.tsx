@@ -1,7 +1,7 @@
 import { CONTRACT_CLAUSES, type ContractClauseId } from "@leasing/core";
 import Link from "next/link";
 import { dateTime, humanise, proposalValue } from "../lib/format";
-import { IconCheck, IconWarning } from "../lib/icons";
+import { CheckIcon as IconCheck, WarningIcon as IconWarning } from "@phosphor-icons/react/dist/ssr";
 import {
   PrepareContractForm,
   ProposeEjariButton,
@@ -9,6 +9,12 @@ import {
   ResendSignLinkButton,
 } from "./contract-forms";
 import { Status } from "./ui";
+import { buttonClass } from "./ui/button";
+import { NOTE_TEXT, ROW_CARD, Section, TENANT_TEXT } from "./ui/record";
+
+const LIST = "m-0 grid list-none gap-1.5 p-0 text-sm";
+const TABLE = "overflow-x-auto rounded-xl border border-line";
+const EVIDENCE = "grid gap-2 rounded-xl border border-line p-3.5";
 
 export interface ContractRow {
   id: string;
@@ -102,7 +108,7 @@ export function ContractFieldsTable({
   sources: Record<string, { entity: string; id: string; column: string }>;
 }) {
   return (
-    <div className="table-wrap">
+    <div className={TABLE}>
       <table className="data">
         <thead>
           <tr>
@@ -117,8 +123,10 @@ export function ContractFieldsTable({
             return (
               <tr key={k}>
                 <td>{label}</td>
-                <td className={k.endsWith("No") ? "ref" : undefined}>{proposalValue(k, fields[k])}</td>
-                <td className="muted">{src ? `${SOURCE_ENTITY[src.entity] ?? src.entity}: ${src.column}` : "—"}</td>
+                <td className={k.endsWith("No") ? "font-mono text-xs" : undefined}>{proposalValue(k, fields[k])}</td>
+                <td className="text-muted">
+                  {src ? `${SOURCE_ENTITY[src.entity] ?? src.entity}: ${src.column}` : "—"}
+                </td>
               </tr>
             );
           })}
@@ -140,23 +148,23 @@ export function EjariAttemptsList({
   }[];
 }) {
   return (
-    <div className="stack">
+    <div className="grid gap-2">
       {attempts.map((a) => (
-        <div key={a.submissionId} className="evidence">
-          <div className="evidence-head">
-            <b>Attempt {a.attempt}</b>
+        <div key={a.submissionId} className={EVIDENCE}>
+          <div className="flex flex-wrap items-center gap-2">
+            <b className="font-semibold">Attempt {a.attempt}</b>
             <Status value="rejected" />
           </div>
           {a.autofix?.map((f) => (
-            <p key={f.field} className="muted" style={{ margin: "6px 0" }}>
+            <p key={f.field} className={NOTE_TEXT}>
               Sent with {humanise(f.field).toLowerCase()} corrected from &ldquo;{f.from}&rdquo; to &ldquo;{f.to}&rdquo;
               ({f.source}).
             </p>
           ))}
-          <ul className="reasons">
+          <ul className={`${LIST} list-disc pl-5`}>
             {a.reasons.map((r) => (
               <li key={r.code + r.message}>
-                <span className="ref">{r.code}</span> {r.message}
+                <span className="font-mono text-xs">{r.code}</span> {r.message}
               </li>
             ))}
           </ul>
@@ -201,15 +209,10 @@ export function ContractPanel({
             : "";
 
   return (
-    <section className="panel" aria-labelledby="contract-h">
-      <div className="panel-head">
-        <h2 id="contract-h">Contract</h2>
-        <span className="hint">{hint}</span>
-      </div>
-
+    <Section id="contract-h" title="Contract" hint={hint}>
       {!current && (
-        <div className="panel-pad stack">
-          <p className="muted" style={{ margin: 0 }}>
+        <div className="grid gap-3">
+          <p className="m-0 text-sm text-muted">
             The engine prepares the contract from the verified records when the reservation is recorded. You can also
             prepare it here.
           </p>
@@ -226,46 +229,58 @@ export function ContractPanel({
       )}
 
       {current && (
-        <div className="panel-pad stack">
-          <div className="list-row" style={{ padding: 0 }}>
-            <div>
-              <div className="title">
+        <div className="grid gap-4">
+          <div className={`${ROW_CARD} flex items-center justify-between gap-3`}>
+            <div className="grid gap-0.5 text-sm">
+              <div className="font-semibold">
                 Version {current.version}{" "}
-                <span className="muted" style={{ fontWeight: 400 }}>
-                  prepared {dateTime(current.createdAt)}
-                </span>
+                <span className="font-normal text-muted">prepared {dateTime(current.createdAt)}</span>
               </div>
-              <div className="meta">
-                <span className="ref">SHA-256 {current.sha256.slice(0, 16)}…</span>
-                {current.signedSha256 && <span className="ref">signed {current.signedSha256.slice(0, 16)}…</span>}
+              <div className="flex flex-wrap gap-x-3 font-mono text-[11.5px] text-muted">
+                <span>SHA-256 {current.sha256.slice(0, 16)}…</span>
+                {current.signedSha256 && <span>signed {current.signedSha256.slice(0, 16)}…</span>}
               </div>
             </div>
             <Status value={current.status} />
           </div>
 
-          <div className="btn-row">
+          <div className="flex flex-wrap items-center gap-2">
             {current.documentId && (
-              <a className="btn small" href={doc(leaseId, current.documentId)} target="_blank" rel="noreferrer">
+              <a
+                className={buttonClass("ghost", "sm")}
+                href={doc(leaseId, current.documentId)}
+                target="_blank"
+                rel="noreferrer"
+              >
                 Open the contract PDF
               </a>
             )}
             {current.signedDocumentId && (
-              <a className="btn small" href={doc(leaseId, current.signedDocumentId)} target="_blank" rel="noreferrer">
+              <a
+                className={buttonClass("ghost", "sm")}
+                href={doc(leaseId, current.signedDocumentId)}
+                target="_blank"
+                rel="noreferrer"
+              >
                 Open the signed copy
               </a>
             )}
             {current.approvalId && current.status === "pending_approval" && (
-              <Link className="btn small" href={`/work?approval=${current.approvalId}`}>
+              <Link className={buttonClass("ghost", "sm")} href={`/work?approval=${current.approvalId}`}>
                 Open the approval
               </Link>
             )}
           </div>
 
           {current.flags.length > 0 && (
-            <ul className="flag-list">
+            <ul className={LIST}>
               {current.flags.map((f) => (
-                <li key={f.quote} data-blocking={f.kind === "illegal_term"}>
-                  <IconWarning size={15} />
+                <li
+                  key={f.quote}
+                  data-blocking={f.kind === "illegal_term"}
+                  className={`flex items-start gap-2 rounded-xl border px-3.5 py-2.5 ${f.kind === "illegal_term" ? "border-danger text-danger" : "border-warning text-warning"}`}
+                >
+                  <IconWarning size={15} className="mt-0.5 shrink-0" />
                   <span>
                     <b>{humanise(f.kind)}:</b> &ldquo;{f.quote}&rdquo; {f.reason}
                   </span>
@@ -275,7 +290,7 @@ export function ContractPanel({
           )}
 
           {current.signers.length > 0 && (
-            <div className="table-wrap">
+            <div className={TABLE}>
               <table className="data">
                 <thead>
                   <tr>
@@ -289,16 +304,18 @@ export function ContractPanel({
                     <tr key={s.id}>
                       <td>
                         <b>{s.role === "tenant" ? "Tenant" : "Landlord"}</b> {s.nameEn}
-                        <div className="row-sub">{s.email ?? "no email on record"}</div>
+                        <div className="text-[12.5px] text-muted">{s.email ?? "no email on record"}</div>
                       </td>
                       <td>
                         {s.signedAt ? (
-                          <span className="row-done">
+                          <span className="inline-flex flex-wrap items-center gap-1">
                             <IconCheck size={14} /> Signed {dateTime(s.signedAt)}
-                            {s.typedName && <span className="muted"> as &ldquo;{s.typedName}&rdquo;</span>}
+                            {s.typedName && <span className="text-muted"> as &ldquo;{s.typedName}&rdquo;</span>}
                           </span>
                         ) : (
-                          <span className="muted">{s.linkSent ? "Link sent, not signed yet" : "Link being sent"}</span>
+                          <span className="text-muted">
+                            {s.linkSent ? "Link sent, not signed yet" : "Link being sent"}
+                          </span>
                         )}
                       </td>
                       <td>
@@ -314,16 +331,16 @@ export function ContractPanel({
           )}
 
           <details>
-            <summary>Fields and where each was copied from</summary>
-            <div style={{ marginTop: 8 }}>
+            <summary className="cursor-pointer text-sm font-semibold">Fields and where each was copied from</summary>
+            <div className="mt-2">
               <ContractFieldsTable fields={current.fields} sources={current.sources} />
             </div>
           </details>
 
           {(current.addendum.clauses.length > 0 || current.addendum.freeText) && (
             <details>
-              <summary>Addendum</summary>
-              <ul className="reasons" style={{ marginTop: 8 }}>
+              <summary className="cursor-pointer text-sm font-semibold">Addendum</summary>
+              <ul className={`${LIST} mt-2 list-disc pl-5`}>
                 {current.addendum.clauses
                   .filter((c) => Object.hasOwn(CONTRACT_CLAUSES, c))
                   .map((c) => (
@@ -335,10 +352,8 @@ export function ContractPanel({
               </ul>
               {(current.addendum.companyClauses?.length ?? 0) > 0 && (
                 <>
-                  <p className="muted" style={{ margin: "8px 0 0" }}>
-                    Additional terms (company)
-                  </p>
-                  <ul className="reasons">
+                  <p className="m-0 mt-2 text-sm text-muted">Additional terms (company)</p>
+                  <ul className={`${LIST} list-disc pl-5`}>
                     {current.addendum.companyClauses?.map((c) => (
                       <li key={c.id}>
                         <b>{c.title}.</b> {c.text}
@@ -348,7 +363,7 @@ export function ContractPanel({
                 </>
               )}
               {current.addendum.freeText && (
-                <blockquote className="tenant-text">{current.addendum.freeText}</blockquote>
+                <blockquote className={TENANT_TEXT}>{current.addendum.freeText}</blockquote>
               )}
             </details>
           )}
@@ -359,8 +374,8 @@ export function ContractPanel({
 
           {canAct && state === "CONTRACT" && current.status !== "signed" && (
             <details>
-              <summary>Prepare a new version</summary>
-              <div style={{ marginTop: 10 }}>
+              <summary className="cursor-pointer text-sm font-semibold">Prepare a new version</summary>
+              <div className="mt-2.5 grid gap-2">
                 <PrepareContractForm
                   leaseId={leaseId}
                   clauses={current.addendum.clauses}
@@ -368,7 +383,7 @@ export function ContractPanel({
                   label="Prepare a new version"
                   companyClauses={options?.companyClauses ?? []}
                 />
-                <p className="muted" style={{ fontSize: 12.5 }}>
+                <p className={NOTE_TEXT}>
                   The new version replaces this one: its approval is cancelled and its signing links stop working.
                 </p>
               </div>
@@ -376,7 +391,7 @@ export function ContractPanel({
           )}
 
           {older.length > 0 && (
-            <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+            <p className={NOTE_TEXT}>
               Earlier versions:{" "}
               {older.map((o, i) => (
                 <span key={o.id}>
@@ -387,7 +402,7 @@ export function ContractPanel({
           )}
         </div>
       )}
-    </section>
+    </Section>
   );
 }
 
@@ -413,37 +428,40 @@ export function EjariPanel({
   const issued = attempts.find((a) => a.status === "issued");
   const inFlight = attempts.some((a) => a.status === "queued" || a.status === "sending");
   return (
-    <section className="panel" aria-labelledby="ejari-h">
-      <div className="panel-head">
-        <h2 id="ejari-h">Ejari{demo ? " (simulated)" : ""}</h2>
-        <span className="hint">
-          {issued
-            ? `Registered, ${issued.ejariNo}`
-            : inFlight
-              ? "On its way to the registry"
-              : pendingApprovalId
-                ? "Waiting for approval"
-                : attempts.length
-                  ? "Needs a person"
-                  : "Not submitted yet"}
-        </span>
-      </div>
-      <div className="panel-pad stack">
+    <Section
+      id="ejari-h"
+      title={`Ejari${demo ? " (simulated)" : ""}`}
+      hint={
+        issued
+          ? `Registered, ${issued.ejariNo}`
+          : inFlight
+            ? "On its way to the registry"
+            : pendingApprovalId
+              ? "Waiting for approval"
+              : attempts.length
+                ? "Needs a person"
+                : "Not submitted yet"
+      }
+    >
+      <div className="grid gap-3">
         {attempts.length === 0 && (
-          <p className="muted" style={{ margin: 0 }}>
+          <p className="m-0 text-sm text-muted">
             The submission is built from the signed contract and waits for an officer&apos;s approval.
           </p>
         )}
         {attempts.map((a) => (
-          <div key={a.id} className="evidence">
-            <div className="evidence-head">
-              <b>Attempt {a.attempt}</b>
+          <div key={a.id} className={EVIDENCE}>
+            <div className="flex flex-wrap items-center gap-2">
+              <b className="font-semibold">Attempt {a.attempt}</b>
               <Status value={a.status} />
-              {a.completedAt && <span className="muted">{dateTime(a.completedAt)}</span>}
+              {a.completedAt && <span className="text-xs text-muted">{dateTime(a.completedAt)}</span>}
             </div>
             {a.autofix?.map((f) => (
-              <p key={f.field} className="alert" data-tone="warn" style={{ margin: "8px 0" }}>
-                <IconWarning size={15} />
+              <p
+                key={f.field}
+                className="m-0 flex items-start gap-2 rounded-xl border border-warning px-3.5 py-2.5 text-sm text-warning"
+              >
+                <IconWarning size={15} className="mt-0.5 shrink-0" />
                 <span>
                   Corrected {humanise(f.field).toLowerCase()} from <b>&ldquo;{f.from}&rdquo;</b> to{" "}
                   <b>&ldquo;{f.to}&rdquo;</b> (case or spacing only), from {f.source}. The signed contract keeps its
@@ -452,21 +470,21 @@ export function EjariPanel({
               </p>
             ))}
             {a.reasons.length > 0 && (
-              <ul className="reasons">
+              <ul className={`${LIST} list-disc pl-5`}>
                 {a.reasons.map((r) => (
                   <li key={r.code + r.message}>
-                    <span className="ref">{r.code}</span> {r.message}
+                    <span className="font-mono text-xs">{r.code}</span> {r.message}
                   </li>
                 ))}
               </ul>
             )}
-            {a.error && <p style={{ color: "var(--bad)", margin: "6px 0 0" }}>{a.error}</p>}
+            {a.error && <p className="m-0 text-sm font-semibold text-danger">{a.error}</p>}
             {a.ejariNo && (
-              <div className="btn-row" style={{ marginTop: 8 }}>
-                <span className="ref">{a.ejariNo}</span>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-mono text-xs">{a.ejariNo}</span>
                 {a.certificateDocumentId && (
                   <a
-                    className="btn small"
+                    className={buttonClass("ghost", "sm")}
                     href={doc(leaseId, a.certificateDocumentId)}
                     target="_blank"
                     rel="noreferrer"
@@ -478,9 +496,9 @@ export function EjariPanel({
             )}
           </div>
         ))}
-        <div className="btn-row">
+        <div className="flex flex-wrap items-center gap-2">
           {pendingApprovalId && (
-            <Link className="btn small" href={`/work?approval=${pendingApprovalId}`}>
+            <Link className={buttonClass("ghost", "sm")} href={`/work?approval=${pendingApprovalId}`}>
               Open the approval
             </Link>
           )}
@@ -488,12 +506,12 @@ export function EjariPanel({
             <ProposeEjariButton leaseId={leaseId} />
           )}
           {mockUrl && (
-            <a className="btn small" href={mockUrl} target="_blank" rel="noreferrer">
+            <a className={buttonClass("ghost", "sm")} href={mockUrl} target="_blank" rel="noreferrer">
               Open the simulated registry
             </a>
           )}
         </div>
       </div>
-    </section>
+    </Section>
   );
 }

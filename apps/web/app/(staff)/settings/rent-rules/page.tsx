@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
-import { AskAi } from "../../../../components/ask-ai";
-import { possessive } from "../../../../lib/format";
+import { AskAi, AskAiMenu } from "../../../../components/ask-ai";
 import { CompanySplit, pickCompany } from "../../../../components/company-split";
 import { CategoryControl } from "../../../../components/settings-tabs";
-import { PageHead } from "../../../../components/ui";
+import { SetPage } from "../../../../components/ui/settings";
+import { askPrompts } from "../../../../lib/ask-ai/prompts";
 import { get } from "../../../../lib/engine";
+import { possessive } from "../../../../lib/format";
 import { categoryOf } from "../../../../lib/portfolio";
 import type { CompanyRow, Me, RentRuleRow } from "../../../../lib/types";
 import { RentRules } from "./rule-form";
@@ -28,14 +29,12 @@ export default async function RentRulesPage({
   const counts: Record<string, number> = {};
   for (const r of rules ?? []) counts[r.companyId] = (counts[r.companyId] ?? 0) + 1;
   return (
-    <>
-      <PageHead
-        title="Rent rules"
-        lede="How far above or below the Smart Rental Index a company may ask, with optional AED limits. A unit's allowed price range comes from the rule that fits its company, type and area best."
-      />
-      <div className="settings-add">
-        <CategoryControl value={category} base="/settings/rent-rules" />
-      </div>
+    <SetPage
+      title="Rent rules"
+      lede="How far above or below the Smart Rental Index a company may ask, with optional AED limits. A unit's allowed price range comes from the rule that fits its company, type and area best. Anything outside it needs a manager."
+      actions={<AskAiMenu label="Ask AI" prompts={askPrompts.settingsPage("Rent rules")} />}
+    >
+      <CategoryControl value={category} base="/settings/rent-rules" />
       <CompanySplit
         companies={companies ?? []}
         selected={company}
@@ -44,27 +43,24 @@ export default async function RentRulesPage({
         counts={counts}
       >
         {company && (
-          <>
-            <div className="co-body-head">
-              <h2 className="section-title">{company.name}</h2>
-              {isAdmin && (
+          <RentRules
+            key={`${category}:${company.id}`}
+            rules={(rules ?? []).filter((r) => r.companyId === company.id)}
+            company={company}
+            category={category}
+            canEdit={isAdmin}
+            askAi={
+              isAdmin ? (
                 <AskAi
                   label="Ask AI to set a rent band"
                   prompt={`Set ${possessive(company.name)} ${category} rent band to `}
                 />
-              )}
-            </div>
-            <RentRules
-              key={`${category}:${company.id}`}
-              rules={(rules ?? []).filter((r) => r.companyId === company.id)}
-              company={company}
-              category={category}
-              canEdit={isAdmin}
-            />
-          </>
+              ) : null
+            }
+          />
         )}
-        {!isAdmin && <p className="muted settings-note">Only admins can change rules.</p>}
+        {!isAdmin && <p className="m-0 text-[13px] text-muted">Only admins can change rules.</p>}
       </CompanySplit>
-    </>
+    </SetPage>
   );
 }

@@ -1,48 +1,77 @@
 "use client";
 
-import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, type SyntheticEvent, useEffect, useRef, useState } from "react";
 import { VoiceOptions } from "../voice/voice-controls";
 import { QuickActions } from "./quick-actions-row";
 import type { Pill } from "./quick-actions.ts";
 
+export const TOOL_BTN =
+  "inline-flex h-[34px] min-w-[34px] cursor-pointer items-center justify-center gap-1.5 rounded-full border-0 bg-transparent px-1.5 text-muted shadow-none hover:bg-raised hover:text-ink disabled:cursor-not-allowed disabled:opacity-50 data-[recording]:text-danger focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ink";
+export const SEND_BTN =
+  "grid size-[34px] cursor-pointer place-items-center rounded-full border-0 bg-primary p-0 text-on-primary disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink";
+/** The text field inside the composer card: bare, so the card draws the border and focus. */
+export const FIELD_BARE =
+  "max-h-36 min-h-6 w-full resize-none !rounded-none !border-0 !bg-transparent !p-0 font-sans text-sm leading-normal text-ink !shadow-none !outline-none [field-sizing:content] placeholder:text-muted focus:!shadow-none focus-visible:!shadow-none";
+
 /**
- * The composer both chats share: one card holding the quick-action pills and, 8px below them with
- * the same left edge, the input row (field, mic, voice menu, send). The card draws the focus ring.
+ * The composer both chats share (staff dock and public chat): a rounded card with the field on top, tools (mic, voice settings) bottom left and the
+ * round send button bottom right. Suggestion chips (children) and quick-action pills sit below the card.
  */
-export function Composer({
+export function StaffComposer({
   pills,
   pillsLabel,
   onPick,
   pillsDisabled,
   onSubmit,
-  className,
+  field,
+  tools,
+  send,
   children,
 }: {
   pills: readonly Pill[];
   pillsLabel: string;
   onPick: (p: Pill) => void;
   pillsDisabled?: boolean | undefined;
-  onSubmit: (e: FormEvent) => void;
-  className?: string | undefined;
-  children: ReactNode;
+  onSubmit: (e: SyntheticEvent) => void;
+  field: ReactNode;
+  tools: ReactNode;
+  send: ReactNode;
+  /** Suggestion chips shown below the card. */
+  children?: ReactNode;
 }) {
+  const chips = Array.isArray(children) ? children.flat().filter(Boolean).length > 0 : !!children;
   return (
-    <div className={`ch-composer${className ? ` ${className}` : ""}`}>
-      <QuickActions pills={pills} onPick={onPick} disabled={pillsDisabled} label={pillsLabel} />
-      <form className="ch-row" onSubmit={onSubmit}>
-        {children}
+    <div className="grid min-w-0 gap-2.5 px-3 pb-1 pt-2">
+      <form
+        onSubmit={onSubmit}
+        className="rounded-[18px] border border-line bg-page py-2.5 pl-4 pr-2.5 focus-within:border-ink"
+      >
+        {field}
+        <div className="mt-1.5 flex items-center justify-between">
+          <div className="flex items-center gap-0.5 [&_.vm-pop]:!end-auto [&_.vm-pop]:!start-0">{tools}</div>
+          {send}
+        </div>
       </form>
+      {pills.length > 0 && (
+        <QuickActions pills={pills} onPick={onPick} disabled={pillsDisabled} label={pillsLabel} wrap />
+      )}
+      {chips && <div className="flex flex-wrap gap-1.5">{children}</div>}
     </div>
   );
 }
 
 /** Voice settings (auto-send, read replies aloud) in a small popover next to the mic. */
-export function VoiceMenu(props: {
+export function VoiceMenu({
+  buttonClassName,
+  ...props
+}: {
   auto: boolean;
   setAuto: (v: boolean) => void;
   read: boolean;
   setRead: (v: boolean) => void;
   canRead: boolean;
+  /** Replaces the default button look. */
+  buttonClassName?: string;
 }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
@@ -63,7 +92,7 @@ export function VoiceMenu(props: {
     <div className="vm" ref={box}>
       <button
         type="button"
-        className="btn small icon"
+        className={buttonClassName ?? TOOL_BTN}
         aria-label="Voice settings"
         aria-haspopup="true"
         aria-expanded={open}

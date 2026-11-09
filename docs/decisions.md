@@ -1102,6 +1102,13 @@ The leasing assistant automates the work up to the contract. Staff should approv
   card for an item the user didn't name (the tool looks the record up from the user's words), and untrusted text never
   triggers one. Decisions are audited as the user, exactly as from the inbox.
 - **Not included.** Approving several items at once, edits (rent, note) — the card links to the full approval.
+- **Amendment (reservation payment).** Asked to record a reservation ("record the reservation for A-BZVJ2V, paid today,
+  ref 1444"), `show_decision` with action `reservation` shows the application page's own reservation form for an
+  application whose applicant accepted the offer (an open `record_reservation` task). The amount is the accepted offer's,
+  from the engine; the model may only prefill the paid-on date (never after today) and the reference the user typed,
+  both editable. The click runs `POST /api/applications/:id/reservation` as the user (leasing roles), exactly as from
+  the application page; recording a reservation stays a person's act and is never toggleable. Also: a record whose
+  applicant accepted now says "Record the reservation payment" as its next step instead of "Waiting for the applicant".
 
 ## D49 — Per-document KYC settings, check severity and automatic re-upload emails
 

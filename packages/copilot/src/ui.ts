@@ -50,7 +50,7 @@ export const UnitCardItem = z.object({
 export type UnitCardItem = z.infer<typeof UnitCardItem>;
 
 /**
- * A decision the user asked for (approve or reject a pending approval, or record a site visit). The card shows what is
+ * A decision the user asked for (approve or reject a pending approval, record a site visit or a reservation payment). The card shows what is
  * being decided, and its buttons call the same staff route as the inbox or the application page, as the user: the
  * copilot only puts the card on screen, the click is the person's decision (AGENTS.md rules 3 and 11).
  */
@@ -74,6 +74,22 @@ export const DecisionCard = z.discriminatedUnion("decision", [
     ref: z.string(),
     name: z.string(),
     unit: z.string(),
+    href: z.string(),
+    blocked: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal("decision"),
+    decision: z.literal("reservation"),
+    applicationId: z.string(),
+    ref: z.string(),
+    name: z.string(),
+    unit: z.string(),
+    /** The accepted offer's reservation, formatted by code from the engine's record. */
+    amount: z.string(),
+    /** Prefills the user can change before clicking: paid on (never after `today`) and the payment reference. */
+    paidOn: z.string(),
+    today: z.string(),
+    reference: z.string(),
     href: z.string(),
     blocked: z.string().optional(),
   }),

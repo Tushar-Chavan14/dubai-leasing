@@ -131,6 +131,9 @@ export const viewingTime = (iso: string) => fmtViewing.format(new Date(iso));
 const fmtDubaiDay = new Intl.DateTimeFormat("en-CA", { ...tz, year: "numeric", month: "2-digit", day: "2-digit" });
 const fmtClock = new Intl.DateTimeFormat("en-GB", { ...tz, hour: "2-digit", minute: "2-digit", hour12: false });
 
+/** 24-hour Dubai clock time, e.g. "09:12". */
+export const clockTime = (iso: string) => fmtClock.format(new Date(iso));
+
 /** "Today, 14:05", "Yesterday", "3 days ago", then a date. `today` is the engine's Dubai calendar day. */
 export function relativeTime(today: string, iso: string): string {
   const day = fmtDubaiDay.format(new Date(iso));
@@ -139,6 +142,16 @@ export function relativeTime(today: string, iso: string): string {
   if (n === 1) return "Yesterday";
   if (n > 1 && n < 7) return `${n} days ago`;
   return dateTime(iso);
+}
+
+/** Timestamp for the activity column: "Today 09:12", "Yesterday 18:20", then "2 Nov 09:12" (Dubai time). */
+export function logStamp(today: string, iso: string): string {
+  const day = fmtDubaiDay.format(new Date(iso));
+  const n = today ? diffDays(day as CalendarDate, today as CalendarDate) : 99;
+  const t = fmtClock.format(new Date(iso));
+  if (n === 0) return `Today ${t}`;
+  if (n === 1) return `Yesterday ${t}`;
+  return `${shortDate(day)} ${t}`;
 }
 
 /** Whole days from `today` to `d` (negative when overdue). */

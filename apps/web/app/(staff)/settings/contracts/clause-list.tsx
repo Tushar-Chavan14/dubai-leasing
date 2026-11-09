@@ -1,10 +1,12 @@
 "use client";
 
 import { useActionState, useRef, useState } from "react";
-import { IconPlus, IconWarning } from "../../../../lib/icons";
+import { PlusIcon as IconPlus, WarningIcon as IconWarning } from "@phosphor-icons/react";
 import { subtypeLabel } from "../../../../lib/portfolio";
 import type { CompanyClauseView, CompanyRow, ContractRuleRow } from "../../../../lib/types";
 import { addClause, editClause, removeClause, setClauseRulesAction } from "./actions";
+import { FIELD, HINT, LABEL } from "../../../../components/ui/form";
+import { ALERT, BTN, CHECK_ROW, GRID6, SPAN, SET_INPUT, SET_TEXTAREA } from "../../../../components/ui/settings";
 
 function AddClauseForm({
   company,
@@ -27,9 +29,9 @@ function AddClauseForm({
     {},
   );
   return (
-    <form action={action} className="rule-form" noValidate>
+    <form action={action} className="grid gap-4" noValidate>
       {state.error && (
-        <div className="alert" data-tone="bad" role="alert">
+        <div className={ALERT.bad} role="alert">
           <IconWarning size={16} />
           <div>
             <strong>{state.error}</strong>
@@ -44,10 +46,11 @@ function AddClauseForm({
         </div>
       )}
       <input type="hidden" name="companyId" value={company.id} />
-      <div className="grid-fields">
-        <label className="field span-6">
-          <span className="field-label">Title</span>
+      <div className={GRID6}>
+        <label className={`${FIELD} ${SPAN[6]}`}>
+          <span className={LABEL}>Title</span>
           <input
+            className={SET_INPUT}
             name="title"
             maxLength={120}
             required
@@ -56,9 +59,10 @@ function AddClauseForm({
             onChange={(e) => setTitle(e.target.value)}
           />
         </label>
-        <label className="field span-6">
-          <span className="field-label">Clause text</span>
+        <label className={`${FIELD} ${SPAN[6]}`}>
+          <span className={LABEL}>Clause text</span>
           <textarea
+            className={SET_TEXTAREA}
             name="text"
             rows={4}
             maxLength={1200}
@@ -66,16 +70,16 @@ function AddClauseForm({
             value={text}
             onChange={(e) => setText(e.target.value)}
           />
-          <span className="hint">
+          <span className={HINT}>
             Saved as approved. It goes under Additional terms in this company&apos;s contracts.
           </span>
         </label>
         {rules.length > 0 && (
-          <fieldset className="field span-6">
-            <legend className="field-label">
+          <fieldset className={`${FIELD} ${SPAN[6]} m-0 min-w-0 border-0 p-0`}>
+            <legend className={`${LABEL} p-0`}>
               Add to rules <em>(optional)</em>
             </legend>
-            <div className="check-row">
+            <div className={CHECK_ROW}>
               {rules.map((r) => (
                 <label key={r.id}>
                   <input type="checkbox" name="ruleIds" value={r.id} />
@@ -86,17 +90,17 @@ function AddClauseForm({
           </fieldset>
         )}
         {state.needsConfirm && (
-          <label className="field span-6 check-row">
+          <label className={`${CHECK_ROW} ${SPAN[6]}`}>
             <input type="checkbox" name="confirmValues" />
             The clause includes amounts or dates. I checked them.
           </label>
         )}
       </div>
-      <div className="btn-row">
-        <button type="submit" className="btn primary" disabled={pending}>
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="submit" className={BTN.primary} disabled={pending}>
           {pending ? "Saving…" : "Save clause"}
         </button>
-        <button type="button" className="btn ghost" onClick={onDone}>
+        <button type="button" className={BTN.ghost} onClick={onDone}>
           Cancel
         </button>
       </div>
@@ -110,7 +114,7 @@ export function ClauseText({ text }: { text: string }) {
     <>
       {text.split(/(\[[^[\]]{1,80}\])/).map((part, i) =>
         /^\[[^[\]]+\]$/.test(part) ? (
-          <span key={i} className="tpl-blank" data-state="ok">
+          <span key={i} className="mx-0.5 inline-block rounded bg-accent px-1.5 text-[12.5px] leading-5 text-on-accent">
             {part.slice(1, -1)}
           </span>
         ) : (
@@ -128,9 +132,9 @@ function RuleTicks({ c, rules }: { c: CompanyClauseView; rules: ContractRuleRow[
   const form = useRef<HTMLFormElement>(null);
   const [state, act, pending] = useActionState(setClauseRulesAction, {});
   return (
-    <form ref={form} action={act} className="check-row clause-rules">
+    <form ref={form} action={act} className={CHECK_ROW}>
       <input type="hidden" name="clauseId" value={c.id} />
-      <span className="muted">In rules:</span>
+      <span className="text-muted">In rules:</span>
       {rules.map((r) => (
         <label key={r.id}>
           <input
@@ -146,7 +150,7 @@ function RuleTicks({ c, rules }: { c: CompanyClauseView; rules: ContractRuleRow[
         </label>
       ))}
       {state.error && (
-        <span className="err" role="alert">
+        <span className="text-xs text-danger" role="alert">
           {state.error}
         </span>
       )}
@@ -186,10 +190,10 @@ export function ClauseItem({
   const [removeState, remove, removing] = useActionState(removeClause, {});
   if (editing) {
     return (
-      <li className="clause-item">
-        <form action={save} className="rule-form" noValidate>
+      <li className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 border-t border-line py-3 first:border-t-0 [&>div]:min-w-[300px] [&>div]:flex-1 [&>form:only-child]:flex-[1_1_100%]">
+        <form action={save} className="grid gap-4" noValidate>
           {state.error && (
-            <div className="alert" data-tone="bad" role="alert">
+            <div className={ALERT.bad} role="alert">
               <IconWarning size={16} />
               <div>
                 <strong>{state.error}</strong>
@@ -197,14 +201,22 @@ export function ClauseItem({
             </div>
           )}
           <input type="hidden" name="clauseId" value={c.id} />
-          <div className="grid-fields">
-            <label className="field span-6">
-              <span className="field-label">Title</span>
-              <input name="title" maxLength={120} required value={title} onChange={(e) => setTitle(e.target.value)} />
+          <div className={GRID6}>
+            <label className={`${FIELD} ${SPAN[6]}`}>
+              <span className={LABEL}>Title</span>
+              <input
+                className={SET_INPUT}
+                name="title"
+                maxLength={120}
+                required
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+              />
             </label>
-            <label className="field span-6">
-              <span className="field-label">Clause text</span>
+            <label className={`${FIELD} ${SPAN[6]}`}>
+              <span className={LABEL}>Clause text</span>
               <textarea
+                className={SET_TEXTAREA}
                 name="text"
                 rows={4}
                 maxLength={1200}
@@ -212,24 +224,24 @@ export function ClauseItem({
                 value={text}
                 onChange={(e) => setText(e.target.value)}
               />
-              <span className="hint">
+              <span className={HINT}>
                 Contracts prepared from now on use the new wording. Signed contracts don&apos;t change.
                 {c.fromTemplate &&
                   " Words in [brackets] are filled from the records: use any name from the template's Fields list, like [Community]."}
               </span>
             </label>
             {state.needsConfirm && (
-              <label className="field span-6 check-row">
+              <label className={`${CHECK_ROW} ${SPAN[6]}`}>
                 <input type="checkbox" name="confirmValues" />
                 The clause includes amounts or dates. I checked them.
               </label>
             )}
           </div>
-          <div className="btn-row">
-            <button type="submit" className="btn primary small" disabled={saving}>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="submit" className={BTN.primary} disabled={saving}>
               {saving ? "Saving…" : "Save"}
             </button>
-            <button type="button" className="btn ghost small" onClick={() => setEditing(false)}>
+            <button type="button" className={BTN.ghost} onClick={() => setEditing(false)}>
               Cancel
             </button>
           </div>
@@ -238,23 +250,27 @@ export function ClauseItem({
     );
   }
   return (
-    <li className="clause-item">
-      <div className="stack" style={{ gap: 6 }}>
+    <li className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 border-t border-line py-3 first:border-t-0 [&>div]:min-w-[300px] [&>div]:flex-1 [&>form:only-child]:flex-[1_1_100%]">
+      <div className="grid gap-1.5">
         <div>
           <b>{c.title}.</b> <ClauseText text={c.text} />{" "}
           {c.fromTemplate && (
-            <span className="status" data-tone="quiet">
+            <span
+              className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${"border border-line text-muted"}`}
+            >
               From template
             </span>
           )}
           {c.locked && (
-            <span className="status" data-tone="quiet">
+            <span
+              className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${"border border-line text-muted"}`}
+            >
               In template wording
             </span>
           )}
         </div>
         {approveFormId && (
-          <label className="check-row">
+          <label className={CHECK_ROW}>
             <input type="checkbox" name="ruleClauseIds" value={c.id} form={approveFormId} defaultChecked />
             {ruleLabel ? `Add to the ${ruleLabel} rule and the rules using this template` : "Add to the contract rules"}
           </label>
@@ -264,7 +280,7 @@ export function ClauseItem({
       {canEdit && !c.locked && (
         <form
           action={remove}
-          className="btn-row"
+          className="flex flex-wrap items-center gap-2"
           onSubmit={(e) => {
             if (
               !window.confirm(
@@ -277,14 +293,14 @@ export function ClauseItem({
           }}
         >
           <input type="hidden" name="clauseId" value={c.id} />
-          <button type="button" className="btn small" onClick={() => setEditing(true)}>
+          <button type="button" className={BTN.ghost} onClick={() => setEditing(true)}>
             Edit
           </button>
-          <button type="submit" className="btn small danger" disabled={removing}>
+          <button type="submit" className={BTN.danger} disabled={removing}>
             {removing ? "Removing…" : "Remove"}
           </button>
           {removeState.error && (
-            <span className="err" role="alert">
+            <span className="text-xs text-danger" role="alert">
               {removeState.error}
             </span>
           )}
@@ -311,25 +327,31 @@ export function ClauseList({
 }) {
   const [adding, setAdding] = useState(false);
   return (
-    <section className="panel panel-pad">
-      <div className="co-body-head">
-        <h3 className="section-title">Clauses</h3>
+    <section className="grid gap-3.5 rounded-card border border-line bg-page p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 className="m-0 font-sans text-[15px] font-semibold tracking-tight text-ink">Clauses</h3>
         {canEdit && !adding && (
-          <button type="button" className="btn small" onClick={() => setAdding(true)}>
+          <button type="button" className={BTN.ghost} onClick={() => setAdding(true)}>
             <IconPlus size={14} />
             Add clause
           </button>
         )}
       </div>
-      <p className="muted tpl-note">
+      <p className="m-0 text-[12.5px] text-muted">
         Clauses tagged From template print in the template&rsquo;s own place; the others go under Additional terms. A
         clause prints only in the rules it is ticked in.
       </p>
+      {clauses.some((c) => c.fromTemplate) && (
+        <p className="m-0 text-[12.5px] text-muted">
+          Words in [brackets] are filled from the records (shown highlighted, like <ClauseText text="[Community]" />
+          ). In a From template clause, use any name from the template&rsquo;s Fields list.
+        </p>
+      )}
       {adding && <AddClauseForm company={company} rules={rules} onDone={() => setAdding(false)} />}
       {clauses.length === 0 ? (
-        <p className="muted">No clauses yet. Upload a sample contract on a rule, or add one.</p>
+        <p className="m-0 text-muted">No clauses yet. Upload a sample contract on a rule, or add one.</p>
       ) : (
-        <ul className="clause-items">
+        <ul className="m-0 list-none p-0">
           {clauses.map((c) => (
             <ClauseItem key={c.id} c={c} canEdit={canEdit} rules={rules} />
           ))}

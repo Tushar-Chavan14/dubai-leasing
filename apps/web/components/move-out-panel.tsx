@@ -14,10 +14,15 @@ import {
   tickMoveOutItem,
 } from "../app/(staff)/leases/[id]/tenancy-actions";
 import { aedShort, longDate } from "../lib/format";
-import { IconCheck, IconWarning } from "../lib/icons";
+import { WarningIcon as IconWarning } from "@phosphor-icons/react";
 import { checkPhotoFile, preparePhoto } from "../lib/images";
-import { Result } from "./tenancy-panels";
 import { Status } from "./ui";
+import { buttonClass } from "./ui/button";
+import { FIELD, LABEL } from "./ui/form";
+import { FactKey, FactList, FactVal, Section } from "./ui/record";
+import { Result } from "./ui/result";
+import { SET_INPUT, SET_SELECT } from "./ui/settings";
+import { CheckLine, FORM_ROW, ItemRow, LINK, LIST, NOTE, SUB_HEAD } from "./ui/tenancy";
 
 export interface MoveOutView {
   status: string;
@@ -119,7 +124,7 @@ export function MoveOutPanel({
   const label = (id: string) => view.priceList.find((p) => p.id === id)?.label ?? id;
   const photoLinks = (ids: string[], what: string) =>
     ids.map((id, n) => (
-      <a key={id} className="link" href={`/api/leases/${leaseId}/photos/${id}`} target="_blank" rel="noreferrer">
+      <a key={id} className={LINK} href={`/api/leases/${leaseId}/photos/${id}`} target="_blank" rel="noreferrer">
         {what} {n + 1}
       </a>
     ));
@@ -127,295 +132,329 @@ export function MoveOutPanel({
   const payable = s && (s.status === "approved" || (s.status === "accepted" && !s.needsApproval));
 
   return (
-    <section className="panel" aria-labelledby="mo-h">
-      <div className="panel-head">
-        <h2 id="mo-h">Move-out</h2>
-        <span className="hint">
+    <Section
+      id="mo-h"
+      title="Move-out"
+      hint={
+        <>
           Moving out {longDate(view.moveOutOn)}
           {view.scheduledAt ? `, inspection ${dubaiTime(view.scheduledAt)}` : ", inspection not booked"}
-        </span>
-      </div>
-      <div className="panel-pad stack">
-        <ul className="checklist">
-          {view.items
-            .filter((i) => i.kind === "check")
-            .map((i) => (
-              <li key={i.id} data-done={i.done ? "" : undefined}>
-                {canAct && open ? (
-                  <form action={tick} style={{ display: "inline" }}>
+        </>
+      }
+    >
+      <ul className={LIST}>
+        {view.items
+          .filter((i) => i.kind === "check")
+          .map((i) => (
+            <CheckLine
+              key={i.id}
+              done={i.done}
+              action={
+                canAct && open ? (
+                  <form action={tick}>
                     <input type="hidden" name="leaseId" value={leaseId} />
                     <input type="hidden" name="item" value={i.id} />
                     <input type="hidden" name="done" value={String(!i.done)} />
-                    <button type="submit" className="btn small" disabled={ticking} aria-pressed={i.done}>
+                    <button
+                      type="submit"
+                      className={buttonClass(i.done ? "primary" : "ghost", "sm")}
+                      disabled={ticking}
+                      aria-pressed={i.done}
+                    >
                       {i.done ? "✓" : "Tick"}
                     </button>
                   </form>
-                ) : i.done ? (
-                  <IconCheck size={14} />
-                ) : null}{" "}
-                {i.label}
-              </li>
-            ))}
-          <li data-done={view.ejariCancelledOn ? "" : undefined}>
-            {view.ejariCancelledOn ? <IconCheck size={14} /> : <IconWarning size={14} />} Ejari{" "}
-            {view.ejariNo
-              ? view.ejariCancelledOn
-                ? `${view.ejariNo} cancelled ${longDate(view.ejariCancelledOn)}`
-                : `${view.ejariNo} active (cancelled automatically from the move-out date)`
-              : "none on record"}
-          </li>
-        </ul>
+                ) : undefined
+              }
+            >
+              {i.label}
+            </CheckLine>
+          ))}
+        <CheckLine done={!!view.ejariCancelledOn}>
+          Ejari{" "}
+          {view.ejariNo
+            ? view.ejariCancelledOn
+              ? `${view.ejariNo} cancelled ${longDate(view.ejariCancelledOn)}`
+              : `${view.ejariNo} active (cancelled automatically from the move-out date)`
+            : "none on record"}
+        </CheckLine>
+      </ul>
 
-        <div>
-          <h3 className="section-title" style={{ fontSize: 14 }}>
-            Rooms: move-in and move-out photos
-          </h3>
-          <ul className="list">
-            {view.rooms.map((r) => {
-              const sug = view.suggestions.find((x) => x.room === r.room);
-              return (
-                <li key={r.room} className="list-row">
-                  <div>
-                    <div className="title">
-                      {r.moveOut.length ? <IconCheck size={14} /> : <IconWarning size={14} />} {r.room}
-                    </div>
-                    <div className="meta">
-                      {r.moveIn.length ? (
-                        photoLinks(r.moveIn, "move-in")
-                      ) : (
-                        <span className="muted">no move-in photo</span>
-                      )}
-                      {photoLinks(r.moveOut, "move-out")}
-                      {upload?.room === r.room && upload.error ? <span className="muted">{upload.error}</span> : null}
-                    </div>
-                    {sug && (
-                      <div className="meta" style={{ display: "block" }}>
-                        {sug.status === "pending" && <span className="muted">Comparing…</span>}
-                        {sug.status === "needs_human" && <span className="muted">{sug.reasons.join(" ")}</span>}
-                        {sug.status === "ok" && !sug.suggestions.length && (
-                          <span className="muted">No clear damage seen (suggestion only).</span>
-                        )}
-                        {sug.suggestions.map((x, n) => (
-                          <form key={n} action={add} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                            <input type="hidden" name="leaseId" value={leaseId} />
-                            <input type="hidden" name="room" value={r.room} />
-                            <input type="hidden" name="itemId" value={x.itemId} />
-                            <input type="hidden" name="quantity" value={x.quantity} />
-                            <input type="hidden" name="fromSuggestion" value="true" />
-                            <span>
-                              Suggestion: {x.label} × {x.quantity}, “{x.description}” ({Math.round(x.confidence * 100)}
-                              %)
-                            </span>
-                            {canAct && view.findingsEditable && (
-                              <button type="submit" className="btn small" disabled={adding}>
-                                Confirm
-                              </button>
-                            )}
-                          </form>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  {canAct && open && (
-                    <label className="btn small">
-                      {upload?.room === r.room && upload.busy ? "Uploading…" : "Add photo"}
-                      <input
-                        type="file"
-                        accept="image/jpeg,image/png,image/webp"
-                        capture="environment"
-                        hidden
-                        onChange={(e) => {
-                          const f = e.target.files?.[0];
-                          if (f) void addPhoto(r.room, f);
-                          e.target.value = "";
-                        }}
-                      />
-                    </label>
+      <h3 className={`${SUB_HEAD} mt-1`}>Rooms: move-in and move-out photos</h3>
+      <ul className={LIST}>
+        {view.rooms.map((r) => {
+          const sug = view.suggestions.find((x) => x.room === r.room);
+          return (
+            <ItemRow
+              key={r.room}
+              title={
+                <span className="inline-flex items-center gap-1.5">
+                  {!r.moveOut.length && (
+                    <IconWarning size={14} className="text-warning" aria-label="No move-out photo" />
                   )}
-                </li>
-              );
-            })}
-          </ul>
-          {canAct && open && (
-            <form action={compare}>
-              <input type="hidden" name="leaseId" value={leaseId} />
-              <button type="submit" className="btn small" disabled={comparing}>
-                Compare with move-in photos
-              </button>
-              <span className="muted" style={{ fontSize: 13, marginLeft: 8 }}>
-                Local vision model; suggestions only. Normal wear and tear is not damage.
-              </span>
-            </form>
-          )}
-        </div>
-
-        <div>
-          <h3 className="section-title" style={{ fontSize: 14 }}>
-            Confirmed damage
-          </h3>
-          {view.findings.length ? (
-            <ul className="list">
-              {view.findings.map((f) => {
-                const price = view.priceList.find((p) => p.id === f.itemId)?.priceFils ?? f.otherAmountFils ?? 0;
-                return (
-                  <li key={f.id} className="list-row">
-                    <div>
-                      <div className="title">
-                        {f.room ? `${f.room}: ` : ""}
-                        {f.itemId === "other" ? f.otherLabel : label(f.itemId)} × {f.quantity}
-                      </div>
-                      <div className="meta">
-                        {aedShort(price * f.quantity)}
-                        {f.itemId === "other" ? " · not on the price list: finance approves" : ""}
-                        {f.fromSuggestion ? " · from a suggestion" : ""}
-                      </div>
-                    </div>
-                    {canAct && view.findingsEditable && (
-                      <form action={remove}>
-                        <input type="hidden" name="leaseId" value={leaseId} />
-                        <input type="hidden" name="findingId" value={f.id} />
-                        <button type="submit" className="btn small">
-                          Remove
+                  {r.room}
+                </span>
+              }
+              meta={
+                <>
+                  {r.moveIn.length ? photoLinks(r.moveIn, "move-in") : <span>no move-in photo</span>}
+                  {photoLinks(r.moveOut, "move-out")}
+                  {upload?.room === r.room && upload.error ? <span>{upload.error}</span> : null}
+                </>
+              }
+              side={
+                canAct && open ? (
+                  <label className={`${buttonClass("ghost", "sm")} cursor-pointer`}>
+                    {upload?.room === r.room && upload.busy ? "Uploading…" : "Add photo"}
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      capture="environment"
+                      hidden
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) void addPhoto(r.room, f);
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                ) : undefined
+              }
+            >
+              {sug && (
+                <div className="grid gap-1.5">
+                  {sug.status === "pending" && <span className={NOTE}>Comparing…</span>}
+                  {sug.status === "needs_human" && <span className={NOTE}>{sug.reasons.join(" ")}</span>}
+                  {sug.status === "ok" && !sug.suggestions.length && (
+                    <span className={NOTE}>No clear damage seen (suggestion only).</span>
+                  )}
+                  {sug.suggestions.map((x, n) => (
+                    <form key={n} action={add} className="flex flex-wrap items-center justify-between gap-2">
+                      <input type="hidden" name="leaseId" value={leaseId} />
+                      <input type="hidden" name="room" value={r.room} />
+                      <input type="hidden" name="itemId" value={x.itemId} />
+                      <input type="hidden" name="quantity" value={x.quantity} />
+                      <input type="hidden" name="fromSuggestion" value="true" />
+                      <span className="text-sm">
+                        Suggestion: {x.label} × {x.quantity}, “{x.description}” ({Math.round(x.confidence * 100)}%)
+                      </span>
+                      {canAct && view.findingsEditable && (
+                        <button type="submit" className={buttonClass("ghost", "sm")} disabled={adding}>
+                          Confirm
                         </button>
-                      </form>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          ) : (
-            <p className="muted" style={{ margin: 0 }}>
-              None. The full deposit of {aedShort(view.depositFils)} is refunded.
-            </p>
-          )}
-          {canAct && view.findingsEditable && (
-            <form action={add} className="stack" style={{ marginTop: 10 }}>
-              <input type="hidden" name="leaseId" value={leaseId} />
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <select name="room" defaultValue="">
-                  <option value="">Whole unit</option>
-                  {view.rooms.map((r) => (
-                    <option key={r.room}>{r.room}</option>
+                      )}
+                    </form>
                   ))}
-                </select>
-                <select name="itemId" value={item} onChange={(e) => setItem(e.target.value)} required>
-                  <option value="">Price-list item…</option>
-                  {view.priceList.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.label} ({aedShort(p.priceFils)} per {p.unit})
-                    </option>
-                  ))}
-                  <option value="other">Other (finance approves)</option>
-                </select>
-                <input name="quantity" type="number" min={1} max={999} defaultValue={1} style={{ width: 70 }} />
-              </div>
-              {item === "other" && (
-                <div style={{ display: "flex", gap: 8 }}>
-                  <input name="otherLabel" placeholder="What is it?" maxLength={120} required />
-                  <input
-                    name="otherAed"
-                    type="number"
-                    min={1}
-                    step="0.01"
-                    placeholder="AED"
-                    required
-                    style={{ width: 110 }}
-                  />
                 </div>
               )}
-              <button type="submit" className="btn small" disabled={adding} style={{ width: "fit-content" }}>
-                Add damage item
+            </ItemRow>
+          );
+        })}
+      </ul>
+      {canAct && open && (
+        <form action={compare} className={FORM_ROW}>
+          <input type="hidden" name="leaseId" value={leaseId} />
+          <button type="submit" className={buttonClass("ghost", "sm")} disabled={comparing}>
+            Compare with move-in photos
+          </button>
+          <span className={NOTE}>Local vision model; suggestions only. Normal wear and tear is not damage.</span>
+        </form>
+      )}
+
+      <h3 className={`${SUB_HEAD} mt-1`}>Confirmed damage</h3>
+      {view.findings.length ? (
+        <ul className={LIST}>
+          {view.findings.map((f) => {
+            const price = view.priceList.find((p) => p.id === f.itemId)?.priceFils ?? f.otherAmountFils ?? 0;
+            return (
+              <ItemRow
+                key={f.id}
+                title={
+                  <>
+                    {f.room ? `${f.room}: ` : ""}
+                    {f.itemId === "other" ? f.otherLabel : label(f.itemId)} × {f.quantity}
+                  </>
+                }
+                meta={
+                  <span>
+                    {aedShort(price * f.quantity)}
+                    {f.itemId === "other" ? " · not on the price list: finance approves" : ""}
+                    {f.fromSuggestion ? " · from a suggestion" : ""}
+                  </span>
+                }
+                side={
+                  canAct && view.findingsEditable ? (
+                    <form action={remove}>
+                      <input type="hidden" name="leaseId" value={leaseId} />
+                      <input type="hidden" name="findingId" value={f.id} />
+                      <button type="submit" className={buttonClass("ghost", "sm")}>
+                        Remove
+                      </button>
+                    </form>
+                  ) : undefined
+                }
+              />
+            );
+          })}
+        </ul>
+      ) : (
+        <p className="m-0 text-sm text-muted">None. The full deposit of {aedShort(view.depositFils)} is refunded.</p>
+      )}
+      {canAct && view.findingsEditable && (
+        <form action={add} className="grid gap-2">
+          <input type="hidden" name="leaseId" value={leaseId} />
+          <div className={FORM_ROW}>
+            <select name="room" defaultValue="" aria-label="Room" className={`${SET_SELECT} w-auto!`}>
+              <option value="">Whole unit</option>
+              {view.rooms.map((r) => (
+                <option key={r.room}>{r.room}</option>
+              ))}
+            </select>
+            <select
+              name="itemId"
+              value={item}
+              onChange={(e) => setItem(e.target.value)}
+              required
+              aria-label="Price-list item"
+              className={`${SET_SELECT} w-auto! max-w-full`}
+            >
+              <option value="">Price-list item…</option>
+              {view.priceList.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label} ({aedShort(p.priceFils)} per {p.unit})
+                </option>
+              ))}
+              <option value="other">Other (finance approves)</option>
+            </select>
+            <input
+              name="quantity"
+              type="number"
+              min={1}
+              max={999}
+              defaultValue={1}
+              aria-label="Quantity"
+              className={`${SET_INPUT} w-[76px]!`}
+            />
+          </div>
+          {item === "other" && (
+            <div className={FORM_ROW}>
+              <input
+                name="otherLabel"
+                placeholder="What is it?"
+                maxLength={120}
+                required
+                aria-label="What is it?"
+                className={`${SET_INPUT} w-auto!`}
+              />
+              <input
+                name="otherAed"
+                type="number"
+                min={1}
+                step="0.01"
+                placeholder="AED"
+                required
+                aria-label="Amount in AED"
+                className={`${SET_INPUT} w-[110px]!`}
+              />
+            </div>
+          )}
+          <div>
+            <button type="submit" className={buttonClass("ghost", "sm")} disabled={adding}>
+              Add damage item
+            </button>
+          </div>
+        </form>
+      )}
+
+      {canAct && open && (
+        <form action={complete} className="grid gap-2">
+          <input type="hidden" name="leaseId" value={leaseId} />
+          <div>
+            <button
+              type="submit"
+              className={buttonClass("primary", "sm")}
+              disabled={completing || view.missing.length > 0}
+            >
+              Complete inspection and send the deposit statement
+            </button>
+          </div>
+          {view.missing.length > 0 && <p className={NOTE}>Still missing: {view.missing.join("; ")}.</p>}
+        </form>
+      )}
+
+      {s && (
+        <div className="grid gap-3 rounded-xl border border-line p-3.5">
+          <h3 className={`${SUB_HEAD} flex flex-wrap items-center gap-2`}>
+            Deposit statement {s.revision} <Status value={s.status} />
+          </h3>
+          <FactList>
+            <FactKey>Deposit</FactKey>
+            <FactVal>{aedShort(s.depositFils)}</FactVal>
+            <FactKey>Deductions</FactKey>
+            <FactVal>{aedShort(s.deductionsFils)}</FactVal>
+            <FactKey>Refund</FactKey>
+            <FactVal>
+              <b>{aedShort(s.refundFils)}</b>
+              {s.needsApproval ? " · finance approval needed" : ""}
+            </FactVal>
+            {s.owedFils > 0 && (
+              <>
+                <FactKey>Beyond the deposit</FactKey>
+                <FactVal>{aedShort(s.owedFils)} (a manager decides)</FactVal>
+              </>
+            )}
+          </FactList>
+          {s.documentId && (
+            <a
+              className={`${LINK} w-fit text-sm`}
+              href={`/api/leases/${leaseId}/documents/${s.documentId}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Statement PDF
+            </a>
+          )}
+          {canAct && s.status === "superseded" && (
+            <form action={reissue}>
+              <input type="hidden" name="leaseId" value={leaseId} />
+              <button type="submit" className={buttonClass("ghost", "sm")} disabled={reissuing}>
+                Reissue corrected statement
               </button>
             </form>
           )}
-        </div>
-
-        {canAct && open && (
-          <form action={complete}>
-            <input type="hidden" name="leaseId" value={leaseId} />
-            <button type="submit" className="btn primary" disabled={completing || view.missing.length > 0}>
-              Complete inspection and send the deposit statement
-            </button>
-            {view.missing.length > 0 && (
-              <p className="muted" style={{ fontSize: 13 }}>
-                Still missing: {view.missing.join("; ")}.
-              </p>
-            )}
-          </form>
-        )}
-
-        {s && (
-          <div>
-            <h3 className="section-title" style={{ fontSize: 14 }}>
-              Deposit statement {s.revision} <Status value={s.status} />
-            </h3>
-            <dl className="facts">
-              <dt>Deposit</dt>
-              <dd>{aedShort(s.depositFils)}</dd>
-              <dt>Deductions</dt>
-              <dd>{aedShort(s.deductionsFils)}</dd>
-              <dt>Refund</dt>
-              <dd>
-                <b>{aedShort(s.refundFils)}</b>
-                {s.needsApproval ? " · finance approval needed" : ""}
-              </dd>
-              {s.owedFils > 0 && (
-                <>
-                  <dt>Beyond the deposit</dt>
-                  <dd>{aedShort(s.owedFils)} (a manager decides)</dd>
-                </>
-              )}
-            </dl>
-            {s.documentId && (
-              <a
-                className="link"
-                href={`/api/leases/${leaseId}/documents/${s.documentId}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Statement PDF
-              </a>
-            )}
-            {canAct && s.status === "superseded" && (
-              <form action={reissue}>
-                <input type="hidden" name="leaseId" value={leaseId} />
-                <button type="submit" className="btn small" disabled={reissuing}>
-                  Reissue corrected statement
-                </button>
-              </form>
-            )}
-            {isFinance && payable && (
-              <form action={showAccount} style={{ marginTop: 8 }}>
-                <input type="hidden" name="leaseId" value={leaseId} />
-                <button type="submit" className="btn small" disabled={showing}>
+          {isFinance && payable && (
+            <form action={showAccount} className="grid gap-2">
+              <input type="hidden" name="leaseId" value={leaseId} />
+              <div>
+                <button type="submit" className={buttonClass("ghost", "sm")} disabled={showing}>
                   Show refund account
                 </button>
-                <Result s={acctState} />
-              </form>
-            )}
-            {isFinance && payable && (
-              <form action={pay} style={{ display: "flex", gap: 8, alignItems: "end", marginTop: 8 }}>
-                <input type="hidden" name="leaseId" value={leaseId} />
-                <label className="field">
-                  <span className="field-label">Paid on</span>
-                  <input type="date" name="paidOn" max={today} defaultValue={today} required />
-                </label>
-                <label className="field">
-                  <span className="field-label">Bank reference</span>
-                  <input name="ref" maxLength={120} required />
-                </label>
-                <button type="submit" className="btn primary small" disabled={paying}>
-                  Record refund paid
-                </button>
-              </form>
-            )}
-            {s.paidOn && <p className="muted">Refund paid {longDate(s.paidOn)}.</p>}
-          </div>
-        )}
-        {[tickState, cmpState, addState, rmState, doneState, reState, payState].map((st, n) => (
-          <Result key={n} s={st} />
-        ))}
-      </div>
-    </section>
+              </div>
+              <Result s={acctState} />
+            </form>
+          )}
+          {isFinance && payable && (
+            <form action={pay} className="flex flex-wrap items-end gap-2">
+              <input type="hidden" name="leaseId" value={leaseId} />
+              <label className={FIELD}>
+                <span className={LABEL}>Paid on</span>
+                <input type="date" name="paidOn" max={today} defaultValue={today} required className={SET_INPUT} />
+              </label>
+              <label className={FIELD}>
+                <span className={LABEL}>Bank reference</span>
+                <input name="ref" maxLength={120} required className={SET_INPUT} />
+              </label>
+              <button type="submit" className={buttonClass("primary", "sm")} disabled={paying}>
+                Record refund paid
+              </button>
+            </form>
+          )}
+          {s.paidOn && <p className={NOTE}>Refund paid {longDate(s.paidOn)}.</p>}
+        </div>
+      )}
+      {[tickState, cmpState, addState, rmState, doneState, reState, payState].map((st, n) => (
+        <Result key={n} s={st} />
+      ))}
+    </Section>
   );
 }

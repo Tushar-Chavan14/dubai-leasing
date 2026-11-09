@@ -12,6 +12,9 @@ import {
   type TaskActionState,
 } from "../app/(staff)/tasks/actions";
 import { Result } from "./tenancy-panels";
+import { buttonClass } from "./ui/button";
+import { ACTIONS, FIELD, INPUT, LABEL } from "./ui/form";
+import { Section } from "./ui/record";
 
 const LEASING = ["leasing_officer", "leasing_manager"];
 
@@ -48,19 +51,19 @@ export function TaskActions({
   if (task.kind === "landlord_intent") {
     if (!LEASING.includes(role)) return null;
     return (
-      <div className="task-actions">
+      <div className="grid justify-items-start gap-2">
         {!open && !answerState.ok && (
-          <button type="button" className="btn small" onClick={() => setOpen(true)}>
+          <button type="button" className={buttonClass("ghost", "sm")} onClick={() => setOpen(true)}>
             Record the landlord&apos;s answer
           </button>
         )}
         {open && !answerState.ok && (
-          <form action={answer} className="stack">
+          <form action={answer} className="grid gap-3">
             <input type="hidden" name="taskId" value={task.id} />
             <input type="hidden" name="leaseId" value={leaseId} />
-            <label className="field">
-              <span className="field-label">The landlord&apos;s plan for the end of the term</span>
-              <select name="answer" required defaultValue="">
+            <label className={FIELD}>
+              <span className={LABEL}>The landlord&apos;s plan for the end of the term</span>
+              <select className={INPUT} name="answer" required defaultValue="">
                 <option value="" disabled>
                   Choose…
                 </option>
@@ -71,17 +74,17 @@ export function TaskActions({
                 ))}
               </select>
             </label>
-            <label className="field">
-              <span className="field-label">
-                Note <em>optional</em>
+            <label className={FIELD}>
+              <span className={LABEL}>
+                Note <em className="font-normal not-italic">optional</em>
               </span>
-              <textarea name="note" rows={2} maxLength={2000} />
+              <textarea className={INPUT} name="note" rows={2} maxLength={2000} />
             </label>
-            <div className="btn-row">
-              <button type="submit" className="btn primary small" disabled={answering}>
+            <div className={ACTIONS}>
+              <button type="submit" className={buttonClass("primary", "sm")} disabled={answering}>
                 Save
               </button>
-              <button type="button" className="btn small" onClick={() => setOpen(false)}>
+              <button type="button" className={buttonClass("ghost", "sm")} onClick={() => setOpen(false)}>
                 Cancel
               </button>
             </div>
@@ -98,20 +101,26 @@ export function TaskActions({
   if (role !== task.assigneeRole && role !== "leasing_manager") return null;
   if (doneState.ok) return <Result s={doneState} />;
   return (
-    <div className="task-actions">
+    <div className="grid justify-items-start gap-2">
       {!open ? (
-        <button type="button" className="btn small" onClick={() => setOpen(true)}>
+        <button type="button" className={buttonClass("ghost", "sm")} onClick={() => setOpen(true)}>
           Mark done
         </button>
       ) : (
-        <form action={done} className="btn-row">
+        <form action={done} className={ACTIONS}>
           <input type="hidden" name="taskId" value={task.id} />
           <input type="hidden" name="leaseId" value={leaseId} />
-          <input name="note" maxLength={2000} placeholder="What was done (optional)" aria-label="Note" />
-          <button type="submit" className="btn primary small" disabled={finishing}>
+          <input
+            className={INPUT}
+            name="note"
+            maxLength={2000}
+            placeholder="What was done (optional)"
+            aria-label="Note"
+          />
+          <button type="submit" className={buttonClass("primary", "sm")} disabled={finishing}>
             Done
           </button>
-          <button type="button" className="btn small" onClick={() => setOpen(false)}>
+          <button type="button" className={buttonClass("ghost", "sm")} onClick={() => setOpen(false)}>
             Cancel
           </button>
         </form>
@@ -129,16 +138,16 @@ export function VacateNoticeForm({ leaseId, ground, today }: { leaseId: string; 
   const [state, submit, pending] = useActionState<TaskActionState, FormData>(proposeVacateNotice, {});
   if (state.ok) return <Result s={state} />;
   return (
-    <form action={submit} className="stack vacate-form">
+    <form action={submit} className="grid gap-3">
       <strong>12-month repossession notice</strong>
-      <p className="muted" style={{ margin: 0 }}>
+      <p className="m-0 text-sm text-muted">
         Serve it by notary or registered mail first, then record it here for a leasing manager to approve. It is never
         sent by email.
       </p>
       <input type="hidden" name="leaseId" value={leaseId} />
-      <label className="field">
-        <span className="field-label">Ground</span>
-        <select name="ground" defaultValue={ground ?? ""} required>
+      <label className={FIELD}>
+        <span className={LABEL}>Ground</span>
+        <select className={INPUT} name="ground" defaultValue={ground ?? ""} required>
           <option value="" disabled>
             Choose…
           </option>
@@ -149,25 +158,25 @@ export function VacateNoticeForm({ leaseId, ground, today }: { leaseId: string; 
           ))}
         </select>
       </label>
-      <label className="field">
-        <span className="field-label">Served on</span>
-        <input type="date" name="servedOn" max={today || undefined} required />
+      <label className={FIELD}>
+        <span className={LABEL}>Served on</span>
+        <input className={INPUT} type="date" name="servedOn" max={today || undefined} required />
       </label>
-      <label className="field">
-        <span className="field-label">Served by</span>
-        <select name="deliveryMethod" defaultValue="notary">
+      <label className={FIELD}>
+        <span className={LABEL}>Served by</span>
+        <select className={INPUT} name="deliveryMethod" defaultValue="notary">
           <option value="notary">Notary public</option>
           <option value="registered_mail">Registered mail</option>
         </select>
       </label>
-      <label className="field">
-        <span className="field-label">
-          Note <em>optional</em>
+      <label className={FIELD}>
+        <span className={LABEL}>
+          Note <em className="font-normal not-italic">optional</em>
         </span>
-        <textarea name="note" rows={2} maxLength={2000} />
+        <textarea className={INPUT} name="note" rows={2} maxLength={2000} />
       </label>
       <div>
-        <button type="submit" className="btn primary small" disabled={pending}>
+        <button type="submit" className={buttonClass("primary", "sm")} disabled={pending}>
           Send for approval
         </button>
       </div>
@@ -182,42 +191,42 @@ export function AddTaskForm({ leaseId, today }: { leaseId: string; today: string
   const [open, setOpen] = useState(false);
   if (!open)
     return (
-      <button type="button" className="btn small" onClick={() => setOpen(true)}>
+      <button type="button" className={buttonClass("ghost", "sm")} onClick={() => setOpen(true)}>
         Add task
       </button>
     );
   return (
-    <form action={submit} className="stack panel-pad">
+    <form action={submit} className="grid gap-3">
       <input type="hidden" name="leaseId" value={leaseId} />
-      <label className="field">
-        <span className="field-label">Task</span>
-        <input name="title" minLength={3} maxLength={200} required />
+      <label className={FIELD}>
+        <span className={LABEL}>Task</span>
+        <input className={INPUT} name="title" minLength={3} maxLength={200} required />
       </label>
-      <label className="field">
-        <span className="field-label">For</span>
-        <select name="assigneeRole" defaultValue="leasing_officer">
+      <label className={FIELD}>
+        <span className={LABEL}>For</span>
+        <select className={INPUT} name="assigneeRole" defaultValue="leasing_officer">
           <option value="leasing_officer">Leasing officer</option>
           <option value="leasing_manager">Leasing manager</option>
           <option value="finance">Finance</option>
         </select>
       </label>
-      <label className="field">
-        <span className="field-label">
-          Due <em>optional</em>
+      <label className={FIELD}>
+        <span className={LABEL}>
+          Due <em className="font-normal not-italic">optional</em>
         </span>
-        <input type="date" name="dueOn" min={today || undefined} />
+        <input className={INPUT} type="date" name="dueOn" min={today || undefined} />
       </label>
-      <label className="field">
-        <span className="field-label">
-          Note <em>optional</em>
+      <label className={FIELD}>
+        <span className={LABEL}>
+          Note <em className="font-normal not-italic">optional</em>
         </span>
-        <textarea name="note" rows={2} maxLength={2000} />
+        <textarea className={INPUT} name="note" rows={2} maxLength={2000} />
       </label>
-      <div className="btn-row">
-        <button type="submit" className="btn primary small" disabled={pending}>
+      <div className={ACTIONS}>
+        <button type="submit" className={buttonClass("primary", "sm")} disabled={pending}>
           Add
         </button>
-        <button type="button" className="btn small" onClick={() => setOpen(false)}>
+        <button type="button" className={buttonClass("ghost", "sm")} onClick={() => setOpen(false)}>
           Close
         </button>
       </div>
@@ -249,24 +258,24 @@ export function EmailTenantForm({
   );
   const [open, setOpen] = useState(!!draft);
   return (
-    <section className="panel" id="email" aria-labelledby="email-h">
-      <div className="panel-head">
-        <h2 id="email-h">Email the {who}</h2>
-        {!open && tenantEmail && (
-          <button type="button" className="btn small" onClick={() => setOpen(true)}>
+    <Section
+      id="email-h"
+      title={`Email the ${who}`}
+      action={
+        !open && tenantEmail ? (
+          <button type="button" className={buttonClass("ghost", "sm")} onClick={() => setOpen(true)}>
             Write
           </button>
-        )}
-      </div>
+        ) : undefined
+      }
+    >
       {!tenantEmail ? (
-        <p className="muted panel-pad">The {who} has no email address on file.</p>
+        <p className="m-0 text-sm text-muted">The {who} has no email address on file.</p>
       ) : state.ok ? (
-        <div className="panel-pad">
-          <Result s={state} />
-        </div>
+        <Result s={state} />
       ) : (
         open && (
-          <form action={submit} className="stack panel-pad">
+          <form action={submit} className="grid gap-3">
             {applicationId ? (
               <input type="hidden" name="applicationId" value={applicationId} />
             ) : (
@@ -274,23 +283,31 @@ export function EmailTenantForm({
             )}
             {draft && <input type="hidden" name="draftId" value={draft.id} />}
             {draft && (
-              <p className="muted" style={{ margin: 0 }}>
+              <p className="m-0 text-sm text-muted">
                 Drafted by your copilot. Read it and change anything before you send it.
               </p>
             )}
-            <p className="muted" style={{ margin: 0 }}>
+            <p className="m-0 text-sm text-muted">
               To {tenantEmail}.{" "}
               {applicationId
                 ? "The email is stored with the application as evidence."
                 : "A link to their tenancy page is added below your message. Never use this for the 12-month repossession notice: that is served by notary or registered mail."}
             </p>
-            <label className="field">
-              <span className="field-label">Subject</span>
-              <input name="subject" minLength={3} maxLength={160} defaultValue={draft?.subject ?? ""} required />
+            <label className={FIELD}>
+              <span className={LABEL}>Subject</span>
+              <input
+                className={INPUT}
+                name="subject"
+                minLength={3}
+                maxLength={160}
+                defaultValue={draft?.subject ?? ""}
+                required
+              />
             </label>
-            <label className="field">
-              <span className="field-label">Message</span>
+            <label className={FIELD}>
+              <span className={LABEL}>Message</span>
               <textarea
+                className={INPUT}
                 name="body"
                 rows={8}
                 minLength={10}
@@ -299,11 +316,11 @@ export function EmailTenantForm({
                 required
               />
             </label>
-            <div className="btn-row">
-              <button type="submit" className="btn primary small" disabled={pending}>
+            <div className={ACTIONS}>
+              <button type="submit" className={buttonClass("primary", "sm")} disabled={pending}>
                 Send
               </button>
-              <button type="button" className="btn small" onClick={() => setOpen(false)}>
+              <button type="button" className={buttonClass("ghost", "sm")} onClick={() => setOpen(false)}>
                 Close
               </button>
             </div>
@@ -311,7 +328,7 @@ export function EmailTenantForm({
           </form>
         )
       )}
-    </section>
+    </Section>
   );
 }
 
@@ -325,17 +342,18 @@ export function ApprovalNoteForm({
 }) {
   const [state, submit, pending] = useActionState<TaskActionState, FormData>(addApprovalNote, {});
   return (
-    <form action={submit} className="stack">
+    <form action={submit} className="grid gap-3">
       <input type="hidden" name="approvalId" value={approvalId} />
       {draft && !state.ok && <input type="hidden" name="draftId" value={draft.id} />}
       {draft && !state.ok && (
-        <p className="muted" style={{ margin: 0 }}>
+        <p className="m-0 text-sm text-muted">
           Drafted by your copilot. Read it and change anything before you post it.
         </p>
       )}
-      <label className="field">
-        <span className="field-label">Add a note</span>
+      <label className={FIELD}>
+        <span className={LABEL}>Add a note</span>
         <textarea
+          className={INPUT}
           name="body"
           rows={3}
           minLength={2}
@@ -345,7 +363,7 @@ export function ApprovalNoteForm({
         />
       </label>
       <div>
-        <button type="submit" className="btn primary small" disabled={pending}>
+        <button type="submit" className={buttonClass("primary", "sm")} disabled={pending}>
           Post note
         </button>
       </div>

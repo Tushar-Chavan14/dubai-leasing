@@ -47,6 +47,11 @@ describe("nextStepFor and stageFor (pure)", () => {
     expect(nextStepFor({ stage: "Contract", contractHeld: true })).toBe("Prepare the contract.");
     expect(nextStepFor({ stage: "Contract", contractSent: true })).toBe("Waiting for the signers.");
   });
+  test("accepted offer: the reservation is the next step, not the applicant's answer", () => {
+    expect(nextStepFor({ stage: "Offer", reservationDue: true })).toBe(
+      "The applicant accepted. Record the reservation payment once it is received.",
+    );
+  });
   test("stage mapping", () => {
     expect(stageFor({ kind: "application", state: "SCREENING" })).toBe("Documents");
     expect(stageFor({ kind: "application", state: "CONVERTED" })).toBeNull();

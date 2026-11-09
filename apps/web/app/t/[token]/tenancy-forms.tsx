@@ -1,7 +1,24 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { IconCheck, IconWarning } from "../../../lib/icons";
+import {
+  CheckCircleIcon as IconCheck,
+  TrashIcon as IconTrash,
+  UploadSimpleIcon as IconUpload,
+  WarningIcon as IconWarning,
+} from "@phosphor-icons/react";
+import { Banner } from "../../../components/ui/form";
+import {
+  Choice,
+  Cta,
+  Done as DonePanel,
+  FORM,
+  Note,
+  P_INPUT,
+  PField,
+  PFieldset,
+  PRIMARY,
+} from "../../../components/ui/portal";
 import { checkPhotoFile, preparePhoto } from "../../../lib/images";
 import {
   bookInspection,
@@ -15,22 +32,20 @@ import {
 
 function Done({ state, what }: { state: PortalState; what: string }) {
   return (
-    <div className="alert" data-tone="good" role="status">
-      <IconCheck size={16} />
-      <span>
-        {state.duplicate ? `We already have your ${what}.` : `Thank you, we've received your ${what}.`} Your reference
-        is <b className="ref">{state.ref}</b>.
-      </span>
-    </div>
+    <DonePanel title={state.duplicate ? `We already have your ${what}` : `Thank you, we've received your ${what}`}>
+      <p className="m-0">
+        Your reference is <b className="font-mono text-[13px]">{state.ref}</b>.
+      </p>
+    </DonePanel>
   );
 }
 
 function ErrorLine({ text }: { text?: string | undefined }) {
   return text ? (
-    <div className="alert" data-tone="bad" role="alert">
-      <IconWarning size={16} />
-      {text}
-    </div>
+    <Banner tone="bad" role="alert">
+      <IconWarning size={16} className="mt-0.5 shrink-0" aria-hidden />
+      <span>{text}</span>
+    </Banner>
   ) : null;
 }
 
@@ -54,24 +69,48 @@ function Photos({ token, kind, max, label }: { token: string; kind: string; max:
     setShots((s) => [...s, { id: body.id!, name: file.name }]);
   }
   return (
-    <div className="field">
-      <span className="field-label">{label}</span>
+    <div className="grid gap-2">
+      <span className="text-[13px] font-semibold text-muted">{label}</span>
       {shots.map((s) => (
         <input key={s.id} type="hidden" name="photoId" value={s.id} />
       ))}
       {shots.length > 0 && (
-        <p className="muted" style={{ margin: 0 }}>
-          {shots.length} photo(s) added.
-        </p>
+        <ul className="m-0 grid list-none gap-2 p-0" aria-label="Added photos">
+          {shots.map((s, n) => (
+            <li
+              key={s.id}
+              className="flex min-h-11 items-center justify-between gap-3 rounded-xl border border-transparent bg-accent px-3.5 py-2 text-[15px] text-on-accent"
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <IconCheck size={20} weight="fill" className="shrink-0" aria-hidden />
+                <span className="truncate">
+                  Photo {n + 1} added<span className="sr-only">: {s.name}</span>
+                </span>
+              </span>
+              <button
+                type="button"
+                className="inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-full text-current focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
+                aria-label={`Remove photo ${n + 1}`}
+                onClick={() => setShots((x) => x.filter((y) => y.id !== s.id))}
+              >
+                <IconTrash size={18} aria-hidden />
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
       {shots.length < max && (
-        <label className="btn small" style={{ width: "fit-content" }}>
-          {busy ? "Uploading…" : "Add a photo"}
+        <label
+          aria-disabled={busy}
+          className="inline-flex min-h-12 cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-line px-4 text-[15px] font-semibold text-ink has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ink aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+        >
+          <IconUpload size={18} aria-hidden />
+          {busy ? "Uploading…" : shots.length ? "Add another photo" : "Add a photo"}
           <input
             type="file"
             accept="image/jpeg,image/png,image/webp"
             capture="environment"
-            hidden
+            className="sr-only"
             disabled={busy}
             onChange={(e) => {
               const f = e.target.files?.[0];
@@ -91,27 +130,27 @@ export function MoveInAckForm({ token }: { token: string }) {
   const [choice, setChoice] = useState("");
   if (state.ref) return <Done state={state} what="confirmation" />;
   return (
-    <form action={action} className="stack">
+    <form action={action} className={FORM}>
       <input type="hidden" name="token" value={token} />
       <ErrorLine text={state.error} />
-      <fieldset className="choice-list">
-        <legend className="field-label">Is the report right?</legend>
-        <label>
-          <input type="radio" name="agree" value="yes" onChange={() => setChoice("yes")} /> Yes, it matches what I found
-        </label>
-        <label>
-          <input type="radio" name="agree" value="no" onChange={() => setChoice("no")} /> No, something is different or
-          missing
-        </label>
-      </fieldset>
-      <label className="field">
-        <span className="field-label">{choice === "no" ? "What is different?" : "Anything to add? (optional)"}</span>
-        <textarea name="comment" rows={3} maxLength={2000} dir="auto" />
-      </label>
+      <PFieldset legend="Is the report right?">
+        <Choice name="agree" value="yes" title="Yes, it matches what I found" onChange={() => setChoice("yes")} />
+        <Choice
+          name="agree"
+          value="no"
+          title="No, something is different or missing"
+          onChange={() => setChoice("no")}
+        />
+      </PFieldset>
+      <PField label={choice === "no" ? "What is different?" : "Anything to add?"} optional={choice !== "no"}>
+        <textarea name="comment" rows={3} maxLength={2000} dir="auto" className={`${P_INPUT} resize-y`} />
+      </PField>
       <Photos token={token} kind="tenant_condition_photo" max={20} label="Your own photos (optional)" />
-      <button type="submit" className="btn primary" disabled={pending}>
-        {pending ? "Sending…" : "Send"}
-      </button>
+      <Cta>
+        <button type="submit" className={PRIMARY} disabled={pending}>
+          {pending ? "Sending…" : "Send"}
+        </button>
+      </Cta>
     </form>
   );
 }
@@ -138,35 +177,36 @@ export function PaymentReplyForm({
   const [choice, setChoice] = useState("");
   if (state.ref) return <Done state={state} what="reply" />;
   return (
-    <form action={action} className="stack">
+    <form action={action} className={FORM}>
       <input type="hidden" name="token" value={token} />
       <input type="hidden" name="paymentId" value={paymentId} />
       <ErrorLine text={state.error} />
-      <fieldset className="choice-list">
-        <legend className="field-label">Where do things stand?</legend>
+      <PFieldset legend="Where do things stand?">
         {PAY_CHOICES.map((c) => (
-          <label key={c.value}>
-            <input type="radio" name="choice" value={c.value} onChange={() => setChoice(c.value)} /> {c.label}
-            <span className="muted" style={{ display: "block", fontSize: 13, marginLeft: 24 }}>
-              {c.help}
-            </span>
-          </label>
+          <Choice
+            key={c.value}
+            name="choice"
+            value={c.value}
+            title={c.label}
+            help={c.help}
+            onChange={() => setChoice(c.value)}
+          />
         ))}
-      </fieldset>
+      </PFieldset>
       {choice === "will_pay" && (
-        <label className="field">
-          <span className="field-label">I will pay by</span>
-          <input type="date" name="payBy" min={today} max={maxDate} required />
-        </label>
+        <PField label="I will pay by">
+          <input type="date" name="payBy" min={today} max={maxDate} required className={P_INPUT} />
+        </PField>
       )}
-      <label className="field">
-        <span className="field-label">Comment (optional)</span>
-        <textarea name="comment" rows={3} maxLength={2000} dir="auto" />
-      </label>
+      <PField label="Comment" optional>
+        <textarea name="comment" rows={3} maxLength={2000} dir="auto" className={`${P_INPUT} resize-y`} />
+      </PField>
       {choice === "paid" && <Photos token={token} kind="payment_proof" max={3} label="Proof of payment (optional)" />}
-      <button type="submit" className="btn primary" disabled={pending}>
-        {pending ? "Sending…" : "Send"}
-      </button>
+      <Cta>
+        <button type="submit" className={PRIMARY} disabled={pending}>
+          {pending ? "Sending…" : "Send"}
+        </button>
+      </Cta>
     </form>
   );
 }
@@ -175,25 +215,27 @@ export function ReportIssueForm({ token }: { token: string }) {
   const [state, action, pending] = useActionState<PortalState, FormData>(reportIssue, {});
   if (state.ref) return <Done state={state} what="report" />;
   return (
-    <form action={action} className="stack">
+    <form action={action} className={FORM}>
       <input type="hidden" name="token" value={token} />
       <ErrorLine text={state.error} />
-      <label className="field">
-        <span className="field-label">What's the problem?</span>
-        <textarea name="description" rows={4} maxLength={2000} required dir="auto" />
-      </label>
-      <label className="field">
-        <span className="field-label">Which room? (optional)</span>
-        <input name="room" maxLength={60} />
-      </label>
-      <label>
-        <input type="checkbox" name="atRisk" /> <b>Someone is at risk</b> (fire, smoke, gas, sparks, flooding, someone
-        hurt). We'll treat it as urgent. In an emergency, call 999 first.
-      </label>
+      <PField label="What's the problem?">
+        <textarea name="description" rows={4} maxLength={2000} required dir="auto" className={`${P_INPUT} resize-y`} />
+      </PField>
+      <PField label="Which room?" optional>
+        <input name="room" type="text" autoComplete="off" maxLength={60} className={P_INPUT} />
+      </PField>
+      <Choice
+        type="checkbox"
+        name="atRisk"
+        title="Someone is at risk"
+        help="Fire, smoke, gas, sparks, flooding, someone hurt. We'll treat it as urgent. In an emergency, call 999 first."
+      />
       <Photos token={token} kind="issue_photo" max={5} label="Photos (optional)" />
-      <button type="submit" className="btn primary" disabled={pending}>
-        {pending ? "Sending…" : "Send report"}
-      </button>
+      <Cta>
+        <button type="submit" className={PRIMARY} disabled={pending}>
+          {pending ? "Sending…" : "Send report"}
+        </button>
+      </Cta>
     </form>
   );
 }
@@ -213,25 +255,33 @@ export function VacateNoticeForm({ token, leaseEndOn }: { token: string; leaseEn
   const [state, action, pending] = useActionState<PortalState, FormData>(giveNotice, {});
   if (state.ref) return <Done state={state} what="notice" />;
   return (
-    <form action={action} className="stack">
+    <form action={action} className={FORM}>
       <input type="hidden" name="token" value={token} />
       <input type="hidden" name="moveOutOn" value={leaseEndOn} />
       <ErrorLine text={state.error} />
-      <p style={{ margin: 0 }}>
-        You will move out when your lease ends, on <b>{leaseEndOn}</b>. To leave earlier, say so in the comment: a
-        person will contact you about the terms.
-      </p>
-      <label className="field">
-        <span className="field-label">Comment (optional)</span>
-        <textarea name="comment" rows={3} maxLength={2000} dir="auto" />
-      </label>
-      <label>
-        <input type="checkbox" name="confirm" value="yes" required /> I am giving notice that I will move out and not
-        renew.
-      </label>
-      <button type="submit" className="btn primary" disabled={pending}>
-        {pending ? "Sending…" : "Give notice"}
-      </button>
+      <div className="grid gap-2 rounded-card border border-transparent bg-accent p-4 text-on-accent">
+        <p className="m-0 text-[15px]">
+          You will move out when your lease ends, on <b>{leaseEndOn}</b>.
+        </p>
+        <p className="m-0 text-[13px] opacity-80">
+          To leave earlier, say so in the comment: a person will contact you about the terms.
+        </p>
+      </div>
+      <PField label="Comment" optional>
+        <textarea name="comment" rows={3} maxLength={2000} dir="auto" className={`${P_INPUT} resize-y`} />
+      </PField>
+      <Choice
+        type="checkbox"
+        name="confirm"
+        value="yes"
+        required
+        title="I am giving notice that I will move out and not renew."
+      />
+      <Cta>
+        <button type="submit" className={PRIMARY} disabled={pending}>
+          {pending ? "Sending…" : "Give notice"}
+        </button>
+      </Cta>
     </form>
   );
 }
@@ -247,27 +297,29 @@ export function InspectionBookingForm({
 }) {
   const [state, action, pending] = useActionState<PortalState, FormData>(bookInspection, {});
   if (state.ref) return <Done state={state} what="booking" />;
-  if (!slots.length) return <p className="muted">No times are open right now. The leasing team will contact you.</p>;
+  if (!slots.length) return <Note>No times are open right now. The leasing team will contact you.</Note>;
   return (
-    <form action={action} className="stack">
+    <form action={action} className={FORM}>
       <input type="hidden" name="token" value={token} />
       <ErrorLine text={state.error} />
       {current && (
-        <p style={{ margin: 0 }}>
-          Booked: <b>{dubaiTime(current)}</b> (Dubai time). Pick another time to move it.
-        </p>
+        <Banner tone="good">
+          <IconCheck size={16} weight="fill" className="mt-0.5 shrink-0" aria-hidden />
+          <span>
+            Booked: <b>{dubaiTime(current)}</b> (Dubai time). Pick another time to move it.
+          </span>
+        </Banner>
       )}
-      <fieldset className="choice-list">
-        <legend className="field-label">Choose a time (Dubai time, about one hour)</legend>
+      <PFieldset legend="Choose a time (Dubai time, about one hour)">
         {slots.map((s) => (
-          <label key={s}>
-            <input type="radio" name="slotAt" value={s} required defaultChecked={s === current} /> {dubaiTime(s)}
-          </label>
+          <Choice key={s} name="slotAt" value={s} required defaultChecked={s === current} title={dubaiTime(s)} />
         ))}
-      </fieldset>
-      <button type="submit" className="btn primary" disabled={pending}>
-        {pending ? "Booking…" : "Book"}
-      </button>
+      </PFieldset>
+      <Cta>
+        <button type="submit" className={PRIMARY} disabled={pending}>
+          {pending ? "Booking…" : "Book"}
+        </button>
+      </Cta>
     </form>
   );
 }
@@ -277,44 +329,47 @@ export function DepositResponseForm({ token, revision }: { token: string; revisi
   const [choice, setChoice] = useState("");
   if (state.ref) return <Done state={state} what="answer" />;
   return (
-    <form action={action} className="stack">
+    <form action={action} className={FORM}>
       <input type="hidden" name="token" value={token} />
       <input type="hidden" name="revision" value={revision} />
       <ErrorLine text={state.error} />
-      <fieldset className="choice-list">
-        <legend className="field-label">Your answer</legend>
-        <label>
-          <input type="radio" name="choice" value="accept" onChange={() => setChoice("accept")} /> I accept the
-          statement
-        </label>
-        <label>
-          <input type="radio" name="choice" value="dispute" onChange={() => setChoice("dispute")} /> I dispute it
-        </label>
-      </fieldset>
+      <PFieldset legend="Your answer">
+        <Choice name="choice" value="accept" title="I accept the statement" onChange={() => setChoice("accept")} />
+        <Choice name="choice" value="dispute" title="I dispute it" onChange={() => setChoice("dispute")} />
+      </PFieldset>
       {choice === "accept" && (
         <>
-          <label className="field">
-            <span className="field-label">Account holder name</span>
-            <input name="accountName" maxLength={120} required autoComplete="name" />
-          </label>
-          <label className="field">
-            <span className="field-label">IBAN</span>
-            <input name="iban" maxLength={40} required placeholder="AE07 0331 2345 6789 0123 456" autoComplete="off" />
-          </label>
+          <PField label="Account holder name">
+            <input name="accountName" type="text" maxLength={120} required autoComplete="name" className={P_INPUT} />
+          </PField>
+          <PField label="IBAN">
+            <input
+              name="iban"
+              type="text"
+              autoCapitalize="characters"
+              autoComplete="off"
+              spellCheck={false}
+              maxLength={40}
+              required
+              placeholder="AE07 0331 2345 6789 0123 456"
+              className={P_INPUT}
+            />
+          </PField>
         </>
       )}
       {choice === "dispute" && (
-        <label className="field">
-          <span className="field-label">What do you disagree with?</span>
-          <textarea name="reason" rows={4} maxLength={2000} dir="auto" required />
-          <span className="muted" style={{ fontSize: 13 }}>
-            A person reviews every dispute. You can also contact the Rental Disputes Centre.
-          </span>
-        </label>
+        <PField
+          label="What do you disagree with?"
+          hint="A person reviews every dispute. You can also contact the Rental Disputes Centre."
+        >
+          <textarea name="reason" rows={4} maxLength={2000} dir="auto" required className={`${P_INPUT} resize-y`} />
+        </PField>
       )}
-      <button type="submit" className="btn primary" disabled={pending || !choice}>
-        {pending ? "Sending…" : "Send"}
-      </button>
+      <Cta>
+        <button type="submit" className={PRIMARY} disabled={pending || !choice}>
+          {pending ? "Sending…" : "Send"}
+        </button>
+      </Cta>
     </form>
   );
 }

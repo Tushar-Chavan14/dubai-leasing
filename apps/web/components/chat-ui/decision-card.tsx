@@ -2,13 +2,17 @@
 
 import Link from "next/link";
 import { useActionState } from "react";
-import { recordViewingOutcome } from "../../app/(staff)/applications/actions";
-import { IconCheck, IconWarning } from "../../lib/icons";
+import { recordReservation, recordViewingOutcome } from "../../app/(staff)/applications/actions";
+import { CheckIcon as IconCheck, WarningIcon as IconWarning } from "@phosphor-icons/react";
 import { DecisionForm } from "../decision-form";
+import { CardError, CardNote, CardShell, Facts } from "./card-shell";
+import { Button } from "../ui/button";
+import { FIELD, INPUT, LABEL } from "../ui/form";
 
 /**
  * A decision the user asked the copilot for (D48). The copilot only puts it on screen; the buttons run the same routes
- * as the inbox (approve, or reject with a note) and the application page (site visit outcome), as the signed-in user,
+ * as the inbox (approve, or reject with a note) and the application page (site visit outcome, reservation payment), as
+ * the signed-in user,
  * with the engine's role checks.
  */
 export type DecisionCardData =
@@ -31,39 +35,55 @@ export type DecisionCardData =
       unit: string;
       href: string;
       blocked?: string;
+    }
+  | {
+      kind: "decision";
+      decision: "reservation";
+      applicationId: string;
+      ref: string;
+      name: string;
+      unit: string;
+      amount: string;
+      paidOn: string;
+      today: string;
+      reference: string;
+      href: string;
+      blocked?: string;
     };
 
+type State = { ok?: string; error?: string };
+
+function Recorded({ text }: { text: string }) {
+  return (
+    <div
+      className="flex items-start gap-2 rounded-xl border border-line bg-accent px-3.5 py-2.5 text-sm text-on-accent"
+      role="status"
+    >
+      <IconCheck size={16} />
+      {text}
+    </div>
+  );
+}
+
 function SiteVisit({ id }: { id: string }) {
-  type State = { ok?: string; error?: string };
   const [state, action, pending] = useActionState<State, FormData>(
     recordViewingOutcome as (s: State, f: FormData) => Promise<State>,
     {},
   );
-  if (state.ok) {
-    return (
-      <div className="alert" data-tone="good" role="status">
-        <IconCheck size={16} />
-        {state.ok}
-      </div>
-    );
-  }
+  if (state.ok) return <Recorded text={state.ok} />;
   return (
-    <form action={action} className="stack" style={{ gap: 8 }}>
+    <form action={action} className="grid gap-2">
       <input type="hidden" name="id" value={id} />
-      {state.error && (
-        <p className="cp-error" role="alert">
-          {state.error}
-        </p>
-      )}
-      <div className="btn-row">
-        <button type="submit" name="outcome" value="attended" className="btn primary small" disabled={pending}>
+      {state.error && <CardError>{state.error}</CardError>}
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="submit" name="outcome" value="attended" variant="primary" size="sm" disabled={pending}>
           Came to the visit
-        </button>
-        <button type="submit" name="outcome" value="no_show" className="btn danger small" disabled={pending}>
+        </Button>
+        <Button type="submit" name="outcome" value="no_show" variant="ghost" size="sm" disabled={pending}>
           Didn&rsquo;t come
-        </button>
+        </Button>
       </div>
-      <span className="hint">
+      <span className="text-xs text-muted">
         Came: the document upload link is emailed. Didn&rsquo;t come: the application closes (only after the booked
         time).
       </span>
@@ -71,16 +91,55 @@ function SiteVisit({ id }: { id: string }) {
   );
 }
 
+/** The application page's reservation form; the copilot only prefills the date and reference the user gave. */
+function Reservation({ card }: { card: Extract<DecisionCardData, { decision: "reservation" }> }) {
+  const [state, action, pending] = useActionState<State, FormData>(
+    recordReservation as (s: State, f: FormData) => Promise<State>,
+    {},
+  );
+  if (state.ok) return <Recorded text={state.ok} />;
+  return (
+    <form action={action} className="grid gap-2.5">
+      <input type="hidden" name="id" value={card.applicationId} />
+      {state.error && <CardError>{state.error}</CardError>}
+      <label className={FIELD}>
+        <span className={LABEL}>Paid on</span>
+        <input className={INPUT} name="paidOn" type="date" required max={card.today} defaultValue={card.paidOn} />
+      </label>
+      <label className={FIELD}>
+        <span className={LABEL}>Payment reference</span>
+        <input
+          className={INPUT}
+          name="reference"
+          required
+          minLength={2}
+          maxLength={80}
+          defaultValue={card.reference}
+          placeholder="Receipt or transfer no."
+        />
+      </label>
+      <div>
+        <Button type="submit" variant="primary" size="sm" disabled={pending}>
+          {pending ? "Recording…" : "Record reservation"}
+        </Button>
+      </div>
+      <span className="text-xs text-muted">
+        Check the date and reference. Recording creates the lease for the contract.
+      </span>
+    </form>
+  );
+}
+
 export function DecisionCardView({ card }: { card: DecisionCardData }) {
   return (
-    <div className="cp-proposal" data-status={card.blocked ? "cancelled" : "pending"}>
-      <div className="cp-proposal-head">
-        <strong>{card.decision === "approval" ? card.gateLabel : "Site visit"}</strong>
-        <span className="status" data-tone={card.blocked ? "quiet" : "warn"}>
-          {card.blocked ? "Not yours to decide" : "Your decision"}
-        </span>
-      </div>
-      <dl>
+    <CardShell
+      title={
+        card.decision === "approval" ? card.gateLabel : card.decision === "reservation" ? "Reservation" : "Site visit"
+      }
+      status={card.blocked ? "Not yours to decide" : "Your decision"}
+      tone={card.blocked ? "neutral" : "waiting"}
+    >
+      <Facts>
         {card.decision === "approval" ? (
           <>
             <dt>Approval</dt>
@@ -92,29 +151,37 @@ export function DecisionCardView({ card }: { card: DecisionCardData }) {
             <dd>
               {card.name} · {card.unit}
             </dd>
+            {card.decision === "reservation" && (
+              <>
+                <dt>Amount</dt>
+                <dd className="tabular-nums">{card.amount}</dd>
+              </>
+            )}
           </>
         )}
         {card.ref && (
           <>
             <dt>Record</dt>
-            <dd className="ref">{card.ref}</dd>
+            <dd className="font-mono text-xs">{card.ref}</dd>
           </>
         )}
-      </dl>
+      </Facts>
       {card.blocked ? (
-        <p className="cp-proposal-note">
-          <IconWarning size={13} /> {card.blocked}
-        </p>
+        <CardNote>
+          <IconWarning size={13} className="mr-1 inline" aria-hidden /> {card.blocked}
+        </CardNote>
       ) : card.decision === "approval" ? (
         <DecisionForm id={card.approvalId} canEditRent={false} currentRentAed={null} />
+      ) : card.decision === "reservation" ? (
+        <Reservation card={card} />
       ) : (
         <SiteVisit id={card.applicationId} />
       )}
-      <p className="cp-proposal-note">
-        <Link className="link" href={card.href}>
+      <CardNote>
+        <Link className="text-ink! underline underline-offset-2 hover:no-underline" href={card.href}>
           {card.decision === "approval" ? "Open the full approval" : "Open the application"}
         </Link>
-      </p>
-    </div>
+      </CardNote>
+    </CardShell>
   );
 }

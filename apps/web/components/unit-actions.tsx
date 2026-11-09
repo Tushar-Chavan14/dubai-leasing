@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { useActionState } from "react";
+import { Button } from "./ui/button";
+import { Banner } from "./ui/form";
 import { type ActionResult, requestPriceApprovalAction, unitEventAction } from "../app/(staff)/units/actions";
-import { IconWarning } from "../lib/icons";
+import { WarningIcon as IconWarning } from "@phosphor-icons/react";
 
 const LABELS: Record<string, { label: string; primary: boolean; help: string }> = {
   MARK_READY: { label: "Mark ready", primary: true, help: "Checklist complete and price settled." },
@@ -24,12 +26,12 @@ export function UnitActions({ unitId, actions, canEdit, needsPriceApproval, pend
   const [state, run, pending] = useActionState<ActionResult, FormData>(unitEventAction, {});
   const [priceState, askPrice, asking] = useActionState<ActionResult, FormData>(requestPriceApprovalAction, {});
 
-  if (!canEdit) return <p className="muted">Your role can view units but not change them.</p>;
+  if (!canEdit) return <p className="m-0 text-sm text-muted">Your role can view units but not change them.</p>;
   return (
-    <div>
+    <div className="grid gap-4">
       {state.error && (
-        <div className="alert" data-tone="bad" role="alert" style={{ marginBottom: 12 }}>
-          <IconWarning size={16} />
+        <Banner tone="bad" role="alert">
+          <IconWarning size={16} className="mt-0.5 shrink-0" />
           <div>
             <strong>{state.error}</strong>
             {state.reasons?.length ? (
@@ -40,27 +42,27 @@ export function UnitActions({ unitId, actions, canEdit, needsPriceApproval, pend
               </ul>
             ) : null}
           </div>
-        </div>
+        </Banner>
       )}
       {actions.map((a) => {
         const meta = LABELS[a.event] ?? { label: a.event, primary: false, help: "" };
         return (
-          <form key={a.event} action={run} className="action-block">
+          <form key={a.event} action={run} className="grid gap-1.5">
             <input type="hidden" name="id" value={unitId} />
             <input type="hidden" name="event" value={a.event} />
-            <button
+            <Button
               type="submit"
-              className={`btn block${meta.primary ? " primary" : ""}`}
+              variant={meta.primary ? "primary" : "ghost"}
+              size="sm"
+              className="w-full"
               disabled={!a.allowed || pending}
             >
               {meta.label}
-            </button>
+            </Button>
             {a.allowed ? (
-              <p className="muted" style={{ fontSize: 13, marginTop: 6 }}>
-                {meta.help}
-              </p>
+              <p className="m-0 text-[12.5px] text-muted">{meta.help}</p>
             ) : (
-              <ul className="why">
+              <ul className="m-0 list-none p-0 text-[12.5px] text-muted">
                 {a.reasons.map((r) => (
                   <li key={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</li>
                 ))}
@@ -70,28 +72,27 @@ export function UnitActions({ unitId, actions, canEdit, needsPriceApproval, pend
         );
       })}
       {needsPriceApproval && (
-        <div className="action-block" style={{ marginTop: 14 }}>
+        <div className="grid gap-1.5">
           {pendingPriceApprovalId || priceState.id ? (
-            <div className="alert" data-tone="warn">
-              <IconWarning size={16} />
+            <Banner tone="warn">
+              <IconWarning size={16} className="mt-0.5 shrink-0" />
               <span>
                 Asking rent is waiting for a leasing manager.{" "}
-                <Link className="link" href={`/work?approval=${pendingPriceApprovalId ?? priceState.id}`}>
+                <Link
+                  className="font-semibold underline"
+                  href={`/work?approval=${pendingPriceApprovalId ?? priceState.id}`}
+                >
                   View the approval
                 </Link>
               </span>
-            </div>
+            </Banner>
           ) : (
-            <form action={askPrice}>
+            <form action={askPrice} className="grid gap-1.5">
               <input type="hidden" name="id" value={unitId} />
-              <button type="submit" className="btn block" disabled={asking}>
+              <Button type="submit" variant="ghost" size="sm" className="w-full" disabled={asking}>
                 Ask a manager to approve this rent
-              </button>
-              {priceState.error && (
-                <p className="err" style={{ color: "var(--bad)", fontSize: 13, marginTop: 6 }}>
-                  {priceState.error}
-                </p>
-              )}
+              </Button>
+              {priceState.error && <p className="m-0 text-[12.5px] text-danger">{priceState.error}</p>}
             </form>
           )}
         </div>

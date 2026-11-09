@@ -1,11 +1,15 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
+import { AskAi } from "../../../components/ask-ai";
 import { ApplicationDetail } from "../../../components/application-detail";
 import { ApprovalDetail } from "../../../components/approval-detail";
 import { LeaseDetail } from "../../../components/lease-detail";
 import { Status } from "../../../components/ui";
+import { buttonClass } from "../../../components/ui/button";
+import { FactList, FactKey, FactVal, Section } from "../../../components/ui/record";
+import { askPrompts } from "../../../lib/ask-ai/prompts";
 import { get } from "../../../lib/engine";
 import { actorLabel, dateTime, eventLabel, humanise, proposalValue } from "../../../lib/format";
-import { IconClose } from "../../../lib/icons";
 import type { LogEntry, RecordRow } from "../../../lib/types";
 import { type WorkQuery, workHref } from "./url";
 
@@ -15,22 +19,22 @@ const SKIP = new Set(["id", "previewUrl", "leaseId", "applicationId", "unitId"])
 
 function Facts({ data }: { data: Record<string, unknown> }) {
   const rows = Object.entries(data).filter(([k, v]) => !SKIP.has(k) && v !== null && v !== undefined && v !== "");
-  if (rows.length === 0) return <p className="muted">No further details were recorded.</p>;
+  if (rows.length === 0) return <p className="m-0 text-sm text-muted">No further details were recorded.</p>;
   return (
-    <dl className="facts">
+    <FactList>
       {rows.map(([k, v]) => (
-        <div key={k} className="wk-fact">
-          <dt>{humanise(k)}</dt>
-          <dd className={/sha256|messageId/i.test(k) ? "ref" : undefined}>
+        <div key={k} className="contents">
+          <FactKey>{humanise(k)}</FactKey>
+          <FactVal className={/sha256|messageId/i.test(k) ? "font-mono text-xs" : ""}>
             {PERSONAL.test(k)
               ? "Hidden (personal data)"
               : Array.isArray(v)
                 ? v.join(", ") || "None"
                 : proposalValue(k, v)}
-          </dd>
+          </FactVal>
         </div>
       ))}
-    </dl>
+    </FactList>
   );
 }
 
@@ -46,124 +50,119 @@ async function EntryDetail({ record, entry }: { record: RecordRow; entry: LogEnt
   const mail = entry.source === "email" ? detail?.outbound?.find((o) => o.id === entry.refId) : undefined;
   const task = entry.source === "task" ? detail?.tasks?.find((t) => t.id === entry.refId) : undefined;
   return (
-    <div className="stack">
-      <section aria-labelledby="entry-h">
-        <h2 id="entry-h" className="section-title">
-          {event ? eventLabel(event.type) : mail ? "Email evidence" : task ? "Task" : "Entry"}
-        </h2>
-        <p>{entry.text}</p>
-        {event && (
-          <p className="muted">
-            {actorLabel(event.actor)}, {dateTime(event.at)}
-          </p>
-        )}
-      </section>
+    <div className="grid gap-6">
+      <Section
+        id="entry-h"
+        title={event ? eventLabel(event.type) : mail ? "Email evidence" : task ? "Task" : "Entry"}
+        hint={event ? `${actorLabel(event.actor)}, ${dateTime(event.at)}` : undefined}
+      >
+        <p className="m-0 text-sm">{entry.text}</p>
+      </Section>
       {event && (
-        <section aria-labelledby="payload-h">
-          <h2 id="payload-h" className="section-title">
-            What was recorded
-          </h2>
+        <Section id="payload-h" title="What was recorded">
           <Facts data={event.payload ?? {}} />
-        </section>
+        </Section>
       )}
       {mail && (
-        <section aria-labelledby="mail-h">
-          <h2 id="mail-h" className="section-title">
-            Stored with the message
-          </h2>
+        <Section id="mail-h" title="Stored with the message">
           <Facts data={mail} />
           {typeof mail.previewUrl === "string" && (
-            <a className="btn small" href={mail.previewUrl} target="_blank" rel="noreferrer">
-              View in test inbox
-            </a>
+            <div>
+              <a className={buttonClass("ghost", "sm")} href={mail.previewUrl} target="_blank" rel="noreferrer">
+                View in test inbox
+              </a>
+            </div>
           )}
-        </section>
+        </Section>
       )}
       {task && (
-        <section aria-labelledby="task-h">
-          <h2 id="task-h" className="section-title">
-            Task details
-          </h2>
+        <Section id="task-h" title="Task details">
           <Facts data={task} />
-        </section>
+        </Section>
       )}
-      {!event && !mail && !task && <p className="muted">No further details for this entry.</p>}
+      {!event && !mail && !task && <p className="m-0 text-sm text-muted">No further details for this entry.</p>}
     </div>
   );
 }
 
-/** Right pane: the selected entry's details, or the whole record when nothing is selected. */
-export async function DetailPane({
+/** The record's body under its header: the waiting gate and the whole record, or the one entry (or approval) that was opened. */
+export async function RecordBody({
   query,
   record,
   entry,
+  gate = null,
   approvalId,
+  activity,
 }: {
+  /** The record's activity, shown right under the gate (or the entry) and above the details. */
+  activity?: ReactNode;
+  /** The record's first approval that waits on a person; pinned at the top of the record. */
+  gate?: LogEntry | null;
   query: WorkQuery;
   record: RecordRow | null;
   entry: LogEntry | null;
   /** An approval that has no record in the Workspace (for example one on a unit). */
   approvalId?: string | undefined;
 }) {
-  const closed = query.pane === "closed";
-  if (closed || (!record && !approvalId)) return null;
-  const clear = workHref(query, { entry: undefined });
-  const title = entry
-    ? entry.source === "approval"
-      ? "Approval"
-      : "Details"
-    : approvalId
-      ? "Approval"
-      : record
-        ? "Record"
-        : "Details";
-  return (
-    <aside
-      className="wk-detail"
-      data-sheet={query.pane === "open" ? "true" : undefined}
-      data-wide={query.wide ? "true" : undefined}
-      aria-label="Details"
-    >
-      <header className="wk-detail-head">
-        <h2>
-          {title}{" "}
-          {entry && (
-            <Status value={entry.pending ? "pending" : "done"} label={entry.pending ? "Waiting" : "Recorded"} />
-          )}
-        </h2>
-        <div className="btn-row">
-          {entry && (
-            <Link href={clear} className="btn small ghost">
-              Whole record
-            </Link>
-          )}
-          <Link href={workHref(query, { wide: !query.wide })} className="btn small ghost wk-wide-toggle">
-            {query.wide ? "Narrower" : "Wider"}
+  if (!record && approvalId) {
+    return (
+      <ApprovalDetail
+        id={approvalId}
+        draftId={query.draft}
+        ask={
+          <AskAi
+            onAccent
+            compact
+            prompt={askPrompts.gate("approval request", "this request")[0]!.prompt}
+            label="Ask AI"
+            page={{ kind: "approval", id: approvalId }}
+          />
+        }
+      />
+    );
+  }
+  if (!record) return null;
+  const gateAsk = (id: string) => {
+    const ask = askPrompts.gate("approval request", `${record.kind} ${record.ref} (${record.title})`)[0]!;
+    return <AskAi onAccent compact prompt={ask.prompt} label={ask.label} page={{ kind: "approval", id }} />;
+  };
+  if (entry) {
+    return (
+      <div className="grid gap-5">
+        <div className="flex flex-wrap items-center gap-3">
+          <Link href={workHref(query, { entry: undefined })} className={buttonClass("ghost", "sm")}>
+            Whole record
           </Link>
-          <Link
-            href={workHref(query, { pane: "closed" })}
-            className="btn small ghost icon"
-            aria-label="Close the details"
-          >
-            <IconClose size={16} />
-          </Link>
+          <Status value={entry.pending ? "pending" : "done"} label={entry.pending ? "Waiting" : "Recorded"} />
         </div>
-      </header>
-      <div className="wk-detail-body">
-        {approvalId && !record ? (
-          <ApprovalDetail id={approvalId} draftId={query.draft} />
-        ) : !record ? (
-          <p className="wk-empty">Pick a record to see its activity.</p>
-        ) : entry?.source === "approval" ? (
-          <ApprovalDetail id={entry.refId} draftId={query.draft} />
-        ) : entry ? (
-          <EntryDetail record={record} entry={entry} />
-        ) : record.kind === "application" ? (
-          <ApplicationDetail id={record.id} draftId={query.draft} />
+        {entry.source === "approval" ? (
+          <ApprovalDetail
+            id={entry.refId}
+            draftId={query.draft}
+            ask={entry.pending ? gateAsk(entry.refId) : undefined}
+            after={activity}
+          />
         ) : (
-          <LeaseDetail id={record.id} draftId={query.draft} />
+          <>
+            <EntryDetail record={record} entry={entry} />
+            {activity}
+          </>
         )}
       </div>
-    </aside>
+    );
+  }
+  return (
+    <div className="grid gap-8">
+      {gate ? (
+        <ApprovalDetail id={gate.refId} draftId={query.draft} ask={gateAsk(gate.refId)} compact after={activity} />
+      ) : (
+        activity
+      )}
+      {record.kind === "application" ? (
+        <ApplicationDetail id={record.id} draftId={query.draft} />
+      ) : (
+        <LeaseDetail id={record.id} draftId={query.draft} />
+      )}
+    </div>
   );
 }

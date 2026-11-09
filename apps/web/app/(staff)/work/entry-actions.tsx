@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useActionState, useState } from "react";
-import { IconWarning } from "../../../lib/icons";
+import { WarningIcon as IconWarning } from "@phosphor-icons/react";
+import { buttonClass } from "../../../components/ui/button";
+import { INPUT } from "../../../components/ui/form";
 import type { LogAction } from "../../../lib/types";
 import { type DecisionState, decide, type EntryActionState, runEntryAction } from "./actions";
 
@@ -16,12 +18,12 @@ const LABEL: Partial<Record<LogAction, string>> = {
 function Errors({ error, reasons }: { error?: string | undefined; reasons?: string[] | undefined }) {
   if (!error) return null;
   return (
-    <div className="wk-err" role="alert">
-      <IconWarning size={14} />
+    <div className="flex items-start gap-1.5 text-[12.5px] text-danger" role="alert">
+      <IconWarning size={14} className="mt-0.5 shrink-0" />
       <div>
         <strong>{error}</strong>
         {reasons && reasons.length > 0 && (
-          <ul>
+          <ul className="m-0 mt-1 pl-4">
             {reasons.map((r) => (
               <li key={r}>{r}</li>
             ))}
@@ -54,14 +56,14 @@ export function EntryActions({
 
   if (decision.ok) {
     return (
-      <p className="wk-done" role="status">
+      <p className="m-0 text-[12.5px] font-semibold text-ink" role="status">
         {decision.ok === "rejected" ? "Rejected." : "Approved."} It is in the audit trail.
       </p>
     );
   }
   if (other.ok) {
     return (
-      <p className="wk-done" role="status">
+      <p className="m-0 text-[12.5px] font-semibold text-ink" role="status">
         {other.ok}
       </p>
     );
@@ -70,39 +72,51 @@ export function EntryActions({
   const isApproval = source === "approval";
 
   return (
-    <div className="wk-actions">
+    <div className="grid gap-2">
       {isApproval && (
-        <form action={decideAction} className="wk-action-form">
+        <form action={decideAction} className="grid gap-2">
           <input type="hidden" name="id" value={entryId} />
           {rejecting && (
-            <label className="wk-note">
+            <label>
               <span className="sr-only">Why you are rejecting</span>
-              <input name="note" placeholder="Why? It goes into the audit trail" autoFocus />
+              <input name="note" placeholder="Why? It goes into the audit trail" autoFocus className={INPUT} />
             </label>
           )}
-          <div className="btn-row">
+          <div className="flex flex-wrap items-center gap-2">
             {!rejecting && has("approve") && (
-              <button type="submit" name="decision" value="approve" className="btn small primary" disabled={deciding}>
+              <button
+                type="submit"
+                name="decision"
+                value="approve"
+                className={buttonClass("primary", "sm")}
+                disabled={deciding}
+              >
                 Approve
               </button>
             )}
             {!rejecting && has("edit") && (
-              <Link href={editHref} className="btn small">
+              <Link href={editHref} className={buttonClass("ghost", "sm")}>
                 Edit
               </Link>
             )}
             {has("reject") &&
               (rejecting ? (
                 <>
-                  <button type="submit" name="decision" value="reject" className="btn small danger" disabled={deciding}>
+                  <button
+                    type="submit"
+                    name="decision"
+                    value="reject"
+                    className={buttonClass("danger", "sm")}
+                    disabled={deciding}
+                  >
                     Confirm reject
                   </button>
-                  <button type="button" className="btn small ghost" onClick={() => setRejecting(false)}>
+                  <button type="button" className={buttonClass("quiet", "sm")} onClick={() => setRejecting(false)}>
                     Cancel
                   </button>
                 </>
               ) : (
-                <button type="button" className="btn small danger" onClick={() => setRejecting(true)}>
+                <button type="button" className={buttonClass("danger", "sm")} onClick={() => setRejecting(true)}>
                   Reject
                 </button>
               ))}
@@ -111,26 +125,33 @@ export function EntryActions({
       )}
 
       {!isApproval && (
-        <form action={otherAction} className="wk-action-form">
+        <form action={otherAction} className="grid gap-2">
           <input type="hidden" name="recordId" value={recordId} />
           <input type="hidden" name="entryId" value={entryId} />
           {asking === "reservation" && (
-            <div className="wk-inline-fields">
+            <div className="flex flex-wrap gap-2">
               <label>
                 <span className="sr-only">Paid on</span>
-                <input type="date" name="paidOn" required />
+                <input type="date" name="paidOn" required className={INPUT} />
               </label>
               <label>
                 <span className="sr-only">Payment reference</span>
-                <input name="reference" placeholder="Reference" minLength={2} required />
+                <input name="reference" placeholder="Reference" minLength={2} required className={INPUT} />
               </label>
             </div>
           )}
-          <div className="btn-row">
+          <div className="flex flex-wrap items-center gap-2">
             {(["send_offer", "prepare_contract", "retry_kyc"] as const).map(
               (a) =>
                 has(a) && (
-                  <button key={a} type="submit" name="op" value={a} className="btn small primary" disabled={running}>
+                  <button
+                    key={a}
+                    type="submit"
+                    name="op"
+                    value={a}
+                    className={buttonClass("primary", "sm")}
+                    disabled={running}
+                  >
                     {LABEL[a]}
                   </button>
                 ),
@@ -141,12 +162,18 @@ export function EntryActions({
                   type="submit"
                   name="op"
                   value="viewing_attended"
-                  className="btn small primary"
+                  className={buttonClass("primary", "sm")}
                   disabled={running}
                 >
                   Attended
                 </button>
-                <button type="submit" name="op" value="viewing_no_show" className="btn small" disabled={running}>
+                <button
+                  type="submit"
+                  name="op"
+                  value="viewing_no_show"
+                  className={buttonClass("ghost", "sm")}
+                  disabled={running}
+                >
                   No-show
                 </button>
               </>
@@ -154,20 +181,26 @@ export function EntryActions({
             {has("record_reservation") &&
               (asking === "reservation" ? (
                 <>
-                  <button type="submit" name="op" value="reservation" className="btn small primary" disabled={running}>
+                  <button
+                    type="submit"
+                    name="op"
+                    value="reservation"
+                    className={buttonClass("primary", "sm")}
+                    disabled={running}
+                  >
                     Record reservation
                   </button>
-                  <button type="button" className="btn small ghost" onClick={() => setAsking(null)}>
+                  <button type="button" className={buttonClass("quiet", "sm")} onClick={() => setAsking(null)}>
                     Cancel
                   </button>
                 </>
               ) : (
-                <button type="button" className="btn small primary" onClick={() => setAsking("reservation")}>
+                <button type="button" className={buttonClass("primary", "sm")} onClick={() => setAsking("reservation")}>
                   Record reservation
                 </button>
               ))}
             {has("done") && (
-              <button type="submit" name="op" value="done" className="btn small" disabled={running}>
+              <button type="submit" name="op" value="done" className={buttonClass("ghost", "sm")} disabled={running}>
                 {LABEL.done}
               </button>
             )}

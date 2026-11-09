@@ -2,7 +2,12 @@
 
 import { useActionState, useState } from "react";
 import { openDispute, resolveDispute, type TenancyActionState } from "../app/(staff)/leases/[id]/tenancy-actions";
-import { Result } from "./tenancy-panels";
+import { buttonClass } from "./ui/button";
+import { FIELD, LABEL } from "./ui/form";
+import { Section } from "./ui/record";
+import { Result } from "./ui/result";
+import { SET_SELECT, SET_TEXTAREA } from "./ui/settings";
+import { FORM_ROW, NOTE } from "./ui/tenancy";
 
 /**
  * Step 11 (person-led): export the case pack, open or resolve a dispute (leasing manager), and
@@ -35,53 +40,57 @@ export function CasePanel({
     URL.revokeObjectURL(url);
   };
   return (
-    <section className="panel" aria-labelledby="case-h" id="case">
-      <div className="panel-head">
-        <h2 id="case-h">Dispute case</h2>
-        <span className="hint">Person-led; the product gathers the evidence</span>
-      </div>
-      <div className="panel-pad stack">
-        <a className="btn small" style={{ width: "fit-content" }} href={`/api/leases/${leaseId}/case-pack`}>
-          Export case pack (zip)
-        </a>
-        <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+    <div id="case">
+      <Section id="case-h" title="Dispute case" hint="Person-led; the product gathers the evidence">
+        <div>
+          <a className={buttonClass("ghost", "sm")} href={`/api/leases/${leaseId}/case-pack`}>
+            Export case pack (zip)
+          </a>
+        </div>
+        <p className={NOTE}>
           Timeline with rules versions, documents, photos, emails with delivery evidence, payments and the tenant&apos;s
           submissions. ID images are listed by hash only. Each export is recorded.
         </p>
         {summary && (
-          <div className="stack">
-            <label className="field">
-              <span className="field-label">{summary.subject ?? "Case summary"} (copilot draft: check every fact)</span>
-              <textarea rows={12} value={text} onChange={(e) => setText(e.target.value)} />
+          <div className="grid gap-2">
+            <label className={FIELD}>
+              <span className={LABEL}>{summary.subject ?? "Case summary"} (copilot draft: check every fact)</span>
+              <textarea rows={12} value={text} onChange={(e) => setText(e.target.value)} className={SET_TEXTAREA} />
             </label>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button type="button" className="btn small" onClick={() => void navigator.clipboard.writeText(text)}>
+            <div className={FORM_ROW}>
+              <button
+                type="button"
+                className={buttonClass("ghost", "sm")}
+                onClick={() => void navigator.clipboard.writeText(text)}
+              >
                 Copy
               </button>
-              <button type="button" className="btn small" onClick={download}>
+              <button type="button" className={buttonClass("ghost", "sm")} onClick={download}>
                 Download .txt
               </button>
             </div>
           </div>
         )}
         {canOpen && (
-          <form action={open} className="stack">
+          <form action={open} className="grid gap-3 rounded-xl border border-line p-3.5">
             <input type="hidden" name="leaseId" value={leaseId} />
-            <label className="field">
-              <span className="field-label">Open a dispute: what is it about?</span>
-              <textarea name="reason" rows={2} minLength={5} maxLength={2000} required />
+            <label className={FIELD}>
+              <span className={LABEL}>Open a dispute: what is it about?</span>
+              <textarea name="reason" rows={2} minLength={5} maxLength={2000} required className={SET_TEXTAREA} />
             </label>
-            <button type="submit" className="btn small" disabled={opening} style={{ width: "fit-content" }}>
-              Open dispute
-            </button>
+            <div>
+              <button type="submit" className={buttonClass("ghost", "sm")} disabled={opening}>
+                Open dispute
+              </button>
+            </div>
           </form>
         )}
         {manager && state === "DISPUTE" && (
-          <form action={resolve} className="stack">
+          <form action={resolve} className="grid gap-3 rounded-xl border border-line p-3.5">
             <input type="hidden" name="leaseId" value={leaseId} />
-            <label className="field">
-              <span className="field-label">Outcome</span>
-              <select name="outcome" required defaultValue="">
+            <label className={FIELD}>
+              <span className={LABEL}>Outcome</span>
+              <select name="outcome" required defaultValue="" className={SET_SELECT}>
                 <option value="" disabled>
                   Choose…
                 </option>
@@ -90,18 +99,20 @@ export function CasePanel({
                 <option value="closed">Closed (deposit settled, Ejari cancelled)</option>
               </select>
             </label>
-            <label className="field">
-              <span className="field-label">Note (decision or settlement reference)</span>
-              <textarea name="note" rows={2} minLength={5} maxLength={2000} required />
+            <label className={FIELD}>
+              <span className={LABEL}>Note (decision or settlement reference)</span>
+              <textarea name="note" rows={2} minLength={5} maxLength={2000} required className={SET_TEXTAREA} />
             </label>
-            <button type="submit" className="btn small" disabled={resolving} style={{ width: "fit-content" }}>
-              Resolve dispute
-            </button>
+            <div>
+              <button type="submit" className={buttonClass("ghost", "sm")} disabled={resolving}>
+                Resolve dispute
+              </button>
+            </div>
           </form>
         )}
         <Result s={openState} />
         <Result s={resState} />
-      </div>
-    </section>
+      </Section>
+    </div>
   );
 }

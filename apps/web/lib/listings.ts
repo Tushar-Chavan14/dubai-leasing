@@ -34,6 +34,9 @@ const ENGINE_PHOTO = /^\/public\/units\/[0-9a-f-]{36}\/photos\/[0-9a-f-]{36}$/i;
 /** Engine photo path → the web app's own proxy route, or null for anything unexpected. */
 export const photoSrc = (path: string | null | undefined) => (path && ENGINE_PHOTO.test(path) ? `/api${path}` : null);
 
+/** "AED 54,000.00" → "AED 54,000" for display (the engine formats the figure; this only drops the empty fils). */
+export const rentShort = (rent: string) => rent.replace(/\.00$/, "");
+
 export const bedsLabel = (b: number | null) => (b === null ? null : b === 0 ? "Studio" : `${b} bed`);
 
 const sqft = (n: number) => `${Math.round(n).toLocaleString("en")} sqft`;
@@ -74,6 +77,9 @@ export function initials(name: string): string {
     .join("")
     .toUpperCase();
 }
+
+/** A stable 140-230 hue for a name (green through teal to slate blue). */
+export const hueOf = (s: string) => 140 + (hue(s) % 90);
 
 const hue = (s: string) => {
   let h = 0;

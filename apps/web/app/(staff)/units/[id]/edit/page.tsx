@@ -1,11 +1,15 @@
+import type { StaffRole } from "@leasing/core";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { PhotoManager } from "../../../../../components/photo-manager";
-import { PageHead } from "../../../../../components/ui";
-import { UnitForm } from "../../../../../components/unit-form";
+import { Banner } from "../../../../../components/ui/form";
+import { PageTitle } from "../../../../../components/ui/page";
+import { FormSection, UnitForm } from "../../../../../components/unit-form";
 import { get } from "../../../../../lib/engine";
-import { IconWarning } from "../../../../../lib/icons";
-import type { CompanyRow, UnitDetail, UnitRow } from "../../../../../lib/types";
+import { canSeeUnits } from "../../../../../lib/shell/nav";
+import { NotAllowed } from "../../not-allowed";
+import { WarningIcon as IconWarning } from "@phosphor-icons/react/dist/ssr";
+import type { CompanyRow, Me, UnitDetail, UnitRow } from "../../../../../lib/types";
 
 export const metadata: Metadata = { title: "Edit unit" };
 
@@ -20,10 +24,12 @@ export default async function EditUnitPage({
 }) {
   const { id } = await params;
   const { photos: photoFlag } = await searchParams;
-  const [unit, companies] = await Promise.all([
+  const [unit, companies, me] = await Promise.all([
     get<UnitDetail>(`/api/units/${id}`),
     get<CompanyRow[]>("/api/companies"),
+    get<Me>("/api/me"),
   ]);
+  if (me && !canSeeUnits(me.role as StaffRole)) return <NotAllowed />;
   if (!unit) notFound();
   const hasLease = unit.leases.some((l) => l.state !== "CLOSED");
   const row: UnitRow = {
@@ -34,30 +40,30 @@ export default async function EditUnitPage({
   };
 
   return (
-    <>
-      <PageHead back={{ href: `/units/${id}`, label: unit.code }} title={`Edit ${unit.code}`} />
+    <div className="grid gap-6">
+      <PageTitle back={{ href: `/units/${id}`, label: unit.code }} title={`Edit ${unit.code}`} />
       {photoFlag === "failed" && (
-        <div className="alert" data-tone="warn" role="alert" style={{ marginBottom: 20 }}>
-          <IconWarning size={16} />
+        <Banner tone="warn" role="alert">
+          <IconWarning size={16} className="mt-0.5 shrink-0" />
           The unit was created, but some photos didn&apos;t upload. Add them again below.
-        </div>
+        </Banner>
       )}
       {hasLease && (
-        <div className="alert" style={{ marginBottom: 20 }}>
-          <IconWarning size={16} />
+        <Banner tone="warn">
+          <IconWarning size={16} className="mt-0.5 shrink-0" />
           This unit has a lease, so its code, category, unit number, DLD, Makani and plot numbers are fixed. They must
           keep matching the contract and the Ejari registration.
-        </div>
+        </Banner>
       )}
-      <section className="form-section" style={{ borderTop: 0, paddingTop: 0 }}>
-        <header>
-          <h2>Photos</h2>
-          <p>The first photo is the cover on listings. Changes here are saved straight away.</p>
-        </header>
-        <PhotoManager unitId={id} photos={unit.photos} />
-      </section>
-      <div className="divider" />
-      <UnitForm mode="edit" unit={row} companies={companies ?? []} lockedFields={hasLease ? IDENTITY : []} />
-    </>
+      <div className="grid max-w-[980px]">
+        <FormSection
+          title="Photos"
+          lede="The first photo is the cover on listings. Changes here are saved straight away."
+        >
+          <PhotoManager unitId={id} photos={unit.photos} />
+        </FormSection>
+        <UnitForm mode="edit" unit={row} companies={companies ?? []} lockedFields={hasLease ? IDENTITY : []} />
+      </div>
+    </div>
   );
 }

@@ -2,9 +2,12 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { type FormEvent, useState } from "react";
+import { type SubmitEvent, useState } from "react";
 import { Status } from "../../../../components/ui";
-import { IconUpload, IconWarning } from "../../../../lib/icons";
+import { Button } from "../../../../components/ui/button";
+import { Banner, INPUT } from "../../../../components/ui/form";
+import { Panel, SET_SELECT, SField, TABLE, TD, TH } from "../../../../components/ui/settings";
+import { UploadSimpleIcon as IconUpload, WarningIcon as IconWarning } from "@phosphor-icons/react";
 import type { CompanyRow } from "../../../../lib/types";
 
 export type ImportKind = "leases" | "units" | "companies";
@@ -52,7 +55,7 @@ export function ImportForm({ kind, companies }: { kind: ImportKind; companies: C
   const [error, setError] = useState<string>();
   const [result, setResult] = useState<ImportResult>();
 
-  async function onSubmit(e: FormEvent<HTMLFormElement>) {
+  async function onSubmit(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault();
     setPending(true);
     setError(undefined);
@@ -73,14 +76,21 @@ export function ImportForm({ kind, companies }: { kind: ImportKind; companies: C
 
   return (
     <>
-      <form onSubmit={onSubmit} className="panel panel-pad stack">
+      <form onSubmit={onSubmit} className="grid gap-4 rounded-card border border-line bg-page p-5">
         {kind !== "companies" && (
-          <label className="field">
-            <span className="field-label">Company</span>
+          <SField
+            label="Company"
+            help={
+              kind === "units"
+                ? "Each row names its company; a company chosen here is used for rows that leave it empty."
+                : "Every row is imported under this company."
+            }
+          >
             <select
               name="company"
               required={kind !== "units"}
               defaultValue={kind === "units" ? "" : companies.find((c) => c.active)?.slug}
+              className={SET_SELECT}
             >
               {kind === "units" && <option value="">Use the company column in the file</option>}
               {kind !== "units" && companies.length === 0 && <option value="">No companies yet</option>}
@@ -92,67 +102,67 @@ export function ImportForm({ kind, companies }: { kind: ImportKind; companies: C
                   </option>
                 ))}
             </select>
-            <span className="hint">
-              {kind === "units"
-                ? "Each row names its company; a company chosen here is used for rows that leave it empty."
-                : "Every row is imported under this company."}
-            </span>
-          </label>
+          </SField>
         )}
-        <label className="dropzone" htmlFor="csv-file">
-          <IconUpload size={22} />
-          <span>
+        <label
+          htmlFor="csv-file"
+          className="flex cursor-pointer flex-wrap items-center gap-3 rounded-card border border-dashed border-line bg-raised px-4 py-5 text-sm hover:border-ink has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-ink"
+        >
+          <span aria-hidden className="grid size-10 flex-none place-items-center rounded-xl bg-page text-ink">
+            <IconUpload size={20} />
+          </span>
+          <span className="min-w-0 flex-1">
             <strong>Choose a CSV file</strong> with one {copy.noun} per row
           </span>
-          <input id="csv-file" type="file" name="file" accept=".csv,text/csv" style={{ fontSize: 13 }} />
+          <input id="csv-file" type="file" name="file" accept=".csv,text/csv" className="max-w-full text-[13px]" />
         </label>
-        <label className="field">
-          <span className="field-label">
-            Or paste rows <em>(with the header line)</em>
-          </span>
-          <textarea name="csv" rows={5} className="ref" placeholder={copy.placeholder} />
-        </label>
-        <div className="btn-row">
-          <button type="submit" className="btn primary" disabled={pending}>
+        <SField label="Or paste rows (with the header line)">
+          <textarea
+            name="csv"
+            rows={5}
+            className={`${INPUT} resize-y font-mono text-[13px]`}
+            placeholder={copy.placeholder}
+          />
+        </SField>
+        <div>
+          <Button type="submit" variant="primary" size="sm" disabled={pending}>
             {pending ? "Importing…" : copy.button}
-          </button>
+          </Button>
         </div>
       </form>
       {error && (
-        <div className="alert" data-tone="bad" role="alert" style={{ marginTop: 16 }}>
-          <IconWarning size={16} />
+        <Banner tone="bad" role="alert">
+          <IconWarning size={16} className="mt-0.5 shrink-0" />
           {error}
-        </div>
+        </Banner>
       )}
       {result && (
-        <section className="panel section" aria-live="polite">
-          <div className="panel-head">
-            <h2>
+        <Panel className="overflow-x-auto">
+          <div aria-live="polite">
+            <h2 className="m-0 px-5 pt-5 font-sans text-[15px] font-semibold tracking-tight">
               {result.imported} imported, {result.skipped} skipped, {result.errors} with errors
             </h2>
-          </div>
-          {kind === "units" && result.imported > 0 && (
-            <p className="muted panel-pad" style={{ fontSize: 13.5, margin: 0 }}>
-              Imported units start in Preparation. Add photos and a virtual tour link from each unit&apos;s edit page.
-            </p>
-          )}
-          <div className="table-wrap">
-            <table className="data">
+            {kind === "units" && result.imported > 0 && (
+              <p className="m-0 px-5 pt-1 text-[13px] text-muted">
+                Imported units start in Preparation. Add photos and a virtual tour link from each unit&apos;s edit page.
+              </p>
+            )}
+            <table className={`${TABLE} mt-3`}>
               <thead>
                 <tr>
-                  <th>Row</th>
-                  <th>Result</th>
-                  <th>{copy.ref}</th>
-                  <th>Notes</th>
+                  <th className={TH}>Row</th>
+                  <th className={TH}>Result</th>
+                  <th className={TH}>{copy.ref}</th>
+                  <th className={TH}>Notes</th>
                 </tr>
               </thead>
               <tbody>
                 {result.rows.map((r) => {
                   const href = r.leaseId ? `/work?kind=lease&id=${r.leaseId}` : r.unitId ? `/units/${r.unitId}` : null;
                   return (
-                    <tr key={r.row}>
-                      <td className="num">{r.row}</td>
-                      <td>
+                    <tr key={r.row} className="group">
+                      <td className={`${TD} font-mono tabular-nums`}>{r.row}</td>
+                      <td className={TD}>
                         <Status
                           value={r.status === "imported" ? "done" : r.status === "error" ? "failed" : "skipped"}
                           label={
@@ -164,23 +174,23 @@ export function ImportForm({ kind, companies }: { kind: ImportKind; companies: C
                           }
                         />
                       </td>
-                      <td className="ref">
+                      <td className={`${TD} font-mono text-[13px]`}>
                         {href ? (
-                          <Link className="link" href={href}>
+                          <Link className="text-ink! underline" href={href}>
                             {r.ref}
                           </Link>
                         ) : (
                           (r.ref ?? "—")
                         )}
                       </td>
-                      <td>{r.reasons.join("; ") || <span className="muted">—</span>}</td>
+                      <td className={TD}>{r.reasons.join("; ") || <span className="text-muted">—</span>}</td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
           </div>
-        </section>
+        </Panel>
       )}
     </>
   );

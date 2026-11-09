@@ -104,6 +104,8 @@ export interface RecordRow {
   contractHeld: boolean;
   /** The contract is out with the signers. */
   contractSent: boolean;
+  /** The applicant accepted the offer and the reservation payment waits to be recorded (fils, from the accepted offer). */
+  reservationDueFils: number | null;
   updatedAt: string;
 }
 
@@ -145,6 +147,8 @@ export function stageFor(r: RecordState): Stage | null {
 export function nextStepFor(r: {
   stage: Stage;
   offerHeld?: boolean;
+  /** The applicant accepted; the reservation payment waits to be recorded. */
+  reservationDue?: boolean;
   contractHeld?: boolean;
   /** The contract is out with the signers. */
   contractSent?: boolean;
@@ -157,7 +161,11 @@ export function nextStepFor(r: {
     case "Documents":
       return "Agent is checking the applicant's documents.";
     case "Offer":
-      return r.offerHeld ? "Send the offer to the applicant." : "Waiting for the applicant to answer the offer.";
+      return r.offerHeld
+        ? "Send the offer to the applicant."
+        : r.reservationDue
+          ? "The applicant accepted. Record the reservation payment once it is received."
+          : "Waiting for the applicant to answer the offer.";
     case "Reserved":
       return "Agent is creating the lease from the reservation.";
     case "Contract":
@@ -626,7 +634,16 @@ export async function loadRecords(db: Db, me: Me): Promise<Loaded> {
     const offerHeld = tk.some((t) => t.kind === "send_offer");
     const contractHeld = tk.some((t) => t.kind === "prepare_contract");
     const contractSent = kind === "lease" && sentLeaseIds.has(id);
-    const nextStep = nextStepFor({ stage, offerHeld, contractHeld, contractSent });
+    const reservationTask = stage === "Offer" ? tk.find((t) => t.kind === "record_reservation") : undefined;
+    const dueFils = (reservationTask?.details as { reservationFils?: unknown } | null)?.reservationFils;
+    const reservationDueFils = reservationTask ? (typeof dueFils === "number" ? dueFils : null) : null;
+    const nextStep = nextStepFor({
+      stage,
+      offerHeld,
+      reservationDue: Boolean(reservationTask),
+      contractHeld,
+      contractSent,
+    });
     let owner: Owner;
     if (waitingForMe) owner = me.role;
     else if (ap[0]) owner = ap[0].approverRole;
@@ -644,9 +661,10 @@ export async function loadRecords(db: Db, me: Me): Promise<Loaded> {
       nextStep,
       owner,
       waitingForMe,
-      waitingOnReply: stage === "Documents" || (stage === "Offer" && !offerHeld) || contractSent,
+      waitingOnReply: stage === "Documents" || (stage === "Offer" && !offerHeld && !reservationTask) || contractSent,
       contractHeld,
       contractSent,
+      reservationDueFils,
       updatedAt: base.updatedAt.toISOString(),
       _entityIds: ids,
       _offerHeld: offerHeld,

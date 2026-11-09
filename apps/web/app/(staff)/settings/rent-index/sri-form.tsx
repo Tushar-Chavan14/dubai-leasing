@@ -1,20 +1,21 @@
 "use client";
 
 import { useActionState } from "react";
-import { IconCheck, IconWarning } from "../../../../lib/icons";
+import { CheckIcon as IconCheck, WarningIcon as IconWarning } from "@phosphor-icons/react";
+import { Button } from "../../../../components/ui/button";
+import { Banner } from "../../../../components/ui/form";
+import { Affix, SET_INPUT, SET_SELECT, SField } from "../../../../components/ui/settings";
 import { type SriState, saveSri } from "./actions";
 
 export function SriForm() {
   const [s, action, pending] = useActionState<SriState, FormData>(saveSri, {});
   return (
-    <form action={action} className="stack">
-      <label className="field">
-        <span className="field-label">Community</span>
-        <input name="community" required placeholder="Dubai Marina" />
-      </label>
-      <label className="field">
-        <span className="field-label">Size</span>
-        <select name="bedrooms" defaultValue="1">
+    <form action={action} className="grid gap-3.5">
+      <SField label="Community">
+        <input name="community" required placeholder="Dubai Marina" className={SET_INPUT} />
+      </SField>
+      <SField label="Size">
+        <select name="bedrooms" defaultValue="1" className={SET_SELECT}>
           <option value="0">Studio</option>
           {[1, 2, 3, 4, 5].map((b) => (
             <option key={b} value={b}>
@@ -22,30 +23,28 @@ export function SriForm() {
             </option>
           ))}
         </select>
-      </label>
-      <label className="field">
-        <span className="field-label">Average annual rent</span>
-        <span className="affix">
-          <b>AED</b>
+      </SField>
+      <SField label="Average annual rent">
+        <Affix unit="AED">
           <input name="avg" inputMode="decimal" required placeholder="100,000" />
-        </span>
-      </label>
+        </Affix>
+      </SField>
       <div>
-        <button type="submit" className="btn primary" disabled={pending}>
+        <Button type="submit" variant="primary" size="sm" disabled={pending}>
           Save
-        </button>
+        </Button>
       </div>
       {s.ok && (
-        <div className="alert" data-tone="good" role="status">
-          <IconCheck size={16} />
+        <Banner tone="good" role="status">
+          <IconCheck size={16} className="mt-0.5 shrink-0" />
           {s.ok}
-        </div>
+        </Banner>
       )}
       {s.error && (
-        <div className="alert" data-tone="bad" role="alert">
-          <IconWarning size={16} />
+        <Banner tone="bad" role="alert">
+          <IconWarning size={16} className="mt-0.5 shrink-0" />
           {s.error}
-        </div>
+        </Banner>
       )}
     </form>
   );

@@ -2,7 +2,27 @@
 
 import { useRouter } from "next/navigation";
 import { useActionState, useState } from "react";
-import { IconCheck, IconTrash, IconUpload, IconWarning } from "../../../../lib/icons";
+import {
+  CheckCircleIcon as IconCheck,
+  FileArrowUpIcon as IconFile,
+  TrashIcon as IconTrash,
+  UploadSimpleIcon as IconUpload,
+  WarningIcon as IconWarning,
+} from "@phosphor-icons/react";
+import { Banner } from "../../../../components/ui/form";
+import {
+  Choice,
+  Cta,
+  Done,
+  FORM,
+  Note,
+  P_INPUT,
+  PAGE,
+  PField,
+  PFieldset,
+  PRIMARY,
+  SMALL_GHOST,
+} from "../../../../components/ui/portal";
 import { checkPhotoFile, preparePhoto } from "../../../../lib/images";
 import { type PortalState, submitDocuments } from "../actions";
 
@@ -120,125 +140,125 @@ export function UploadDocuments({ token, initial, form }: { token: string; initi
 
   if (state.ref) {
     return (
-      <section className="panel panel-pad stack" role="status">
-        <p className="row-done" style={{ margin: 0 }}>
-          <IconCheck size={16} /> Thank you, your documents are being checked. Reference{" "}
-          <span className="ref">{state.ref}</span>.
+      <Done
+        title="Thank you, your documents are being checked"
+        action={
+          <button type="button" className={SMALL_GHOST} onClick={() => router.push(`/t/${token}`)}>
+            View your application
+          </button>
+        }
+      >
+        <p className="m-0">
+          Reference <span className="font-mono text-[13px]">{state.ref}</span>.
         </p>
-        <p className="muted" style={{ margin: 0 }}>
-          We&apos;ll email you as soon as the check is done.
-        </p>
-        <button
-          type="button"
-          className="btn small"
-          onClick={() => router.push(`/t/${token}`)}
-          style={{ alignSelf: "start" }}
-        >
-          View your application
-        </button>
-      </section>
+        <p className="m-0">We&apos;ll email you as soon as the check is done.</p>
+      </Done>
     );
   }
 
   return (
-    <div className="stack" style={{ gap: 16 }}>
-      <fieldset className="panel panel-pad renting-as">
-        <legend className="field-label">You are renting as</legend>
-        <label className="check-row">
-          <input
-            type="radio"
+    <div className={PAGE}>
+      <PFieldset legend="You are renting as">
+        <div className="grid grid-cols-2 gap-2">
+          <Choice
             name="renting-as"
+            title="Myself (an individual)"
             checked={applicantKind === "individual"}
             onChange={() => setApplicantKind("individual")}
           />
-          Myself (an individual)
-        </label>
-        <label className="check-row">
-          <input
-            type="radio"
+          <Choice
             name="renting-as"
+            title="A company (I sign for it)"
             checked={applicantKind === "company"}
             onChange={() => setApplicantKind("company")}
           />
-          A company (I sign for it)
-        </label>
-      </fieldset>
-      <ul className="doc-slots">
+        </div>
+      </PFieldset>
+      <ul className="m-0 grid list-none gap-2 p-0" aria-label="Documents">
         {slots.map((slot) => {
           const k = keyOf(slot);
           const d = docFor(slot);
           return (
-            <li key={k} className="panel panel-pad" data-done={!!d}>
-              <div className="doc-slot-head">
-                <div>
-                  <b>
-                    {slot.label}
-                    {!slot.required && <em className="muted"> (optional)</em>}
-                  </b>
-                  {slot.hint && (
-                    <div className="muted" style={{ fontSize: 13 }}>
-                      {slot.hint}
-                    </div>
+            <li key={k} data-done={!!d} className="grid gap-2">
+              <div
+                className={`grid gap-3 rounded-xl border px-3.5 py-3 ${d ? "border-transparent bg-accent text-on-accent" : "border-line bg-page text-ink"}`}
+              >
+                <div className="flex items-start gap-3">
+                  {d ? (
+                    <IconCheck size={22} weight="fill" className="mt-0.5 shrink-0" aria-hidden />
+                  ) : (
+                    <IconFile size={22} className="mt-0.5 shrink-0 text-muted" aria-hidden />
+                  )}
+                  <div className="grid min-w-0 flex-1 gap-0.5">
+                    <b className="text-[15px] font-semibold">
+                      {slot.label}
+                      {!slot.required && <span className="font-normal opacity-70"> (optional)</span>}
+                    </b>
+                    {slot.hint && <span className="text-[13px] opacity-75">{slot.hint}</span>}
+                    <span className="text-[13px] font-medium">
+                      {d
+                        ? `Uploaded${d.bytes ? `, ${Math.round(d.bytes / 1024)} KB` : ""}`
+                        : busy === k
+                          ? "Uploading…"
+                          : slot.required
+                            ? "Needed"
+                            : "Not added"}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <label
+                    aria-disabled={busy !== null}
+                    className={`${d ? "inline-flex min-h-11 cursor-pointer items-center justify-center gap-1.5 rounded-full border border-current px-4 text-sm font-semibold" : "inline-flex min-h-11 cursor-pointer items-center justify-center gap-1.5 rounded-full bg-primary px-4 text-sm font-semibold text-on-primary"} has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ink aria-disabled:cursor-not-allowed aria-disabled:opacity-50`}
+                  >
+                    <IconUpload size={16} aria-hidden />
+                    {busy === k ? "Uploading…" : d ? "Replace photo" : "Take or choose photo"}
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      capture="environment"
+                      className="sr-only"
+                      disabled={busy !== null}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        e.target.value = "";
+                        if (f) void upload(slot, f);
+                      }}
+                    />
+                  </label>
+                  {d && (
+                    <button
+                      type="button"
+                      className="inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-full border border-transparent bg-transparent px-3 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink disabled:opacity-50"
+                      onClick={() => void remove(slot)}
+                      disabled={busy !== null}
+                    >
+                      <IconTrash size={16} aria-hidden /> Remove
+                    </button>
                   )}
                 </div>
-                {d && (
-                  <span className="row-done" style={{ fontSize: 13 }}>
-                    <IconCheck size={14} /> Uploaded{d.bytes ? `, ${Math.round(d.bytes / 1024)} KB` : ""}
-                  </span>
-                )}
-              </div>
-              <div className="btn-row">
-                <label className={`btn small ${d ? "" : "primary"}`} aria-disabled={busy === k}>
-                  <IconUpload size={15} />
-                  {busy === k ? "Uploading…" : d ? "Replace photo" : "Take or choose photo"}
-                  <input
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp"
-                    capture="environment"
-                    className="sr-only"
-                    disabled={busy !== null}
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      e.target.value = "";
-                      if (f) void upload(slot, f);
-                    }}
-                  />
-                </label>
-                {d && (
-                  <button
-                    type="button"
-                    className="btn small ghost"
-                    onClick={() => void remove(slot)}
-                    disabled={busy !== null}
-                  >
-                    <IconTrash size={15} /> Remove
-                  </button>
-                )}
               </div>
               {errors[k] && (
-                <p className="alert" data-tone="bad" role="alert" style={{ marginTop: 10 }}>
-                  <IconWarning size={15} /> {errors[k]}
-                </p>
+                <Banner tone="bad" role="alert">
+                  <IconWarning size={16} className="mt-0.5 shrink-0" aria-hidden />
+                  <span>{errors[k]}</span>
+                </Banner>
               )}
             </li>
           );
         })}
       </ul>
 
-      <form action={submit} className="stack">
+      <form action={submit} className={FORM}>
         <input type="hidden" name="token" value={token} />
         <input type="hidden" name="formVersion" value={form.version} />
         <input type="hidden" name="applicantKind" value={applicantKind} />
         {answerFields.length > 0 && (
-          <div className="panel panel-pad grid-fields">
+          <div className="grid gap-3.5 rounded-card border border-line bg-raised p-4">
             {answerFields.map((f) => (
-              <label key={f.key} className="field span-6">
-                <span className="field-label">
-                  {f.label}
-                  {!f.required && <em> (optional)</em>}
-                </span>
+              <PField key={f.key} label={f.label} optional={!f.required} hint={f.help}>
                 {f.type === "select" ? (
-                  <select name={`answer:${f.key}`} required={f.required} defaultValue="">
+                  <select name={`answer:${f.key}`} required={f.required} defaultValue="" className={P_INPUT}>
                     <option value="" disabled>
                       {f.placeholder || "Choose…"}
                     </option>
@@ -252,13 +272,15 @@ export function UploadDocuments({ token, initial, form }: { token: string; initi
                   <input
                     name={`answer:${f.key}`}
                     type={f.type === "document" ? "text" : INPUT_TYPE[f.type]}
+                    autoComplete={f.type === "email" ? "email" : f.type === "phone" ? "tel" : "off"}
+                    inputMode={f.type === "number" ? "decimal" : undefined}
                     placeholder={f.placeholder}
                     required={f.required}
                     maxLength={500}
+                    className={P_INPUT}
                   />
                 )}
-                {f.help && <span className="hint">{f.help}</span>}
-              </label>
+              </PField>
             ))}
           </div>
         )}
@@ -269,20 +291,17 @@ export function UploadDocuments({ token, initial, form }: { token: string; initi
             <input key={d.id} type="hidden" name="documentId" value={d.id} />
           ))}
         {state.error && (
-          <p className="alert" data-tone="bad" role="alert">
-            <IconWarning size={15} /> {state.error}
-          </p>
+          <Banner tone="bad" role="alert">
+            <IconWarning size={16} className="mt-0.5 shrink-0" aria-hidden />
+            <span>{state.error}</span>
+          </Banner>
         )}
-        <div>
-          <button type="submit" className="btn primary" disabled={!complete || sending || busy !== null}>
+        {!complete && <Note>Upload the required photos above (at least one document) to continue.</Note>}
+        <Cta>
+          <button type="submit" className={PRIMARY} disabled={!complete || sending || busy !== null}>
             {sending ? "Sending…" : "Send for checking"}
           </button>
-        </div>
-        {!complete && (
-          <p className="muted" style={{ fontSize: 13, margin: 0 }}>
-            Upload the required photos above (at least one document) to continue.
-          </p>
-        )}
+        </Cta>
       </form>
     </div>
   );

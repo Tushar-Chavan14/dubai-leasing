@@ -28,10 +28,13 @@ export function MicButton({
   endpoint,
   onText,
   disabled,
+  className,
 }: {
   endpoint: string;
   onText: (t: string) => void;
   disabled?: boolean;
+  /** Replaces the default button look. */
+  className?: string;
 }) {
   const { state, level, toggle } = useVoice(endpoint, onText);
   const available = useVoiceAvailable();
@@ -43,7 +46,10 @@ export function MicButton({
     <>
       <button
         type="button"
-        className="btn small voice-mic"
+        className={
+          className ??
+          "inline-flex size-8 items-center justify-center rounded-full border border-line bg-transparent text-ink"
+        }
         data-recording={recording || undefined}
         aria-label={label}
         aria-pressed={recording}

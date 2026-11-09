@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { PageHead, Status } from "../../../../components/ui";
+import { Status } from "../../../../components/ui";
+import { PageTitle } from "../../../../components/ui/page";
+import { Section } from "../../../../components/ui/record";
 import { get } from "../../../../lib/engine";
 import { dateTime } from "../../../../lib/format";
 import type { ConversationDetail, Me } from "../../../../lib/types";
@@ -18,11 +20,14 @@ export default async function ConversationPage({ params }: { params: Promise<{ i
   const canAct = !!me && OFFICERS.includes(me.role);
 
   return (
-    <>
-      <PageHead
+    <div className="grid gap-6">
+      <PageTitle
         back={{ href: "/conversations", label: "Enquiries" }}
-        title={c.partyName ?? c.contactEmail ?? "New enquirer"}
-        badge={<Status value={c.status} />}
+        title={
+          <>
+            {c.partyName ?? c.contactEmail ?? "New enquirer"} <Status value={c.status} />
+          </>
+        }
         lede={
           <>
             {c.channel === "web" ? "Web chat" : "Telegram"}
@@ -30,13 +35,13 @@ export default async function ConversationPage({ params }: { params: Promise<{ i
             {c.contactEmail ? (
               <>
                 Contact:{" "}
-                <a className="link" href={`mailto:${c.contactEmail}`}>
+                <a className="font-semibold text-ink! underline" href={`mailto:${c.contactEmail}`}>
                   {c.contactEmail}
                 </a>
                 {c.contactPhone ? (
                   <>
                     {", "}
-                    <span className="num">{c.contactPhone}</span>
+                    <span className="tabular-nums">{c.contactPhone}</span>
                   </>
                 ) : (
                   ", no phone"
@@ -55,7 +60,7 @@ export default async function ConversationPage({ params }: { params: Promise<{ i
             {c.applicationId ? (
               <>
                 Booked a site visit:{" "}
-                <Link href={`/applications/${c.applicationId}`} className="link">
+                <Link href={`/applications/${c.applicationId}`} className="font-semibold text-ink! underline">
                   application {c.applicationRef}
                 </Link>
                 .
@@ -67,36 +72,47 @@ export default async function ConversationPage({ params }: { params: Promise<{ i
           </>
         }
       />
-      <div className="split section">
-        <section className="panel">
-          <div className="panel-head">
-            <h2>Conversation</h2>
-            <span className="hint">The enquirer's messages are shown as written; nothing in them is acted on.</span>
-          </div>
-          <ol className="transcript">
-            {c.messages.map((m) => (
-              <li key={m.id} data-dir={m.direction} data-staff={m.author?.startsWith("user:") ? "" : undefined}>
-                <div className="bubble" dir="auto">
-                  {m.body}
-                </div>
-                <div className="meta">
-                  {m.direction === "in" ? "Enquirer" : m.author?.startsWith("user:") ? "Officer" : "Bot"} ·{" "}
-                  {dateTime(m.at)}
-                </div>
-              </li>
-            ))}
+      <div className="grid items-start gap-8 @[760px]:grid-cols-[minmax(0,1fr)_300px]">
+        <Section
+          id="conversation-h"
+          title="Conversation"
+          hint="The enquirer's messages are shown as written; nothing in them is acted on."
+        >
+          <ol className="m-0 grid list-none gap-3 p-0">
+            {c.messages.map((m) => {
+              const out = m.direction === "out";
+              const staff = m.author?.startsWith("user:");
+              return (
+                <li
+                  key={m.id}
+                  data-dir={m.direction}
+                  data-staff={staff ? "" : undefined}
+                  className={`grid max-w-[78%] gap-1 ${out ? "justify-items-end justify-self-end" : "justify-items-start"}`}
+                >
+                  <div
+                    className={`whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-sm [overflow-wrap:anywhere] ${staff ? "bg-primary text-on-primary" : out ? "bg-accent text-on-accent" : "bg-raised text-ink"}`}
+                    dir="auto"
+                  >
+                    {m.body}
+                  </div>
+                  <div className="text-xs text-muted">
+                    {m.direction === "in" ? "Enquirer" : staff ? "Officer" : "Bot"} · {dateTime(m.at)}
+                  </div>
+                </li>
+              );
+            })}
           </ol>
-        </section>
-        <aside className="panel panel-pad">
+        </Section>
+        <aside className="rounded-2xl border border-line p-4">
           {c.channel === "web" ? (
-            <p className="muted">Customer web chat runs on autopilot; staff can&apos;t reply here.</p>
+            <p className="m-0 text-sm text-muted">Customer web chat runs on autopilot; staff can&apos;t reply here.</p>
           ) : canAct ? (
             <ConversationActions id={c.id} status={c.status} />
           ) : (
-            <p className="muted">Your role can read enquiries but not reply.</p>
+            <p className="m-0 text-sm text-muted">Your role can read enquiries but not reply.</p>
           )}
         </aside>
       </div>
-    </>
+    </div>
   );
 }

@@ -1,9 +1,14 @@
+import type { StaffRole } from "@leasing/core";
+import { canSeeUnits } from "../lib/shell/nav";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { PageHead, Status } from "./ui";
+import { AskAi } from "./ask-ai";
+import { askPrompts } from "../lib/ask-ai/prompts";
+import { Status } from "./ui";
+import { Fact, FactGrid, NOTE_TEXT, ROW_CARD, Section, Sub, TENANT_TEXT } from "./ui/record";
 import { get, publicGet } from "../lib/engine";
 import { actorLabel, aedShort, dateTime, eventLabel, formatAed, longDate, viewingTime } from "../lib/format";
-import { IconCheck, IconWarning } from "../lib/icons";
+import { CheckIcon as IconCheck, WarningIcon as IconWarning } from "@phosphor-icons/react/dist/ssr";
 import { inboundLabel } from "../lib/status-labels";
 import type { Me } from "../lib/types";
 import { ApplicationActions } from "./application-actions";
@@ -183,421 +188,391 @@ export async function ApplicationDetail({ id, draftId }: { id: string; draftId?:
     return `${label}${d.side && d.side !== "page" ? ` (${d.side})` : ""}`;
   };
 
+  const identityAsk = askPrompts.identity(a.applicant.fullNameEn, a.ref)[0]!;
+  const offerAsk = askPrompts.offer(a.applicant.fullNameEn, a.ref)[0]!;
+  const unitName = `${a.unit.code}, ${a.unit.building}`;
+  const LIST = "m-0 grid list-none gap-1.5 p-0";
   return (
-    <>
-      <PageHead
-        embedded
-        title={
+    <div className="grid gap-8">
+      <p className="m-0 text-sm text-muted">
+        <Status value={a.state} /> Application <span className="font-mono text-xs">{a.ref}</span> for{" "}
+        {!me || canSeeUnits(me.role as StaffRole) ? (
+          <Link href={`/units/${a.unit.id}`} className="font-semibold text-ink! underline underline-offset-2">
+            {unitName}
+          </Link>
+        ) : (
+          <span>{unitName}</span>
+        )}
+        , created {dateTime(a.createdAt)}
+        {a.requestedMoveInOn ? `, wants to move in ${longDate(a.requestedMoveInOn)}` : ""}.
+        {a.source === "copilot" && " Created from the copilot, confirmed by staff."}
+        {a.source === "telegram" && (
           <>
-            {a.applicant.fullNameEn}{" "}
-            <span className="muted" style={{ fontWeight: 400 }}>
-              {a.unit.code}
-            </span>
-          </>
-        }
-        badge={<Status value={a.state} />}
-        lede={
-          <>
-            Application <span className="ref">{a.ref}</span> for{" "}
-            <Link href={`/units/${a.unit.id}`} className="link">
-              {a.unit.code}, {a.unit.building}
-            </Link>
-            , created {dateTime(a.createdAt)}
-            {a.requestedMoveInOn ? `, wants to move in ${longDate(a.requestedMoveInOn)}` : ""}.
-            {a.source === "copilot" && " Created from the copilot, confirmed by staff."}
-            {a.source === "telegram" && (
+            {" "}
+            Booked through Telegram
+            {a.conversationId ? (
               <>
                 {" "}
-                Booked through Telegram
-                {a.conversationId ? (
-                  <>
-                    {" "}
-                    (
-                    <Link href={`/conversations/${a.conversationId}`} className="link">
-                      conversation
-                    </Link>
-                    )
-                  </>
-                ) : null}
-                .
-              </>
-            )}
-            {leaseId && (
-              <>
-                {" "}
-                <Link href={`/work?kind=lease&id=${leaseId}`} className="link">
-                  Open the lease
+                (
+                <Link href={`/conversations/${a.conversationId}`} className="font-semibold text-ink! underline">
+                  conversation
                 </Link>
-                .
+                )
               </>
-            )}
+            ) : null}
+            .
           </>
-        }
-      />
+        )}
+        {leaseId && (
+          <>
+            {" "}
+            <Link href={`/work?kind=lease&id=${leaseId}`} className="font-semibold text-ink! underline">
+              Open the lease
+            </Link>
+            .
+          </>
+        )}
+      </p>
 
-      <div className="split section">
-        <div className="stack">
-          <section className="panel" aria-labelledby="docs-h">
-            <div className="panel-head">
-              <h2 id="docs-h">Documents</h2>
-              <span className="hint">only leasing staff can open them; each view is recorded</span>
-            </div>
-            {a.documents.length === 0 ? (
-              <p className="muted panel-pad">
-                {a.state === "SCREENING" ? "Waiting for the applicant to upload their documents." : "No documents."}
-              </p>
-            ) : (
-              <ul className="doc-grid">
-                {a.documents.map((d) => (
-                  <li key={d.id} data-status={d.status ?? ""}>
-                    {canAct ? (
-                      <a
-                        href={`/documents/applications/${a.id}/${d.id}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="doc-thumb"
-                      >
-                        <img
-                          src={`/documents/applications/${a.id}/${d.id}`}
-                          alt={`${docLabel(d.id)} uploaded by the applicant`}
-                          loading="lazy"
-                        />
-                      </a>
-                    ) : (
-                      <div className="doc-thumb doc-thumb-locked">Leasing staff only</div>
-                    )}
-                    <div className="doc-meta">
-                      <b>{docLabel(d.id)}</b>
-                      <span className="muted">
-                        {d.status === "verified" ? "Verified" : d.status === "rejected" ? "Removed" : "Uploaded"}
-                        {d.expiresOn ? `, expires ${longDate(d.expiresOn)}` : ""}
-                      </span>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {a.formAnswers && Object.keys(a.formAnswers.answers).length > 0 && (
-              <dl className="panel-pad facts">
-                {Object.entries(a.formAnswers.answers).map(([k, v]) => (
-                  <div key={k}>
-                    <dt>{a.formLabels?.[k] ?? keyLabel(k)}</dt>
-                    <dd className="tenant-text">{v}</dd>
+      {canAct && (
+        <ApplicationActions
+          id={a.id}
+          state={a.state}
+          accepted={!!a.offerAcceptedAt}
+          reservation={a.offer ? formatAed(a.offer.reservationFils) : null}
+          today={health?.today ?? ""}
+          viewingAt={a.viewingAt}
+        />
+      )}
+
+      <Section id="who-h" title="Applicant">
+        <FactGrid>
+          <Fact label={a.applicant.kind === "company" ? "Company" : "Name"}>{a.applicant.fullNameEn}</Fact>
+          <Fact label="Contact">{[a.applicant.email, a.applicant.phone].filter(Boolean).join(", ") || "—"}</Fact>
+          {a.applicant.emiratesIdNo && (
+            <Fact label="Emirates ID" mono>
+              {a.applicant.emiratesIdNo}
+            </Fact>
+          )}
+          {a.applicant.nationality && <Fact label="Nationality">{a.applicant.nationality}</Fact>}
+        </FactGrid>
+      </Section>
+
+      {a.viewingAt && (
+        <Section id="viewing-h" title="Site visit">
+          <FactGrid>
+            <Fact label="Booked for">{viewingTime(a.viewingAt)} (Dubai)</Fact>
+            <Fact label="Outcome">
+              {a.viewingOutcome === "attended"
+                ? "Showed up"
+                : a.viewingOutcome === "no_show"
+                  ? "Didn't show up; application closed"
+                  : "Not recorded yet"}
+              {a.viewingOutcomeAt && <Sub className="font-normal">recorded {dateTime(a.viewingOutcomeAt)}</Sub>}
+            </Fact>
+          </FactGrid>
+        </Section>
+      )}
+
+      {a.offer && (
+        <Section id="terms-h" title="Current offer">
+          <FactGrid>
+            <Fact label="Annual rent">{formatAed(a.offer.annualRentFils)}</Fact>
+            <Fact label="Asking rent">{a.unit.askingRentFils ? formatAed(a.unit.askingRentFils) : "—"}</Fact>
+            <Fact label="Cheques">{a.offer.cheques}</Fact>
+            <Fact label="Deposit">{formatAed(a.offer.depositFils)}</Fact>
+            <Fact label="Term">
+              {longDate(a.offer.startOn)} to {longDate(a.offer.endOn)}
+            </Fact>
+          </FactGrid>
+        </Section>
+      )}
+
+      <Section
+        id="docs-h"
+        title="Documents"
+        hint="only leasing staff can open them; each view is recorded"
+        action={<AskAi compact prompt={identityAsk.prompt} label={identityAsk.label} />}
+      >
+        {a.documents.length === 0 ? (
+          <p className="m-0 text-sm text-muted">
+            {a.state === "SCREENING" ? "Waiting for the applicant to upload their documents." : "No documents."}
+          </p>
+        ) : (
+          <ul className="m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-2 p-0">
+            {a.documents.map((d) => (
+              <li key={d.id} data-status={d.status ?? ""} className={`${ROW_CARD} grid gap-2 p-2`}>
+                {canAct ? (
+                  <a
+                    href={`/documents/applications/${a.id}/${d.id}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block overflow-hidden rounded-lg bg-raised"
+                  >
+                    <img
+                      src={`/documents/applications/${a.id}/${d.id}`}
+                      alt={`${docLabel(d.id)} uploaded by the applicant`}
+                      loading="lazy"
+                      className="aspect-[4/3] w-full object-cover"
+                    />
+                  </a>
+                ) : (
+                  <div className="grid aspect-[4/3] place-items-center rounded-lg bg-raised text-xs text-muted">
+                    Leasing staff only
                   </div>
-                ))}
-              </dl>
-            )}
-          </section>
-
-          {a.kyc && (
-            <section className="panel" aria-labelledby="kyc-h">
-              <div className="panel-head">
-                <h2 id="kyc-h">Identity check</h2>
-                <span className="hint">
-                  {kyc?.verdict === "verified" ? "everything checked out" : "needs a person"} · {dateTime(a.kyc.at)}
-                  {a.kyc.latencyMs ? ` · ${Math.round(a.kyc.latencyMs / 1000)} s` : ""}
-                </span>
-              </div>
-              {kyc ? (
-                <div className="panel-pad stack">
-                  {kyc.flags.length > 0 && (
-                    <ul className="flag-list">
-                      {kyc.flags.map((f, i) => (
-                        <li key={i} data-blocking={f.blocking}>
-                          <IconWarning size={15} />
-                          <span>
-                            {f.message}
-                            {f.blocking && <b> Can&apos;t be approved; ask for a new document.</b>}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  <dl className="facts">
-                    {Object.entries(kyc.identity)
-                      .filter(([, v]) => v)
-                      .map(([k, v]) => (
-                        <div key={k} style={{ display: "contents" }}>
-                          <dt>{FIELD_LABEL[k] ?? k}</dt>
-                          <dd>
-                            {/^\d{4}-\d{2}-\d{2}$/.test(v ?? "") ? longDate(v!) : v}
-                            {kyc.sources[k] && (
-                              <div className="row-sub">
-                                from the {docLabel(kyc.sources[k].docId)}
-                                {kyc.sources[k].via === "mrz" ? ", machine-readable zone" : ""}
-                              </div>
-                            )}
-                          </dd>
-                        </div>
-                      ))}
-                  </dl>
-                  <ul className="check-list">
-                    {kyc.checks
-                      .filter((c) => c.status === "pass")
-                      .map((c, i) => (
-                        <li key={i}>
-                          <IconCheck size={14} />
-                          <span>
-                            {CHECK_LABEL[c.check] ?? c.check}
-                            {c.docId ? <span className="muted">{`, ${docLabel(c.docId)}`}</span> : null}
-                          </span>
-                        </li>
-                      ))}
-                  </ul>
-                  <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>
-                    The model only reads the documents; check digits, dates and name matching are done in code. ID
-                    numbers are shown masked; open the document to compare.
-                  </p>
-                </div>
-              ) : (
-                <p className="panel-pad muted">{a.kyc.reasons.join(" ")}</p>
-              )}
-            </section>
-          )}
-
-          {offers.length > 0 && (
-            <section className="panel" aria-labelledby="offer-h">
-              <div className="panel-head">
-                <h2 id="offer-h">Offer</h2>
-                <span className="hint">
-                  {a.offerAcceptedAt
-                    ? a.reservationPaidOn
-                      ? `accepted, reservation paid ${longDate(a.reservationPaidOn)}`
-                      : "accepted, waiting for the reservation"
-                    : a.offer
-                      ? `open until ${longDate(a.offer.expiresOn)}`
-                      : ""}
-                </span>
-              </div>
-              <div className="table-wrap">
-                <table className="data">
-                  <thead>
-                    <tr>
-                      <th>Revision</th>
-                      <th className="num">Rent</th>
-                      <th className="num">Cheques</th>
-                      <th className="num">Deposit</th>
-                      <th>Move-in</th>
-                      <th className="num">Reservation</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {offers.map((e) => {
-                      const t = e.payload.terms as Terms | undefined;
-                      if (!t) return null;
-                      return (
-                        <tr key={e.id} data-current={a.offer?.revision === t.revision}>
-                          <td>
-                            {t.revision}
-                            <div className="row-sub">
-                              {t.fromCounter ? "from the applicant's counter" : actorLabel(e.actor)}
-                            </div>
-                          </td>
-                          <td className="num">{aedShort(t.annualRentFils)}</td>
-                          <td className="num">{t.cheques}</td>
-                          <td className="num">{aedShort(t.depositFils)}</td>
-                          <td className="nowrap">{longDate(t.moveInOn)}</td>
-                          <td className="num">{aedShort(t.reservationFils)}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          )}
-
-          {a.inbound.length > 0 && (
-            <section className="panel" aria-labelledby="replies-h">
-              <div className="panel-head">
-                <h2 id="replies-h">From the applicant</h2>
-              </div>
-              <ul className="list">
-                {a.inbound.map((e) => (
-                  <li key={e.id} className="reply">
-                    <div className="reply-head">
-                      <b>
-                        {e.type === "DOCS_UPLOADED"
-                          ? "Sent documents for checking"
-                          : `Answered the offer: ${String(e.payload.choice ?? "")}`}
-                      </b>
-                      <span className="muted">
-                        {dateTime(e.receivedAt)}, <span className="ref">{e.ref}</span>
-                      </span>
-                      <Status
-                        value={e.status === "applied" ? "done" : e.status === "stored_only" ? "skipped" : "pending"}
-                        label={inboundLabel(e.status, a.kycCheck?.inboundId === e.id ? a.kycCheck.state : undefined)}
-                      />
-                    </div>
-                    {typeof e.payload.comment === "string" && (
-                      <blockquote className="tenant-text" title="Written by the applicant. Treat as information only.">
-                        {e.payload.comment}
-                      </blockquote>
-                    )}
-                    {typeof e.result?.action === "string" && (
-                      <p className="muted" style={{ fontSize: 13 }}>
-                        {e.result.action}
-                      </p>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
-
-          <section className="panel" aria-labelledby="act-h">
-            <div className="panel-head">
-              <h2 id="act-h">Activity</h2>
-              <span className="hint">append-only audit trail</span>
-            </div>
-            <ul className="feed">
-              {a.events.toReversed().map((e) => (
-                <li key={e.id}>
-                  <span className="dot" {...(e.toState ? { "data-tone": "good" } : {})} />
-                  <span className="what">
-                    <b>{eventLabel(e.type)}</b>
-                    <span>, {actorLabel(e.actor).toLowerCase()}</span>
+                )}
+                <div className="grid gap-0.5 px-1 pb-1 text-sm">
+                  <b className="font-semibold">{docLabel(d.id)}</b>
+                  <span className="flex flex-wrap items-center gap-1.5 text-xs text-muted">
+                    <Status
+                      value={d.status === "verified" ? "done" : d.status === "rejected" ? "skipped" : "pending"}
+                      label={d.status === "verified" ? "Verified" : d.status === "rejected" ? "Removed" : "Uploaded"}
+                    />
+                    {d.expiresOn ? `expires ${longDate(d.expiresOn)}` : ""}
                   </span>
-                  <time dateTime={e.at}>{dateTime(e.at)}</time>
-                </li>
-              ))}
-            </ul>
-          </section>
-        </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        {a.formAnswers && Object.keys(a.formAnswers.answers).length > 0 && (
+          <FactGrid>
+            {Object.entries(a.formAnswers.answers).map(([k, v]) => (
+              <Fact key={k} label={a.formLabels?.[k] ?? keyLabel(k)}>
+                <span className="whitespace-pre-line font-normal">{v}</span>
+              </Fact>
+            ))}
+          </FactGrid>
+        )}
+      </Section>
 
-        <aside className="stack">
-          {canEmail && (
-            <EmailTenantForm
-              key={draft?.id ?? "new"}
-              applicationId={a.id}
-              tenantEmail={a.applicant.email ?? null}
-              draft={draft}
-            />
-          )}
-          {canAct && (
-            <ApplicationActions
-              id={a.id}
-              state={a.state}
-              accepted={!!a.offerAcceptedAt}
-              reservation={a.offer ? formatAed(a.offer.reservationFils) : null}
-              today={health?.today ?? ""}
-              viewingAt={a.viewingAt}
-            />
-          )}
-          {a.viewingAt && (
-            <section className="panel panel-pad" aria-labelledby="viewing-h">
-              <h2 id="viewing-h" className="section-title">
-                Site visit
-              </h2>
-              <dl className="facts">
-                <dt>Booked for</dt>
-                <dd>{viewingTime(a.viewingAt)} (Dubai)</dd>
-                <dt>Outcome</dt>
-                <dd>
-                  {a.viewingOutcome === "attended"
-                    ? "Showed up"
-                    : a.viewingOutcome === "no_show"
-                      ? "Didn't show up; application closed"
-                      : "Not recorded yet"}
-                  {a.viewingOutcomeAt && <div className="row-sub">recorded {dateTime(a.viewingOutcomeAt)}</div>}
-                </dd>
-              </dl>
-            </section>
-          )}
-          {a.offer && (
-            <section className="panel panel-pad" aria-labelledby="terms-h">
-              <h2 id="terms-h" className="section-title">
-                Current offer
-              </h2>
-              <dl className="facts">
-                <dt>Annual rent</dt>
-                <dd className="num">{formatAed(a.offer.annualRentFils)}</dd>
-                <dt>Asking rent</dt>
-                <dd className="num">{a.unit.askingRentFils ? formatAed(a.unit.askingRentFils) : "—"}</dd>
-                <dt>Cheques</dt>
-                <dd>{a.offer.cheques}</dd>
-                <dt>Deposit</dt>
-                <dd className="num">{formatAed(a.offer.depositFils)}</dd>
-                <dt>Term</dt>
-                <dd>
-                  {longDate(a.offer.startOn)} to {longDate(a.offer.endOn)}
-                </dd>
-              </dl>
-            </section>
-          )}
-          <section className="panel panel-pad" aria-labelledby="who-h">
-            <h2 id="who-h" className="section-title">
-              Applicant
-            </h2>
-            <dl className="facts">
-              <dt>{a.applicant.kind === "company" ? "Company" : "Name"}</dt>
-              <dd>{a.applicant.fullNameEn}</dd>
-              <dt>Contact</dt>
-              <dd>{[a.applicant.email, a.applicant.phone].filter(Boolean).join(", ")}</dd>
-              {a.applicant.emiratesIdNo && (
-                <>
-                  <dt>Emirates ID</dt>
-                  <dd className="ref">{a.applicant.emiratesIdNo}</dd>
-                </>
+      {a.kyc && (
+        <Section
+          id="kyc-h"
+          title="Identity check"
+          hint={`${kyc?.verdict === "verified" ? "everything checked out" : "needs a person"} · ${dateTime(a.kyc.at)}${a.kyc.latencyMs ? ` · ${Math.round(a.kyc.latencyMs / 1000)} s` : ""}`}
+          action={<AskAi compact prompt={identityAsk.prompt} label={identityAsk.label} />}
+        >
+          {kyc ? (
+            <>
+              {kyc.flags.length > 0 && (
+                <ul className={LIST}>
+                  {kyc.flags.map((f, i) => (
+                    <li
+                      key={i}
+                      data-blocking={f.blocking}
+                      className={`flex items-start gap-2 rounded-xl border px-3.5 py-2.5 text-sm ${f.blocking ? "border-danger text-danger" : "border-warning text-warning"}`}
+                    >
+                      <IconWarning size={15} className="mt-0.5 shrink-0" />
+                      <span>
+                        {f.message}
+                        {f.blocking && <b> Can&apos;t be approved; ask for a new document.</b>}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
               )}
-              {a.applicant.nationality && (
-                <>
-                  <dt>Nationality</dt>
-                  <dd>{a.applicant.nationality}</dd>
-                </>
-              )}
-            </dl>
-          </section>
-          {(a.approvals.length > 0 || openTasks.length > 0) && (
-            <section className="panel" aria-labelledby="work-h">
-              <div className="panel-head">
-                <h2 id="work-h">Open work</h2>
-              </div>
-              <ul className="list" style={{ marginTop: 6 }}>
-                {a.approvals.map((x) => (
-                  <li key={x.id}>
-                    <Link href={`/work?approval=${x.id}`} className="list-row">
-                      <span className="title">{x.title}</span>
-                      <Status value={x.status} />
-                    </Link>
-                  </li>
-                ))}
-                {openTasks.map((t) => (
-                  <li key={t.id} className="list-row">
-                    <div>{t.title}</div>
-                    <Status value="open" label="Task" />
-                  </li>
-                ))}
+              <FactGrid>
+                {Object.entries(kyc.identity)
+                  .filter(([, v]) => v)
+                  .map(([k, v]) => (
+                    <Fact key={k} label={FIELD_LABEL[k] ?? k}>
+                      {/^\d{4}-\d{2}-\d{2}$/.test(v ?? "") ? longDate(v!) : v}
+                      {kyc.sources[k] && (
+                        <Sub className="font-normal">
+                          from the {docLabel(kyc.sources[k].docId)}
+                          {kyc.sources[k].via === "mrz" ? ", machine-readable zone" : ""}
+                        </Sub>
+                      )}
+                    </Fact>
+                  ))}
+              </FactGrid>
+              <ul className={`${LIST} text-sm`}>
+                {kyc.checks
+                  .filter((c) => c.status === "pass")
+                  .map((c, i) => (
+                    <li key={i} className="flex items-start gap-2">
+                      <IconCheck size={14} className="mt-1 shrink-0" />
+                      <span>
+                        {CHECK_LABEL[c.check] ?? c.check}
+                        {c.docId ? <span className="text-muted">{`, ${docLabel(c.docId)}`}</span> : null}
+                      </span>
+                    </li>
+                  ))}
               </ul>
-            </section>
+              <p className={NOTE_TEXT}>
+                The model only reads the documents; check digits, dates and name matching are done in code. ID numbers
+                are shown masked; open the document to compare.
+              </p>
+            </>
+          ) : (
+            <p className="m-0 text-sm text-muted">{a.kyc.reasons.join(" ")}</p>
           )}
-          {a.outbound.length > 0 && (
-            <section className="panel panel-pad" aria-labelledby="mail-h">
-              <h2 id="mail-h" className="section-title">
-                Emails
-              </h2>
-              <ul className="list">
-                {a.outbound.map((o) => (
-                  <li key={o.id} className="list-row">
-                    <div>
-                      <div>{o.subject}</div>
-                      <div className="row-sub">
-                        {o.sentAt ? dateTime(o.sentAt) : o.status}
-                        {o.to !== o.intendedTo ? " · to the demo inbox" : ""}
-                      </div>
-                    </div>
-                    {o.previewUrl && (
-                      <a className="link" href={o.previewUrl} target="_blank" rel="noreferrer">
-                        View
-                      </a>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
-        </aside>
-      </div>
-    </>
+        </Section>
+      )}
+
+      {offers.length > 0 && (
+        <Section
+          id="offer-h"
+          title="Offer"
+          hint={
+            a.offerAcceptedAt
+              ? a.reservationPaidOn
+                ? `accepted, reservation paid ${longDate(a.reservationPaidOn)}`
+                : "accepted, waiting for the reservation"
+              : a.offer
+                ? `open until ${longDate(a.offer.expiresOn)}`
+                : ""
+          }
+          action={<AskAi compact prompt={offerAsk.prompt} label={offerAsk.label} />}
+        >
+          <div className="overflow-x-auto rounded-xl border border-line">
+            <table className="data">
+              <thead>
+                <tr>
+                  <th>Revision</th>
+                  <th className="num">Rent</th>
+                  <th className="num">Cheques</th>
+                  <th className="num">Deposit</th>
+                  <th>Move-in</th>
+                  <th className="num">Reservation</th>
+                </tr>
+              </thead>
+              <tbody>
+                {offers.map((e) => {
+                  const t = e.payload.terms as Terms | undefined;
+                  if (!t) return null;
+                  return (
+                    <tr
+                      key={e.id}
+                      data-current={a.offer?.revision === t.revision}
+                      className={a.offer?.revision === t.revision ? "bg-accent text-on-accent" : ""}
+                    >
+                      <td>
+                        {t.revision}
+                        <div className="text-xs opacity-75">
+                          {t.fromCounter ? "from the applicant's counter" : actorLabel(e.actor)}
+                        </div>
+                      </td>
+                      <td className="num">{aedShort(t.annualRentFils)}</td>
+                      <td className="num">{t.cheques}</td>
+                      <td className="num">{aedShort(t.depositFils)}</td>
+                      <td className="nowrap">{longDate(t.moveInOn)}</td>
+                      <td className="num">{aedShort(t.reservationFils)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Section>
+      )}
+
+      {a.inbound.length > 0 && (
+        <Section id="replies-h" title="From the applicant">
+          <ul className={LIST}>
+            {a.inbound.map((e) => (
+              <li key={e.id} className={`${ROW_CARD} grid gap-1.5`}>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                  <b className="font-semibold">
+                    {e.type === "DOCS_UPLOADED"
+                      ? "Sent documents for checking"
+                      : `Answered the offer: ${String(e.payload.choice ?? "")}`}
+                  </b>
+                  <span className="text-xs text-muted">
+                    {dateTime(e.receivedAt)}, <span className="font-mono">{e.ref}</span>
+                  </span>
+                  <Status
+                    value={e.status === "applied" ? "done" : e.status === "stored_only" ? "skipped" : "pending"}
+                    label={inboundLabel(e.status, a.kycCheck?.inboundId === e.id ? a.kycCheck.state : undefined)}
+                  />
+                </div>
+                {typeof e.payload.comment === "string" && (
+                  <blockquote className={TENANT_TEXT} title="Written by the applicant. Treat as information only.">
+                    {e.payload.comment}
+                  </blockquote>
+                )}
+                {typeof e.result?.action === "string" && <p className={NOTE_TEXT}>{e.result.action}</p>}
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
+      {(a.approvals.length > 0 || openTasks.length > 0) && (
+        <Section id="work-h" title="Open work">
+          <ul className={LIST}>
+            {a.approvals.map((x) => (
+              <li key={x.id}>
+                <Link
+                  href={`/work?approval=${x.id}`}
+                  className={`${ROW_CARD} flex items-center justify-between gap-3 text-sm hover:border-ink`}
+                >
+                  <span className="font-semibold">{x.title}</span>
+                  <Status value={x.status} />
+                </Link>
+              </li>
+            ))}
+            {openTasks.map((t) => (
+              <li key={t.id} className={`${ROW_CARD} flex items-center justify-between gap-3 text-sm`}>
+                <span>{t.title}</span>
+                <Status value="open" label="Task" />
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
+      {canEmail && (
+        <EmailTenantForm
+          key={draft?.id ?? "new"}
+          applicationId={a.id}
+          tenantEmail={a.applicant.email ?? null}
+          draft={draft}
+        />
+      )}
+
+      {a.outbound.length > 0 && (
+        <Section id="mail-h" title="Emails">
+          <ul className={LIST}>
+            {a.outbound.map((o) => (
+              <li key={o.id} className={`${ROW_CARD} flex items-center justify-between gap-3 text-sm`}>
+                <div>
+                  <div>{o.subject}</div>
+                  <Sub>
+                    {o.sentAt ? dateTime(o.sentAt) : o.status}
+                    {o.to !== o.intendedTo ? " · to the demo inbox" : ""}
+                  </Sub>
+                </div>
+                {o.previewUrl && (
+                  <a className="font-semibold text-ink! underline" href={o.previewUrl} target="_blank" rel="noreferrer">
+                    View
+                  </a>
+                )}
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
+      <details className="group">
+        <summary className="cursor-pointer text-[15px] font-semibold tracking-tight">
+          Audit trail <span className="text-xs font-normal text-muted">append-only, every event</span>
+        </summary>
+        <ul className={`${LIST} mt-3`}>
+          {a.events.toReversed().map((e) => (
+            <li key={e.id} className="grid grid-cols-[88px_minmax(0,1fr)] gap-3 text-sm">
+              <time dateTime={e.at} className="font-mono text-xs text-muted">
+                {dateTime(e.at)}
+              </time>
+              <span>
+                <b className="font-semibold">{eventLabel(e.type)}</b>
+                <span className="text-muted">, {actorLabel(e.actor).toLowerCase()}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      </details>
+    </div>
   );
 }

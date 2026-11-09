@@ -8,7 +8,7 @@ export function pickCompany(companies: CompanyRow[], id: string | undefined): Co
   return list.find((c) => c.id === id) ?? list[0];
 }
 
-/** Companies on the left, the selected company's settings on the right. Keeps other URL params. */
+/** A row of company pills above the selected company's settings. Keeps other URL params. */
 export function CompanySplit({
   companies,
   selected,
@@ -30,20 +30,28 @@ export function CompanySplit({
   const active = companies.filter((c) => c.active).sort((a, b) => a.name.localeCompare(b.name));
   const href = (id: string) => `${base}?${new URLSearchParams({ ...params, company: id }).toString()}`;
   return (
-    <div className="co-split">
-      <nav className="co-list" aria-label="Companies">
+    <div className="grid gap-5">
+      <nav aria-label="Companies" className="min-w-0">
         {active.length === 0 ? (
-          <p className="muted co-empty">
-            No active companies. <Link href="/settings/companies">Add one</Link>
+          <p className="m-0 text-[13px] text-muted">
+            No active companies.{" "}
+            <Link href="/settings/companies" className="text-ink! underline">
+              Add one
+            </Link>
           </p>
         ) : (
-          <ul>
+          <ul className="m-0 flex list-none flex-wrap gap-2 p-0">
             {active.map((c) => (
-              <li key={c.id}>
-                <Link href={href(c.id)} className="co-row" aria-current={c.id === selected?.id ? "true" : undefined}>
-                  <span className="co-row-name">{c.name}</span>
-                  <span className="co-row-meta">
-                    {counts[c.id] ?? 0} {countLabel} · {c.unitCount} units
+              <li key={c.id} className="m-0 p-0">
+                <Link
+                  href={href(c.id)}
+                  aria-current={c.id === selected?.id ? "true" : undefined}
+                  className="grid gap-0.5 rounded-xl border border-line bg-page px-3 py-2 text-ink! no-underline hover:border-ink aria-[current=true]:border-transparent aria-[current=true]:bg-accent aria-[current=true]:text-on-accent! focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ink"
+                >
+                  <span className="text-sm font-semibold">{c.name}</span>
+                  <span className="text-xs opacity-75">
+                    {counts[c.id] ?? 0} {(counts[c.id] ?? 0) === 1 ? countLabel.replace(/s$/, "") : countLabel} ·{" "}
+                    {c.unitCount} {c.unitCount === 1 ? "unit" : "units"}
                   </span>
                 </Link>
               </li>
@@ -51,7 +59,7 @@ export function CompanySplit({
           </ul>
         )}
       </nav>
-      <div className="co-body">{children}</div>
+      <div className="grid min-w-0 gap-5">{children}</div>
     </div>
   );
 }

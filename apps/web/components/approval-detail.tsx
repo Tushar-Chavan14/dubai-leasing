@@ -1,7 +1,22 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ContractFieldsTable, EjariAttemptsList } from "./contract-panel";
-import { Due, PageHead, Status } from "./ui";
+import type { ReactNode } from "react";
+import { SealCheckIcon } from "@phosphor-icons/react/dist/ssr";
+import { Due, Status } from "./ui";
+import { buttonClass } from "./ui/button";
+import {
+  Fact,
+  FactGrid,
+  FactKey,
+  FactList,
+  FactVal,
+  NOTE_TEXT,
+  ROW_CARD,
+  Section,
+  Sub,
+  TENANT_TEXT,
+} from "./ui/record";
 import { get, publicGet } from "../lib/engine";
 import {
   actorLabel,
@@ -169,16 +184,18 @@ function displayed(gate: string, p: Record<string, unknown>): Record<string, unk
   return p;
 }
 
+const LIST = "m-0 grid list-none gap-1.5 p-0 text-sm";
+
 /** Links to the PDFs attached to a lease proposal (opening a contract is recorded on the lease). */
 function DocLinks({ leaseId, sources }: { leaseId: string; sources: Source[] }) {
   const docs = sources.filter((s): s is Extract<Source, { kind: "document" }> => s.kind === "document");
   if (!leaseId || !docs.length) return null;
   return (
-    <div className="btn-row">
+    <div className="flex flex-wrap gap-2">
       {docs.map((d) => (
         <a
           key={d.documentId}
-          className="btn small"
+          className={buttonClass("ghost", "sm")}
           href={`/documents/leases/${leaseId}/${d.documentId}`}
           target="_blank"
           rel="noreferrer"
@@ -199,25 +216,21 @@ function ContractProposal({ p, leaseId, sources }: { p: Record<string, unknown>;
   };
   return (
     <>
-      <section aria-labelledby="fields-h">
-        <h2 id="fields-h" className="section-title">
-          Every field and where it was copied from
-        </h2>
+      <Section id="fields-h" title="Every field and where it was copied from">
         <ContractFieldsTable
           fields={(p.fields ?? {}) as Record<string, unknown>}
           sources={(p.sources ?? {}) as Record<string, { entity: string; id: string; column: string }>}
         />
-        <p className="muted" style={{ fontSize: 12.5 }}>
+        <p className={NOTE_TEXT}>
           ID numbers are masked here; compare them on the PDF. No value was typed or changed by a model.
         </p>
         <DocLinks leaseId={leaseId} sources={sources} />
-      </section>
-      <section aria-labelledby="addendum-h">
-        <h2 id="addendum-h" className="section-title">
-          Addendum
-        </h2>
-        {addendum.clauses.length === 0 && !addendum.freeText && <p className="muted">No addendum clauses.</p>}
-        <ul className="reasons">
+      </Section>
+      <Section id="addendum-h" title="Addendum">
+        {addendum.clauses.length === 0 && !addendum.freeText && (
+          <p className="m-0 text-sm text-muted">No addendum clauses.</p>
+        )}
+        <ul className={LIST}>
           {addendum.clauses
             .filter((c) => Object.hasOwn(CONTRACT_CLAUSES, c))
             .map((c) => (
@@ -228,10 +241,8 @@ function ContractProposal({ p, leaseId, sources }: { p: Record<string, unknown>;
         </ul>
         {(addendum.companyClauses?.length ?? 0) > 0 && (
           <>
-            <p className="muted" style={{ margin: "8px 0 0" }}>
-              Additional terms (company)
-            </p>
-            <ul className="reasons">
+            <p className="m-0 text-sm text-muted">Additional terms (company)</p>
+            <ul className={LIST}>
               {addendum.companyClauses?.map((c) => (
                 <li key={c.id}>
                   <b>{c.title}.</b> {c.text}
@@ -241,25 +252,38 @@ function ContractProposal({ p, leaseId, sources }: { p: Record<string, unknown>;
             </ul>
           </>
         )}
-        {addendum.freeText && <blockquote className="tenant-text">{addendum.freeText}</blockquote>}
+        {addendum.freeText && <blockquote className={TENANT_TEXT}>{addendum.freeText}</blockquote>}
         {p.reviewed ? (
-          flags.length ? (
-            <p className="muted" style={{ fontSize: 12.5 }}>
-              The review model flagged the extra terms (see why this is here). It never edits the text.
-            </p>
-          ) : (
-            <p className="muted" style={{ fontSize: 12.5 }}>
-              The review model found no conflicts in the extra terms.
-            </p>
-          )
+          <p className={NOTE_TEXT}>
+            {flags.length
+              ? "The review model flagged the extra terms (see why this is here). It never edits the text."
+              : "The review model found no conflicts in the extra terms."}
+          </p>
         ) : null}
-      </section>
+      </Section>
     </>
   );
 }
 
-/** One approval in full: proposal, why it is here, sources and the decision. Rendered in the Workspace detail pane. */
-export async function ApprovalDetail({ id, draftId }: { id: string; draftId?: string | undefined }) {
+/**
+ * One approval in full: the gate panel (what is proposed, and the decision), then why it is here, its sources and the
+ * notes for the approver. `compact` is the pinned gate at the top of a record: only the headline facts in the panel.
+ */
+export async function ApprovalDetail({
+  id,
+  draftId,
+  ask,
+  compact = false,
+  after,
+}: {
+  id: string;
+  draftId?: string | undefined;
+  /** An Ask AI button for the panel's header. */
+  ask?: ReactNode;
+  compact?: boolean;
+  /** Shown right under the gate panel (the record's activity), before the rest of the approval. */
+  after?: ReactNode;
+}) {
   const [a, me, health, notes, draftRow] = await Promise.all([
     get<ApprovalDetail>(`/api/approvals/${id}`),
     get<Me>("/api/me"),
@@ -279,14 +303,23 @@ export async function ApprovalDetail({ id, draftId }: { id: string; draftId?: st
       : null;
   const today = health?.today ?? "";
   const ownProposal = !!me && (a.proposedBy === `user:${me.id}` || a.proposedBy === `copilot:${me.id}`);
-  const canDecide = a.status === "pending" && canDecideApproval(a, me);
+  const waiting = a.status === "pending";
+  const canDecide = waiting && canDecideApproval(a, me);
+  // Who decides, in words: managers also decide leasing-officer gates (canDecideGate).
+  const decider =
+    a.approverRole === "leasing_officer"
+      ? "a leasing officer or manager"
+      : `a ${roleLabel(a.approverRole).toLowerCase()}`;
+  // Filled only when the decision is the signed-in user's to make.
+  const mine = canDecide;
   const shown = displayed(a.gate, a.editedProposal ?? a.proposal);
   const kycDocs = a.gate === "kyc_review" ? a.sources.filter((s) => s.kind === "document") : [];
   const order = FIELD_ORDER[a.gate] ?? [];
   const keys = [...order.filter((k) => k in shown), ...Object.keys(shown).filter((k) => !order.includes(k))].filter(
     (k) => !HIDDEN.has(k),
   );
-  const keyField = order[0];
+  const headline = compact ? keys.slice(0, 4) : keys;
+  const more = compact ? keys.slice(4) : [];
   const deadline = typeof shown.legalDeadline === "string" ? shown.legalDeadline : null;
   const rent =
     typeof a.proposal.proposedRentFils === "number" ? formatAed(a.proposal.proposedRentFils).replace("AED ", "") : null;
@@ -298,308 +331,281 @@ export async function ApprovalDetail({ id, draftId }: { id: string; draftId?: st
         : a.entity?.kind === "application"
           ? `/work?kind=application&id=${a.entity.id}`
           : null;
-
+  const fact = (k: string) => (
+    <Fact key={k} label={humanise(k)} tone={mine ? "tinted" : "raised"} mono={k.endsWith("No") || k === "rulesVersion"}>
+      {proposalValue(k, shown[k])}
+    </Fact>
+  );
   return (
-    <>
-      <PageHead
-        embedded
-        title={a.title}
-        badge={<Status value={a.status} />}
-        lede={
-          <>
+    <div className="grid gap-7">
+      <section
+        aria-labelledby="gate-h"
+        className={`grid gap-3.5 rounded-2xl p-5 ${mine ? "bg-accent text-on-accent" : "border border-line bg-page text-ink"}`}
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={`inline-flex items-center gap-1.5 text-xs ${mine ? "text-on-accent/75" : "text-muted"}`}>
+            <SealCheckIcon size={15} aria-hidden />
+            {mine ? "Waiting for you" : waiting ? `Waiting for ${decider}` : "Decision"}
+          </span>
+          {!waiting && <Status value={a.status} />}
+          {ask && <span className="ml-auto">{ask}</span>}
+        </div>
+        <div className="grid gap-1">
+          <h2 id="gate-h" className="m-0 font-sans text-[17px] font-semibold tracking-tight">
+            {a.title}
+          </h2>
+          <p className={`m-0 text-[13px] ${mine ? "text-on-accent/75" : "text-muted"}`}>
             {a.gateDef.label}.{" "}
-            {a.gateDef.when === "always" ? "Always needs a person" : "Needed because a limit was crossed"}; decided by a{" "}
-            {roleLabel(a.approverRole).toLowerCase()}. Proposed by {actorLabel(a.proposedBy).toLowerCase()} on{" "}
-            {dateTime(a.createdAt)}
+            {a.gateDef.when === "always" ? "Always needs a person" : "Needed because a limit was crossed"}; decided by{" "}
+            {decider}. Proposed by {actorLabel(a.proposedBy).toLowerCase()} on {dateTime(a.createdAt)}
             {a.rulesVersion ? (
               <>
-                , rules <span className="ref">{a.rulesVersion}</span>
+                , rules <span className="font-mono text-xs">{a.rulesVersion}</span>
               </>
             ) : null}
             .
-          </>
-        }
-      />
-
-      <div className="split">
-        <div className="stack">
-          <section aria-labelledby="proposal-h">
-            <h2 id="proposal-h" className="section-title">
-              {a.editedProposal ? "Proposal, as edited" : "Proposal"}
-            </h2>
-            <dl className="proposal-grid">
-              {keys.map((k) => (
-                <div key={k} className={k === keyField ? "key" : undefined}>
-                  <dt>{humanise(k)}</dt>
-                  <dd>
-                    {k === "rulesVersion" ? (
-                      <span className="ref">{String(shown[k])}</span>
-                    ) : (
-                      proposalValue(k, shown[k])
-                    )}
-                  </dd>
-                </div>
-              ))}
-            </dl>
-          </section>
-
-          {a.gate === "final_contract" && (
-            <ContractProposal p={a.proposal} leaseId={a.entity?.id ?? ""} sources={a.sources} />
+          </p>
+          {deadline && today && waiting && (
+            <p className="m-0 text-[13px] font-semibold">
+              Notice must be sent by {proposalValue("legalDeadline", deadline)},{" "}
+              <Due today={today} on={deadline} warnWithin={30} />.
+            </p>
           )}
-          {a.gate === "ejari_submission" && (
-            <section aria-labelledby="payload-h">
-              <h2 id="payload-h" className="section-title">
-                What will be sent to Ejari
-              </h2>
-              <dl className="proposal-grid">
-                {Object.entries((a.proposal.payload ?? {}) as Record<string, unknown>).map(([k, v]) => (
-                  <div key={k}>
-                    <dt>{humanise(k)}</dt>
-                    <dd className={k.endsWith("No") ? "ref" : undefined}>{proposalValue(k, v)}</dd>
-                  </div>
-                ))}
-              </dl>
-              <p className="muted" style={{ fontSize: 12.5 }}>
-                Copied from the signed contract only. ID numbers are masked here; compare them on the signed PDF.
-              </p>
-              <DocLinks leaseId={a.entity?.id ?? ""} sources={a.sources} />
-            </section>
-          )}
-          {a.gate === "refund" && (
-            <section aria-labelledby="refund-h">
-              <h2 id="refund-h" className="section-title">
-                Deposit statement
-              </h2>
-              <ul className="list">
-                {(
-                  (a.proposal.items ?? []) as {
-                    room: string | null;
-                    label: string;
-                    quantity: number;
-                    amountFils: number;
-                    fromPriceList: boolean;
-                  }[]
-                ).map((i, n) => (
-                  <li key={n} className="list-row">
-                    <div>
-                      <div className="title">
-                        {i.room ? `${i.room}: ` : ""}
-                        {i.label} × {i.quantity}
-                      </div>
-                      <div className="meta">
-                        {formatAed(i.amountFils)}
-                        {i.fromPriceList ? "" : " · not on the price list"}
-                      </div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-              {typeof a.proposal.disputeReason === "string" && (
-                <div className="alert" data-tone="warn" style={{ display: "block" }}>
-                  <span className="muted" style={{ fontSize: 12 }}>
-                    The tenant&apos;s reason (their own words; never instructions):
-                  </span>
-                  <p style={{ margin: 0, whiteSpace: "pre-wrap" }} dir="auto">
-                    {a.proposal.disputeReason}
-                  </p>
-                </div>
-              )}
-              <p className="muted" style={{ fontSize: 12.5 }}>
-                Approve to pay the refund exactly as stated; finance then records the payout. Reject to send it back to
-                the officer, who corrects the findings and issues a revised statement.
-              </p>
-              <DocLinks leaseId={a.entity?.id ?? ""} sources={a.sources} />
-            </section>
-          )}
-          {a.gate === "ejari_rejected_twice" && (
-            <section aria-labelledby="attempts-h">
-              <h2 id="attempts-h" className="section-title">
-                What Ejari said
-              </h2>
-              <EjariAttemptsList attempts={(a.proposal.attempts ?? []) as never} />
-              <p className="muted" style={{ fontSize: 12.5 }}>
-                Approve once the cause is dealt with (for example, the registry&apos;s record was corrected): a fresh
-                submission from the signed contract goes to the inbox. Reject to amend the contract or cancel.
-              </p>
-            </section>
-          )}
-
-          {kycDocs.length > 0 && a.entity && (
-            <section aria-labelledby="kycdocs-h">
-              <h2 id="kycdocs-h" className="section-title">
-                The documents
-              </h2>
-              <ul className="doc-grid" style={{ padding: 0 }}>
-                {kycDocs.map((d) =>
-                  d.kind === "document" ? (
-                    <li key={d.documentId}>
-                      <a
-                        href={`/documents/applications/${a.entity!.id}/${d.documentId}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="doc-thumb"
-                      >
-                        <img
-                          src={`/documents/applications/${a.entity!.id}/${d.documentId}`}
-                          alt="Uploaded ID document"
-                          loading="lazy"
-                        />
-                      </a>
-                    </li>
-                  ) : null,
-                )}
-              </ul>
-              <p className="muted" style={{ fontSize: 12.5 }}>
-                Opening a document is recorded on the application. ID numbers above are masked; compare them on the
-                image.
-              </p>
-            </section>
-          )}
-
-          {a.reasons.length > 0 && (
-            <section className="panel panel-pad" aria-labelledby="why-h">
-              <h2 id="why-h" className="section-title">
-                Why this is here
-              </h2>
-              <ul className="reasons">
-                {a.reasons.map((r) => (
-                  <li key={r}>{r}</li>
-                ))}
-              </ul>
-            </section>
-          )}
-
-          <section className="panel" aria-labelledby="src-h">
-            <div className="panel-head">
-              <h2 id="src-h">Sources</h2>
-              <span className="hint">what the proposal is based on</span>
-            </div>
-            <ul className="sources" style={{ marginTop: 8 }}>
-              {a.sources.map((s, i) => (
-                <li key={i}>
-                  <span className="kind">{s.kind === "helper_run" ? "Helper run" : humanise(s.kind)}</span>
-                  <span>
-                    {s.kind === "rule" ? (
-                      <>
-                        <span className="ref">{s.rule}</span>: {s.value}{" "}
-                        <span className="muted">({s.rulesVersion})</span>
-                      </>
-                    ) : s.kind === "field" ? (
-                      <>
-                        {s.label}: <b className="num">{s.value}</b>
-                      </>
-                    ) : (
-                      s.label
-                    )}
-                  </span>
-                </li>
-              ))}
-              {a.sources.length === 0 && (
-                <li>
-                  <span className="kind">None</span>
-                  <span className="muted">No sources were attached to this proposal.</span>
-                </li>
-              )}
-            </ul>
-          </section>
         </div>
+        {headline.length > 0 && (
+          <div className="grid gap-1.5">
+            <h3 className="sr-only">{a.editedProposal ? "Proposal, as edited" : "Proposal"}</h3>
+            <FactGrid>{headline.map(fact)}</FactGrid>
+          </div>
+        )}
+        {canDecide ? (
+          <DecisionForm
+            id={a.id}
+            canEditRent={a.gate === "renewal_notice"}
+            canEditNote={NOTE_EDIT_GATES.has(a.gate)}
+            currentRentAed={rent}
+          />
+        ) : waiting ? (
+          <p className="m-0 text-sm text-muted">
+            {ownProposal
+              ? `You prepared this, so ${decider} other than you decides it.`
+              : me?.role === "admin"
+                ? `Admins configure the system but don't approve gates; ${decider} decides it.`
+                : `Decided by ${decider}; your role can't decide it.`}
+          </p>
+        ) : (
+          <FactList>
+            <FactKey>Outcome</FactKey>
+            <FactVal>
+              <Status value={a.status} />
+            </FactVal>
+            <FactKey>By</FactKey>
+            <FactVal>
+              {a.decidedByUser ? `${a.decidedByUser.name}, ${roleLabel(a.decidedByUser.role).toLowerCase()}` : "Engine"}
+            </FactVal>
+            <FactKey>When</FactKey>
+            <FactVal>{a.decidedAt ? dateTime(a.decidedAt) : "—"}</FactVal>
+            <FactKey>Note</FactKey>
+            <FactVal>{a.decisionNote ?? "—"}</FactVal>
+          </FactList>
+        )}
+      </section>
+      {after}
 
-        <aside className="stack sticky">
-          <section className="panel panel-pad" aria-labelledby="decide-h">
-            <h2 id="decide-h" className="section-title">
-              {a.status === "pending" ? "Your decision" : "Decision"}
-            </h2>
-            {deadline && today && a.status === "pending" && (
-              <p className="muted" style={{ marginBottom: 14, fontSize: 14 }}>
-                Notice must be sent by <b style={{ color: "var(--ink)" }}>{proposalValue("legalDeadline", deadline)}</b>
-                , <Due today={today} on={deadline} warnWithin={30} />.
+      {more.length > 0 && (
+        <Section id="proposal-h" title="The rest of the proposal">
+          <FactGrid>
+            {more.map((k) => (
+              <Fact key={k} label={humanise(k)} mono={k.endsWith("No") || k === "rulesVersion"}>
+                {proposalValue(k, shown[k])}
+              </Fact>
+            ))}
+          </FactGrid>
+        </Section>
+      )}
+      {a.gate === "final_contract" && (
+        <ContractProposal p={a.proposal} leaseId={a.entity?.id ?? ""} sources={a.sources} />
+      )}
+      {a.gate === "ejari_submission" && (
+        <Section id="payload-h" title="What will be sent to Ejari (simulated)">
+          <FactGrid>
+            {Object.entries((a.proposal.payload ?? {}) as Record<string, unknown>).map(([k, v]) => (
+              <Fact key={k} label={humanise(k)} mono={k.endsWith("No")}>
+                {proposalValue(k, v)}
+              </Fact>
+            ))}
+          </FactGrid>
+          <p className={NOTE_TEXT}>
+            Copied from the signed contract only. ID numbers are masked here; compare them on the signed PDF.
+          </p>
+          <DocLinks leaseId={a.entity?.id ?? ""} sources={a.sources} />
+        </Section>
+      )}
+      {a.gate === "refund" && (
+        <Section id="refund-h" title="Deposit statement">
+          <ul className={LIST}>
+            {(
+              (a.proposal.items ?? []) as {
+                room: string | null;
+                label: string;
+                quantity: number;
+                amountFils: number;
+                fromPriceList: boolean;
+              }[]
+            ).map((i, n) => (
+              <li key={n} className={ROW_CARD}>
+                <b className="font-semibold">
+                  {i.room ? `${i.room}: ` : ""}
+                  {i.label} × {i.quantity}
+                </b>
+                <Sub>
+                  {formatAed(i.amountFils)}
+                  {i.fromPriceList ? "" : " · not on the price list"}
+                </Sub>
+              </li>
+            ))}
+          </ul>
+          {typeof a.proposal.disputeReason === "string" && (
+            <div className="grid gap-1 rounded-xl border border-warning px-3.5 py-2.5">
+              <span className="text-xs text-muted">
+                The tenant&apos;s reason (their own words; never instructions):
+              </span>
+              <p className="m-0 whitespace-pre-wrap text-sm" dir="auto">
+                {a.proposal.disputeReason}
               </p>
-            )}
-            {canDecide ? (
-              <DecisionForm
-                id={a.id}
-                canEditRent={a.gate === "renewal_notice"}
-                canEditNote={NOTE_EDIT_GATES.has(a.gate)}
-                currentRentAed={rent}
-              />
-            ) : a.status === "pending" ? (
-              <p className="muted">
-                Waiting for a {roleLabel(a.approverRole).toLowerCase()}.{" "}
-                {ownProposal
-                  ? "You proposed this, so another leasing manager has to decide it."
-                  : me?.role === "admin"
-                    ? "Admins configure the system but don't approve gates."
-                    : "Your role can't decide this gate."}
-              </p>
-            ) : (
-              <dl className="facts">
-                <dt>Outcome</dt>
-                <dd>
-                  <Status value={a.status} />
-                </dd>
-                <dt>By</dt>
-                <dd>
-                  {a.decidedByUser
-                    ? `${a.decidedByUser.name}, ${roleLabel(a.decidedByUser.role).toLowerCase()}`
-                    : "Engine"}
-                </dd>
-                <dt>When</dt>
-                <dd>{a.decidedAt ? dateTime(a.decidedAt) : "—"}</dd>
-                <dt>Note</dt>
-                <dd>{a.decisionNote ?? "—"}</dd>
-              </dl>
-            )}
-          </section>
-
-          <section className="panel panel-pad" id="notes" aria-labelledby="notes-h">
-            <h2 id="notes-h" className="section-title">
-              Notes for the approver
-            </h2>
-            {(notes ?? []).length > 0 && (
-              <ul className="feed" style={{ marginBottom: 12 }}>
-                {(notes ?? []).map((n) => (
-                  <li key={n.id}>
-                    <span className="dot" />
-                    <span className="what" style={{ whiteSpace: "pre-wrap" }}>
-                      <b>{actorLabel(n.author)}</b> <span>{n.body}</span>
-                    </span>
-                    <time dateTime={n.createdAt}>{dateTime(n.createdAt)}</time>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <ApprovalNoteForm key={draft?.id ?? "new"} approvalId={a.id} draft={draft} />
-          </section>
-
-          {a.entity && (
-            <section className="panel" aria-labelledby="entity-h">
-              <div className="panel-head">
-                <h2 id="entity-h">
-                  {entityHref ? (
-                    <Link href={entityHref} className="link">
-                      {a.entity.ref ?? a.entity.code}
-                    </Link>
-                  ) : (
-                    stateLabel(a.entity.kind)
-                  )}
-                </h2>
-                <Status value={a.entity.state} />
-              </div>
-              <ul className="feed">
-                {a.events.slice(-6).map((e) => (
-                  <li key={e.id}>
-                    <span className="dot" {...(e.toState ? { "data-tone": "good" } : {})} />
-                    <span className="what">
-                      <b>{eventLabel(e.type)}</b> <span>{actorLabel(e.actor)}</span>
-                    </span>
-                    <time dateTime={e.at}>{dateTime(e.at)}</time>
-                  </li>
-                ))}
-              </ul>
-            </section>
+            </div>
           )}
-        </aside>
-      </div>
-    </>
+          <p className={NOTE_TEXT}>
+            Approve to pay the refund exactly as stated; finance then records the payout. Reject to send it back to the
+            officer, who corrects the findings and issues a revised statement.
+          </p>
+          <DocLinks leaseId={a.entity?.id ?? ""} sources={a.sources} />
+        </Section>
+      )}
+      {a.gate === "ejari_rejected_twice" && (
+        <Section id="attempts-h" title="What Ejari said (simulated)">
+          <EjariAttemptsList attempts={(a.proposal.attempts ?? []) as never} />
+          <p className={NOTE_TEXT}>
+            Approve once the cause is dealt with (for example, the registry&apos;s record was corrected): a fresh
+            submission from the signed contract goes to the inbox. Reject to amend the contract or cancel.
+          </p>
+        </Section>
+      )}
+      {kycDocs.length > 0 && a.entity && (
+        <Section id="kycdocs-h" title="The documents">
+          <ul className="m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2 p-0">
+            {kycDocs.map((d) =>
+              d.kind === "document" ? (
+                <li key={d.documentId}>
+                  <a
+                    href={`/documents/applications/${a.entity!.id}/${d.documentId}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block overflow-hidden rounded-xl border border-line bg-raised"
+                  >
+                    <img
+                      src={`/documents/applications/${a.entity!.id}/${d.documentId}`}
+                      alt="Uploaded ID document"
+                      loading="lazy"
+                      className="aspect-[4/3] w-full object-cover"
+                    />
+                  </a>
+                </li>
+              ) : null,
+            )}
+          </ul>
+          <p className={NOTE_TEXT}>
+            Opening a document is recorded on the application. ID numbers above are masked; compare them on the image.
+          </p>
+        </Section>
+      )}
+      {a.reasons.length > 0 && (
+        <Section id="why-h" title="Why this is here">
+          <ul className={`${LIST} list-disc pl-5`}>
+            {a.reasons.map((r) => (
+              <li key={r}>{r}</li>
+            ))}
+          </ul>
+        </Section>
+      )}
+      <Section id="src-h" title="Sources" hint="what the proposal is based on">
+        <ul className={LIST}>
+          {a.sources.map((s, i) => (
+            <li key={i} className="grid grid-cols-[96px_1fr] gap-3">
+              <span className="text-xs text-muted">{s.kind === "helper_run" ? "Helper run" : humanise(s.kind)}</span>
+              <span>
+                {s.kind === "rule" ? (
+                  <>
+                    <span className="font-mono text-xs">{s.rule}</span>: {s.value}{" "}
+                    <span className="text-muted">({s.rulesVersion})</span>
+                  </>
+                ) : s.kind === "field" ? (
+                  <>
+                    {s.label}: <b className="font-semibold tabular-nums">{s.value}</b>
+                  </>
+                ) : (
+                  s.label
+                )}
+              </span>
+            </li>
+          ))}
+          {a.sources.length === 0 && (
+            <li className="grid grid-cols-[96px_1fr] gap-3">
+              <span className="text-xs text-muted">None</span>
+              <span className="text-muted">No sources were attached to this proposal.</span>
+            </li>
+          )}
+        </ul>
+      </Section>
+      <section id="notes" aria-labelledby="notes-h" className="grid gap-3">
+        <h2 id="notes-h" className="m-0 font-sans text-[15px] font-semibold tracking-tight">
+          Notes for the approver
+        </h2>
+        {(notes ?? []).length > 0 && (
+          <ul className={LIST}>
+            {(notes ?? []).map((n) => (
+              <li key={n.id} className="grid grid-cols-[88px_minmax(0,1fr)] gap-3 whitespace-pre-wrap">
+                <time dateTime={n.createdAt} className="font-mono text-xs text-muted">
+                  {dateTime(n.createdAt)}
+                </time>
+                <span>
+                  <b className="font-semibold">{actorLabel(n.author)}</b> {n.body}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+        <ApprovalNoteForm key={draft?.id ?? "new"} approvalId={a.id} draft={draft} />
+      </section>
+      {a.entity && !compact && (
+        <Section
+          id="entity-h"
+          title={
+            entityHref ? (
+              <Link href={entityHref} className="underline underline-offset-2">
+                {a.entity.ref ?? a.entity.code}
+              </Link>
+            ) : (
+              stateLabel(a.entity.kind)
+            )
+          }
+          action={<Status value={a.entity.state} />}
+        >
+          <ul className={LIST}>
+            {a.events.slice(-6).map((e) => (
+              <li key={e.id} className="grid grid-cols-[88px_minmax(0,1fr)] gap-3">
+                <time dateTime={e.at} className="font-mono text-xs text-muted">
+                  {dateTime(e.at)}
+                </time>
+                <span>
+                  <b className="font-semibold">{eventLabel(e.type)}</b>{" "}
+                  <span className="text-muted">{actorLabel(e.actor)}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+    </div>
   );
 }

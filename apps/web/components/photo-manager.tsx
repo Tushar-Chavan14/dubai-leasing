@@ -4,8 +4,9 @@ import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { captionPhotoAction, deletePhotoAction, reorderPhotosAction } from "../app/(staff)/units/actions";
 import { uploadPhoto } from "../lib/images";
-import { IconWarning } from "../lib/icons";
+import { WarningIcon as IconWarning } from "@phosphor-icons/react";
 import type { UnitPhoto } from "../lib/types";
+import { Banner } from "./ui/form";
 import { moveItem, type PhotoItem, PhotoPicker } from "./photo-picker";
 
 /** Edits a saved unit's photos in place: every change is saved as it happens. */
@@ -85,12 +86,12 @@ export function PhotoManager({ unitId, photos }: { unitId: string; photos: UnitP
   }
 
   return (
-    <div>
+    <div className="grid gap-3">
       {error && (
-        <div className="alert" data-tone="bad" role="alert" style={{ marginBottom: 12 }}>
-          <IconWarning size={16} />
+        <Banner tone="bad" role="alert">
+          <IconWarning size={16} className="mt-0.5 shrink-0" />
           {error}
-        </div>
+        </Banner>
       )}
       <PhotoPicker
         items={items}
@@ -100,7 +101,7 @@ export function PhotoManager({ unitId, photos }: { unitId: string; photos: UnitP
         onCaption={(key, caption) => patch(key, { caption })}
         onCaptionCommit={commitCaption}
       />
-      <p className="hint" style={{ marginTop: 10, fontSize: 13, color: "var(--muted)" }} role="status">
+      <p className="m-0 text-[13px] text-muted" role="status">
         {busy ? "Uploading…" : "Changes to photos are saved as you make them."}
       </p>
     </div>

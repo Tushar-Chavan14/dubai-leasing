@@ -1,8 +1,11 @@
 import { notFound } from "next/navigation";
+import { CheckIcon as IconCheck } from "@phosphor-icons/react/dist/ssr";
+import { Banner } from "../../../../components/ui/form";
+import { Note, PAGE, PortalTitle } from "../../../../components/ui/portal";
+import { portalView } from "../../../../lib/engine";
 import { TENANCY_OPS } from "../../../../lib/env";
-import { publicGet } from "../../../../lib/engine";
 import { longDate } from "../../../../lib/format";
-import { IconCheck } from "../../../../lib/icons";
+import { LinkGone } from "../link-gone";
 import { AcknowledgeForm } from "../forms";
 
 interface AckView {
@@ -17,36 +20,25 @@ interface AckView {
 export default async function AcknowledgePage({ params }: { params: Promise<{ token: string }> }) {
   if (!TENANCY_OPS) notFound();
   const { token } = await params;
-  const v = await publicGet<AckView>(`/api/portal/${encodeURIComponent(token)}`);
+  const v = await portalView<AckView>(token);
   if (!v?.notice) {
-    return (
-      <section className="panel panel-pad">
-        <h1 className="portal-title" style={{ fontSize: 22 }}>
-          This link has expired
-        </h1>
-        <p className="muted">Open the newest email from us, or reply to it and we&apos;ll send a fresh link.</p>
-      </section>
-    );
+    return <LinkGone message="Open the newest email from us, or reply to it and we'll send a fresh link." />;
   }
   return (
-    <section className="panel panel-pad stack">
-      <h1 className="portal-title" style={{ fontSize: 24 }}>
-        Confirm you received your renewal notice
-      </h1>
-      <p className="muted">
-        {v.unit?.label}. Your tenancy ends on {longDate(v.lease.endOn)}. Confirming only tells us the notice reached
-        you; it doesn&apos;t accept or refuse anything.
-      </p>
+    <div className={PAGE}>
+      <PortalTitle
+        title="Confirm you received your renewal notice"
+        sub={`${v.unit?.label}. Your tenancy ends on ${longDate(v.lease.endOn)}. Confirming only tells us the notice reached you; it doesn't accept or refuse anything.`}
+      />
       {v.canAcknowledge ? (
-        <AcknowledgeForm token={token} />
+        <AcknowledgeForm token={token} pinned />
       ) : (
-        <p className="row-done">
-          <IconCheck size={16} /> Already confirmed. Thank you.
-        </p>
+        <Banner tone="good" role="status">
+          <IconCheck size={16} className="mt-0.5 shrink-0" aria-hidden />
+          <span>Already confirmed. Thank you.</span>
+        </Banner>
       )}
-      <p className="muted" style={{ fontSize: 13 }}>
-        To renew, move out or discuss, use the &ldquo;Reply&rdquo; button in the same email.
-      </p>
-    </section>
+      <Note>To renew, move out or discuss, use the &ldquo;Reply&rdquo; button in the same email.</Note>
+    </div>
   );
 }

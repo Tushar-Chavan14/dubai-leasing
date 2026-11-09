@@ -1,8 +1,28 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useState, type ReactNode } from "react";
 import { RowAction } from "../../../../components/row-action";
-import { IconPlus, IconWarning } from "../../../../lib/icons";
+import {
+  PencilSimpleIcon as IconPencil,
+  PlusIcon as IconPlus,
+  TrashIcon as IconTrash,
+  WarningIcon as IconWarning,
+} from "@phosphor-icons/react";
+import { Button, iconButtonClass } from "../../../../components/ui/button";
+import { Banner } from "../../../../components/ui/form";
+import {
+  Affix,
+  FormGrid,
+  GRID6,
+  Panel,
+  SET_INPUT,
+  SET_SELECT,
+  SField,
+  SPAN,
+  TABLE,
+  TD,
+  TH,
+} from "../../../../components/ui/settings";
 import {
   aedInput,
   aedLimitsLabel,
@@ -16,6 +36,7 @@ import {
 } from "../../../../lib/portfolio";
 import type { CompanyRow, RentRuleRow } from "../../../../lib/types";
 import { removeRentRule, saveRentRule } from "./actions";
+import { RentTry } from "./rent-try";
 
 function RuleEditor({
   rule,
@@ -34,13 +55,12 @@ function RuleEditor({
     return r;
   }, {});
   const fe = state.fieldErrors ?? {};
-  const err = (k: string) => (fe[k] ? <span className="err">{fe[k]}</span> : null);
   const inv = (k: string) => (fe[k] ? { "aria-invalid": true as const } : {});
   return (
-    <form action={action} className="rule-form" noValidate>
+    <form action={action} className="grid gap-4" noValidate>
       {state.error && (
-        <div className="alert" data-tone="bad" role="alert">
-          <IconWarning size={16} />
+        <Banner tone="bad" role="alert">
+          <IconWarning size={16} className="mt-0.5 shrink-0" />
           <div>
             <strong>{state.error}</strong>
             {state.reasons && state.reasons.length > 0 && (
@@ -51,15 +71,14 @@ function RuleEditor({
               </ul>
             )}
           </div>
-        </div>
+        </Banner>
       )}
       {rule && <input type="hidden" name="id" value={rule.id} />}
       <input type="hidden" name="category" value={category} />
       <input type="hidden" name="companyId" value={rule?.companyId ?? company.id} />
-      <div className="grid-fields">
-        <label className="field span-3">
-          <span className="field-label">Type</span>
-          <select name="subtype" defaultValue={rule?.subtype ?? ""}>
+      <div className={GRID6}>
+        <SField label="Type" error={fe.subtype} className={SPAN[3]}>
+          <select name="subtype" defaultValue={rule?.subtype ?? ""} className={SET_SELECT}>
             <option value="">All types</option>
             {subtypesFor(category).map((s) => (
               <option key={s.value} value={s.value}>
@@ -67,15 +86,14 @@ function RuleEditor({
               </option>
             ))}
           </select>
-          {err("subtype")}
-        </label>
-        <label className="field span-3">
-          <span className="field-label">Area</span>
+        </SField>
+        <SField label="Area" error={fe.community} help="Leave empty for all areas" className={SPAN[3]}>
           <input
             name="community"
             list="rule-communities"
             defaultValue={rule?.community ?? ""}
             maxLength={120}
+            className={SET_INPUT}
             {...inv("community")}
           />
           <datalist id="rule-communities">
@@ -83,72 +101,60 @@ function RuleEditor({
               <option key={c} value={c} />
             ))}
           </datalist>
-          {err("community") ?? <span className="hint">Leave empty for all areas</span>}
-        </label>
-        <label className="field span-3">
-          <span className="field-label">Lowest rent, percent of SRI</span>
-          <span className="affix">
-            <b>%</b>
+        </SField>
+        <SField
+          label="Lowest rent, percent of SRI"
+          error={fe.minPctBp}
+          help="Relative to the SRI average, for example -5"
+          className={SPAN[3]}
+        >
+          <Affix unit="%">
             <input
               name="minPct"
               inputMode="decimal"
               defaultValue={rule ? pctInput(rule.minPctBp) : ""}
               {...inv("minPctBp")}
             />
-          </span>
-          {err("minPctBp") ?? <span className="hint">Relative to the SRI average, for example -5</span>}
-        </label>
-        <label className="field span-3">
-          <span className="field-label">Highest rent, percent of SRI</span>
-          <span className="affix">
-            <b>%</b>
+          </Affix>
+        </SField>
+        <SField label="Highest rent, percent of SRI" error={fe.maxPctBp} help="For example 10" className={SPAN[3]}>
+          <Affix unit="%">
             <input
               name="maxPct"
               inputMode="decimal"
               defaultValue={rule ? pctInput(rule.maxPctBp) : ""}
               {...inv("maxPctBp")}
             />
-          </span>
-          {err("maxPctBp") ?? <span className="hint">For example 10</span>}
-        </label>
-        <label className="field span-3">
-          <span className="field-label">
-            Lowest rent in AED <em>(optional)</em>
-          </span>
-          <span className="affix">
-            <b>AED</b>
+          </Affix>
+        </SField>
+        <SField label="Lowest rent in AED (optional)" error={fe.minRentFils} className={SPAN[3]}>
+          <Affix unit="AED">
             <input
               name="minRent"
               inputMode="numeric"
               defaultValue={rule ? aedInput(rule.minRentFils) : ""}
               {...inv("minRentFils")}
             />
-          </span>
-          {err("minRentFils")}
-        </label>
-        <label className="field span-3">
-          <span className="field-label">
-            Highest rent in AED <em>(optional)</em>
-          </span>
-          <span className="affix">
-            <b>AED</b>
+          </Affix>
+        </SField>
+        <SField label="Highest rent in AED (optional)" error={fe.maxRentFils} className={SPAN[3]}>
+          <Affix unit="AED">
             <input
               name="maxRent"
               inputMode="numeric"
               defaultValue={rule ? aedInput(rule.maxRentFils) : ""}
               {...inv("maxRentFils")}
             />
-          </span>
-          {err("maxRentFils")}
-        </label>
+          </Affix>
+        </SField>
       </div>
-      <div className="btn-row">
-        <button type="submit" className="btn primary" disabled={pending}>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="submit" variant="primary" size="sm" disabled={pending}>
           {pending ? "Saving…" : rule ? "Save changes" : "Save rule"}
-        </button>
-        <button type="button" className="btn ghost" onClick={onDone}>
+        </Button>
+        <Button variant="ghost" size="sm" onClick={onDone}>
           Cancel
-        </button>
+        </Button>
       </div>
     </form>
   );
@@ -159,90 +165,111 @@ export function RentRules({
   company,
   category,
   canEdit,
+  askAi,
 }: {
   rules: RentRuleRow[];
   company: CompanyRow;
   category: Category;
   canEdit: boolean;
+  askAi?: ReactNode;
 }) {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const closeAdd = () => setAdding(false);
   const closeEdit = () => setEditing(null);
   return (
-    <>
-      {canEdit && (
-        <div className="settings-add">
-          {adding ? (
-            <div className="panel panel-pad">
-              <RuleEditor company={company} category={category} onDone={closeAdd} />
-            </div>
-          ) : (
-            <button type="button" className="btn primary" onClick={() => setAdding(true)}>
+    <FormGrid
+      preview={
+        <RentTry
+          companyId={company.id}
+          companyName={company.name}
+          category={category}
+          firstArea={rules.find((r) => r.community)?.community ?? ""}
+        />
+      }
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="m-0 font-sans text-[15px] font-semibold tracking-tight text-ink">{company.name}</h2>
+        <div className="flex flex-wrap items-center gap-2">
+          {askAi}
+          {canEdit && !adding && (
+            <Button variant="primary" size="sm" onClick={() => setAdding(true)}>
               <IconPlus size={16} />
               Add rule
-            </button>
+            </Button>
           )}
         </div>
+      </div>
+      {canEdit && adding && (
+        <Panel className="p-5">
+          <RuleEditor company={company} category={category} onDone={closeAdd} />
+        </Panel>
       )}
-      <section className="panel">
-        {rules.length === 0 ? (
-          <p className="muted panel-pad">
-            No {category} rent rules for {company.name} yet. Its units in this category can&apos;t get a price range
-            until one is added.
-          </p>
-        ) : (
-          <div className="table-wrap">
-            <table className="data">
-              <thead>
-                <tr>
-                  <th>Type</th>
-                  <th>Area</th>
-                  <th>Band</th>
-                  <th>AED limits</th>
-                  {canEdit && <th />}
-                </tr>
-              </thead>
-              <tbody>
-                {rules.map((r) =>
-                  editing === r.id ? (
-                    <tr key={r.id}>
-                      <td colSpan={canEdit ? 5 : 4}>
-                        <RuleEditor rule={r} company={company} category={category} onDone={closeEdit} />
+      {rules.length === 0 ? (
+        <p className="m-0 rounded-card border border-dashed border-line bg-raised p-5 text-sm text-muted">
+          No {category} rent rules for {company.name} yet. Its units in this category can&apos;t get a price range until
+          one is added.
+        </p>
+      ) : (
+        <Panel className="overflow-x-auto">
+          <table className={TABLE}>
+            <thead>
+              <tr>
+                <th className={TH}>Type</th>
+                <th className={TH}>Area</th>
+                <th className={TH}>Band</th>
+                <th className={TH}>AED limits</th>
+                {canEdit && <th className={TH} />}
+              </tr>
+            </thead>
+            <tbody>
+              {rules.map((r) =>
+                editing === r.id ? (
+                  <tr key={r.id} className="group">
+                    <td className={TD} colSpan={canEdit ? 5 : 4}>
+                      <RuleEditor rule={r} company={company} category={category} onDone={closeEdit} />
+                    </td>
+                  </tr>
+                ) : (
+                  <tr key={r.id} className="group">
+                    <td className={`${TD} whitespace-nowrap font-semibold`}>{subtypeLabel(r.subtype)}</td>
+                    <td className={TD}>{r.community ?? "All areas"}</td>
+                    <td className={`${TD} whitespace-nowrap font-mono tabular-nums`}>
+                      SRI {pctLabel(r.minPctBp)} to {pctLabel(r.maxPctBp)}
+                    </td>
+                    <td className={`${TD} whitespace-nowrap font-mono tabular-nums`}>
+                      {aedLimitsLabel(r.minRentFils, r.maxRentFils)}
+                    </td>
+                    {canEdit && (
+                      <td className={`${TD} whitespace-nowrap`}>
+                        <div className="flex items-start gap-2">
+                          <button
+                            type="button"
+                            className={iconButtonClass()}
+                            aria-label={`Edit ${subtypeLabel(r.subtype)} rule`}
+                            title="Edit"
+                            onClick={() => setEditing(r.id)}
+                          >
+                            <IconPencil size={16} />
+                          </button>
+                          <RowAction
+                            action={removeRentRule}
+                            fields={{ id: r.id }}
+                            label={`Remove ${subtypeLabel(r.subtype)} rule`}
+                            icon={<IconTrash size={16} />}
+                            danger
+                            confirmText="Remove this rule? It stops applying to units straight away."
+                          />
+                        </div>
                       </td>
-                    </tr>
-                  ) : (
-                    <tr key={r.id}>
-                      <td>{subtypeLabel(r.subtype)}</td>
-                      <td>{r.community ?? "All areas"}</td>
-                      <td className="num nowrap">
-                        SRI {pctLabel(r.minPctBp)} to {pctLabel(r.maxPctBp)}
-                      </td>
-                      <td className="num nowrap">{aedLimitsLabel(r.minRentFils, r.maxRentFils)}</td>
-                      {canEdit && (
-                        <td className="nowrap">
-                          <div className="btn-row">
-                            <button type="button" className="btn small" onClick={() => setEditing(r.id)}>
-                              Edit
-                            </button>
-                            <RowAction
-                              action={removeRentRule}
-                              fields={{ id: r.id }}
-                              label="Remove"
-                              danger
-                              confirmText="Remove this rule? It stops applying to units straight away."
-                            />
-                          </div>
-                        </td>
-                      )}
-                    </tr>
-                  ),
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-    </>
+                    )}
+                  </tr>
+                ),
+              )}
+            </tbody>
+          </table>
+        </Panel>
+      )}
+    </FormGrid>
   );
 }

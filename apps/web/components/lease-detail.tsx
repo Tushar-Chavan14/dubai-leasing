@@ -1,3 +1,6 @@
+import type { ReactNode } from "react";
+import type { StaffRole } from "@leasing/core";
+import { canSeeUnits } from "../lib/shell/nav";
 import { TENANCY_OPS } from "../lib/env";
 import { CasePanel } from "./case-panel";
 import { MoveOutPanel, type MoveOutView } from "./move-out-panel";
@@ -14,8 +17,11 @@ import {
   type PaymentRow,
   PaymentsPanel,
 } from "./tenancy-panels";
-import { Due, PlanPlaceholder, Status } from "./ui";
-import { PageHead } from "./ui";
+import { BuildingsIcon } from "@phosphor-icons/react/dist/ssr";
+import { Due, Status } from "./ui";
+import { AskAi } from "./ask-ai";
+import { askPrompts } from "../lib/ask-ai/prompts";
+import { Fact, FactGrid, FactKey, FactList, FactVal, ROW_CARD, Section, Sub } from "./ui/record";
 import { AddTaskForm, EmailTenantForm, TaskActions, VacateNoticeForm } from "./work-forms";
 import { get, publicGet } from "../lib/engine";
 import {
@@ -78,12 +84,6 @@ interface LeaseView {
   ejari: EjariAttempt[];
 }
 
-const TONE: Record<string, string> = {
-  MILESTONE_FIRED: "good",
-  APPROVAL_REQUESTED: "warn",
-  TASK_CREATED: "warn",
-};
-
 interface DraftRow {
   id: string;
   kind: string;
@@ -95,7 +95,7 @@ interface DraftRow {
 
 const OFF_COPY = "Tenancy operations are switched off.";
 function TenancyOff() {
-  return <p className="muted panel-pad">{OFF_COPY}</p>;
+  return <p className="m-0 text-sm text-muted">{OFF_COPY}</p>;
 }
 
 /** The lease, in full: renewal path, contract, Ejari, move-in and move-out, payments, cases. Rendered in the Workspace detail pane. */
@@ -119,6 +119,19 @@ export async function LeaseDetail({ id, draftId }: { id: string; draftId?: strin
     : null;
   const canAct = me?.role === "leasing_officer" || me?.role === "leasing_manager";
   const canEmail = canAct || me?.role === "finance";
+  // Finance cannot open Units, so the unit card is not a link for them.
+  const unitCard = (body: ReactNode) =>
+    !me || canSeeUnits(me.role as StaffRole) ? (
+      <Link
+        href={`/units/${l.unit.id}`}
+        className={`${ROW_CARD} flex items-center gap-3 p-2 hover:border-ink`}
+        aria-label={`Unit ${l.unit.code}`}
+      >
+        {body}
+      </Link>
+    ) : (
+      <div className={`${ROW_CARD} flex items-center gap-3 p-2`}>{body}</div>
+    );
   // A copilot draft (the user's own) prefills the email form; a used one doesn't.
   const draftRow =
     draftId && canEmail ? await get<DraftRow>(`/api/copilot/drafts/${encodeURIComponent(draftId)}`) : null;
@@ -140,277 +153,258 @@ export async function LeaseDetail({ id, draftId }: { id: string; draftId?: strin
   );
   const demo = !!health?.demoMode;
 
+  const contractAsk = askPrompts.contractEjari(l.ref)[0]!;
+  const LIST = "m-0 grid list-none gap-1.5 p-0";
   return (
-    <>
-      <PageHead
-        embedded
-        title={
+    <div className="grid gap-8">
+      <p className="m-0 text-sm text-muted">
+        <Status value={l.state} /> Lease <span className="font-mono text-xs">{l.ref}</span>, {shortDate(l.startOn)} to{" "}
+        {longDate(l.endOn)}. Rules <span className="font-mono text-xs">{l.rulesVersion}</span>.
+      </p>
+
+      <Section id="terms-h" title="Terms">
+        <FactGrid>
+          <Fact label="Annual rent">{aedShort(l.annualRentFils)}</Fact>
+          <Fact label="Cheques">{l.cheques}</Fact>
+          <Fact label="Deposit">{aedShort(l.depositFils)}</Fact>
+          <Fact label="Ejari" mono={!!l.ejariNo}>
+            {l.ejariNo ?? "Not registered"}
+          </Fact>
+        </FactGrid>
+        {unitCard(
           <>
-            {l.unit.code}{" "}
-            <span className="muted" style={{ fontWeight: 400 }}>
-              {tenant?.fullNameEn}
-            </span>
-          </>
-        }
-        badge={<Status value={l.state} />}
-        lede={
-          <>
-            Lease <span className="ref">{l.ref}</span>, {shortDate(l.startOn)} to {longDate(l.endOn)}. Rules{" "}
-            <span className="ref">{l.rulesVersion}</span>.
-          </>
-        }
-      />
-
-      <section className="panel" aria-labelledby="tl-h">
-        <div className="panel-head">
-          <h2 id="tl-h">Renewal path</h2>
-          {TENANCY_OPS && next && today && (
-            <span className="hint">
-              Next: {milestoneLabel(next.milestone).toLowerCase()} on {shortDate(next.dueOn)},{" "}
-              <Due today={today} on={next.dueOn} />
-            </span>
-          )}
-        </div>
-        {!TENANCY_OPS ? (
-          <TenancyOff />
-        ) : l.deadlines.length ? (
-          <RenewalTimeline deadlines={l.deadlines} startOn={l.startOn} endOn={l.endOn} today={today} />
-        ) : (
-          <p className="muted panel-pad">Renewal milestones are scheduled when the lease becomes active.</p>
-        )}
-      </section>
-
-      <div className="split section">
-        <div className="stack">
-          {moveOut && <MoveOutPanel leaseId={l.id} view={moveOut} role={me?.role ?? ""} today={health?.today ?? ""} />}
-          {moveIn && <MoveInPanel leaseId={l.id} view={moveIn} canAct={canAct} active={l.state !== "MOVE_IN"} />}
-          {(payments?.length ?? 0) > 0 && (
-            <PaymentsPanel leaseId={l.id} rows={payments ?? []} role={me?.role ?? ""} today={today} />
-          )}
-          {!TENANCY_OPS && ["ACTIVE", "RENEWAL", "MOVE_OUT", "DISPUTE", "CLOSED"].includes(l.state) && (
-            <section className="panel" aria-label="Tenancy operations">
-              <TenancyOff />
-            </section>
-          )}
-          {TENANCY_OPS && ["ACTIVE", "RENEWAL", "MOVE_OUT", "DISPUTE"].includes(l.state) && (
-            <ComplaintsPanel leaseId={l.id} rows={complaints ?? []} canAct={canAct} canLog={canAct} />
-          )}
-          {TENANCY_OPS && ["ACTIVE", "RENEWAL", "MOVE_OUT", "DISPUTE", "CLOSED"].includes(l.state) && (
-            <CasePanel
-              key={caseDraft?.id ?? "case"}
-              leaseId={l.id}
-              state={l.state}
-              role={me?.role ?? ""}
-              summary={caseDraft ? { subject: caseDraft.subject, body: caseDraft.body } : null}
-            />
-          )}
-          {canEmail && tenant && (
-            <EmailTenantForm key={draft?.id ?? "new"} leaseId={l.id} tenantEmail={tenant.email} draft={draft} />
-          )}
-          <ContractPanel
-            leaseId={l.id}
-            state={l.state}
-            contracts={l.contracts ?? []}
-            canAct={canAct}
-            options={l.clauseOptions}
-            prepareNeeded={l.prepareNeeded ?? null}
-          />
-          <EjariPanel
-            leaseId={l.id}
-            state={l.state}
-            attempts={l.ejari ?? []}
-            canAct={canAct}
-            pendingApprovalId={ejariApproval?.id ?? null}
-            mockUrl={demo ? (process.env.EJARI_MOCK_URL ?? "http://localhost:4100") : null}
-            demo={demo}
-          />
-          {TENANCY_OPS ? (
-            <RenewalPanel
-              leaseId={l.id}
-              state={l.state}
-              approvals={l.approvals}
-              outbound={l.outbound}
-              inbound={l.inbound}
-              tasks={l.tasks}
-              canAct={canAct}
-            />
-          ) : null}
-          <section className="panel" aria-labelledby="dl-h">
-            <div className="panel-head">
-              <h2 id="dl-h">Deadlines</h2>
-              <span className="hint">Asia/Dubai calendar days</span>
-            </div>
-            <div className="table-wrap">
-              <table className="data">
-                <thead>
-                  <tr>
-                    <th>Milestone</th>
-                    <th>Due</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {l.deadlines.map((d) => (
-                    <tr key={d.id}>
-                      <td>
-                        {milestoneLabel(d.milestone)}
-                        {d.note && d.status !== "pending" && <div className="row-sub">{d.note}</div>}
-                      </td>
-                      <td className="nowrap">
-                        {longDate(d.dueOn)}
-                        {d.status === "pending" && today && (
-                          <div>
-                            <Due today={today} on={d.dueOn} />
-                          </div>
-                        )}
-                      </td>
-                      <td>
-                        <Status value={d.status === "pending" ? "upcoming" : d.status} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-
-          <section className="panel" aria-labelledby="act-h">
-            <div className="panel-head">
-              <h2 id="act-h">Activity</h2>
-              <span className="hint">append-only audit trail</span>
-            </div>
-            <ul className="feed">
-              {l.events.toReversed().map((e) => (
-                <li key={e.id}>
-                  <span
-                    className="dot"
-                    {...(e.toState ? { "data-tone": "good" } : TONE[e.type] ? { "data-tone": TONE[e.type] } : {})}
-                  />
-                  <span className="what">
-                    <b>{eventLabel(e.type)}</b>
-                    {e.toState && <span> to {e.toState.toLowerCase().replace("_", " ")}</span>}
-                    {typeof e.payload.milestone === "string" && (
-                      <span> {milestoneLabel(e.payload.milestone).toLowerCase()}</span>
-                    )}
-                    {typeof e.payload.title === "string" && <span> {e.payload.title}</span>}
-                    <span>, {actorLabel(e.actor).toLowerCase()}</span>
-                  </span>
-                  <time dateTime={e.at}>{dateTime(e.at)}</time>
-                </li>
-              ))}
-            </ul>
-          </section>
-        </div>
-
-        <aside className="stack">
-          <Link href={`/units/${l.unit.id}`} className="unit-card" aria-label={`Unit ${l.unit.code}`}>
-            <div className="media">
+            <div className="size-14 shrink-0 overflow-hidden rounded-lg bg-raised">
               {cover ? (
                 <img
                   src={`/media/units/${l.unit.id}/${cover.id}`}
                   alt={cover.caption ?? `Unit ${l.unit.code}`}
                   loading="lazy"
+                  className="size-full object-cover"
                 />
               ) : (
-                <PlanPlaceholder bedrooms={l.unit.bedrooms} label="No photos yet" />
+                <span className="grid size-full place-items-center text-muted" title="No photos yet">
+                  <BuildingsIcon size={22} aria-hidden />
+                </span>
               )}
             </div>
-            <div className="body">
-              <div className="code">
-                <b>{l.unit.code}</b>
-                <span className="muted">{bedroomsLabel(l.unit.bedrooms)}</span>
-              </div>
-              <div className="where">
+            <div className="grid min-w-0 gap-0.5 text-sm">
+              <span>
+                <b className="font-semibold">{l.unit.code}</b>{" "}
+                <span className="text-muted">{bedroomsLabel(l.unit.bedrooms)}</span>
+              </span>
+              <Sub>
                 {l.unit.building}, {l.unit.community}
-              </div>
+              </Sub>
             </div>
-          </Link>
+          </>,
+        )}
+      </Section>
 
-          <section className="panel panel-pad" aria-labelledby="terms-h">
-            <h2 id="terms-h" className="section-title">
-              Terms
-            </h2>
-            <dl className="facts">
-              <dt>Annual rent</dt>
-              <dd className="num">{aedShort(l.annualRentFils)}</dd>
-              <dt>Cheques</dt>
-              <dd>{l.cheques}</dd>
-              <dt>Deposit</dt>
-              <dd className="num">{aedShort(l.depositFils)}</dd>
-              <dt>Ejari</dt>
-              <dd className="ref">{l.ejariNo ?? "Not registered"}</dd>
-            </dl>
-          </section>
-
-          <section className="panel panel-pad" aria-labelledby="people-h">
-            <h2 id="people-h" className="section-title">
-              People
-            </h2>
-            <dl className="facts">
-              {tenant && (
-                <>
-                  <dt>Tenant</dt>
-                  <dd>
-                    {tenant.fullNameEn}
-                    <div className="row-sub">{[tenant.email, tenant.phone].filter(Boolean).join(", ")}</div>
-                    {tenant.emiratesIdNo && <div className="row-sub ref">EID {tenant.emiratesIdNo}</div>}
-                  </dd>
-                </>
-              )}
-              {landlord && (
-                <>
-                  <dt>Landlord</dt>
-                  <dd>{landlord.fullNameEn}</dd>
-                </>
-              )}
-            </dl>
-          </section>
-
-          {(l.approvals.length > 0 || openTasks.length > 0 || canAct) && (
-            <section className="panel" aria-labelledby="work-h">
-              <div className="panel-head">
-                <h2 id="work-h">Open work</h2>
-                {canAct && <AddTaskForm leaseId={l.id} today={today} />}
-              </div>
-              <ul className="list" style={{ marginTop: 6 }}>
-                {l.approvals.map((a) => (
-                  <li key={a.id}>
-                    <Link href={`/work?approval=${a.id}`} className="list-row">
-                      <span className="title">{a.title}</span>
-                      <Status value={a.status} />
-                    </Link>
-                  </li>
-                ))}
-                {openTasks.map((t) => (
-                  <li key={t.id} className="list-row">
-                    <div>
-                      <div>{t.title}</div>
-                      <div className="meta">
-                        {roleLabel(t.assigneeRole)}
-                        {t.dueOn && <span>by {shortDate(t.dueOn)}</span>}
-                      </div>
-                      {me && (
-                        <TaskActions
-                          task={{ ...t, entityKind: "lease", entityId: l.id }}
-                          role={me.role}
-                          today={today}
-                        />
-                      )}
-                    </div>
-                    <Status value="open" label="Task" />
-                  </li>
-                ))}
-              </ul>
-              {TENANCY_OPS && canAct && running && (
-                <details className="panel-pad">
-                  <summary>Record a served 12-month notice</summary>
-                  <VacateNoticeForm leaseId={l.id} today={today} />
-                </details>
-              )}
-            </section>
+      <Section id="people-h" title="People">
+        <FactList>
+          {tenant && (
+            <>
+              <FactKey>Tenant</FactKey>
+              <FactVal>
+                {tenant.fullNameEn}
+                <Sub>{[tenant.email, tenant.phone].filter(Boolean).join(", ")}</Sub>
+                {tenant.emiratesIdNo && <Sub className="font-mono">EID {tenant.emiratesIdNo}</Sub>}
+              </FactVal>
+            </>
           )}
-        </aside>
+          {landlord && (
+            <>
+              <FactKey>Landlord</FactKey>
+              <FactVal>{landlord.fullNameEn}</FactVal>
+            </>
+          )}
+        </FactList>
+      </Section>
+
+      <div className="grid gap-5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="m-0 font-sans text-[15px] font-semibold tracking-tight">Contract and Ejari</h2>
+          <AskAi compact prompt={contractAsk.prompt} label={contractAsk.label} page={{ kind: "lease", id: l.id }} />
+        </div>
+        <ContractPanel
+          leaseId={l.id}
+          state={l.state}
+          contracts={l.contracts ?? []}
+          canAct={canAct}
+          options={l.clauseOptions}
+          prepareNeeded={l.prepareNeeded ?? null}
+        />
+        <EjariPanel
+          leaseId={l.id}
+          state={l.state}
+          attempts={l.ejari ?? []}
+          canAct={canAct}
+          pendingApprovalId={ejariApproval?.id ?? null}
+          mockUrl={demo ? (process.env.EJARI_MOCK_URL ?? "http://localhost:4100") : null}
+          demo={demo}
+        />
       </div>
-    </>
+
+      {moveOut && <MoveOutPanel leaseId={l.id} view={moveOut} role={me?.role ?? ""} today={health?.today ?? ""} />}
+      {moveIn && <MoveInPanel leaseId={l.id} view={moveIn} canAct={canAct} active={l.state !== "MOVE_IN"} />}
+      {(payments?.length ?? 0) > 0 && (
+        <PaymentsPanel leaseId={l.id} rows={payments ?? []} role={me?.role ?? ""} today={today} />
+      )}
+      {!TENANCY_OPS && ["ACTIVE", "RENEWAL", "MOVE_OUT", "DISPUTE", "CLOSED"].includes(l.state) && (
+        <section aria-label="Tenancy operations">
+          <TenancyOff />
+        </section>
+      )}
+      {TENANCY_OPS && ["ACTIVE", "RENEWAL", "MOVE_OUT", "DISPUTE"].includes(l.state) && (
+        <ComplaintsPanel leaseId={l.id} rows={complaints ?? []} canAct={canAct} canLog={canAct} />
+      )}
+      {TENANCY_OPS && ["ACTIVE", "RENEWAL", "MOVE_OUT", "DISPUTE", "CLOSED"].includes(l.state) && (
+        <CasePanel
+          key={caseDraft?.id ?? "case"}
+          leaseId={l.id}
+          state={l.state}
+          role={me?.role ?? ""}
+          summary={caseDraft ? { subject: caseDraft.subject, body: caseDraft.body } : null}
+        />
+      )}
+      {canEmail && tenant && (
+        <EmailTenantForm key={draft?.id ?? "new"} leaseId={l.id} tenantEmail={tenant.email} draft={draft} />
+      )}
+
+      <Section
+        id="tl-h"
+        title="Renewal path"
+        hint={
+          TENANCY_OPS && next && today ? (
+            <>
+              Next: {milestoneLabel(next.milestone).toLowerCase()} on {shortDate(next.dueOn)},{" "}
+              <Due today={today} on={next.dueOn} />
+            </>
+          ) : undefined
+        }
+      >
+        {!TENANCY_OPS ? (
+          <TenancyOff />
+        ) : l.deadlines.length ? (
+          <RenewalTimeline deadlines={l.deadlines} startOn={l.startOn} endOn={l.endOn} today={today} />
+        ) : (
+          <p className="m-0 text-sm text-muted">Renewal milestones are scheduled when the lease becomes active.</p>
+        )}
+      </Section>
+      {TENANCY_OPS ? (
+        <RenewalPanel
+          leaseId={l.id}
+          state={l.state}
+          approvals={l.approvals}
+          outbound={l.outbound}
+          inbound={l.inbound}
+          tasks={l.tasks}
+          canAct={canAct}
+        />
+      ) : null}
+
+      <Section id="dl-h" title="Deadlines" hint="Asia/Dubai calendar days">
+        <div className="overflow-x-auto rounded-xl border border-line">
+          <table className="data">
+            <thead>
+              <tr>
+                <th>Milestone</th>
+                <th>Due</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {l.deadlines.map((d) => (
+                <tr key={d.id}>
+                  <td>
+                    {milestoneLabel(d.milestone)}
+                    {d.note && d.status !== "pending" && <Sub>{d.note}</Sub>}
+                  </td>
+                  <td className="nowrap">
+                    {longDate(d.dueOn)}
+                    {d.status === "pending" && today && (
+                      <div>
+                        <Due today={today} on={d.dueOn} />
+                      </div>
+                    )}
+                  </td>
+                  <td>
+                    <Status value={d.status === "pending" ? "upcoming" : d.status} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Section>
+
+      {(l.approvals.length > 0 || openTasks.length > 0 || canAct) && (
+        <Section id="work-h" title="Open work">
+          <ul className={LIST}>
+            {l.approvals.map((a) => (
+              <li key={a.id}>
+                <Link
+                  href={`/work?approval=${a.id}`}
+                  className={`${ROW_CARD} flex items-center justify-between gap-3 text-sm hover:border-ink`}
+                >
+                  <span className="font-semibold">{a.title}</span>
+                  <Status value={a.status} />
+                </Link>
+              </li>
+            ))}
+            {openTasks.map((t) => (
+              <li key={t.id} className={`${ROW_CARD} grid gap-2`}>
+                <div className="flex items-center justify-between gap-3 text-sm">
+                  <div>
+                    <div>{t.title}</div>
+                    <Sub>
+                      {roleLabel(t.assigneeRole)}
+                      {t.dueOn && <span> by {shortDate(t.dueOn)}</span>}
+                    </Sub>
+                  </div>
+                  <Status value="open" label="Task" />
+                </div>
+                {me && (
+                  <TaskActions task={{ ...t, entityKind: "lease", entityId: l.id }} role={me.role} today={today} />
+                )}
+              </li>
+            ))}
+          </ul>
+          {canAct && <AddTaskForm leaseId={l.id} today={today} />}
+          {TENANCY_OPS && canAct && running && (
+            <details>
+              <summary className="cursor-pointer text-sm font-semibold">Record a served 12-month notice</summary>
+              <div className="mt-3">
+                <VacateNoticeForm leaseId={l.id} today={today} />
+              </div>
+            </details>
+          )}
+        </Section>
+      )}
+
+      <details>
+        <summary className="cursor-pointer text-[15px] font-semibold tracking-tight">
+          Audit trail <span className="text-xs font-normal text-muted">append-only, every event</span>
+        </summary>
+        <ul className={`${LIST} mt-3`}>
+          {l.events.toReversed().map((e) => (
+            <li key={e.id} className="grid grid-cols-[88px_minmax(0,1fr)] gap-3 text-sm">
+              <time dateTime={e.at} className="font-mono text-xs text-muted">
+                {dateTime(e.at)}
+              </time>
+              <span>
+                <b className="font-semibold">{eventLabel(e.type)}</b>
+                {e.toState && <span> to {e.toState.toLowerCase().replace("_", " ")}</span>}
+                {typeof e.payload.milestone === "string" && (
+                  <span> {milestoneLabel(e.payload.milestone).toLowerCase()}</span>
+                )}
+                {typeof e.payload.title === "string" && <span> {e.payload.title}</span>}
+                <span className="text-muted">, {actorLabel(e.actor).toLowerCase()}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      </details>
+    </div>
   );
 }

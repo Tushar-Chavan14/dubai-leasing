@@ -1,7 +1,27 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { IconCheck, IconPlus, IconTrash, IconWarning } from "../../../../../lib/icons";
+import {
+  CheckIcon as IconCheck,
+  PlusIcon as IconPlus,
+  TrashIcon as IconTrash,
+  WarningIcon as IconWarning,
+} from "@phosphor-icons/react";
+import { Button } from "../../../../../components/ui/button";
+import { Banner, INPUT } from "../../../../../components/ui/form";
+import {
+  FormGrid,
+  Panel,
+  SaveBar,
+  SET_INPUT,
+  SField,
+  SPAN,
+  GRID6,
+  TABLE,
+  TD,
+  TH,
+  Block,
+} from "../../../../../components/ui/settings";
 import { deleteDraftAction, publishAction, type RuleActionState, saveDraftAction } from "../actions";
 import {
   bandRows,
@@ -64,116 +84,170 @@ function Editor({ detail }: { detail: RulebookDetail }) {
       return [...ns, { id, title: "", text: "", k: Math.max(-1, ...ns.map((n) => n.k)) + 1 }];
     });
 
+  const cell = `${SET_INPUT} w-24`;
   return (
-    <div className="split">
+    <FormGrid
+      preview={
+        <aside className="grid gap-5 self-start @3xl:sticky @3xl:top-4">
+          <ChangesList
+            title={detail.active ? `Changes vs active (${detail.active})` : "Changes"}
+            changes={detail.changesVsActive}
+          />
+          <Panel className="grid gap-3 p-5">
+            <h2 id="pub-h" className="m-0 font-sans text-[15px] font-semibold tracking-tight text-ink">
+              Publish
+            </h2>
+            {needsReview && (
+              <Banner tone="warn">
+                <IconWarning size={16} className="mt-0.5 shrink-0" />
+                <span>
+                  These changes weaken tenant protection compared with the base version {detail.baseVersion}:{" "}
+                  {detail.loosened.map((l) => `${fieldLabel(l.field)} ${show(l.base)} → ${show(l.value)}`).join("; ")}.
+                </span>
+              </Banner>
+            )}
+            {needsReview && (
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={confirmed}
+                  onChange={(e) => setConfirmed(e.target.checked)}
+                  className="mt-0.5 size-4 accent-primary"
+                />
+                <span>I confirm a Dubai property lawyer reviewed these changes.</span>
+              </label>
+            )}
+            <p className="m-0 text-[13px] text-muted">
+              Once published, this version can&apos;t be edited or deleted. Existing leases keep their own version.
+            </p>
+            <div>
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={pending || dirty || (needsReview && !confirmed)}
+                onClick={() => run("publish", () => publishAction(detail.version, confirmed))}
+              >
+                Publish {detail.version}
+              </Button>
+              {dirty && (
+                <p className="m-0 mt-2 text-[13px] text-muted">
+                  Save the draft first; the comparison and checks use the saved version.
+                </p>
+              )}
+            </div>
+            {state.from === "publish" && <Feedback state={state} />}
+          </Panel>
+          <History events={detail.events} />
+        </aside>
+      }
+    >
       <form
-        className="stack"
+        className="grid gap-6"
         onSubmit={(e) => {
           e.preventDefault();
           const referenceRules = notes.map(({ k: _k, ...n }) => n);
           run("save", () => saveDraftAction(detail.version, { values, referenceRules, effectiveFrom }));
         }}
       >
-        <section className="panel panel-pad" aria-labelledby="ed-values-h">
-          <h2 id="ed-values-h" className="section-title">
-            Notices and deadlines
-          </h2>
-          <div className="grid-fields">
-            {NUMBER_FIELDS.map((f) => (
-              <label key={f.path} className="field span-3">
-                <span className="field-label">
-                  {f.label} <em>({f.unit})</em>
-                </span>
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  step={1}
-                  min={0}
-                  required
-                  value={readPath(values, f.path)}
-                  onChange={(e) => setValues((v) => writePath(v, f.path, e.target.valueAsNumber))}
-                />
-                <span className="hint">{f.hint}</span>
-              </label>
-            ))}
-          </div>
-        </section>
+        <Panel className="grid gap-4 p-5">
+          <Block
+            id="ed-values-h"
+            title="Notices and deadlines"
+            lede="Days and limits the engine uses for every notice. Each lease keeps the version it was created under."
+          >
+            <div className={GRID6}>
+              {NUMBER_FIELDS.map((f) => (
+                <SField key={f.path} label={`${f.label} (${f.unit})`} help={f.hint} className={SPAN[3]}>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    step={1}
+                    min={0}
+                    required
+                    value={readPath(values, f.path)}
+                    onChange={(e) => setValues((v) => writePath(v, f.path, e.target.valueAsNumber))}
+                    className={SET_INPUT}
+                  />
+                </SField>
+              ))}
+            </div>
+          </Block>
+        </Panel>
 
-        <section className="panel" aria-labelledby="ed-bands-h">
-          <div className="panel-head">
-            <h2 id="ed-bands-h">Rent-cap bands</h2>
-            <span className="hint">in ascending order of gap; the first matching band applies</span>
+        <Panel className="overflow-x-auto">
+          <div className="flex flex-wrap items-baseline gap-x-3 px-5 pt-5">
+            <h2 id="ed-bands-h" className="m-0 font-sans text-[15px] font-semibold tracking-tight text-ink">
+              Rent-cap bands
+            </h2>
+            <span className="text-xs text-muted">in ascending order of gap; the first matching band applies</span>
           </div>
-          <div className="table-wrap">
-            <table className="data">
-              <thead>
-                <tr>
-                  <th>Band</th>
-                  <th>Gap below SRI up to (%)</th>
-                  <th>Max increase (%)</th>
-                  <th aria-label="Remove" />
-                </tr>
-              </thead>
-              <tbody>
-                {values.rentCapBands.map((b, i) => (
-                  <tr key={i}>
-                    <td className="muted">{bandRows(values)[i]?.gap}</td>
-                    <td>
-                      <span className="field">
-                        <input
-                          type="number"
-                          min={0}
-                          max={100}
-                          step={1}
-                          required
-                          aria-label={`Band ${i + 1} gap up to`}
-                          value={b.gapUpTo}
-                          onChange={(e) => setBand(i, "gapUpTo", e.target.valueAsNumber)}
-                        />
-                      </span>
-                    </td>
-                    <td>
-                      <span className="field">
-                        <input
-                          type="number"
-                          min={0}
-                          max={100}
-                          step={1}
-                          required
-                          aria-label={`Band ${i + 1} max increase`}
-                          value={b.maxIncrease}
-                          onChange={(e) => setBand(i, "maxIncrease", e.target.valueAsNumber)}
-                        />
-                      </span>
-                    </td>
-                    <td>
-                      <button
-                        type="button"
-                        className="btn ghost icon"
-                        aria-label={`Remove band ${i + 1}`}
-                        disabled={values.rentCapBands.length <= 1}
-                        onClick={() =>
-                          setValues((v) => ({ ...v, rentCapBands: v.rentCapBands.filter((_, j) => j !== i) }))
-                        }
-                      >
-                        <IconTrash size={16} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                <tr>
-                  <td className="muted">{bandRows(values).at(-1)?.gap}</td>
-                  <td colSpan={3} className="muted">
-                    Uses “Increase above the last band”: {values.aboveLastBandMaxIncrease}%
+          <table className={`${TABLE} mt-3`}>
+            <thead>
+              <tr>
+                <th className={TH}>Band</th>
+                <th className={TH}>Gap below SRI up to (%)</th>
+                <th className={TH}>Max increase (%)</th>
+                <th className={TH} aria-label="Remove" />
+              </tr>
+            </thead>
+            <tbody>
+              {values.rentCapBands.map((b, i) => (
+                <tr key={i} className="group">
+                  <td className={`${TD} text-muted`}>{bandRows(values)[i]?.gap}</td>
+                  <td className={TD}>
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={1}
+                      required
+                      aria-label={`Band ${i + 1} gap up to`}
+                      value={b.gapUpTo}
+                      onChange={(e) => setBand(i, "gapUpTo", e.target.valueAsNumber)}
+                      className={cell}
+                    />
+                  </td>
+                  <td className={TD}>
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={1}
+                      required
+                      aria-label={`Band ${i + 1} max increase`}
+                      value={b.maxIncrease}
+                      onChange={(e) => setBand(i, "maxIncrease", e.target.valueAsNumber)}
+                      className={cell}
+                    />
+                  </td>
+                  <td className={TD}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="!px-2.5"
+                      aria-label={`Remove band ${i + 1}`}
+                      disabled={values.rentCapBands.length <= 1}
+                      onClick={() =>
+                        setValues((v) => ({ ...v, rentCapBands: v.rentCapBands.filter((_, j) => j !== i) }))
+                      }
+                    >
+                      <IconTrash size={16} />
+                    </Button>
                   </td>
                 </tr>
-              </tbody>
-            </table>
-          </div>
-          <div className="panel-pad" style={{ paddingTop: 12 }}>
-            <button
-              type="button"
-              className="btn small"
+              ))}
+              <tr className="group">
+                <td className={`${TD} text-muted`}>{bandRows(values).at(-1)?.gap}</td>
+                <td colSpan={3} className={`${TD} text-muted`}>
+                  Uses “Increase above the last band”: {values.aboveLastBandMaxIncrease}%
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div className="px-5 pb-5 pt-1">
+            <Button
+              variant="ghost"
+              size="sm"
               disabled={values.rentCapBands.length >= 10}
               onClick={() =>
                 setValues((v) => {
@@ -188,138 +262,132 @@ function Editor({ detail }: { detail: RulebookDetail }) {
             >
               <IconPlus size={14} />
               Add band
-            </button>
+            </Button>
           </div>
-        </section>
+        </Panel>
 
-        <section className="panel panel-pad" aria-labelledby="ed-notes-h">
-          <h2 id="ed-notes-h" className="section-title">
-            Reference notes
-          </h2>
-          <p className="muted" style={{ fontSize: 13.5, marginBottom: 12 }}>
-            Company guidance shown to staff and the copilot. Not law: the engine doesn&apos;t enforce them, and they
-            can&apos;t change any value above.
-          </p>
-          <div className="stack">
-            {notes.map((n, i) => (
-              <div key={n.k} className="inline-form stack" style={{ gap: 10 }}>
-                <label className="field">
-                  <span className="field-label">Title</span>
-                  <input
-                    required
-                    maxLength={120}
-                    value={n.title}
-                    onChange={(e) =>
-                      setNote(i, {
-                        title: e.target.value,
-                        // New notes take their id from the title until saved.
-                        ...(detail.referenceRules.some((r) => r.id === n.id)
-                          ? {}
-                          : { id: slug(e.target.value) || `note-${i + 1}` }),
-                      })
-                    }
-                  />
-                </label>
-                <label className="field">
-                  <span className="field-label">Text</span>
-                  <textarea
-                    required
-                    maxLength={2000}
-                    rows={3}
-                    value={n.text}
-                    onChange={(e) => setNote(i, { text: e.target.value })}
-                  />
-                </label>
-                <div className="btn-row">
-                  <span className="muted ref" style={{ fontSize: 12.5 }}>
-                    id {n.id}
-                  </span>
-                  <button
-                    type="button"
-                    className="btn ghost small"
-                    onClick={() => setNotes((ns) => ns.filter((_, j) => j !== i))}
-                  >
-                    <IconTrash size={14} />
-                    Remove
-                  </button>
+        <Panel className="grid gap-4 p-5">
+          <Block
+            id="ed-notes-h"
+            title="Reference notes"
+            lede="Company guidance shown to staff and the copilot. Not law: the engine doesn't enforce them, and they can't change any value above."
+          >
+            <div className="grid gap-4">
+              {notes.map((n, i) => (
+                <div key={n.k} className="grid gap-2.5 rounded-xl border border-line bg-raised p-4">
+                  <SField label="Title">
+                    <input
+                      required
+                      maxLength={120}
+                      value={n.title}
+                      className={SET_INPUT}
+                      onChange={(e) =>
+                        setNote(i, {
+                          title: e.target.value,
+                          // New notes take their id from the title until saved.
+                          ...(detail.referenceRules.some((r) => r.id === n.id)
+                            ? {}
+                            : { id: slug(e.target.value) || `note-${i + 1}` }),
+                        })
+                      }
+                    />
+                  </SField>
+                  <SField label="Text">
+                    <textarea
+                      required
+                      maxLength={2000}
+                      rows={3}
+                      value={n.text}
+                      className={`${INPUT} resize-y`}
+                      onChange={(e) => setNote(i, { text: e.target.value })}
+                    />
+                  </SField>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-mono text-xs text-muted">id {n.id}</span>
+                    <Button variant="ghost" size="sm" onClick={() => setNotes((ns) => ns.filter((_, j) => j !== i))}>
+                      <IconTrash size={14} />
+                      Remove
+                    </Button>
+                  </div>
                 </div>
+              ))}
+              <div>
+                <Button variant="ghost" size="sm" disabled={notes.length >= 50} onClick={addNote}>
+                  <IconPlus size={14} />
+                  Add note
+                </Button>
               </div>
-            ))}
-            <div>
-              <button type="button" className="btn small" disabled={notes.length >= 50} onClick={addNote}>
-                <IconPlus size={14} />
-                Add note
-              </button>
             </div>
-          </div>
-        </section>
+          </Block>
+        </Panel>
 
-        <section className="panel panel-pad" aria-labelledby="ed-sources-h">
-          <h2 id="ed-sources-h" className="section-title">
-            Sources
-          </h2>
-          <div className="stack" style={{ gap: 10 }}>
-            {values.sources.map((s, i) => (
-              <div key={i} className="btn-row" style={{ flexWrap: "nowrap" }}>
-                <label className="field" style={{ flex: 1 }}>
-                  <span className="sr-only">Source {i + 1}</span>
-                  <input
-                    required
-                    maxLength={300}
-                    value={s}
-                    onChange={(e) =>
-                      setValues((v) => ({ ...v, sources: v.sources.map((x, j) => (j === i ? e.target.value : x)) }))
-                    }
-                  />
-                </label>
-                <button
-                  type="button"
-                  className="btn ghost icon"
-                  aria-label={`Remove source ${i + 1}`}
-                  onClick={() => setValues((v) => ({ ...v, sources: v.sources.filter((_, j) => j !== i) }))}
+        <Panel className="grid gap-4 p-5">
+          <Block id="ed-sources-h" title="Sources" lede="Where each rule comes from, so staff can check it.">
+            <div className="grid gap-2.5">
+              {values.sources.map((s, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <label className="min-w-0 flex-1">
+                    <span className="sr-only">Source {i + 1}</span>
+                    <input
+                      required
+                      maxLength={300}
+                      value={s}
+                      className={SET_INPUT}
+                      onChange={(e) =>
+                        setValues((v) => ({ ...v, sources: v.sources.map((x, j) => (j === i ? e.target.value : x)) }))
+                      }
+                    />
+                  </label>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="!px-2.5"
+                    aria-label={`Remove source ${i + 1}`}
+                    onClick={() => setValues((v) => ({ ...v, sources: v.sources.filter((_, j) => j !== i) }))}
+                  >
+                    <IconTrash size={16} />
+                  </Button>
+                </div>
+              ))}
+              <div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={values.sources.length >= 20}
+                  onClick={() => setValues((v) => ({ ...v, sources: [...v.sources, ""] }))}
                 >
-                  <IconTrash size={16} />
-                </button>
+                  <IconPlus size={14} />
+                  Add source
+                </Button>
               </div>
-            ))}
-            <div>
-              <button
-                type="button"
-                className="btn small"
-                disabled={values.sources.length >= 20}
-                onClick={() => setValues((v) => ({ ...v, sources: [...v.sources, ""] }))}
-              >
-                <IconPlus size={14} />
-                Add source
-              </button>
             </div>
-          </div>
-        </section>
+          </Block>
+        </Panel>
 
-        <section className="panel panel-pad" aria-labelledby="ed-eff-h">
-          <h2 id="ed-eff-h" className="section-title">
-            Effective from
-          </h2>
-          <label className="field" style={{ maxWidth: 240 }}>
-            <span className="field-label">Date (Dubai)</span>
-            <input
-              type="date"
-              required
-              min={detail.today}
-              value={effectiveFrom}
-              onChange={(e) => setEffectiveFrom(e.target.value)}
-            />
-            <span className="hint">Today or later. New leases get this version from that date.</span>
-          </label>
-        </section>
+        <Panel className="grid gap-4 p-5">
+          <Block id="ed-eff-h" title="Effective from">
+            <SField
+              label="Date (Dubai)"
+              help="Today or later. New leases get this version from that date."
+              className="max-w-[260px]"
+            >
+              <input
+                type="date"
+                required
+                min={detail.today}
+                value={effectiveFrom}
+                onChange={(e) => setEffectiveFrom(e.target.value)}
+                className={SET_INPUT}
+              />
+            </SField>
+          </Block>
+        </Panel>
 
-        <div className="btn-row">
-          <button type="submit" className="btn primary" disabled={pending || !dirty}>
-            Save draft
-          </button>
-          <button
-            type="button"
-            className="btn danger"
+        {state.from === "save" && <Feedback state={state} />}
+        <SaveBar note={dirty ? "Unsaved changes" : "All changes saved"}>
+          <Button
+            variant="danger"
+            size="sm"
             disabled={pending}
             onClick={() => {
               if (confirm(`Delete draft ${detail.version}? This can't be undone.`))
@@ -328,76 +396,28 @@ function Editor({ detail }: { detail: RulebookDetail }) {
           >
             <IconTrash size={14} />
             Delete draft
-          </button>
-          {dirty && <span className="muted">Unsaved changes</span>}
-        </div>
-        {state.from === "save" && <Feedback state={state} />}
+          </Button>
+          <Button type="submit" variant="primary" size="sm" disabled={pending || !dirty}>
+            Save draft
+          </Button>
+        </SaveBar>
       </form>
-
-      <aside className="stack sticky">
-        <ChangesList
-          title={detail.active ? `Changes vs active (${detail.active})` : "Changes"}
-          changes={detail.changesVsActive}
-        />
-        <section className="panel panel-pad" aria-labelledby="pub-h">
-          <h2 id="pub-h" className="section-title">
-            Publish
-          </h2>
-          <div className="stack" style={{ gap: 12 }}>
-            {needsReview && (
-              <div className="alert" data-tone="warn">
-                <IconWarning size={16} />
-                <span>
-                  These changes weaken tenant protection compared with the base version {detail.baseVersion}:{" "}
-                  {detail.loosened.map((l) => `${fieldLabel(l.field)} ${show(l.base)} → ${show(l.value)}`).join("; ")}.
-                </span>
-              </div>
-            )}
-            {needsReview && (
-              <label className="check">
-                <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
-                <span>I confirm a Dubai property lawyer reviewed these changes.</span>
-              </label>
-            )}
-            <p className="muted" style={{ fontSize: 13.5 }}>
-              Once published, this version can&apos;t be edited or deleted. Existing leases keep their own version.
-            </p>
-            <div>
-              <button
-                type="button"
-                className="btn primary"
-                disabled={pending || dirty || (needsReview && !confirmed)}
-                onClick={() => run("publish", () => publishAction(detail.version, confirmed))}
-              >
-                Publish {detail.version}
-              </button>
-              {dirty && (
-                <p className="muted" style={{ fontSize: 13, marginTop: 8 }}>
-                  Save the draft first; the comparison and checks use the saved version.
-                </p>
-              )}
-            </div>
-            {state.from === "publish" && <Feedback state={state} />}
-          </div>
-        </section>
-        <History events={detail.events} />
-      </aside>
-    </div>
+    </FormGrid>
   );
 }
 
 function Feedback({ state }: { state: RuleActionState }) {
   if (state.ok)
     return (
-      <div className="alert" data-tone="good" role="status">
-        <IconCheck size={16} />
+      <Banner tone="good" role="status">
+        <IconCheck size={16} className="mt-0.5 shrink-0" />
         {state.ok}
-      </div>
+      </Banner>
     );
   if (!state.error) return null;
   return (
-    <div className="alert" data-tone="bad" role="alert">
-      <IconWarning size={16} />
+    <Banner tone="bad" role="alert">
+      <IconWarning size={16} className="mt-0.5 shrink-0" />
       <span>
         {state.error}
         {state.reasons && state.reasons.length > 0 && (
@@ -408,6 +428,6 @@ function Feedback({ state }: { state: RuleActionState }) {
           </ul>
         )}
       </span>
-    </div>
+    </Banner>
   );
 }

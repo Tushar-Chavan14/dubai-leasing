@@ -54,69 +54,93 @@ export function RenewalTimeline({
   const legal = term.find((d) => milestoneId(d.milestone) === "notice_deadline");
   const twoTier = placed.some((x) => x.slot.includes("t2"));
 
+  const LABEL =
+    "absolute -ml-14 w-28 text-center text-xs leading-tight text-muted max-sm:-ml-[35px] max-sm:w-[70px] max-sm:text-[11px] max-sm:[&>span]:hidden";
+  const LABEL_B = "block text-[12.5px] font-semibold text-ink";
+  const KEY_DOT = "size-2.5 rounded-full";
   return (
-    <div>
+    <div className="overflow-hidden rounded-xl border border-line">
       <div
-        className="timeline-track"
+        className="overflow-x-clip px-7 pt-5 pb-4 max-sm:px-3.5"
         role="img"
         aria-label={`Renewal milestones for the term ending ${shortDate(endOn)}`}
       >
-        <div className="line" style={twoTier ? { margin: "96px 4px 104px" } : undefined}>
-          {todayPos !== null && <div className="elapsed" style={{ width: `${todayPos}%` }} />}
+        <div
+          className="relative mx-1 h-1 rounded-sm bg-line"
+          style={twoTier ? { margin: "96px 4px 104px" } : { margin: "58px 4px 70px" }}
+        >
+          {todayPos !== null && (
+            <div className="absolute inset-y-0 left-0 rounded-sm bg-ink/25" style={{ width: `${todayPos}%` }} />
+          )}
           {assess && legal && (
             <div
-              className="window"
+              className="absolute -top-[7px] -bottom-[7px] rounded-[7px] border border-warning/40 bg-warning/12"
               style={{ left: `${pos(assess.dueOn)}%`, width: `${pos(legal.dueOn) - pos(assess.dueOn)}%` }}
             />
           )}
           {placed.map((it) => {
             const tier = it.slot === "above t2" ? { bottom: 52 } : it.slot === "below t2" ? { top: 52 } : {};
+            const side = it.slot.startsWith("above") ? "bottom-[18px]" : "top-[18px]";
             if (it.kind === "today") {
               return (
                 <span key="today">
-                  <span className="today" style={{ left: `${it.p}%` }} />
-                  <span className={`ms-label today-label ${it.slot}`} style={{ left: `${it.p}%`, ...tier }}>
-                    <b>Today</b>
+                  <span
+                    className="absolute -top-3.5 -bottom-3.5 border-l-[1.5px] border-dashed border-ink"
+                    style={{ left: `${it.p}%` }}
+                  />
+                  <span className={`${LABEL} ${side}`} style={{ left: `${it.p}%`, ...tier }}>
+                    <b className="mx-auto mb-px table rounded-[5px] bg-ink px-[7px] text-[11.5px] font-semibold text-page">
+                      Today
+                    </b>
                     <span>{shortDate(today)}</span>
                   </span>
                 </span>
               );
             }
             const d = it.d;
+            const legalMs = LEGAL.has(milestoneId(d.milestone));
+            const msTone =
+              d.status === "done"
+                ? "border-primary bg-primary"
+                : d.status === "skipped" || d.status === "cancelled"
+                  ? "border-line bg-line"
+                  : legalMs
+                    ? "border-warning bg-page"
+                    : "border-muted bg-page";
             return (
               <span key={d.id}>
                 <span
-                  className="ms"
+                  className={`absolute top-1/2 -mt-[7px] -ml-[7px] size-3.5 border-2 ${legalMs ? "rotate-45 rounded-[3px]" : "rounded-full"} ${msTone}`}
                   style={{ left: `${it.p}%` }}
                   data-status={d.status}
-                  data-legal={LEGAL.has(milestoneId(d.milestone))}
+                  data-legal={legalMs}
                   title={`${milestoneLabel(d.milestone)}: ${shortDate(d.dueOn)} (${d.status})`}
                 />
-                <span className={`ms-label ${it.slot}`} style={{ left: `${it.p}%`, ...tier }}>
-                  <b>{MILESTONE_SHORT[milestoneId(d.milestone)] ?? milestoneLabel(d.milestone)}</b>
+                <span className={`${LABEL} ${side}`} style={{ left: `${it.p}%`, ...tier }}>
+                  <b className={LABEL_B}>{MILESTONE_SHORT[milestoneId(d.milestone)] ?? milestoneLabel(d.milestone)}</b>
                   <span>{shortDate(d.dueOn)}</span>
                 </span>
               </span>
             );
           })}
         </div>
-        <div className="ends">
+        <div className="flex justify-between text-[12.5px] text-muted">
           <span>{from === startOn ? `Term starts ${shortDate(startOn)}` : `${shortDate(from)}`}</span>
           <span>Term ends {shortDate(endOn)}</span>
         </div>
       </div>
-      <div className="timeline-key">
+      <div className="flex flex-wrap gap-x-[18px] gap-y-1.5 border-t border-line px-7 py-3 text-[12.5px] text-muted max-sm:px-3.5 [&>span]:inline-flex [&>span]:items-center [&>span]:gap-[7px]">
         <span>
-          <i /> Done
+          <i className={`${KEY_DOT} bg-primary`} /> Done
         </span>
         <span>
-          <i className="pending" /> Upcoming
+          <i className={`${KEY_DOT} border-2 border-muted bg-page`} /> Upcoming
         </span>
         <span>
-          <i className="legal" /> Legal deadline (90 days)
+          <i className="size-2.5 rotate-45 rounded-[2px] border-2 border-warning bg-page" /> Legal deadline (90 days)
         </span>
         <span>
-          <i className="window" /> Renewal window
+          <i className="h-2.5 w-4 rounded-[3px] border border-warning/40 bg-warning/12" /> Renewal window
         </span>
       </div>
     </div>

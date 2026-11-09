@@ -10,6 +10,7 @@ export const gridText = (ar: boolean) =>
         startOver: "ابدأ من جديد",
         removeBudget: "إزالة فلتر الميزانية",
         upTo: (aed: string) => `حتى ${aed} في السنة`,
+        upToShort: (k: number) => `حتى ${k >= 1000 ? `${k / 1000}k` : k} درهم`,
         details: "عرض التفاصيل",
         category: { residential: "سكني", commercial: "تجاري", retail: "تجزئة" } as Record<PropertyCategory, string>,
         beds: (b: number) => (b === 0 ? "استوديو" : b >= 4 ? "4+ غرف" : `${b} غرف`),
@@ -26,6 +27,7 @@ export const gridText = (ar: boolean) =>
         startOver: "Start over",
         removeBudget: "Remove budget filter",
         upTo: (aed: string) => `Up to ${aed} a year`,
+        upToShort: (aed: number) => `Up to AED ${aed >= 1000 ? `${aed / 1000}k` : aed}`,
         details: "View details",
         category: { residential: "Residential", commercial: "Commercial", retail: "Retail" } as Record<
           PropertyCategory,
