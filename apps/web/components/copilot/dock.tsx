@@ -203,7 +203,7 @@ export function CopilotDock({ today }: { today: string }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
-      const k = e.key.toLowerCase();
+      const k = typeof e.key === "string" ? e.key.toLowerCase() : "";
       if (mod && k === "j") {
         e.preventDefault();
         const next = !openRef.current;

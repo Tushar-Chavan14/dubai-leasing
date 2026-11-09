@@ -1,5 +1,6 @@
 "use client";
 
+import { ActionForm } from "../../../../components/ui/action-form";
 import { useRouter } from "next/navigation";
 import { useActionState, useState } from "react";
 import {
@@ -249,7 +250,7 @@ export function UploadDocuments({ token, initial, form }: { token: string; initi
         })}
       </ul>
 
-      <form action={submit} className={FORM}>
+      <ActionForm state={state} action={submit} className={FORM}>
         <input type="hidden" name="token" value={token} />
         <input type="hidden" name="formVersion" value={form.version} />
         <input type="hidden" name="applicantKind" value={applicantKind} />
@@ -302,7 +303,7 @@ export function UploadDocuments({ token, initial, form }: { token: string; initi
             {sending ? "Sending…" : "Send for checking"}
           </button>
         </Cta>
-      </form>
+      </ActionForm>
     </div>
   );
 }

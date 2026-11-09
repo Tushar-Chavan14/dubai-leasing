@@ -1,5 +1,6 @@
 "use client";
 
+import { ActionForm } from "../../../../components/ui/action-form";
 import { useActionState, useRef, useState } from "react";
 import { PlusIcon as IconPlus, WarningIcon as IconWarning } from "@phosphor-icons/react";
 import { subtypeLabel } from "../../../../lib/portfolio";
@@ -29,7 +30,7 @@ function AddClauseForm({
     {},
   );
   return (
-    <form action={action} className="grid gap-4" noValidate>
+    <ActionForm state={state} action={action} className="grid gap-4" noValidate>
       {state.error && (
         <div className={ALERT.bad} role="alert">
           <IconWarning size={16} />
@@ -104,7 +105,7 @@ function AddClauseForm({
           Cancel
         </button>
       </div>
-    </form>
+    </ActionForm>
   );
 }
 
@@ -191,7 +192,7 @@ export function ClauseItem({
   if (editing) {
     return (
       <li className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 border-t border-line py-3 first:border-t-0 [&>div]:min-w-[300px] [&>div]:flex-1 [&>form:only-child]:flex-[1_1_100%]">
-        <form action={save} className="grid gap-4" noValidate>
+        <ActionForm state={state} action={save} className="grid gap-4" noValidate>
           {state.error && (
             <div className={ALERT.bad} role="alert">
               <IconWarning size={16} />
@@ -245,7 +246,7 @@ export function ClauseItem({
               Cancel
             </button>
           </div>
-        </form>
+        </ActionForm>
       </li>
     );
   }

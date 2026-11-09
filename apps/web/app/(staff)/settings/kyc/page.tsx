@@ -14,11 +14,15 @@ export default async function KycSettingsPage({ searchParams }: { searchParams: 
   const sp = await searchParams;
   const [companies, me] = await Promise.all([get<CompanyRow[]>("/api/companies"), get<Me>("/api/me")]);
   const company = pickCompany(companies ?? [], sp.company);
-  const config = company
-    ? await get<KycConfigView & { draft: (KycConfigView & { updatedBy: string }) | null }>(
-        `/api/companies/${company.id}/kyc-config`,
-      )
-    : null;
+  type ConfigWithDraft = KycConfigView & { draft: (KycConfigView & { updatedBy: string }) | null };
+  // Every company's config, for the field count on its tab: the live form, the one applicants see.
+  const configs = await Promise.all(
+    (companies ?? []).map(
+      async (c) => [c.id, await get<ConfigWithDraft>(`/api/companies/${c.id}/kyc-config`)] as const,
+    ),
+  );
+  const counts = Object.fromEntries(configs.map(([id, c]) => [id, c?.form.length ?? 0]));
+  const config = company ? (configs.find(([id]) => id === company.id)?.[1] ?? null) : null;
   // The editor works on the open draft when there is one (D50), else on a copy of the live version.
   const editing = config?.draft ?? config;
   const isAdmin = me?.role === "admin";
@@ -28,7 +32,13 @@ export default async function KycSettingsPage({ searchParams }: { searchParams: 
       actions={<AskAiMenu label="Ask AI" prompts={askPrompts.settingsPage("Documents & KYC")} />}
       lede="What applicants fill in and upload on their document link, and the checks each document must pass. A warning sends the application to a person; a blocker can't be approved and can email the applicant a new upload link. Nothing rejects an applicant automatically."
     >
-      <CompanySplit companies={companies ?? []} selected={company} base="/settings/kyc" countLabel="fields">
+      <CompanySplit
+        companies={companies ?? []}
+        selected={company}
+        base="/settings/kyc"
+        counts={counts}
+        countLabel="fields"
+      >
         {company && config && (
           <>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-2">

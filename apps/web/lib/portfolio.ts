@@ -1,5 +1,6 @@
 import { SUBTYPES_BY_CATEGORY } from "@leasing/core";
 import type { EngineResult } from "./engine";
+import { splitReasons } from "./field-errors";
 
 export type Category = "residential" | "commercial" | "retail";
 
@@ -80,16 +81,11 @@ export interface RuleResult {
 
 const cap = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
-/** Engine error into a form result: Zod "field: message" reasons become field errors. */
+/** Engine error into a form result: Zod "field: message" reasons (also nested, "legal.email: …") become field errors. */
 export function ruleError(r: EngineResult<unknown>): RuleResult {
-  const fieldErrors: Record<string, string> = {};
-  const reasons: string[] = [];
-  for (const reason of r.error?.reasons ?? []) {
-    const m = /^([a-zA-Z]+): (.+)$/.exec(reason);
-    if (m?.[1] && m[2]) fieldErrors[m[1]] = cap(m[2]);
-    else reasons.push(cap(reason));
-  }
-  if (r.status === 400) return { error: "Some fields need attention.", reasons, fieldErrors };
+  const { fieldErrors, reasons } = splitReasons(r.error?.reasons ?? []);
+  if (r.status === 400 || Object.keys(fieldErrors).length)
+    return { error: "Some fields need attention.", reasons, fieldErrors };
   if (r.error?.code === "rule_inactive")
     return { error: "This rule was already replaced or removed. Reload the page to see the current rules." };
   if (r.error?.code === "slug_taken")

@@ -1,11 +1,13 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { PlusIcon as IconPlus, WarningIcon as IconWarning } from "@phosphor-icons/react";
+import { PlusIcon as IconPlus } from "@phosphor-icons/react";
+import { FormAlert } from "../../../../components/ui/action-form";
 import { Button } from "../../../../components/ui/button";
-import { Banner } from "../../../../components/ui/form";
 import { Block, GRID6, SaveBar, SET_INPUT, SET_SELECT, SField, SPAN } from "../../../../components/ui/settings";
+import { validateCompanyCreate } from "../../../../lib/company-legal";
 import { KIND_LABEL, type RuleResult } from "../../../../lib/portfolio";
+import { useActionForm } from "../../../../lib/use-action-form";
 import { createCompany } from "./actions";
 import { LegalFields } from "./legal-fields";
 
@@ -16,6 +18,7 @@ export function CompanyForm() {
     if (r.ok) setOpen(false);
     return r;
   }, {});
+  const form = useActionForm(action, { validate: validateCompanyCreate, serverErrors: state.fieldErrors });
   if (!open)
     return (
       <div>
@@ -25,15 +28,11 @@ export function CompanyForm() {
         </Button>
       </div>
     );
-  const nameErr = state.fieldErrors?.name;
+  const errors = form.fieldErrors;
+  const nameErr = errors.name;
   return (
-    <form action={action} className="grid gap-6 rounded-card border border-line bg-page p-5" noValidate>
-      {state.error && !nameErr && (
-        <Banner tone="bad" role="alert">
-          <IconWarning size={16} className="mt-0.5 shrink-0" />
-          {state.error}
-        </Banner>
-      )}
+    <form {...form.formProps} className="grid gap-6 rounded-card border border-line bg-page p-5" noValidate>
+      <FormAlert {...form.alertProps(state)} />
       <Block title="Company" lede="The name staff see everywhere, and what kind of company it is.">
         <div className={GRID6}>
           <SField label="Company name" error={nameErr} className={SPAN[3]}>
@@ -45,7 +44,7 @@ export function CompanyForm() {
               {...(nameErr ? { "aria-invalid": true } : {})}
             />
           </SField>
-          <SField label="Kind" className={SPAN[3]}>
+          <SField label="Kind" error={errors.kind} className={SPAN[3]}>
             <select name="kind" defaultValue="realty" className={SET_SELECT}>
               {Object.entries(KIND_LABEL).map(([v, l]) => (
                 <option key={v} value={v}>
@@ -56,13 +55,13 @@ export function CompanyForm() {
           </SField>
         </div>
       </Block>
-      <LegalFields legal={{}} errors={state.fieldErrors} />
+      <LegalFields legal={{}} errors={errors} />
       <SaveBar>
         <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>
           Cancel
         </Button>
-        <Button type="submit" variant="primary" size="sm" disabled={pending}>
-          {pending ? "Saving…" : "Save company"}
+        <Button type="submit" variant="primary" size="sm" disabled={pending || form.pending}>
+          {pending || form.pending ? "Saving…" : "Save company"}
         </Button>
       </SaveBar>
     </form>

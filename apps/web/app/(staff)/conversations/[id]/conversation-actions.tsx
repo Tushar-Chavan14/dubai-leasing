@@ -1,5 +1,6 @@
 "use client";
 
+import { ActionForm } from "../../../../components/ui/action-form";
 import { useActionState } from "react";
 import { CheckIcon as IconCheck, WarningIcon as IconWarning } from "@phosphor-icons/react";
 import { type ConversationActionState, releaseAction, replyAction } from "../actions";
@@ -39,7 +40,7 @@ export function ConversationActions({ id, status }: { id: string; status: string
   const [released, release, releasing] = useActionState<ConversationActionState, FormData>(releaseAction, {});
   return (
     <div className="grid gap-4">
-      <form action={reply} className={FIELD}>
+      <ActionForm state={sent} action={reply} className={FIELD}>
         <input type="hidden" name="id" value={id} />
         <label className={LABEL} htmlFor="reply-text">
           Reply on Telegram
@@ -53,9 +54,9 @@ export function ConversationActions({ id, status }: { id: string; status: string
           {sending ? "Sending…" : "Send"}
         </button>
         <Result s={sent} />
-      </form>
+      </ActionForm>
       {status === "handoff" && (
-        <form action={release}>
+        <ActionForm state={released} action={release}>
           <input type="hidden" name="id" value={id} />
           <button type="submit" className={`${buttonClass("ghost", "sm")} w-full`} disabled={releasing}>
             Hand back to the bot
@@ -64,7 +65,7 @@ export function ConversationActions({ id, status }: { id: string; status: string
             Closes the handoff task. The bot starts again from the beginning with this person.
           </p>
           <Result s={released} />
-        </form>
+        </ActionForm>
       )}
     </div>
   );

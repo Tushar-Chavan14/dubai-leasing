@@ -1,5 +1,6 @@
 "use client";
 
+import { ActionForm } from "../../../components/ui/action-form";
 import { useActionState, useState } from "react";
 import {
   CheckCircleIcon as IconCheck,
@@ -130,7 +131,7 @@ export function MoveInAckForm({ token }: { token: string }) {
   const [choice, setChoice] = useState("");
   if (state.ref) return <Done state={state} what="confirmation" />;
   return (
-    <form action={action} className={FORM}>
+    <ActionForm state={state} action={action} className={FORM}>
       <input type="hidden" name="token" value={token} />
       <ErrorLine text={state.error} />
       <PFieldset legend="Is the report right?">
@@ -151,7 +152,7 @@ export function MoveInAckForm({ token }: { token: string }) {
           {pending ? "Sending…" : "Send"}
         </button>
       </Cta>
-    </form>
+    </ActionForm>
   );
 }
 
@@ -177,7 +178,7 @@ export function PaymentReplyForm({
   const [choice, setChoice] = useState("");
   if (state.ref) return <Done state={state} what="reply" />;
   return (
-    <form action={action} className={FORM}>
+    <ActionForm state={state} action={action} className={FORM}>
       <input type="hidden" name="token" value={token} />
       <input type="hidden" name="paymentId" value={paymentId} />
       <ErrorLine text={state.error} />
@@ -207,7 +208,7 @@ export function PaymentReplyForm({
           {pending ? "Sending…" : "Send"}
         </button>
       </Cta>
-    </form>
+    </ActionForm>
   );
 }
 
@@ -215,7 +216,7 @@ export function ReportIssueForm({ token }: { token: string }) {
   const [state, action, pending] = useActionState<PortalState, FormData>(reportIssue, {});
   if (state.ref) return <Done state={state} what="report" />;
   return (
-    <form action={action} className={FORM}>
+    <ActionForm state={state} action={action} className={FORM}>
       <input type="hidden" name="token" value={token} />
       <ErrorLine text={state.error} />
       <PField label="What's the problem?">
@@ -236,7 +237,7 @@ export function ReportIssueForm({ token }: { token: string }) {
           {pending ? "Sending…" : "Send report"}
         </button>
       </Cta>
-    </form>
+    </ActionForm>
   );
 }
 
@@ -255,7 +256,7 @@ export function VacateNoticeForm({ token, leaseEndOn }: { token: string; leaseEn
   const [state, action, pending] = useActionState<PortalState, FormData>(giveNotice, {});
   if (state.ref) return <Done state={state} what="notice" />;
   return (
-    <form action={action} className={FORM}>
+    <ActionForm state={state} action={action} className={FORM}>
       <input type="hidden" name="token" value={token} />
       <input type="hidden" name="moveOutOn" value={leaseEndOn} />
       <ErrorLine text={state.error} />
@@ -282,7 +283,7 @@ export function VacateNoticeForm({ token, leaseEndOn }: { token: string; leaseEn
           {pending ? "Sending…" : "Give notice"}
         </button>
       </Cta>
-    </form>
+    </ActionForm>
   );
 }
 
@@ -299,7 +300,7 @@ export function InspectionBookingForm({
   if (state.ref) return <Done state={state} what="booking" />;
   if (!slots.length) return <Note>No times are open right now. The leasing team will contact you.</Note>;
   return (
-    <form action={action} className={FORM}>
+    <ActionForm state={state} action={action} className={FORM}>
       <input type="hidden" name="token" value={token} />
       <ErrorLine text={state.error} />
       {current && (
@@ -320,7 +321,7 @@ export function InspectionBookingForm({
           {pending ? "Booking…" : "Book"}
         </button>
       </Cta>
-    </form>
+    </ActionForm>
   );
 }
 
@@ -329,7 +330,7 @@ export function DepositResponseForm({ token, revision }: { token: string; revisi
   const [choice, setChoice] = useState("");
   if (state.ref) return <Done state={state} what="answer" />;
   return (
-    <form action={action} className={FORM}>
+    <ActionForm state={state} action={action} className={FORM}>
       <input type="hidden" name="token" value={token} />
       <input type="hidden" name="revision" value={revision} />
       <ErrorLine text={state.error} />
@@ -370,6 +371,6 @@ export function DepositResponseForm({ token, revision }: { token: string; revisi
           {pending ? "Sending…" : "Send"}
         </button>
       </Cta>
-    </form>
+    </ActionForm>
   );
 }

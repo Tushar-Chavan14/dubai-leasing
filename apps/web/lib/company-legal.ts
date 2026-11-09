@@ -1,3 +1,6 @@
+import { CompanyCreateForm, CompanyLegalInput } from "@leasing/core";
+import { type FieldErrors, zodFieldErrors } from "./field-errors";
+
 /** Legal (landlord) details of a company (D44): form fields, the engine body and the masked ID display. */
 
 export const LEGAL_TEXT_FIELDS = [
@@ -32,4 +35,20 @@ export function legalBody(formData: FormData): Record<string, string | null> {
 /** The ID number is shown in full only to roles that work with leases; the engine already masks it for finance. */
 export function showsIdNumber(role: string | undefined): boolean {
   return role === "admin" || role === "leasing_manager" || role === "leasing_officer";
+}
+
+/** The engine's own Zod check, run in the browser before "Add company" is sent. */
+export function validateCompanyCreate(formData: FormData): FieldErrors | null {
+  const r = CompanyCreateForm.safeParse({
+    name: String(formData.get("name") ?? ""),
+    kind: String(formData.get("kind") ?? ""),
+    legal: legalBody(formData),
+  });
+  return r.success ? null : zodFieldErrors(r.error);
+}
+
+/** The engine's own Zod check, run in the browser before the legal details are saved. */
+export function validateCompanyLegal(formData: FormData): FieldErrors | null {
+  const r = CompanyLegalInput.safeParse(legalBody(formData));
+  return r.success ? null : zodFieldErrors(r.error);
 }

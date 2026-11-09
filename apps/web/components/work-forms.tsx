@@ -1,5 +1,6 @@
 "use client";
 
+import { ActionForm } from "./ui/action-form";
 import { useActionState, useState } from "react";
 import {
   addApprovalNote,
@@ -58,7 +59,7 @@ export function TaskActions({
           </button>
         )}
         {open && !answerState.ok && (
-          <form action={answer} className="grid gap-3">
+          <ActionForm state={answerState} action={answer} className="grid gap-3">
             <input type="hidden" name="taskId" value={task.id} />
             <input type="hidden" name="leaseId" value={leaseId} />
             <label className={FIELD}>
@@ -88,7 +89,7 @@ export function TaskActions({
                 Cancel
               </button>
             </div>
-          </form>
+          </ActionForm>
         )}
         <Result s={answerState} />
         {answerState.vacate && (
@@ -107,7 +108,7 @@ export function TaskActions({
           Mark done
         </button>
       ) : (
-        <form action={done} className={ACTIONS}>
+        <ActionForm state={doneState} action={done} className={ACTIONS}>
           <input type="hidden" name="taskId" value={task.id} />
           <input type="hidden" name="leaseId" value={leaseId} />
           <input
@@ -123,7 +124,7 @@ export function TaskActions({
           <button type="button" className={buttonClass("ghost", "sm")} onClick={() => setOpen(false)}>
             Cancel
           </button>
-        </form>
+        </ActionForm>
       )}
       <Result s={doneState} />
     </div>
@@ -138,7 +139,7 @@ export function VacateNoticeForm({ leaseId, ground, today }: { leaseId: string; 
   const [state, submit, pending] = useActionState<TaskActionState, FormData>(proposeVacateNotice, {});
   if (state.ok) return <Result s={state} />;
   return (
-    <form action={submit} className="grid gap-3">
+    <ActionForm state={state} action={submit} className="grid gap-3">
       <strong>12-month repossession notice</strong>
       <p className="m-0 text-sm text-muted">
         Serve it by notary or registered mail first, then record it here for a leasing manager to approve. It is never
@@ -181,7 +182,7 @@ export function VacateNoticeForm({ leaseId, ground, today }: { leaseId: string; 
         </button>
       </div>
       <Result s={state} />
-    </form>
+    </ActionForm>
   );
 }
 
@@ -196,7 +197,7 @@ export function AddTaskForm({ leaseId, today }: { leaseId: string; today: string
       </button>
     );
   return (
-    <form action={submit} className="grid gap-3">
+    <ActionForm state={state} action={submit} className="grid gap-3">
       <input type="hidden" name="leaseId" value={leaseId} />
       <label className={FIELD}>
         <span className={LABEL}>Task</span>
@@ -231,7 +232,7 @@ export function AddTaskForm({ leaseId, today }: { leaseId: string; today: string
         </button>
       </div>
       <Result s={state} />
-    </form>
+    </ActionForm>
   );
 }
 
@@ -275,7 +276,7 @@ export function EmailTenantForm({
         <Result s={state} />
       ) : (
         open && (
-          <form action={submit} className="grid gap-3">
+          <ActionForm state={state} action={submit} className="grid gap-3">
             {applicationId ? (
               <input type="hidden" name="applicationId" value={applicationId} />
             ) : (
@@ -325,7 +326,7 @@ export function EmailTenantForm({
               </button>
             </div>
             <Result s={state} />
-          </form>
+          </ActionForm>
         )
       )}
     </Section>
@@ -342,7 +343,7 @@ export function ApprovalNoteForm({
 }) {
   const [state, submit, pending] = useActionState<TaskActionState, FormData>(addApprovalNote, {});
   return (
-    <form action={submit} className="grid gap-3">
+    <ActionForm state={state} action={submit} className="grid gap-3">
       <input type="hidden" name="approvalId" value={approvalId} />
       {draft && !state.ok && <input type="hidden" name="draftId" value={draft.id} />}
       {draft && !state.ok && (
@@ -368,6 +369,6 @@ export function ApprovalNoteForm({
         </button>
       </div>
       <Result s={state} />
-    </form>
+    </ActionForm>
   );
 }

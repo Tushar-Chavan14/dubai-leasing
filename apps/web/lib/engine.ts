@@ -33,7 +33,7 @@ export async function engine<T>(path: string, init: RequestInit = {}): Promise<E
   const body = res.status === 204 ? null : await res.json().catch(() => null);
   return res.ok
     ? { ok: true, status: res.status, data: body as T }
-    : { ok: false, status: res.status, data: null as T, error: body };
+    : { ok: false, status: res.status, data: null as T, error: body as NonNullable<EngineResult<T>["error"]> };
 }
 
 /** For pages: throw on errors other than 404 so the error boundary shows them. */

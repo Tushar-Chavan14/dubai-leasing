@@ -1,5 +1,6 @@
 "use client";
 
+import { ActionForm } from "../../../../components/ui/action-form";
 import { useActionState } from "react";
 import { WarningIcon as IconWarning } from "@phosphor-icons/react";
 import { type AppActionState, createApplication } from "../actions";
@@ -18,7 +19,7 @@ export function NewApplicationForm({
 }) {
   const [state, action, pending] = useActionState<AppActionState, FormData>(createApplication, {});
   return (
-    <form action={action} className="grid max-w-[720px] gap-4 @container">
+    <ActionForm state={state} action={action} className="grid max-w-[720px] gap-4 @container">
       <label className={FIELD}>
         <span className={LABEL}>Unit</span>
         <select className={INPUT} name="unitId" defaultValue={defaultUnit} required>
@@ -98,6 +99,6 @@ export function NewApplicationForm({
           {pending ? "Creating…" : "Create and send site visit invitation"}
         </button>
       </div>
-    </form>
+    </ActionForm>
   );
 }

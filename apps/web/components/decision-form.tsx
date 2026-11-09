@@ -1,5 +1,6 @@
 "use client";
 
+import { ActionForm } from "./ui/action-form";
 import { useActionState, useState } from "react";
 import { CheckIcon as IconCheck, WarningIcon as IconWarning } from "@phosphor-icons/react";
 import { type DecisionState, decide } from "../app/(staff)/work/actions";
@@ -41,7 +42,7 @@ export function DecisionForm({
     );
   }
   return (
-    <form action={action} className="grid gap-3">
+    <ActionForm state={state} action={action} className="grid gap-3">
       <input type="hidden" name="id" value={id} />
       <input type="hidden" name="editField" value={canEditRent ? "rent" : "note"} />
       {state.error && (
@@ -115,6 +116,6 @@ export function DecisionForm({
           </>
         )}
       </div>
-    </form>
+    </ActionForm>
   );
 }

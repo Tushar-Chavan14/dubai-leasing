@@ -1,5 +1,6 @@
 "use client";
 
+import { ActionForm } from "./ui/action-form";
 import { useRouter } from "next/navigation";
 import { useActionState, useState } from "react";
 import {
@@ -151,7 +152,7 @@ export function MoveOutPanel({
               done={i.done}
               action={
                 canAct && open ? (
-                  <form action={tick}>
+                  <ActionForm state={tickState} action={tick}>
                     <input type="hidden" name="leaseId" value={leaseId} />
                     <input type="hidden" name="item" value={i.id} />
                     <input type="hidden" name="done" value={String(!i.done)} />
@@ -163,7 +164,7 @@ export function MoveOutPanel({
                     >
                       {i.done ? "✓" : "Tick"}
                     </button>
-                  </form>
+                  </ActionForm>
                 ) : undefined
               }
             >
@@ -229,7 +230,12 @@ export function MoveOutPanel({
                     <span className={NOTE}>No clear damage seen (suggestion only).</span>
                   )}
                   {sug.suggestions.map((x, n) => (
-                    <form key={n} action={add} className="flex flex-wrap items-center justify-between gap-2">
+                    <ActionForm
+                      state={addState}
+                      key={n}
+                      action={add}
+                      className="flex flex-wrap items-center justify-between gap-2"
+                    >
                       <input type="hidden" name="leaseId" value={leaseId} />
                       <input type="hidden" name="room" value={r.room} />
                       <input type="hidden" name="itemId" value={x.itemId} />
@@ -243,7 +249,7 @@ export function MoveOutPanel({
                           Confirm
                         </button>
                       )}
-                    </form>
+                    </ActionForm>
                   ))}
                 </div>
               )}
@@ -252,13 +258,13 @@ export function MoveOutPanel({
         })}
       </ul>
       {canAct && open && (
-        <form action={compare} className={FORM_ROW}>
+        <ActionForm state={cmpState} action={compare} className={FORM_ROW}>
           <input type="hidden" name="leaseId" value={leaseId} />
           <button type="submit" className={buttonClass("ghost", "sm")} disabled={comparing}>
             Compare with move-in photos
           </button>
           <span className={NOTE}>Local vision model; suggestions only. Normal wear and tear is not damage.</span>
-        </form>
+        </ActionForm>
       )}
 
       <h3 className={`${SUB_HEAD} mt-1`}>Confirmed damage</h3>
@@ -284,13 +290,13 @@ export function MoveOutPanel({
                 }
                 side={
                   canAct && view.findingsEditable ? (
-                    <form action={remove}>
+                    <ActionForm state={rmState} action={remove}>
                       <input type="hidden" name="leaseId" value={leaseId} />
                       <input type="hidden" name="findingId" value={f.id} />
                       <button type="submit" className={buttonClass("ghost", "sm")}>
                         Remove
                       </button>
-                    </form>
+                    </ActionForm>
                   ) : undefined
                 }
               />
@@ -301,7 +307,7 @@ export function MoveOutPanel({
         <p className="m-0 text-sm text-muted">None. The full deposit of {aedShort(view.depositFils)} is refunded.</p>
       )}
       {canAct && view.findingsEditable && (
-        <form action={add} className="grid gap-2">
+        <ActionForm state={addState} action={add} className="grid gap-2">
           <input type="hidden" name="leaseId" value={leaseId} />
           <div className={FORM_ROW}>
             <select name="room" defaultValue="" aria-label="Room" className={`${SET_SELECT} w-auto!`}>
@@ -363,11 +369,11 @@ export function MoveOutPanel({
               Add damage item
             </button>
           </div>
-        </form>
+        </ActionForm>
       )}
 
       {canAct && open && (
-        <form action={complete} className="grid gap-2">
+        <ActionForm state={doneState} action={complete} className="grid gap-2">
           <input type="hidden" name="leaseId" value={leaseId} />
           <div>
             <button
@@ -379,7 +385,7 @@ export function MoveOutPanel({
             </button>
           </div>
           {view.missing.length > 0 && <p className={NOTE}>Still missing: {view.missing.join("; ")}.</p>}
-        </form>
+        </ActionForm>
       )}
 
       {s && (
@@ -415,15 +421,15 @@ export function MoveOutPanel({
             </a>
           )}
           {canAct && s.status === "superseded" && (
-            <form action={reissue}>
+            <ActionForm state={reState} action={reissue}>
               <input type="hidden" name="leaseId" value={leaseId} />
               <button type="submit" className={buttonClass("ghost", "sm")} disabled={reissuing}>
                 Reissue corrected statement
               </button>
-            </form>
+            </ActionForm>
           )}
           {isFinance && payable && (
-            <form action={showAccount} className="grid gap-2">
+            <ActionForm state={acctState} action={showAccount} className="grid gap-2">
               <input type="hidden" name="leaseId" value={leaseId} />
               <div>
                 <button type="submit" className={buttonClass("ghost", "sm")} disabled={showing}>
@@ -431,10 +437,10 @@ export function MoveOutPanel({
                 </button>
               </div>
               <Result s={acctState} />
-            </form>
+            </ActionForm>
           )}
           {isFinance && payable && (
-            <form action={pay} className="flex flex-wrap items-end gap-2">
+            <ActionForm state={payState} action={pay} className="flex flex-wrap items-end gap-2">
               <input type="hidden" name="leaseId" value={leaseId} />
               <label className={FIELD}>
                 <span className={LABEL}>Paid on</span>
@@ -447,7 +453,7 @@ export function MoveOutPanel({
               <button type="submit" className={buttonClass("primary", "sm")} disabled={paying}>
                 Record refund paid
               </button>
-            </form>
+            </ActionForm>
           )}
           {s.paidOn && <p className={NOTE}>Refund paid {longDate(s.paidOn)}.</p>}
         </div>

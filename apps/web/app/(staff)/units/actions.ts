@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { type EngineResult, engine, formError } from "../../../lib/engine";
+import { splitReasons } from "../../../lib/field-errors";
 
 export interface ActionResult {
   ok?: boolean;
@@ -13,24 +14,15 @@ export interface ActionResult {
 }
 
 function toResult(r: EngineResult<unknown>): ActionResult {
-  const reasons = r.error?.reasons ?? [];
-  const fieldErrors: Record<string, string> = {};
-  const other: string[] = [];
-  for (const reason of reasons) {
-    const m = /^([a-zA-Z]+): (.+)$/.exec(reason);
-    if (m?.[1] && m[2]) fieldErrors[m[1]] = m[2];
-    else other.push(reason);
-  }
+  const { fieldErrors, reasons } = splitReasons(r.error?.reasons ?? []);
   const nice = formError({
     ...r,
-    error: r.error ? { ...r.error, reasons: other } : undefined,
+    error: r.error ? { ...r.error, reasons } : undefined,
   } as EngineResult<unknown>);
   return {
-    error: r.status === 400 ? "Some fields need attention." : nice.error,
+    error: r.status === 400 || Object.keys(fieldErrors).length ? "Some fields need attention." : nice.error,
     reasons: nice.reasons,
-    fieldErrors: Object.fromEntries(
-      Object.entries(fieldErrors).map(([k, v]) => [k, v.charAt(0).toUpperCase() + v.slice(1)]),
-    ),
+    fieldErrors,
   };
 }
 

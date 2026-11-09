@@ -1,5 +1,6 @@
 "use client";
 
+import { ActionForm } from "./ui/action-form";
 import { useActionState, useState } from "react";
 import { openDispute, resolveDispute, type TenancyActionState } from "../app/(staff)/leases/[id]/tenancy-actions";
 import { buttonClass } from "./ui/button";
@@ -72,7 +73,7 @@ export function CasePanel({
           </div>
         )}
         {canOpen && (
-          <form action={open} className="grid gap-3 rounded-xl border border-line p-3.5">
+          <ActionForm state={openState} action={open} className="grid gap-3 rounded-xl border border-line p-3.5">
             <input type="hidden" name="leaseId" value={leaseId} />
             <label className={FIELD}>
               <span className={LABEL}>Open a dispute: what is it about?</span>
@@ -83,10 +84,10 @@ export function CasePanel({
                 Open dispute
               </button>
             </div>
-          </form>
+          </ActionForm>
         )}
         {manager && state === "DISPUTE" && (
-          <form action={resolve} className="grid gap-3 rounded-xl border border-line p-3.5">
+          <ActionForm state={resState} action={resolve} className="grid gap-3 rounded-xl border border-line p-3.5">
             <input type="hidden" name="leaseId" value={leaseId} />
             <label className={FIELD}>
               <span className={LABEL}>Outcome</span>
@@ -108,7 +109,7 @@ export function CasePanel({
                 Resolve dispute
               </button>
             </div>
-          </form>
+          </ActionForm>
         )}
         <Result s={openState} />
         <Result s={resState} />

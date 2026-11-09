@@ -1,5 +1,6 @@
 "use client";
 
+import { ActionForm } from "../ui/action-form";
 import Link from "next/link";
 import { useActionState } from "react";
 import { recordReservation, recordViewingOutcome } from "../../app/(staff)/applications/actions";
@@ -72,7 +73,7 @@ function SiteVisit({ id }: { id: string }) {
   );
   if (state.ok) return <Recorded text={state.ok} />;
   return (
-    <form action={action} className="grid gap-2">
+    <ActionForm state={state} action={action} className="grid gap-2">
       <input type="hidden" name="id" value={id} />
       {state.error && <CardError>{state.error}</CardError>}
       <div className="flex flex-wrap items-center gap-2">
@@ -87,7 +88,7 @@ function SiteVisit({ id }: { id: string }) {
         Came: the document upload link is emailed. Didn&rsquo;t come: the application closes (only after the booked
         time).
       </span>
-    </form>
+    </ActionForm>
   );
 }
 
@@ -99,7 +100,7 @@ function Reservation({ card }: { card: Extract<DecisionCardData, { decision: "re
   );
   if (state.ok) return <Recorded text={state.ok} />;
   return (
-    <form action={action} className="grid gap-2.5">
+    <ActionForm state={state} action={action} className="grid gap-2.5">
       <input type="hidden" name="id" value={card.applicationId} />
       {state.error && <CardError>{state.error}</CardError>}
       <label className={FIELD}>
@@ -126,7 +127,7 @@ function Reservation({ card }: { card: Extract<DecisionCardData, { decision: "re
       <span className="text-xs text-muted">
         Check the date and reference. Recording creates the lease for the contract.
       </span>
-    </form>
+    </ActionForm>
   );
 }
 

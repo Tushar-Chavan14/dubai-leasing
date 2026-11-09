@@ -1,5 +1,6 @@
 "use client";
 
+import { ActionForm } from "./ui/action-form";
 import Link from "next/link";
 import { useActionState } from "react";
 import { Button } from "./ui/button";
@@ -47,7 +48,7 @@ export function UnitActions({ unitId, actions, canEdit, needsPriceApproval, pend
       {actions.map((a) => {
         const meta = LABELS[a.event] ?? { label: a.event, primary: false, help: "" };
         return (
-          <form key={a.event} action={run} className="grid gap-1.5">
+          <ActionForm state={state} key={a.event} action={run} className="grid gap-1.5">
             <input type="hidden" name="id" value={unitId} />
             <input type="hidden" name="event" value={a.event} />
             <Button
@@ -68,7 +69,7 @@ export function UnitActions({ unitId, actions, canEdit, needsPriceApproval, pend
                 ))}
               </ul>
             )}
-          </form>
+          </ActionForm>
         );
       })}
       {needsPriceApproval && (
@@ -87,13 +88,13 @@ export function UnitActions({ unitId, actions, canEdit, needsPriceApproval, pend
               </span>
             </Banner>
           ) : (
-            <form action={askPrice} className="grid gap-1.5">
+            <ActionForm state={priceState} action={askPrice} className="grid gap-1.5">
               <input type="hidden" name="id" value={unitId} />
               <Button type="submit" variant="ghost" size="sm" className="w-full" disabled={asking}>
                 Ask a manager to approve this rent
               </Button>
               {priceState.error && <p className="m-0 text-[12.5px] text-danger">{priceState.error}</p>}
-            </form>
+            </ActionForm>
           )}
         </div>
       )}

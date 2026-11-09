@@ -1,7 +1,6 @@
-import { type Actor, type CalendarDate, newId, type StaffRole } from "@leasing/core";
+import { type Actor, type CalendarDate, CompanyLegalInput, newId, type StaffRole } from "@leasing/core";
 import { companies, leases, parties, type Tx, units } from "@leasing/db";
 import { eq } from "drizzle-orm";
-import { z } from "zod";
 import type { EngineContext } from "../context.ts";
 import { notFound, unprocessable } from "../errors.ts";
 import { appendEvent } from "./events.ts";
@@ -13,53 +12,8 @@ import { appendEvent } from "./events.ts";
  * payload read the party like any other party, so nothing downstream changed shape.
  */
 
-const text = (max: number) => z.string().trim().min(1).max(max);
-const optText = (max: number) =>
-  z
-    .string()
-    .trim()
-    .max(max)
-    .nullable()
-    .optional()
-    .transform((v) => (v ? v : null));
-const calendarDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "use a date like 2027-03-31");
-const optDate = calendarDate
-  .nullable()
-  .optional()
-  .transform((v) => v ?? null);
-const EID_FORMAT = /^784-\d{4}-\d{7}-\d$/;
-
-/** The legal (landlord) details. Cross-field and clock checks (expiry in the future) run in `updateCompanyLegal`. */
-export const CompanyLegalInput = z
-  .object({
-    legalNameEn: text(200),
-    legalNameAr: optText(200),
-    tradeLicenceNo: text(60),
-    tradeLicenceAuthority: text(120),
-    tradeLicenceExpiresOn: calendarDate,
-    reraOrn: optText(60),
-    registeredAddress: text(400),
-    email: z.string().trim().email().max(200),
-    phone: optText(40),
-    chequePayeeName: optText(200),
-    signatoryName: text(200),
-    signatoryTitle: text(120),
-    signatoryEmail: z.string().trim().email().max(200),
-    signatoryIdKind: z.enum(["emirates_id", "passport"]),
-    signatoryIdNo: text(40),
-    signatoryIdExpiresOn: optDate,
-  })
-  .superRefine((v, c) => {
-    if (v.signatoryIdKind === "emirates_id" && !EID_FORMAT.test(v.signatoryIdNo))
-      c.addIssue({ code: "custom", path: ["signatoryIdNo"], message: "use the format 784-YYYY-NNNNNNN-N" });
-    if (v.signatoryIdKind === "passport" && !/^[A-Za-z0-9]{6,12}$/.test(v.signatoryIdNo))
-      c.addIssue({
-        code: "custom",
-        path: ["signatoryIdNo"],
-        message: "enter the passport number (6 to 12 letters or digits)",
-      });
-  });
-export type CompanyLegalInput = z.infer<typeof CompanyLegalInput>;
+/** The schema lives in `@leasing/core` so the web forms run the same check before submit. */
+export { CompanyLegalInput };
 
 export type CompanyLegal = {
   [K in keyof CompanyLegalInput]: CompanyLegalInput[K] | null;

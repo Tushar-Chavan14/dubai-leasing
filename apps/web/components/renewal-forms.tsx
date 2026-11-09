@@ -1,5 +1,6 @@
 "use client";
 
+import { ActionForm } from "./ui/action-form";
 import { useActionState, useState } from "react";
 import { type LeaseActionState, recordResponse, recordSri, renewLease } from "../app/(staff)/leases/[id]/actions";
 import { buttonClass } from "./ui/button";
@@ -31,7 +32,7 @@ export function RenewalForms({
   return (
     <div className="grid gap-3">
       {readyToRenew && (
-        <form action={renew} className={`${BOX} bg-raised`}>
+        <ActionForm state={renewState} action={renew} className={`${BOX} bg-raised`}>
           <input type="hidden" name="leaseId" value={leaseId} />
           <p className="m-0 text-sm">The tenant accepted. Renewing applies the new term and rent from the notice.</p>
           <div>
@@ -40,7 +41,7 @@ export function RenewalForms({
             </button>
           </div>
           <Result s={renewState} />
-        </form>
+        </ActionForm>
       )}
 
       <div className={FORM_ROW}>
@@ -65,7 +66,7 @@ export function RenewalForms({
       </div>
 
       {open === "respond" && (
-        <form action={respond} className={BOX}>
+        <ActionForm state={respState} action={respond} className={BOX}>
           <input type="hidden" name="leaseId" value={leaseId} />
           <p className={NOTE}>
             For answers given by phone or in person. It goes through the same steps as a portal reply and is marked as
@@ -96,11 +97,11 @@ export function RenewalForms({
             </button>
           </div>
           <Result s={respState} />
-        </form>
+        </ActionForm>
       )}
 
       {open === "sri" && (
-        <form action={saveSri} className={BOX}>
+        <ActionForm state={sriState} action={saveSri} className={BOX}>
           <input type="hidden" name="leaseId" value={leaseId} />
           <p className={NOTE}>
             The Smart Rental Index average for this unit, e.g. from the DLD calculator. A pending notice is re-drafted
@@ -132,7 +133,7 @@ export function RenewalForms({
             </button>
           </div>
           <Result s={sriState} />
-        </form>
+        </ActionForm>
       )}
     </div>
   );

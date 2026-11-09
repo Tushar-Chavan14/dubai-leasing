@@ -1,5 +1,6 @@
 "use client";
 
+import { ActionForm } from "../../../../components/ui/action-form";
 import { useActionState } from "react";
 import { WarningIcon as IconWarning } from "@phosphor-icons/react";
 import { Banner } from "../../../../components/ui/form";
@@ -20,7 +21,7 @@ export function SignForm({ token, name }: { token: string; name: string }) {
     );
   }
   return (
-    <form action={action} className={FORM}>
+    <ActionForm state={state} action={action} className={FORM}>
       <input type="hidden" name="token" value={token} />
       <PField label="Type your full name to sign" hint={`As written on the contract: ${name}`}>
         <input
@@ -52,6 +53,6 @@ export function SignForm({ token, name }: { token: string; name: string }) {
           {pending ? "Signing…" : "Sign contract"}
         </button>
       </Cta>
-    </form>
+    </ActionForm>
   );
 }

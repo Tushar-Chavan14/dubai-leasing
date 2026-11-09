@@ -1,5 +1,6 @@
 "use client";
 
+import { ActionForm } from "../../../../components/ui/action-form";
 import { useRouter } from "next/navigation";
 import { useActionState, useEffect } from "react";
 import { WarningIcon as IconWarning } from "@phosphor-icons/react";
@@ -139,7 +140,7 @@ function TemplateCard({ t, canEdit }: { t: CompanyTemplateView; canEdit: boolean
       {canEdit && t.status === "approved" && (
         <div className="grid gap-2">
           <Errors state={retireState} />
-          <form action={retire} className="flex flex-wrap items-center gap-2">
+          <ActionForm state={retireState} action={retire} className="flex flex-wrap items-center gap-2">
             <input type="hidden" name="templateId" value={t.id} />
             <button type="submit" className={BTN.danger} disabled={retiring}>
               {retiring ? "Retiring…" : "Retire template"}
@@ -147,7 +148,7 @@ function TemplateCard({ t, canEdit }: { t: CompanyTemplateView; canEdit: boolean
             <span className="m-0 text-[12.5px] text-muted">
               Contract rules that use it stop preparing contracts until they point at another template.
             </span>
-          </form>
+          </ActionForm>
         </div>
       )}
     </div>
@@ -228,7 +229,7 @@ function SampleReview({
         )
       )}
       {canEdit && (
-        <form id={formId} action={approve} className="grid gap-2">
+        <ActionForm state={state} id={formId} action={approve} className="grid gap-2">
           <input type="hidden" name="companyId" value={company.id} />
           <Errors state={state} />
           {review.needsCheck && (
@@ -247,7 +248,7 @@ function SampleReview({
               </span>
             )}
           </div>
-        </form>
+        </ActionForm>
       )}
     </div>
   );
@@ -346,7 +347,7 @@ export function CompanyTemplatePanelView({
             </p>
           )}
           {canEdit && (
-            <form action={retry} className="flex flex-wrap items-center gap-2">
+            <ActionForm state={retryState} action={retry} className="flex flex-wrap items-center gap-2">
               <input type="hidden" name="companyId" value={company.id} />
               <button type="submit" className={BTN.ghost} disabled={retrying}>
                 {retrying ? "Starting…" : panel.extraction.status === "failed" ? "Try again" : "Read the sample again"}
@@ -356,7 +357,7 @@ export function CompanyTemplatePanelView({
                   {retryState.error}
                 </span>
               )}
-            </form>
+            </ActionForm>
           )}
         </div>
       )}

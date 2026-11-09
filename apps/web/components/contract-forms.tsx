@@ -1,5 +1,6 @@
 "use client";
 
+import { ActionForm } from "./ui/action-form";
 import { CONTRACT_CLAUSES, type ContractClauseId } from "@leasing/core";
 import { useActionState } from "react";
 import {
@@ -59,7 +60,7 @@ export function PrepareContractForm({
 }) {
   const [state, action, pending] = useActionState<LeaseActionState, FormData>(prepareContract, {});
   return (
-    <form action={action} className="grid gap-3">
+    <ActionForm state={state} action={action} className="grid gap-3">
       <input type="hidden" name="leaseId" value={leaseId} />
       <fieldset className="m-0 grid min-w-0 gap-2 border-0 p-0">
         <legend className={`${FIELD_LABEL} mb-1.5 p-0`}>Standard clauses</legend>
@@ -102,28 +103,28 @@ export function PrepareContractForm({
           {pending ? "Preparing…" : label}
         </button>
       </div>
-    </form>
+    </ActionForm>
   );
 }
 
 export function ResendSignLinkButton({ leaseId, signerId }: { leaseId: string; signerId: string }) {
   const [state, action, pending] = useActionState<LeaseActionState, FormData>(resendSignLink, {});
   return (
-    <form action={action} className="grid gap-1.5">
+    <ActionForm state={state} action={action} className="grid gap-1.5">
       <input type="hidden" name="leaseId" value={leaseId} />
       <input type="hidden" name="signerId" value={signerId} />
       <button type="submit" className={buttonClass("ghost", "sm")} disabled={pending}>
         {pending ? "Sending…" : "Send a new link"}
       </button>
       <Result s={state} />
-    </form>
+    </ActionForm>
   );
 }
 
 export function ProposeEjariButton({ leaseId }: { leaseId: string }) {
   const [state, action, pending] = useActionState<LeaseActionState, FormData>(proposeEjari, {});
   return (
-    <form action={action} className="grid gap-2">
+    <ActionForm state={state} action={action} className="grid gap-2">
       <input type="hidden" name="leaseId" value={leaseId} />
       <div>
         <button type="submit" className={buttonClass("ghost", "sm")} disabled={pending}>
@@ -131,7 +132,7 @@ export function ProposeEjariButton({ leaseId }: { leaseId: string }) {
         </button>
       </div>
       <Result s={state} />
-    </form>
+    </ActionForm>
   );
 }
 
@@ -167,7 +168,7 @@ export function ReprepareContractButton({
     {},
   );
   return (
-    <form action={action} className="grid gap-1.5">
+    <ActionForm state={state} action={action} className="grid gap-1.5">
       <input type="hidden" name="leaseId" value={leaseId} />
       {reason !== "rules_changed" && clauses.map((c) => <input key={c} type="hidden" name="clause" value={c} />)}
       <button type="submit" className={buttonClass("ghost", "sm")} disabled={pending}>
@@ -175,6 +176,6 @@ export function ReprepareContractButton({
       </button>
       <small className="text-[12.5px] text-muted">{HINT[reason]}</small>
       <Result s={state} />
-    </form>
+    </ActionForm>
   );
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import { ActionForm } from "../../../../components/ui/action-form";
 import { useActionState } from "react";
 import { CheckIcon as IconCheck, WarningIcon as IconWarning } from "@phosphor-icons/react";
 import { Button } from "../../../../components/ui/button";
@@ -10,7 +11,7 @@ import { type SriState, saveSri } from "./actions";
 export function SriForm() {
   const [s, action, pending] = useActionState<SriState, FormData>(saveSri, {});
   return (
-    <form action={action} className="grid gap-3.5">
+    <ActionForm state={s} action={action} className="grid gap-3.5">
       <SField label="Community">
         <input name="community" required placeholder="Dubai Marina" className={SET_INPUT} />
       </SField>
@@ -46,6 +47,6 @@ export function SriForm() {
           {s.error}
         </Banner>
       )}
-    </form>
+    </ActionForm>
   );
 }

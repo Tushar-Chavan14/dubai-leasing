@@ -1,5 +1,6 @@
 "use client";
 
+import { ActionForm } from "../../../../components/ui/action-form";
 import { type ReactNode, useActionState, useState } from "react";
 import { WarningIcon as IconWarning } from "@phosphor-icons/react";
 import { Banner } from "../../../../components/ui/form";
@@ -49,7 +50,7 @@ export function OfferForm(p: {
   }
   if (!p.canRespond) return <>{p.closed}</>;
   return (
-    <form action={action} className={FORM}>
+    <ActionForm state={state} action={action} className={FORM}>
       <input type="hidden" name="token" value={p.token} />
       <input type="hidden" name="revision" value={p.revision} />
       <fieldset className="m-0 grid gap-2 border-0 p-0">
@@ -110,6 +111,6 @@ export function OfferForm(p: {
           {pending ? "Sending…" : mode ? SUBMIT[mode] : "Choose an answer"}
         </button>
       </Cta>
-    </form>
+    </ActionForm>
   );
 }

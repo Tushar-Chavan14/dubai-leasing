@@ -1,5 +1,6 @@
 "use client";
 
+import { ActionForm } from "../../../components/ui/action-form";
 import { useActionState } from "react";
 import { buttonClass } from "../../../components/ui/button";
 import { SET_INPUT, SET_SELECT } from "../../../components/ui/settings";
@@ -9,7 +10,7 @@ import { type TenancyActionState, updateTicket } from "../leases/[id]/tenancy-ac
 export function TicketActions({ ticketId, status }: { ticketId: string; status: string }) {
   const [state, act, busy] = useActionState<TenancyActionState, FormData>(updateTicket, {});
   return (
-    <form action={act} className="flex flex-wrap items-center gap-2">
+    <ActionForm state={state} action={act} className="flex flex-wrap items-center gap-2">
       <input type="hidden" name="ticketId" value={ticketId} />
       <select
         name="status"
@@ -32,6 +33,6 @@ export function TicketActions({ ticketId, status }: { ticketId: string; status: 
         Update
       </button>
       {state.error && <span className="text-[12.5px] text-danger">{state.error}</span>}
-    </form>
+    </ActionForm>
   );
 }

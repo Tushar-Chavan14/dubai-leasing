@@ -1,5 +1,6 @@
 "use client";
 
+import { ActionForm } from "../../../../components/ui/action-form";
 import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useRef, useState } from "react";
 import type { RuleResult } from "../../../../lib/portfolio";
@@ -81,7 +82,7 @@ export function ClauseReview({
   const [retryState, retry, retrying] = useActionState<RuleResult, FormData>(retrySample, {});
   if (!sample) return null;
   const retryButton = canEdit && (sample.status === "failed" || sample.status === "needs_human") && (
-    <form action={retry}>
+    <ActionForm state={retryState} action={retry}>
       <input type="hidden" name="ruleId" value={rule.id} />
       <button type="submit" className={BTN.ghost} disabled={retrying}>
         {templateReady ? "Read clauses again" : "Try again"}
@@ -91,7 +92,7 @@ export function ClauseReview({
           {retryState.error}
         </span>
       )}
-    </form>
+    </ActionForm>
   );
   const clauses = review?.clauses ?? [];
   return (

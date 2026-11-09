@@ -12,11 +12,12 @@ import {
 } from "../app/(staff)/units/actions";
 import { aedShort } from "../lib/format";
 import { uploadPhoto } from "../lib/images";
-import { WarningIcon as IconWarning } from "@phosphor-icons/react";
 import { type Category, CATEGORIES, COMMUNITIES, subtypeLabel } from "../lib/portfolio";
 import type { CompanyRow, UnitRow } from "../lib/types";
 import { Button } from "./ui/button";
-import { Banner, FIELD, HINT, INPUT as BASE_INPUT, LABEL } from "./ui/form";
+import { FormAlert } from "./ui/action-form";
+import { useActionForm } from "../lib/use-action-form";
+import { FIELD, HINT, INPUT as BASE_INPUT, LABEL } from "./ui/form";
 import { moveItem, type PhotoItem, PhotoPicker } from "./photo-picker";
 
 interface Values {
@@ -94,7 +95,6 @@ export function UnitForm({
     <K extends keyof Values>(k: K) =>
     (e: { target: { value: string } }) =>
       setV((p) => ({ ...p, [k]: e.target.value as Values[K] }));
-  const fe = result.fieldErrors ?? {};
 
   const rentFils = useMemo(() => {
     try {
@@ -159,14 +159,7 @@ export function UnitForm({
     return `Allowed: ${amount} (${companyName} ${v.category} rule${basis ? `, ${basis}` : ""})`;
   })();
 
-  function payload(): Record<string, unknown> | null {
-    if (Number.isNaN(rentFils)) {
-      setResult({
-        error: "Some fields need attention.",
-        fieldErrors: { askingRentFils: "Enter an amount like 85,000" },
-      });
-      return null;
-    }
+  function payload(): Record<string, unknown> {
     return {
       code: v.code,
       building: v.building,
@@ -191,10 +184,8 @@ export function UnitForm({
     };
   }
 
-  function submit(e: React.SubmitEvent<HTMLFormElement>) {
-    e.preventDefault();
+  function submit() {
     const body = payload();
-    if (!body) return;
     startTransition(async () => {
       if (mode === "edit" && unit) {
         const patch = Object.fromEntries(Object.entries(body).filter(([k]) => !lockedFields.includes(k)));
@@ -226,31 +217,25 @@ export function UnitForm({
     });
   }
 
+  const form = useActionForm(submit, {
+    validate: () => (Number.isNaN(rentFils) ? { askingRentFils: "Enter an amount like 85,000" } : null),
+    serverErrors: result.fieldErrors,
+  });
+  const fe = form.fieldErrors;
   const locked = (k: string) => lockedFields.includes(k);
   const err = (k: string) => (fe[k] ? <span className="text-xs text-danger">{fe[k]}</span> : null);
-  const inv = (k: string) => (fe[k] ? { "aria-invalid": true as const } : {});
+  // `data-field` lets the form focus the field an engine error names (these inputs are controlled, without `name`).
+  const inv = (k: string) => ({ "data-field": k, ...(fe[k] ? { "aria-invalid": true as const } : {}) });
 
   return (
     <form
-      onSubmit={submit}
+      {...form.formProps}
       noValidate
       className={`@container grid max-w-[980px] ${mode === "edit" ? "" : "[&>section:first-child]:border-t-0 [&>section:first-child]:pt-0"}`}
     >
-      {result.error && (
+      {(result.error || form.invalid.length > 0) && (
         <div className="mb-5">
-          <Banner tone="bad" role="alert">
-            <IconWarning size={16} className="mt-0.5 shrink-0" />
-            <div>
-              <strong>{result.error}</strong>
-              {result.reasons && result.reasons.length > 0 && (
-                <ul>
-                  {result.reasons.map((r) => (
-                    <li key={r}>{r}</li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </Banner>
+          <FormAlert {...form.alertProps(result)} />
         </div>
       )}
 

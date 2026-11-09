@@ -13,6 +13,7 @@ function Field({
   span = 3,
   hint,
   readOnly,
+  errorLabel,
 }: {
   name: keyof Legal;
   label: string;
@@ -22,6 +23,8 @@ function Field({
   span?: 3 | 6;
   hint?: string;
   readOnly?: boolean;
+  /** The field's name in the error banner, when the label alone is ambiguous ("Email" twice). */
+  errorLabel?: string;
 }) {
   const err = errors?.[name];
   return (
@@ -32,6 +35,7 @@ function Field({
         defaultValue={value ?? ""}
         maxLength={400}
         readOnly={readOnly}
+        data-label={errorLabel}
         className={SET_INPUT}
         {...(err ? { "aria-invalid": true } : {})}
       />
@@ -81,7 +85,14 @@ export function LegalFields({
             errors={errors}
             span={6}
           />
-          <Field name="email" label="Email" type="email" value={legal.email} errors={errors} />
+          <Field
+            name="email"
+            label="Email"
+            type="email"
+            value={legal.email}
+            errors={errors}
+            errorLabel="Company email"
+          />
           <Field name="phone" label="Phone (optional)" value={legal.phone} errors={errors} />
           <Field
             name="chequePayeeName"
@@ -94,9 +105,28 @@ export function LegalFields({
       </Block>
       <Block title="Authorised signatory" lede="Signs contracts for the company. The signing link goes to this email.">
         <div className={GRID6}>
-          <Field name="signatoryName" label="Name" value={legal.signatoryName} errors={errors} />
-          <Field name="signatoryTitle" label="Title" value={legal.signatoryTitle} errors={errors} />
-          <Field name="signatoryEmail" label="Email" type="email" value={legal.signatoryEmail} errors={errors} />
+          <Field
+            name="signatoryName"
+            label="Name"
+            value={legal.signatoryName}
+            errors={errors}
+            errorLabel="Signatory name"
+          />
+          <Field
+            name="signatoryTitle"
+            label="Title"
+            value={legal.signatoryTitle}
+            errors={errors}
+            errorLabel="Signatory title"
+          />
+          <Field
+            name="signatoryEmail"
+            label="Email"
+            type="email"
+            value={legal.signatoryEmail}
+            errors={errors}
+            errorLabel="Signatory email"
+          />
           <SField label="ID type" className={SPAN[3]}>
             <select name="signatoryIdKind" defaultValue={legal.signatoryIdKind ?? "emirates_id"} className={SET_SELECT}>
               <option value="emirates_id">Emirates ID</option>
@@ -110,10 +140,12 @@ export function LegalFields({
             errors={errors}
             hint="Emirates ID: 784-YYYY-NNNNNNN-N"
             readOnly={!!maskedId}
+            errorLabel="Signatory ID number"
           />
           <Field
             name="signatoryIdExpiresOn"
             label="ID expiry (optional)"
+            errorLabel="Signatory ID expiry"
             type="date"
             value={legal.signatoryIdExpiresOn}
             errors={errors}

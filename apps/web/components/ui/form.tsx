@@ -5,7 +5,7 @@ export const FIELD = "grid gap-1.5";
 export const LABEL = "text-xs font-semibold text-muted";
 export const HINT = "text-xs font-normal text-muted";
 export const INPUT =
-  "w-full rounded-input border border-line bg-page px-3 py-2 font-sans text-sm text-ink placeholder:text-muted hover:border-ink focus:border-ink";
+  "w-full rounded-input border border-line bg-page px-3 py-2 font-sans text-sm text-ink placeholder:text-muted hover:border-ink focus:border-ink aria-[invalid=true]:border-danger";
 export const ACTIONS = "flex flex-wrap items-center gap-2";
 
 /** A success or error banner. */

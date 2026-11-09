@@ -1,5 +1,6 @@
 "use client";
 
+import { ActionForm } from "../../../components/ui/action-form";
 import { useActionState, useState } from "react";
 import { CheckIcon as IconCheck, WarningIcon as IconWarning } from "@phosphor-icons/react";
 import { Banner } from "../../../components/ui/form";
@@ -41,7 +42,7 @@ export function AcknowledgeForm({ token, pinned }: { token: string; pinned?: boo
   const [state, action, pending] = useActionState<PortalState, FormData>(acknowledge, {});
   if (state.ref) return <Result state={state} what="confirmation" pinned={!!pinned} />;
   return (
-    <form action={action} className={pinned ? "flex flex-1 flex-col gap-4" : "grid gap-3"}>
+    <ActionForm state={state} action={action} className={pinned ? "flex flex-1 flex-col gap-4" : "grid gap-3"}>
       <input type="hidden" name="token" value={token} />
       <ErrorLine text={state.error} />
       <Cta inline={!pinned}>
@@ -49,7 +50,7 @@ export function AcknowledgeForm({ token, pinned }: { token: string; pinned?: boo
           {pending ? "Sending…" : "I confirm I received the notice"}
         </button>
       </Cta>
-    </form>
+    </ActionForm>
   );
 }
 
@@ -65,7 +66,7 @@ export function ReplyForm({ token }: { token: string }) {
   const [confirmVacate, setConfirmVacate] = useState(false);
   if (state.ref) return <Result state={state} what="reply" />;
   return (
-    <form action={action} className="grid gap-3.5">
+    <ActionForm state={state} action={action} className="grid gap-3.5">
       <input type="hidden" name="token" value={token} />
       <ErrorLine text={state.error} />
       <PFieldset legend="What would you like to do?">
@@ -104,6 +105,6 @@ export function ReplyForm({ token }: { token: string }) {
           {pending ? "Sending…" : choice === "vacate" ? "Confirm I'm moving out" : "Send my reply"}
         </button>
       </Cta>
-    </form>
+    </ActionForm>
   );
 }

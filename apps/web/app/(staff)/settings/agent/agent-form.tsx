@@ -1,5 +1,6 @@
 "use client";
 
+import { ActionForm } from "../../../../components/ui/action-form";
 import { useActionState } from "react";
 import { CheckIcon as IconCheck, LockSimpleIcon as IconLock, WarningIcon as IconWarning } from "@phosphor-icons/react";
 import { Button } from "../../../../components/ui/button";
@@ -85,7 +86,7 @@ export function AgentForm({
 }) {
   const [s, action, pending] = useActionState<AgentState, FormData>(saveAgent, {});
   return (
-    <form action={action} className="grid gap-7">
+    <ActionForm state={s} fieldErrors={s.fields} action={action} className="grid gap-7">
       <fieldset disabled={!canEdit} className="m-0 grid min-w-0 gap-6 border-0 p-0">
         <legend className="sr-only">The agent may do this by itself</legend>
         {groups.map((group) => {
@@ -180,6 +181,6 @@ export function AgentForm({
           ))}
         </ul>
       </Block>
-    </form>
+    </ActionForm>
   );
 }

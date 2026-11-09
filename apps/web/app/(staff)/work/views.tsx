@@ -1,5 +1,6 @@
 "use client";
 
+import { ActionForm } from "../../../components/ui/action-form";
 import Link from "next/link";
 import { useActionState, useState } from "react";
 import { buttonClass } from "../../../components/ui/button";
@@ -84,7 +85,7 @@ export function SavedViews({
         </button>
       )}
       {open && (
-        <form action={action} className="flex flex-wrap items-center gap-2">
+        <ActionForm state={state} action={action} className="flex flex-wrap items-center gap-2">
           <input type="hidden" name="stage" value={filter.stage} />
           <input type="hidden" name="q" value={filter.q} />
           <input type="hidden" name="mine" value={filter.mine ? "1" : "0"} />
@@ -111,7 +112,7 @@ export function SavedViews({
               {state.error}
             </p>
           )}
-        </form>
+        </ActionForm>
       )}
     </div>
   );

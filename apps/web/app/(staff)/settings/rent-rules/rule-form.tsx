@@ -2,14 +2,9 @@
 
 import { useActionState, useState, type ReactNode } from "react";
 import { RowAction } from "../../../../components/row-action";
-import {
-  PencilSimpleIcon as IconPencil,
-  PlusIcon as IconPlus,
-  TrashIcon as IconTrash,
-  WarningIcon as IconWarning,
-} from "@phosphor-icons/react";
+import { PencilSimpleIcon as IconPencil, PlusIcon as IconPlus, TrashIcon as IconTrash } from "@phosphor-icons/react";
 import { Button, iconButtonClass } from "../../../../components/ui/button";
-import { Banner } from "../../../../components/ui/form";
+import { FormAlert } from "../../../../components/ui/action-form";
 import {
   Affix,
   FormGrid,
@@ -34,6 +29,7 @@ import {
   subtypeLabel,
   subtypesFor,
 } from "../../../../lib/portfolio";
+import { useActionForm } from "../../../../lib/use-action-form";
 import type { CompanyRow, RentRuleRow } from "../../../../lib/types";
 import { removeRentRule, saveRentRule } from "./actions";
 import { RentTry } from "./rent-try";
@@ -54,25 +50,12 @@ function RuleEditor({
     if (r.ok) onDone();
     return r;
   }, {});
-  const fe = state.fieldErrors ?? {};
+  const form = useActionForm(action, { serverErrors: state.fieldErrors });
+  const fe = form.fieldErrors;
   const inv = (k: string) => (fe[k] ? { "aria-invalid": true as const } : {});
   return (
-    <form action={action} className="grid gap-4" noValidate>
-      {state.error && (
-        <Banner tone="bad" role="alert">
-          <IconWarning size={16} className="mt-0.5 shrink-0" />
-          <div>
-            <strong>{state.error}</strong>
-            {state.reasons && state.reasons.length > 0 && (
-              <ul>
-                {state.reasons.map((r) => (
-                  <li key={r}>{r}</li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </Banner>
-      )}
+    <form {...form.formProps} className="grid gap-4" noValidate>
+      <FormAlert {...form.alertProps(state)} />
       {rule && <input type="hidden" name="id" value={rule.id} />}
       <input type="hidden" name="category" value={category} />
       <input type="hidden" name="companyId" value={rule?.companyId ?? company.id} />

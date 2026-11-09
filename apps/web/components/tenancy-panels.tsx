@@ -1,5 +1,6 @@
 "use client";
 
+import { ActionForm } from "./ui/action-form";
 import { useRouter } from "next/navigation";
 import { useActionState, useState } from "react";
 import {
@@ -80,7 +81,7 @@ export function MoveInPanel({
             done={i.done}
             action={
               canAct && !active ? (
-                <form action={tick}>
+                <ActionForm state={tickState} action={tick}>
                   <input type="hidden" name="leaseId" value={leaseId} />
                   <input type="hidden" name="item" value={i.id} />
                   <input type="hidden" name="done" value={String(!i.done)} />
@@ -92,7 +93,7 @@ export function MoveInPanel({
                   >
                     {i.done ? "✓" : "Tick"}
                   </button>
-                </form>
+                </ActionForm>
               ) : undefined
             }
           >
@@ -167,7 +168,7 @@ export function MoveInPanel({
         })}
       </ul>
       {canAct && !active && (
-        <form action={complete} className="grid gap-2">
+        <ActionForm state={doneState} action={complete} className="grid gap-2">
           <input type="hidden" name="leaseId" value={leaseId} />
           <div>
             <button
@@ -179,7 +180,7 @@ export function MoveInPanel({
             </button>
           </div>
           {view.missing.length > 0 && <p className={NOTE}>Still missing: {view.missing.join("; ")}.</p>}
-        </form>
+        </ActionForm>
       )}
       <Result s={tickState} />
       <Result s={doneState} />
@@ -277,7 +278,7 @@ export function PaymentsPanel({
                 {open === p.id && (
                   <div className="grid gap-2">
                     {isOpen && (
-                      <form action={record} className={FORM_ROW}>
+                      <ActionForm state={recState} action={record} className={FORM_ROW}>
                         <input type="hidden" name="leaseId" value={leaseId} />
                         <input type="hidden" name="paymentId" value={p.id} />
                         <input type="hidden" name="outcome" value="paid" />
@@ -301,28 +302,28 @@ export function PaymentsPanel({
                         <button type="submit" className={buttonClass("primary", "sm")} disabled={recording}>
                           Paid
                         </button>
-                      </form>
+                      </ActionForm>
                     )}
                     {p.method === "cheque" && p.status !== "bounced" && p.dueOn <= today && (
-                      <form action={record}>
+                      <ActionForm state={recState} action={record}>
                         <input type="hidden" name="leaseId" value={leaseId} />
                         <input type="hidden" name="paymentId" value={p.id} />
                         <input type="hidden" name="outcome" value="bounced" />
                         <button type="submit" className={buttonClass("ghost", "sm")} disabled={recording}>
                           Cheque bounced
                         </button>
-                      </form>
+                      </ActionForm>
                     )}
                   </div>
                 )}
                 {(p.status === "overdue" || p.status === "bounced") && !p.formalReminderSentOn && canPropose && (
-                  <form action={formal}>
+                  <ActionForm state={formalState} action={formal}>
                     <input type="hidden" name="leaseId" value={leaseId} />
                     <input type="hidden" name="paymentId" value={p.id} />
                     <button type="submit" className={buttonClass("ghost", "sm")} disabled={proposing}>
                       Propose formal reminder
                     </button>
-                  </form>
+                  </ActionForm>
                 )}
               </ItemRow>
             );
@@ -387,7 +388,7 @@ export function ComplaintsPanel({
       }
     >
       {showLog && (
-        <form action={log} className="grid gap-3 rounded-xl border border-line p-3.5">
+        <ActionForm state={logState} action={log} className="grid gap-3 rounded-xl border border-line p-3.5">
           <input type="hidden" name="leaseId" value={leaseId} />
           <label className={FIELD}>
             <span className={LABEL}>What the tenant reported</span>
@@ -406,7 +407,7 @@ export function ComplaintsPanel({
             </button>
           </div>
           <Result s={logState} />
-        </form>
+        </ActionForm>
       )}
       {rows.length === 0 ? (
         <p className="m-0 text-sm text-muted">No issues reported.</p>
@@ -441,7 +442,7 @@ export function ComplaintsPanel({
             >
               {canAct && c.status === "review" && (
                 <div className={ACTIONS}>
-                  <form action={resolve} className={FORM_ROW}>
+                  <ActionForm state={resState} action={resolve} className={FORM_ROW}>
                     <input type="hidden" name="leaseId" value={leaseId} />
                     <input type="hidden" name="complaintId" value={c.id} />
                     <input type="hidden" name="action" value="ticket" />
@@ -465,8 +466,8 @@ export function ComplaintsPanel({
                     <button type="submit" className={buttonClass("primary", "sm")} disabled={resolving}>
                       Open ticket
                     </button>
-                  </form>
-                  <form action={resolve} className={FORM_ROW}>
+                  </ActionForm>
+                  <ActionForm state={resState} action={resolve} className={FORM_ROW}>
                     <input type="hidden" name="leaseId" value={leaseId} />
                     <input type="hidden" name="complaintId" value={c.id} />
                     <input type="hidden" name="action" value="close" />
@@ -481,7 +482,7 @@ export function ComplaintsPanel({
                     <button type="submit" className={buttonClass("ghost", "sm")} disabled={resolving}>
                       Close
                     </button>
-                  </form>
+                  </ActionForm>
                 </div>
               )}
             </ItemRow>

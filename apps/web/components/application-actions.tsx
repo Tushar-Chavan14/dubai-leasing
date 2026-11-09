@@ -1,5 +1,6 @@
 "use client";
 
+import { ActionForm } from "./ui/action-form";
 import { useActionState, useState } from "react";
 import { CheckIcon as IconCheck, WarningIcon as IconWarning } from "@phosphor-icons/react";
 import { viewingTime } from "../lib/format";
@@ -63,7 +64,7 @@ export function ApplicationActions(p: {
   return (
     <Section id="next-h" title="Next step">
       {p.state === "ENQUIRY" && (
-        <form action={book} className="grid gap-3">
+        <ActionForm state={bookS} action={book} className="grid gap-3">
           <input type="hidden" name="id" value={p.id} />
           <p className="m-0 text-sm">
             Book a site visit. The applicant gets an invitation with the time, the address and a page to view the
@@ -86,7 +87,7 @@ export function ApplicationActions(p: {
             </button>
           </div>
           <Result s={bookS} />
-        </form>
+        </ActionForm>
       )}
       {p.state === "VIEWING" && (
         <div className="grid gap-3">
@@ -99,7 +100,7 @@ export function ApplicationActions(p: {
               "Site visit booked. Record what happened."
             )}
           </p>
-          <form action={came} className="grid gap-3">
+          <ActionForm state={cameS} action={came} className="grid gap-3">
             <input type="hidden" name="id" value={p.id} />
             <input type="hidden" name="outcome" value="attended" />
             <div>
@@ -108,8 +109,8 @@ export function ApplicationActions(p: {
               </button>
             </div>
             <Result s={cameS} />
-          </form>
-          <form action={noShow} className="grid gap-3 rounded-xl border border-line p-3.5">
+          </ActionForm>
+          <ActionForm state={noShowS} action={noShow} className="grid gap-3 rounded-xl border border-line p-3.5">
             <input type="hidden" name="id" value={p.id} />
             <input type="hidden" name="outcome" value="no_show" />
             <label className={FIELD}>
@@ -127,11 +128,11 @@ export function ApplicationActions(p: {
               Only once the site visit time has passed. The applicant must apply again.
             </p>
             <Result s={noShowS} />
-          </form>
+          </ActionForm>
         </div>
       )}
       {p.state === "SCREENING" && (
-        <form action={docs} className="grid gap-3">
+        <ActionForm state={docsS} action={docs} className="grid gap-3">
           <input type="hidden" name="id" value={p.id} />
           <p className="m-0 text-sm">
             Waiting for documents or for the check. If the applicant needs a new link (lost email, new documents), send
@@ -143,11 +144,11 @@ export function ApplicationActions(p: {
             </button>
           </div>
           <Result s={docsS} />
-        </form>
+        </ActionForm>
       )}
       {p.state === "OFFER" &&
         (p.accepted ? (
-          <form action={reserve} className="grid gap-3">
+          <ActionForm state={resS} action={reserve} className="grid gap-3">
             <input type="hidden" name="id" value={p.id} />
             <p className="m-0 text-sm">
               The applicant accepted. Record the reservation of <b>{p.reservation}</b> once it&apos;s received; the
@@ -176,7 +177,7 @@ export function ApplicationActions(p: {
               </button>
             </div>
             <Result s={resS} />
-          </form>
+          </ActionForm>
         ) : (
           <p className="m-0 text-sm text-muted">
             The offer is with the applicant. Counter-offers inside company limits go back to them automatically;
@@ -194,7 +195,7 @@ export function ApplicationActions(p: {
         </button>
       </div>
       {rejectOpen && (
-        <form action={reject} className="grid gap-3 rounded-xl border border-line p-3.5">
+        <ActionForm state={rejS} action={reject} className="grid gap-3 rounded-xl border border-line p-3.5">
           <input type="hidden" name="id" value={p.id} />
           <label className={FIELD}>
             <span className={LABEL}>Reason (kept in the audit trail)</span>
@@ -206,7 +207,7 @@ export function ApplicationActions(p: {
             </button>
           </div>
           <Result s={rejS} />
-        </form>
+        </ActionForm>
       )}
     </Section>
   );

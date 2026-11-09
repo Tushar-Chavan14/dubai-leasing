@@ -1,4 +1,5 @@
 export * from "./clock.ts";
+export * from "./company-legal.ts";
 export * from "./contract.ts";
 export * from "./demo-units.ts";
 export * from "./dates.ts";

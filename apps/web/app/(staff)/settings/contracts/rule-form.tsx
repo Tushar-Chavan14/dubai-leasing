@@ -2,29 +2,15 @@
 
 import { Fragment, type ReactNode, useActionState, useState } from "react";
 import { RowAction } from "../../../../components/row-action";
-import {
-  PencilSimpleIcon as IconPencil,
-  PlusIcon as IconPlus,
-  TrashIcon as IconTrash,
-  WarningIcon as IconWarning,
-} from "@phosphor-icons/react";
+import { PencilSimpleIcon as IconPencil, PlusIcon as IconPlus, TrashIcon as IconTrash } from "@phosphor-icons/react";
+import { useActionForm } from "../../../../lib/use-action-form";
+import { FormAlert } from "../../../../components/ui/action-form";
 import { type Category, type RuleResult, subtypeLabel, subtypesFor, TENURE_LABEL } from "../../../../lib/portfolio";
 import type { CompanyRow, ContractRuleRow, RuleReview } from "../../../../lib/types";
 import { ClauseReview, UploadSample } from "./clause-review";
 import { removeContractRule, saveContractRule } from "./actions";
 import { FIELD, LABEL } from "../../../../components/ui/form";
-import {
-  ALERT,
-  BTN,
-  CHECK_ROW,
-  GRID6,
-  SPAN,
-  SET_INPUT,
-  SET_SELECT,
-  TABLE,
-  TD,
-  TH,
-} from "../../../../components/ui/settings";
+import { BTN, CHECK_ROW, GRID6, SPAN, SET_INPUT, SET_SELECT, TABLE, TD, TH } from "../../../../components/ui/settings";
 import { Button, iconButtonClass } from "../../../../components/ui/button";
 
 type ApprovedTemplates = { id: string; version: number }[];
@@ -47,26 +33,13 @@ function RuleEditor({
     if (r.ok) onDone();
     return r;
   }, {});
-  const fe = state.fieldErrors ?? {};
+  const form = useActionForm(action, { serverErrors: state.fieldErrors });
+  const fe = form.fieldErrors;
   const err = (k: string) => (fe[k] ? <span className="text-xs text-danger">{fe[k]}</span> : null);
   const inv = (k: string) => (fe[k] ? { "aria-invalid": true as const } : {});
   return (
-    <form action={action} className="grid gap-4" noValidate>
-      {state.error && (
-        <div className={ALERT.bad} role="alert">
-          <IconWarning size={16} />
-          <div>
-            <strong>{state.error}</strong>
-            {state.reasons && state.reasons.length > 0 && (
-              <ul>
-                {state.reasons.map((r) => (
-                  <li key={r}>{r}</li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </div>
-      )}
+    <form {...form.formProps} className="grid gap-4" noValidate>
+      <FormAlert {...form.alertProps(state)} />
       {rule && <input type="hidden" name="id" value={rule.id} />}
       {rule && <input type="hidden" name="clauseIds" value={rule.clauseIds.join(",")} />}
       {rule?.sampleDocumentId && <input type="hidden" name="sampleDocumentId" value={rule.sampleDocumentId} />}

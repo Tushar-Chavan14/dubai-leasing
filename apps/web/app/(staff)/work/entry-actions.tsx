@@ -1,5 +1,6 @@
 "use client";
 
+import { ActionForm } from "../../../components/ui/action-form";
 import Link from "next/link";
 import { useActionState, useState } from "react";
 import { WarningIcon as IconWarning } from "@phosphor-icons/react";
@@ -74,7 +75,7 @@ export function EntryActions({
   return (
     <div className="grid gap-2">
       {isApproval && (
-        <form action={decideAction} className="grid gap-2">
+        <ActionForm state={decision} action={decideAction} className="grid gap-2">
           <input type="hidden" name="id" value={entryId} />
           {rejecting && (
             <label>
@@ -121,11 +122,11 @@ export function EntryActions({
                 </button>
               ))}
           </div>
-        </form>
+        </ActionForm>
       )}
 
       {!isApproval && (
-        <form action={otherAction} className="grid gap-2">
+        <ActionForm state={other} action={otherAction} className="grid gap-2">
           <input type="hidden" name="recordId" value={recordId} />
           <input type="hidden" name="entryId" value={entryId} />
           {asking === "reservation" && (
@@ -205,7 +206,7 @@ export function EntryActions({
               </button>
             )}
           </div>
-        </form>
+        </ActionForm>
       )}
       <Errors error={decision.error} reasons={decision.reasons} />
       <Errors error={other.error} reasons={other.reasons} />
