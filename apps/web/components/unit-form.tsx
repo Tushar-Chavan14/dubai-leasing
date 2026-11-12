@@ -1,6 +1,6 @@
 "use client";
 
-import { formatAed, parseAed, SUBTYPES_BY_CATEGORY } from "@leasing/core";
+import { EMIRATE_LABELS, EMIRATES, type Emirate, formatAed, parseAed, SUBTYPES_BY_CATEGORY } from "@leasing/core";
 import { useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useMemo, useState, useTransition } from "react";
 import {
@@ -24,6 +24,7 @@ interface Values {
   code: string;
   building: string;
   community: string;
+  emirate: Emirate;
   companyId: string;
   category: Category;
   subtype: string;
@@ -50,6 +51,7 @@ function initial(u: Partial<UnitRow> | undefined, defaultCompanyId: string): Val
     code: s(u?.code),
     building: s(u?.building),
     community: s(u?.community),
+    emirate: u?.emirate ?? "dubai",
     companyId: u?.companyId ?? defaultCompanyId,
     category: u?.category ?? "residential",
     subtype: s(u?.subtype),
@@ -108,7 +110,15 @@ export function UnitForm({
   const bedrooms = residential ? int(v.bedrooms) : null;
   const rangeEnabled = !!v.companyId && !!v.community.trim();
   const rangeArea = areaSqft !== null && Number.isInteger(areaSqft) && areaSqft >= 50 ? areaSqft : null;
-  const rangeKey = JSON.stringify([v.companyId, v.category, v.subtype, v.community.trim(), bedrooms, rangeArea]);
+  const rangeKey = JSON.stringify([
+    v.companyId,
+    v.category,
+    v.subtype,
+    v.emirate,
+    v.community.trim(),
+    bedrooms,
+    rangeArea,
+  ]);
   // The answer is stored with the inputs it was fetched for, so a stale one never shows while typing.
   const [fetched, setFetched] = useState<{ key: string; data: PriceRangeView | null } | null>(null);
   const view: PriceRangeView | null | "loading" | "idle" = !rangeEnabled
@@ -124,6 +134,7 @@ export function UnitForm({
         companyId: v.companyId,
         category: v.category,
         subtype: v.subtype || null,
+        emirate: v.emirate,
         community: v.community.trim(),
         bedrooms,
         areaSqft: rangeArea,
@@ -134,7 +145,7 @@ export function UnitForm({
       live = false;
       clearTimeout(t);
     };
-  }, [rangeEnabled, rangeKey, v.companyId, v.category, v.subtype, v.community, bedrooms, rangeArea]);
+  }, [rangeEnabled, rangeKey, v.companyId, v.category, v.subtype, v.emirate, v.community, bedrooms, rangeArea]);
   const loaded = view && view !== "loading" && view !== "idle" ? view : null;
   const range = loaded?.range ?? null;
   const companyName = companies.find((c) => c.id === v.companyId)?.name ?? "The company";
@@ -164,6 +175,7 @@ export function UnitForm({
       code: v.code,
       building: v.building,
       community: v.community,
+      emirate: v.emirate,
       companyId: v.companyId,
       category: v.category,
       subtype: v.subtype || null,
@@ -287,6 +299,17 @@ export function UnitForm({
               ))}
             </datalist>
             {err("community")}
+          </label>
+          <label className={`${FIELD} ${W3}`}>
+            <span className={LABEL}>Emirate</span>
+            <select className={INPUT} value={v.emirate} onChange={set("emirate")} required {...inv("emirate")}>
+              {EMIRATES.map((e) => (
+                <option key={e} value={e}>
+                  {EMIRATE_LABELS[e]}
+                </option>
+              ))}
+            </select>
+            {err("emirate")}
           </label>
           <label className={`${FIELD} ${W2}`}>
             <span className={LABEL}>Unit number</span>

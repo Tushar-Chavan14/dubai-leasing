@@ -84,10 +84,29 @@ async function setPolicy(over: Partial<typeof defaultCompanyPolicy.autopilot>) {
   });
 }
 
+/** The scope gate's answer for the next messages (null = the classifier gives no scope answer). */
+let offTopicProbability: number | null = null;
+/** True: the decision model throws on the scope check (the gate must fail open). */
+let scopeModelThrows = false;
+const withScope = (): SystemOneResponse => {
+  if (scopeModelThrows) throw new Error("decision model unavailable");
+  const r = classifier();
+  if (offTopicProbability !== null)
+    r.answers.scope = {
+      type: "choice",
+      choice: offTopicProbability >= 0.5 ? "off_topic" : "rental",
+      confidence: Math.max(offTopicProbability, 1 - offTopicProbability),
+      probabilities: { off_topic: offTopicProbability, rental: 1 - offTopicProbability },
+    };
+  return r;
+};
+
 async function world(opts: { agent?: boolean } = {}) {
   const model = new Driven();
+  offTopicProbability = null;
+  scopeModelThrows = false;
   const t = testContext(database, START, {
-    llm: new FakeLlm(classifier),
+    llm: new FakeLlm(withScope),
     ...(opts.agent === false ? {} : { customerAgent: model }),
   });
   const { ctx } = t;
@@ -188,6 +207,77 @@ describe.skipIf(noDb)("customer agent: routing", () => {
     expect(w.model.calls).toBe(1);
     expect(r.reply!.text).toBe("Sure, I can help with that.");
     expect(r.reply!.buttons).toBeUndefined(); // no generic menu chips on an agent answer
+  });
+
+  test("an off-topic request gets a fixed reply from code; the agent model never runs", async () => {
+    const w = await world();
+    await w.unit();
+    const c = await w.chat();
+    offTopicProbability = 0.97;
+    for (const q of ["write a hello world program in python", "what is Meta?"]) {
+      const r = await c.say(q);
+      expect(r.reply!.text).toBe(enquiryCopy.en.offTopic);
+    }
+    expect(w.model.calls).toBe(0);
+    // Unsure (below the threshold): the agent answers as before.
+    offTopicProbability = 0.6;
+    w.model.next(say("Here are some homes."));
+    expect((await c.say("anything near the metro?")).reply!.text).toBe("Here are some homes.");
+    expect(w.model.calls).toBe(1);
+  });
+
+  test("the scope gate fails open: when the decision model throws, the message reaches the agent", async () => {
+    const w = await world();
+    await w.unit();
+    const c = await w.chat();
+    scopeModelThrows = true;
+    w.model.next(say("Happy to help."));
+    const r = await c.say("write a hello world program in python");
+    expect(w.model.calls).toBe(1);
+    expect(r.reply!.text).toBe("Happy to help.");
+  });
+
+  test("the scope gate is skipped while the chat waits for the contact email, or for a status code", async () => {
+    const w = await world();
+    await w.unit();
+    offTopicProbability = 0.99;
+    // Waiting for the contact email: code answers, the gate and the agent never run.
+    const visitor = newId();
+    const send = (text: string) =>
+      handleChannelUpdate(w.ctx, {
+        channel: "web",
+        updateId: newId(),
+        chatId: visitor,
+        from: { id: visitor },
+        kind: "text",
+        text,
+      } as ChannelUpdate);
+    await send("hello");
+    const asked = await send("what is Meta?");
+    expect(asked.reply!.text).not.toBe(enquiryCopy.en.offTopic);
+    expect(w.model.calls).toBe(0);
+    // Waiting for a code: text that is not a code goes to the agent even at 0.99 off topic.
+    offTopicProbability = null;
+    const c = await w.chat("sara@example.com");
+    w.model.next(call("start_status_check"));
+    await c.say("check my application status");
+    expect((await c.conv()).flow.step).toBe("asking_status_code");
+    offTopicProbability = 0.99;
+    w.model.next(say("Your code comes by email."));
+    const r = await c.say("where do I find the code?");
+    expect(w.model.calls).toBe(2);
+    expect(r.reply!.text).toBe("Your code comes by email.");
+  });
+
+  test("the scope gate is skipped while the chat waits for a name", async () => {
+    const w = await world();
+    const u = await w.unit();
+    const c = await w.chat();
+    await c.tap(`unit:${u}`);
+    await c.tap(`slot:${slotMinutes("2026-11-03T10:00:00+04:00")}`);
+    offTopicProbability = 0.99; // a name can read as off topic to the classifier
+    const r = await c.say("Sara Khan");
+    expect(r.reply!.text).toContain("booked");
   });
 
   test("a question at the name step goes to the agent and the step stays; a short answer is the name", async () => {
@@ -418,6 +508,35 @@ describe.skipIf(noDb)("customer agent: search, slots, choice card, booking", () 
     });
     const r = await c.say("how many properties do you have in Dubai Marina");
     expect(r.reply!.cards).toHaveLength(5);
+  });
+
+  test("search_units with an emirate returns that emirate's units; one with no listings says so, never Dubai", async () => {
+    const w = await world();
+    await w.unit({ askingRentFils: 7_400_000 });
+    await w.unit({
+      emirate: "sharjah",
+      community: "Al Majaz",
+      askingRentFils: 3_000_000,
+      priceApprovedAt: new Date("2026-10-01T08:00:00Z"),
+    });
+    const c = await w.chat();
+    w.model.next(
+      call("search_units", { emirate: "sharjah" }),
+      (m) => {
+        const res = lastResult(m);
+        expect(res.count).toBe(1);
+        expect(res.units[0].community).toBe("Al Majaz");
+        return call("search_units", { emirate: "ajman", reset: true });
+      },
+      (m) => {
+        const res = lastResult(m);
+        expect(res.total).toBe(0);
+        expect(res.units).toEqual([]);
+        expect(res.note).toContain("no bookable listings in ajman");
+        return say("There are no listings in Ajman.");
+      },
+    );
+    await c.say("homes in Sharjah, and Ajman");
   });
 
   test("search_units filters by company (name, slug or contained match); an unknown or inactive company is a tool error", async () => {

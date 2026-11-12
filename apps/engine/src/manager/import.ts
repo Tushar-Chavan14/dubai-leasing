@@ -1,6 +1,14 @@
-import { type Actor, addDays, type LeaseState, maskPiiText, newId, type UnitState } from "@leasing/core";
+import {
+  type Actor,
+  addDays,
+  EMIRATE_LABELS,
+  type LeaseState,
+  maskPiiText,
+  newId,
+  type UnitState,
+} from "@leasing/core";
 import { companies, leaseParties, leases, parties, type Tx, units, withTx } from "@leasing/db";
-import { getRulebook, rulesVersionForTerm } from "@leasing/rulebook";
+import { getRulebook, hasRulebookFor, rulesVersionForTerm } from "@leasing/rulebook";
 import { and, eq, inArray, ne } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
 import { scheduleTermPayments } from "./collections.ts";
@@ -273,7 +281,13 @@ async function importRow(
 ): Promise<Omit<ImportRowResult, "row">> {
   const today = ctx.clock.today();
   // The version in force when this term started (D23), not the import day.
-  const rulesVersion = rulesVersionForTerm(r.start_on);
+  // An existing unit keeps its emirate; a unit created by this row is Dubai (default).
+  const [known] = await tx.db.select({ emirate: units.emirate }).from(units).where(eq(units.code, r.unit_code));
+  const emirate = known?.emirate ?? "dubai";
+  if (!hasRulebookFor(r.start_on, emirate)) {
+    return { status: "error", reasons: [`no rulebook for ${EMIRATE_LABELS[emirate]} yet`] };
+  }
+  const rulesVersion = rulesVersionForTerm(r.start_on, emirate);
   const decided = importedLeaseState(r, today, rulesVersion);
   if (!decided.ok) return { status: "error", reasons: [decided.reason] };
   const leaseState = decided.state;

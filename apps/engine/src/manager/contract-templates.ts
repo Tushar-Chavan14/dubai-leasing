@@ -1,4 +1,4 @@
-import { type Actor, newId } from "@leasing/core";
+import { type Actor, type Emirate, newId } from "@leasing/core";
 import { sha256Hex } from "@leasing/core/tokens";
 import { companyClauses, companyContractTemplates, contractRules, documents, type Tx, withTx } from "@leasing/db";
 import {
@@ -21,6 +21,7 @@ import {
 } from "./company-templates.ts";
 import { recordRun, runOnly } from "./helpers.ts";
 import { replaceContractRule } from "./portfolio.ts";
+import { failStructure } from "./company-templates.ts";
 export { approvedClauses, resolveCompanyClauses } from "./clause-refs.ts";
 
 /**
@@ -62,6 +63,8 @@ interface SampleMeta {
   queuedAt: string;
   /** When the job actually began reading (Clock); absent while it still waits for the model. */
   startedAt?: string;
+  /** The emirate the template read from this sample is for; absent or null = any emirate (D56). */
+  emirate?: Emirate | null;
 }
 
 /** A reading still "queued" after this long is treated as stopped (the job ran out of retries or was lost). */
@@ -151,7 +154,13 @@ class JobDeadline extends Error {
 const MODEL_TIMEOUT_RE = /did not answer within (\d+) s/;
 
 /** Stores the sample (content-addressed), pins it on a new row of the rule, and queues the helper. */
-export async function uploadSample(ctx: EngineContext, ruleId: string, bytes: Uint8Array, actor: Actor) {
+export async function uploadSample(
+  ctx: EngineContext,
+  ruleId: string,
+  bytes: Uint8Array,
+  actor: Actor,
+  emirate: Emirate | null = null,
+) {
   if (bytes.byteLength > MAX_SAMPLE_BYTES) throw unprocessable("The file is larger than 10 MB.", [], "too_big");
   if (!isPdf(bytes)) throw unprocessable("Upload a PDF file.", [], "not_pdf");
   const sha256 = sha256Hex(bytes);
@@ -160,7 +169,8 @@ export async function uploadSample(ctx: EngineContext, ruleId: string, bytes: Ui
   if (!rule.active) throw conflict("contract rule is no longer active", "rule_inactive");
   if (rule.sampleDocumentId) {
     const [prev] = await ctx.database.db.select().from(documents).where(eq(documents.id, rule.sampleDocumentId));
-    if (prev?.sha256 === sha256) {
+    // The same file for another emirate is a new upload (it makes a template for that emirate).
+    if (prev?.sha256 === sha256 && ((prev.extracted as SampleMeta).emirate ?? null) === emirate) {
       // Same file: nothing to do unless the last reading failed, then it is read again.
       const m = prev.extracted as SampleMeta;
       if (m.status !== "failed" && m.status !== "needs_human") {
@@ -180,6 +190,7 @@ export async function uploadSample(ctx: EngineContext, ruleId: string, bytes: Ui
       clauseCount: 0,
       attempt: 1,
       queuedAt: ctx.clock.now().toISOString(),
+      emirate,
     };
     await tx.db.insert(documents).values({
       id: documentId,
@@ -223,7 +234,7 @@ export async function uploadSample(ctx: EngineContext, ruleId: string, bytes: Ui
       entity: { kind: "company", id: rule.companyId },
       type: "CONTRACT_SAMPLE_UPLOADED",
       actor,
-      payload: { ruleId: next.id, documentId, sha256: stored.sha256, bytes: stored.bytes },
+      payload: { ruleId: next.id, documentId, sha256: stored.sha256, bytes: stored.bytes, emirate },
       rulesVersion: ctx.rulesVersion,
     });
     await ctx.scheduler.send(tx, {
@@ -418,6 +429,39 @@ export async function runContractStructure(ctx: EngineContext, documentId: strin
   if (!doc || doc.kind !== "contract_sample") throw notFound("sample document");
   const meta = doc.extracted as SampleMeta;
   return extractCompanyTemplate(ctx, { companyId: meta.companyId, sampleDocumentId: documentId, force });
+}
+
+/**
+ * The structure job with a deadline: reading the template makes up to three model calls (sections, then two rounds of
+ * blank mapping), and the runner may run it twice. Past the budget, or on an error, the reason is stored as a failed
+ * run so the panel shows it at once (and "Try again" works), instead of a silent "stopped" much later.
+ */
+export async function runContractStructureJob(
+  ctx: EngineContext,
+  documentId: string,
+  force: boolean,
+  modelTimeoutSeconds: number,
+  /** Tests only: a shorter deadline. */
+  budget = contractJobBudgetSeconds(modelTimeoutSeconds),
+) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      runContractStructure(ctx, documentId, force),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new JobDeadline(budget)), budget * 1000);
+      }),
+    ]);
+  } catch (e) {
+    const reason =
+      e instanceof JobDeadline
+        ? timeoutReason(budget)
+        : `The reading failed: ${e instanceof Error ? e.message : String(e)}`;
+    await failStructure(ctx, documentId, reason);
+    return { skipped: false as const, status: "failed" as const, reasons: [reason], templateId: null };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export interface ClauseDecision {

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { TemplateRewrites, type TemplateRewrite } from "./template-rewrites";
 import { notFound } from "next/navigation";
 import { ContractFieldsTable, EjariAttemptsList } from "./contract-panel";
 import type { ReactNode } from "react";
@@ -36,13 +37,7 @@ import { DecisionForm } from "./decision-form";
 import { LegalTag, needsLegalCheck } from "./legal-tag";
 
 /** Gates whose only editable field is the note (mirrors `editable` in the engine's gate rules). */
-const NOTE_EDIT_GATES = new Set<string>([
-  "refund",
-  "kyc_review",
-  "offer_out_of_limits",
-  "safety_complaint",
-  "ejari_rejected_twice",
-]);
+const NOTE_EDIT_GATES = new Set<string>(["refund", "kyc_review", "safety_complaint", "ejari_rejected_twice"]);
 
 interface NoteRow {
   id: string;
@@ -184,6 +179,17 @@ function displayed(gate: string, p: Record<string, unknown>): Record<string, unk
   return p;
 }
 
+/** The manager's counter-terms form (D51): rent, cheques and move-in, prefilled from the proposed terms. */
+function offerEdit(p: Record<string, unknown>, today: string) {
+  const t = (p.terms ?? {}) as { annualRentFils?: number; cheques?: number; moveInOn?: string };
+  return {
+    rentAed: typeof t.annualRentFils === "number" ? formatAed(t.annualRentFils).replace("AED ", "") : "",
+    cheques: t.cheques ?? 1,
+    moveInOn: t.moveInOn ?? "",
+    today,
+  };
+}
+
 const LIST = "m-0 grid list-none gap-1.5 p-0 text-sm";
 
 /** Links to the PDFs attached to a lease proposal (opening a contract is recorded on the lease). */
@@ -209,6 +215,7 @@ function DocLinks({ leaseId, sources }: { leaseId: string; sources: Source[] }) 
 
 function ContractProposal({ p, leaseId, sources }: { p: Record<string, unknown>; leaseId: string; sources: Source[] }) {
   const flags = (p.flags ?? []) as { kind: string; quote: string; reason: string }[];
+  const rewrites = (p.rewrites ?? []) as TemplateRewrite[];
   const addendum = (p.addendum ?? { clauses: [], freeText: null }) as {
     clauses: string[];
     freeText: string | null;
@@ -226,6 +233,14 @@ function ContractProposal({ p, leaseId, sources }: { p: Record<string, unknown>;
         </p>
         <DocLinks leaseId={leaseId} sources={sources} />
       </Section>
+      {rewrites.length > 0 && (
+        <Section id="rewrites-h" title="Template wording changed to match the records">
+          <TemplateRewrites rewrites={rewrites} />
+          <p className={NOTE_TEXT}>
+            Only wording about the unit is changed, and only to what the unit record says; code checked every number.
+          </p>
+        </Section>
+      )}
       <Section id="addendum-h" title="Addendum">
         {addendum.clauses.length === 0 && !addendum.freeText && (
           <p className="m-0 text-sm text-muted">No addendum clauses.</p>
@@ -355,8 +370,10 @@ export async function ApprovalDetail({
             {a.title}
           </h2>
           <p className={`m-0 text-[13px] ${mine ? "text-on-accent/75" : "text-muted"}`}>
-            {a.gateDef.label}.{" "}
-            {a.gateDef.when === "always" ? "Always needs a person" : "Needed because a limit was crossed"}; decided by{" "}
+            {a.gate.startsWith("ejari_") && typeof a.proposal.systemName === "string"
+              ? a.gateDef.label.replace(/\bEjari\b/g, a.proposal.systemName)
+              : a.gateDef.label}
+            . {a.gateDef.when === "always" ? "Always needs a person" : "Needed because a limit was crossed"}; decided by{" "}
             {decider}. Proposed by {actorLabel(a.proposedBy).toLowerCase()} on {dateTime(a.createdAt)}
             {a.rulesVersion ? (
               <>
@@ -372,6 +389,22 @@ export async function ApprovalDetail({
             </p>
           )}
         </div>
+        {a.gate === "ejari_submission" && a.proposal.mode === "manual" && typeof a.proposal.leaseId === "string" && (
+          // Registered by hand: the one-file pack the officer takes to the office, right where the decision is made.
+          <div className="flex flex-wrap items-center gap-2">
+            <a
+              className={buttonClass("primary", "sm")}
+              href={`/api/leases/${a.proposal.leaseId}/registration/pack`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Download registration pack
+            </a>
+            <span className="text-[13px]">
+              One PDF: what to register and where, the signed contract and the ID files.
+            </span>
+          </div>
+        )}
         {headline.length > 0 && (
           <div className="grid gap-1.5">
             <h3 className="sr-only">{a.editedProposal ? "Proposal, as edited" : "Proposal"}</h3>
@@ -384,6 +417,7 @@ export async function ApprovalDetail({
             canEditRent={a.gate === "renewal_notice"}
             canEditNote={NOTE_EDIT_GATES.has(a.gate)}
             currentRentAed={rent}
+            editOffer={a.gate === "offer_out_of_limits" ? offerEdit(a.proposal, today) : undefined}
           />
         ) : waiting ? (
           <p className="m-0 text-sm text-muted">
@@ -427,7 +461,21 @@ export async function ApprovalDetail({
         <ContractProposal p={a.proposal} leaseId={a.entity?.id ?? ""} sources={a.sources} />
       )}
       {a.gate === "ejari_submission" && (
-        <Section id="payload-h" title="What will be sent to Ejari (simulated)">
+        <Section
+          id="payload-h"
+          title={
+            a.proposal.mode === "manual"
+              ? `What to enter on ${(a.proposal.portalName as string | undefined) ?? "the portal"}`
+              : `What will be sent to ${(a.proposal.systemName as string | undefined) ?? "Ejari"} (simulated)`
+          }
+        >
+          {typeof a.proposal.feeFils === "number" && (
+            <p className={NOTE_TEXT}>
+              Registration fee ({(a.proposal.systemName as string | undefined) ?? "Ejari"}):{" "}
+              {formatAed(a.proposal.feeFils)}, paid by{" "}
+              {a.proposal.feePaidBy === "landlord" ? "the landlord" : "the tenant"}.
+            </p>
+          )}
           <FactGrid>
             {Object.entries((a.proposal.payload ?? {}) as Record<string, unknown>).map(([k, v]) => (
               <Fact key={k} label={humanise(k)} mono={k.endsWith("No")}>

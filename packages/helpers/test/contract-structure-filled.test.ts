@@ -152,3 +152,26 @@ describe("approval is blocked while specific values are fixed wording", () => {
     expect(problems(["Owner Name {{b1}} Emirates ID {{b2}}"])).not.toContain("contains");
   });
 });
+
+describe("D64: lines that describe the unit become blanks from the unit record", () => {
+  test("Description, Furnishing, Bathrooms, Parking and Property type", () => {
+    const f = detectFilledValues(
+      [
+        "Description: Four-bedroom villa with a private garden and pool, maid's room and a two-car garage",
+        "Furnishing: Unfurnished",
+        "Bathrooms: 5",
+        "Parking: 2 covered bays",
+        "Property type: Villa",
+      ],
+      0,
+    );
+    expect(f.lines.join("\n")).not.toMatch(/Four-bedroom|Unfurnished|covered bays/);
+    expect(f.blanks.map((b) => b.proposedField)).toEqual([
+      "unitDescription",
+      "furnishing",
+      "bathrooms",
+      "parkingSpaces",
+      "propertySubtype",
+    ]);
+  });
+});

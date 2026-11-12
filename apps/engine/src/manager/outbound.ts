@@ -277,6 +277,7 @@ export async function sendRenewalNotice(ctx: EngineContext, approvalId: string):
       sriAverageFils: p.sriAverageFils,
       sameRentFallback: !!p.sameRentFallback,
       renewalNoticeDays: r.renewalNoticeDays,
+      emirate: r.emirate,
       demo: ctx.demoMode,
     });
     const pdf = await renderPdf({ title: doc.title, subject: `${lease.ref} ${reference}` }, doc.blocks);

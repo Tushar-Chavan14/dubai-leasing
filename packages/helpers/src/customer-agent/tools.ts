@@ -62,7 +62,7 @@ const tool = (name: AgentToolName, description: string, input: z.ZodTypeAny): Ag
 export const AGENT_TOOLS: Record<AgentToolName, AgentTool> = {
   search_units: tool(
     "search_units",
-    'Find up to 5 bookable units to show, and `total`, how many bookable units match (use it for "how many" questions). Can filter by area, company (developer, realty company or owner name), type, bedrooms, size and budget. Filters add to the earlier ones unless reset is true. Returns each unit with its rent as text and a choice value. Cards are shown to the visitor automatically.',
+    'Find up to 5 bookable units to show, and `total`, how many bookable units match (use it for "how many" questions). Can filter by emirate (default: the emirate chosen in the chat, else Dubai), area, company (developer, realty company or owner name), type, bedrooms, size and budget. Filters add to the earlier ones unless reset is true. Returns each unit with its rent as text and a choice value. Cards are shown to the visitor automatically.',
     SearchUnitsInput,
   ),
   unit_details: tool(
@@ -107,7 +107,7 @@ export const AGENT_TOOLS: Record<AgentToolName, AgentTool> = {
   ),
   area_rent_index: tool(
     "area_rent_index",
-    "The Smart Rental Index average yearly rent for an area (and bedroom count or property type), as text. Use only when the visitor asks what rents are typical. Quote it as returned, and say it is an index average, not an offer or a price for a unit.",
+    "The Smart Rental Index average yearly rent for an area in an emirate (default: the chat's emirate, else Dubai) (and bedroom count or property type), as text. Use only when the visitor asks what rents are typical. Quote it as returned, and say it is an index average, not an offer or a price for a unit.",
     AreaRentIndexInput,
   ),
 };

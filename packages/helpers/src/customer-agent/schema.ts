@@ -1,5 +1,5 @@
 import { ChannelButton, ChatFilters, ChatStatus, ChoiceCard, EnquiryFlow, SizeBand, UnitCard } from "@leasing/core";
-import { PropertyCategory } from "@leasing/core";
+import { EMIRATES, PropertyCategory } from "@leasing/core";
 import { z } from "zod";
 
 /**
@@ -26,6 +26,12 @@ export type AgentToolName = (typeof AGENT_TOOL_NAMES)[number];
 const unitId = z.string().min(1).max(64).describe("A unit id returned by search_units or unit_details.");
 
 export const SearchUnitsInput = z.object({
+  emirate: z
+    .enum(EMIRATES)
+    .optional()
+    .describe(
+      "Only if the visitor named an emirate: its id. Otherwise the emirate chosen in the chat (default Dubai) is used.",
+    ),
   community: z
     .string()
     .max(120)
@@ -60,6 +66,12 @@ export const SearchUnitsInput = z.object({
     .describe("A unit id the visitor was shown that is no longer available: also look for similar units."),
 });
 export const AreaRentIndexInput = z.object({
+  emirate: z
+    .enum(EMIRATES)
+    .optional()
+    .describe(
+      "Only if the visitor named an emirate: its id. Otherwise the emirate chosen in the chat (default Dubai) is used.",
+    ),
   community: z.string().min(1).max(120).describe("An area name from the list of areas."),
   bedrooms: z.number().int().min(0).max(4).optional().describe("0 = studio, 4 = four or more."),
   category: PropertyCategory.optional(),

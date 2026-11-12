@@ -1,4 +1,4 @@
-import type { CalendarDate, CompanyPolicy, PropertyCategory } from "@leasing/core";
+import { type CalendarDate, type CompanyPolicy, EMIRATES, type Emirate, type PropertyCategory } from "@leasing/core";
 import { applications, companies, type Tx, units } from "@leasing/db";
 import { and, asc, eq, gte, isNotNull, lte, sql } from "drizzle-orm";
 import { unitHasContractedLease } from "./advance.ts";
@@ -22,7 +22,7 @@ export type Filters = {
   maxRentFils?: number | undefined;
   /** Default (unset) is residential only, for Telegram and staff; the web chat passes a category or "all". */
   category?: PropertyCategory | "all" | undefined;
-  emirate?: string | undefined;
+  emirate?: Emirate | undefined;
   /** Floor area bounds, sq ft (a unit without an area never matches a bound). */
   minAreaSqft?: number | undefined;
   maxAreaSqft?: number | undefined;
@@ -111,6 +111,13 @@ export async function bookableFacets(
     communities: [...new Set(rows.map((u) => u.community))].sort(),
     bedrooms: [...new Set(rows.map((u) => Math.min(u.bedrooms ?? 0, 4)))].sort((a, b) => a - b),
   };
+}
+
+/** Emirates with at least one bookable listing (any category, the web chat's scope), in the standard order. */
+export async function bookableEmirates(tx: Tx, today: CalendarDate): Promise<Emirate[]> {
+  const rows = await listedUnits(tx, today, { category: "all" }, 500);
+  const present = new Set(rows.map((u) => u.emirate));
+  return EMIRATES.filter((e) => present.has(e));
 }
 
 export async function listedCommunities(tx: Tx, anyCategory = false): Promise<string[]> {

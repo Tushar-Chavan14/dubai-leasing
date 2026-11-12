@@ -1,5 +1,6 @@
 "use client";
 
+import { EMIRATE_LABELS, EMIRATES } from "@leasing/core";
 import { ActionForm } from "../../../../components/ui/action-form";
 import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useRef, useState } from "react";
@@ -7,17 +8,20 @@ import type { RuleResult } from "../../../../lib/portfolio";
 import { readingLabel } from "../../../../lib/status-labels";
 import type { ContractRuleRow, RuleReview } from "../../../../lib/types";
 import { retrySample } from "./actions";
-import { BTN } from "../../../../components/ui/settings";
+import { BTN, SET_SELECT } from "../../../../components/ui/settings";
 
 /** The dashed "Upload sample contract" button for one rule row. */
 export function UploadSample({ rule, label = "Upload sample contract" }: { rule: ContractRuleRow; label?: string }) {
   const router = useRouter();
   const input = useRef<HTMLInputElement>(null);
   const [state, setState] = useState<{ busy?: boolean; error?: string }>({});
+  // Which emirate the template read from the sample is for; empty = any emirate (D56).
+  // Starts at the rule's own emirate (D58).
+  const [emirate, setEmirate] = useState<string>(rule.emirate ?? "");
   async function onFile(file: File | undefined) {
     if (!file) return;
     setState({ busy: true });
-    const res = await fetch(`/api/contract-rules/${rule.id}/sample`, {
+    const res = await fetch(`/api/contract-rules/${rule.id}/sample${emirate ? `?emirate=${emirate}` : ""}`, {
       method: "POST",
       headers: { "content-type": "application/pdf" },
       body: file,
@@ -32,7 +36,22 @@ export function UploadSample({ rule, label = "Upload sample contract" }: { rule:
     if (input.current) input.current.value = "";
   }
   return (
-    <div>
+    <div className="flex flex-wrap items-center gap-2">
+      <select
+        className={`${SET_SELECT} !w-auto`}
+        aria-label="Emirate of the template read from the sample"
+        title="Which emirate the template read from this sample is for"
+        value={emirate}
+        onChange={(e) => setEmirate(e.target.value)}
+        disabled={state.busy}
+      >
+        <option value="">Any emirate</option>
+        {EMIRATES.map((e) => (
+          <option key={e} value={e}>
+            {EMIRATE_LABELS[e]}
+          </option>
+        ))}
+      </select>
       <input
         ref={input}
         type="file"

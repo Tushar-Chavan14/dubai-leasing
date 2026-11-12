@@ -34,6 +34,14 @@ export default async function OfferPage({ params }: { params: Promise<{ token: s
         rows={[
           { label: "Tenancy", value: `${longDate(o.startOn)} to ${longDate(o.endOn)}` },
           { label: "Reservation to pay", value: formatAed(o.reservationFils) },
+          ...(o.registrationFee
+            ? [
+                {
+                  label: `Registration fee (${o.registrationFee.systemName})`,
+                  value: `${formatAed(o.registrationFee.feeFils)}, paid by you`,
+                },
+              ]
+            : []),
         ]}
       />
       <Note>This offer is open until {longDate(o.expiresOn)}.</Note>

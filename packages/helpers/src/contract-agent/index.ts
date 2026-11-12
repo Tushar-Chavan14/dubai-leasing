@@ -4,11 +4,17 @@ import { CONTRACT_CLAUSES, type Helper } from "@leasing/core";
 import { z } from "zod";
 import { buildContractFields } from "../contract/fields.ts";
 import type { AgentModel, ModelTurn, ToolSpec } from "../customer-agent/index.ts";
-import { checkContractTerms } from "./checks.ts";
+import { checkContractTerms, checkRewrite, safeReason } from "./checks.ts";
 import { asData, contractAgentSystem } from "./prompt.ts";
-import { AgentAnswer, type BlankFill, ContractAgentContext, ContractAgentData } from "./schema.ts";
+import {
+  AgentAnswer,
+  type BlankFill,
+  ContractAgentContext,
+  ContractAgentData,
+  type TemplateRewrite,
+} from "./schema.ts";
 
-export { checkContractTerms } from "./checks.ts";
+export { checkContractTerms, checkRewrite, describesUnit, factNumbers, safeReason, statedNumbers } from "./checks.ts";
 export * from "./schema.ts";
 
 export const ContractAgentSchemas = { context: ContractAgentContext, data: ContractAgentData };
@@ -25,6 +31,7 @@ const State = Annotation.Root({
   messages: Annotation<BaseMessage[]>({ reducer: (a, b) => a.concat(b), default: () => [] }),
   calls: Annotation<number>({ reducer: (a, b) => a + b, default: () => 0 }),
   retried: Annotation<boolean>({ reducer: (_a, b) => b, default: () => false }),
+  rewriteRetried: Annotation<boolean>({ reducer: (_a, b) => b, default: () => false }),
 });
 
 const NoArgs = z.object({}).strict();
@@ -33,6 +40,7 @@ const TOOL_NAMES = [
   "contract_rule",
   "company_clauses",
   "template",
+  "unit_facts",
   "fill_blanks",
   "check_terms",
 ] as const;
@@ -40,7 +48,10 @@ const DESCRIPTIONS: Record<(typeof TOOL_NAMES)[number], string> = {
   contract_inputs: "The contract fields copied from the records, with the source of each.",
   contract_rule: "The company's contract rule for this unit: allowed tenures, cheque range and its clause ids.",
   company_clauses: "The company's approved clauses (ref, title, text, inTemplate).",
-  template: "The company template's paragraphs with {{bN}} blanks, or null for the standard contract.",
+  template:
+    "The company template's paragraphs with {{bN}} blanks (rewritable: may be reworded from unit_facts), or null for the standard contract.",
+  unit_facts:
+    "The unit's facts from its record (type, bedrooms, bathrooms, area, parking, floor, furnished, description).",
   fill_blanks: "Fills the template blanks from the records (code). Returns filled, leftEmpty and missingCore.",
   check_terms: "Checks tenure, cheques, rent band, deposit, landlord details, required terms and blanks (code).",
 };
@@ -87,7 +98,18 @@ export function contractAgent(
             return c.template
               ? {
                   version: c.template.version,
-                  paragraphs: c.template.paragraphs.map((p) => ({ key: p.key, text: asData(p.text, nonce) })),
+                  paragraphs: c.template.paragraphs.map((p) => ({
+                    key: p.key,
+                    text: asData(p.text, nonce),
+                    rewritable: p.rewritable === true,
+                  })),
+                }
+              : null;
+          case "unit_facts":
+            return c.unitFacts
+              ? {
+                  ...c.unitFacts,
+                  description: c.unitFacts.description ? asData(c.unitFacts.description, nonce) : null,
                 }
               : null;
           case "fill_blanks":
@@ -135,6 +157,19 @@ export function contractAgent(
         }
         const parsed = AgentAnswer.safeParse(parseJson(turn.content));
         if (parsed.success) {
+          // D64: a rewording code refuses is sent back once with the reasons; after that it is dropped.
+          const problems = parsed.data.rewrites.flatMap((r) => checkRewrite(c, r).problems);
+          if (problems.length && !s.rewriteRetried) {
+            return {
+              rewriteRetried: true,
+              messages: [
+                new AIMessage(turn.content),
+                new HumanMessage(
+                  `Code refused these rewrites:\n- ${problems.join("\n- ")}\nFix them (use only unit_facts) or leave them out, and answer with the full JSON again.`,
+                ),
+              ],
+            };
+          }
           answer = parsed.data;
           return { messages: [new AIMessage(turn.content)] };
         }
@@ -172,7 +207,7 @@ export function contractAgent(
           (s) => {
             if (answer || failed) return END;
             const last = s.messages.at(-1);
-            if (last instanceof SystemMessage) return "agent";
+            if (last instanceof SystemMessage || last instanceof HumanMessage) return "agent";
             return (last as AIMessage).tool_calls?.length ? "tools" : END;
           },
           ["tools", "agent", END],
@@ -239,6 +274,15 @@ export function contractAgent(
         };
       }
       const addendum = { ...c.contract.addendum, clauses: extra as typeof c.contract.addendum.clauses };
+      // D64: only rewordings code accepts are used, one per paragraph; the rest keep the template's wording.
+      const rewrites: TemplateRewrite[] = [];
+      const refused: string[] = [];
+      for (const r of a.rewrites) {
+        if (rewrites.some((x) => x.key === r.key)) continue;
+        const chk = checkRewrite(c, r);
+        if (chk.problems.length || chk.before === null) refused.push(...chk.problems);
+        else rewrites.push({ key: r.key, before: chk.before, after: r.text.trim(), reason: safeReason(r.reason) });
+      }
       return {
         status: "ok",
         data: {
@@ -250,11 +294,14 @@ export function contractAgent(
           checks,
           extraClauseIds: extra,
           clauseReasons: a.clauseReasons.filter((r) => added.includes(r.id)),
+          ...(rewrites.length ? { rewrites } : {}),
         },
         reasons: [
           ...checks.map((x) => x.reason),
           ...(skipped.length ? [`Already in the template, not added again: ${skipped.join(", ")}`] : []),
           ...a.flags.map((f) => `Flag ${f.kind.replace("_", " ")}: "${f.quote}" (${f.reason})`),
+          ...rewrites.map((r) => `Reworded from the records: "${r.before}" -> "${r.after}" (${r.reason})`),
+          ...refused.map((p) => `Rewording refused by code, template wording kept: ${p}`),
         ],
         sourceDocIds: [],
         model: { name: model.name },

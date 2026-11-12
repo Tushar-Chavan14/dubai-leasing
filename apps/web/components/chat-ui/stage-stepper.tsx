@@ -10,7 +10,14 @@ const STATE = {
 } as const;
 
 /** The Viewing → Documents → Offer → Contract → Ejari tracker, shared by the public status card and the staff record card. */
-export function StageStepper({ stages }: { stages: readonly StepperStage[] }) {
+/** `registration` relabels the last stage for the unit's emirate (Tawtheeq, Attestation, …). */
+export function StageStepper({
+  stages,
+  registration,
+}: {
+  stages: readonly StepperStage[];
+  registration?: string | undefined;
+}) {
   return (
     <ol className="m-0 flex list-none flex-wrap gap-1.5 p-0" role="list">
       {stages.map((s) => (
@@ -21,7 +28,7 @@ export function StageStepper({ stages }: { stages: readonly StepperStage[] }) {
           className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[12.5px] leading-snug ${STATE[s.state]}`}
         >
           {s.state === "done" && <CheckIcon size={11} weight="bold" aria-hidden="true" />}
-          {s.name}
+          {s.name === "Ejari" && registration ? registration : s.name}
           <span className="sr-only">
             {s.state === "done" ? " (done)" : s.state === "current" ? " (current)" : " (to do)"}
           </span>

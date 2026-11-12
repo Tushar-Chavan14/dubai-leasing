@@ -1,3 +1,4 @@
+import { EMIRATE_LABELS } from "@leasing/core";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { AskAiMenu } from "../../../../../components/ask-ai";
@@ -42,8 +43,8 @@ export default async function RulebookPage({ params }: { params: Promise<{ versi
       }
       lede={
         r.status === "published"
-          ? `Effective from ${longDate(r.effectiveFrom)}. Published by ${r.publishedBy ?? "—"}${r.publishedAt ? ` on ${dateTime(r.publishedAt)}` : ""}. A published version can't be changed.`
-          : `Draft based on ${r.basedOn ?? "—"}, created by ${r.createdBy ?? "—"}. Nothing uses it until it is published.`
+          ? `${EMIRATE_LABELS[r.emirate]}. Effective from ${longDate(r.effectiveFrom)}. Published by ${r.publishedBy ?? "—"}${r.publishedAt ? ` on ${dateTime(r.publishedAt)}` : ""}. A published version can't be changed.`
+          : `${EMIRATE_LABELS[r.emirate]} draft based on ${r.basedOn ?? "—"}, created by ${r.createdBy ?? "—"}. Nothing uses it until it is published.`
       }
       actions={<AskAiMenu label="Ask AI" prompts={askPrompts.settingsPage(`Rulebook ${r.version}`)} />}
     >
@@ -60,8 +61,17 @@ export default async function RulebookPage({ params }: { params: Promise<{ versi
               {r.loosened.length > 0 && (
                 <Banner tone="warn">
                   <span>
-                    Weaker tenant protection than the base version {r.baseVersion}:{" "}
-                    {r.loosened.map((l) => `${fieldLabel(l.field)} ${show(l.base)} → ${show(l.value)}`).join("; ")}.
+                    {r.baseVersion
+                      ? `Weaker tenant protection than the base version ${r.baseVersion}: `
+                      : "No reviewed rules for this emirate before this version: "}
+                    {r.loosened
+                      .map((l) =>
+                        l.base === null && l.value === null
+                          ? l.field
+                          : `${fieldLabel(l.field)} ${show(l.base)} → ${show(l.value)}`,
+                      )
+                      .join("; ")}
+                    .
                   </span>
                 </Banner>
               )}

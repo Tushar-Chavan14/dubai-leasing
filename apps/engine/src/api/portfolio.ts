@@ -1,4 +1,4 @@
-import { Addendum, PropertyCategory, PropertySubtype, type StaffUser } from "@leasing/core";
+import { Addendum, Emirate, PropertyCategory, PropertySubtype, type StaffUser } from "@leasing/core";
 import { companies, contractRules, rentRules, units, withTx } from "@leasing/db";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import type { Hono } from "hono";
@@ -52,6 +52,7 @@ import {
   replaceRentRule,
   updateCompany,
 } from "../manager/portfolio.ts";
+import { readLimited } from "./upload.ts";
 import { type AuthEnv, requireRole } from "./auth.ts";
 
 const actorOf = (u: StaffUser) => `user:${u.id}` as const;
@@ -73,18 +74,22 @@ const CompanyPatch = CompanyCreate.omit({ legal: true }).partial().extend({ acti
 const RentRuleBody = z.object({
   category: PropertyCategory,
   subtype: PropertySubtype.nullable().optional(),
-  emirate: z.literal("dubai").default("dubai"),
+  emirate: Emirate.default("dubai"),
   community: z.string().trim().min(1).max(120).nullable().optional(),
   minPctBp: z.number().int().min(-5000).max(5000),
   maxPctBp: z.number().int().min(-5000).max(5000),
   minRentFils: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable().optional(),
   maxRentFils: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable().optional(),
+  /** D63: whole percent 0–50 below the asking rent an offer may go without a manager; null = company default. */
+  maxOfferDiscountPct: z.number().int().min(0).max(50).nullable().optional(),
 });
 const RentRuleInput = RentRuleBody.extend({ companyId: z.string().uuid() });
 
 const ContractRuleBody = z.object({
   category: PropertyCategory,
   subtype: PropertySubtype.nullable().optional(),
+  /** The emirate the rule is for; null = any emirate (D58). On replace: omitted keeps it, null clears it. */
+  emirate: Emirate.nullable().optional(),
   tenures: z.array(z.enum(["annual", "short_term"])).min(1),
   minCheques: z.number().int().min(1).max(12),
   maxCheques: z.number().int().min(1).max(12),
@@ -138,34 +143,6 @@ const ClauseDecide = z
     editedText: z.string().max(5000).optional(),
   })
   .strict();
-
-/** Reads a request body, refusing more than `max` bytes without buffering the rest (Content-Length first, then the stream). */
-async function readLimited(req: Request, max: number): Promise<Uint8Array> {
-  const tooBig = () => unprocessable("The file is larger than 10 MB.", [], "too_big");
-  const declared = Number(req.headers.get("content-length") ?? "");
-  if (Number.isFinite(declared) && declared > max) throw tooBig();
-  if (!req.body) return new Uint8Array();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  const reader = req.body.getReader();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > max) {
-      await reader.cancel();
-      throw tooBig();
-    }
-    chunks.push(value);
-  }
-  const out = new Uint8Array(total);
-  let at = 0;
-  for (const c of chunks) {
-    out.set(c, at);
-    at += c.byteLength;
-  }
-  return out;
-}
 
 const ListQuery = z.object({
   companyId: z.string().uuid().optional(),
@@ -323,13 +300,21 @@ export function registerPortfolioRoutes(api: Hono<AuthEnv>, ctx: EngineContext) 
     const raw = await readLimited(c.req.raw, MAX_SAMPLE_BYTES + 64 * 1024);
     const type = c.req.header("content-type") ?? "";
     let bytes = raw;
+    // Optional emirate (D56): query `emirate` or a multipart `emirate` part; empty or absent = any emirate.
+    let emirateRaw: unknown = c.req.query("emirate");
     if (type.startsWith("multipart/form-data")) {
       const form = await new Response(raw, { headers: { "content-type": type } }).formData().catch(() => null);
       const file = form?.get("file");
       if (!(file instanceof File)) throw unprocessable("attach the contract as `file`", [], "invalid_request");
       bytes = new Uint8Array(await file.arrayBuffer());
+      emirateRaw ??= form?.get("emirate") ?? undefined;
     }
-    const r = await uploadSample(ctx, id, bytes, actorOf(user));
+    const emirate = z
+      .union([Emirate, z.literal("")])
+      .optional()
+      .safeParse(emirateRaw === null ? undefined : emirateRaw);
+    if (!emirate.success) throw unprocessable("emirate must be one of the seven emirates", [], "invalid_request");
+    const r = await uploadSample(ctx, id, bytes, actorOf(user), emirate.data || null);
     return c.json(r, r.duplicate ? 200 : 202);
   });
 

@@ -1,9 +1,11 @@
+import { defaultCompanyPolicy } from "@leasing/core";
 import { beforeEach, describe, expect, test } from "bun:test";
 import type { CalendarDate } from "@leasing/core";
 import { newId } from "@leasing/core";
 import { contractRules, type Database, leases, rentRules, sriAverages, units, withTx } from "@leasing/db";
 import { eq } from "drizzle-orm";
-import { findRentRule, findSri, offerPolicyFor, priceRangeFor } from "../src/manager/pricing.ts";
+import { offerRentFloorFils } from "@leasing/helpers";
+import { findRentRule, findSri, offerPolicyAndRuleFor, offerPolicyFor, priceRangeFor } from "../src/manager/pricing.ts";
 import { importLeasesCsv } from "../src/manager/import.ts";
 import { lookupSri } from "../src/manager/sri.ts";
 import { freshDatabase, leaseCsv, noDb, testContext, testCompany } from "./harness.ts";
@@ -112,6 +114,16 @@ describe.skipIf(noDb)("pricing: rent rule, SRI and range lookups", () => {
     expect(await run((tx) => findSri(tx, unit({ bedrooms: 3 }), TODAY))).toBeNull();
   });
 
+  test("the same community name in two emirates gets each emirate's own row", async () => {
+    const dxb = await sri({ emirate: "dubai", community: "Al Nahda", avgAnnualRentFils: 6_000_000 });
+    const shj = await sri({ emirate: "sharjah", community: "Al Nahda", avgAnnualRentFils: 4_000_000 });
+    const d = await run((tx) => findSri(tx, unit({ emirate: "dubai", community: "Al Nahda" }), TODAY));
+    const s = await run((tx) => findSri(tx, unit({ emirate: "sharjah", community: "Al Nahda" }), TODAY));
+    expect(d).toMatchObject({ id: dxb, label: "SRI Al Nahda 1-bed" });
+    expect(s).toMatchObject({ id: shj, avgAnnualRentFils: 4_000_000, label: "Rent index Al Nahda 1-bed" });
+    expect(await run((tx) => findSri(tx, unit({ emirate: "ajman", community: "Al Nahda" }), TODAY))).toBeNull();
+  });
+
   test("commercial SRI is matched with bedrooms IS NULL and gives a per-sqft value", async () => {
     await sri({ bedrooms: 1 }); // residential row for the same community: never matched
     const id = await sri({
@@ -139,6 +151,30 @@ describe.skipIf(noDb)("pricing: rent rule, SRI and range lookups", () => {
     expect((await run((tx) => priceRangeFor(tx, unit({ companyId: otherId }), TODAY))).range).toBeNull();
   });
 
+  test("offer discount per rent rule (D63): the unit's rule sets it, else the company default; never below the band", async () => {
+    await rule({ maxOfferDiscountPct: 5, community: "Dubai Marina" });
+    await rule({ emirate: "sharjah", maxOfferDiscountPct: null });
+    await sri();
+    const marina = await run((tx) => offerPolicyAndRuleFor(tx, unit(), TODAY));
+    expect(marina).toMatchObject({ discountFrom: "rent rule" });
+    expect(marina.policy).toMatchObject({ maxRentDiscountPercent: 5, offerFloorMinFils: 9_500_000 });
+    // Asking AED 100,000 less 5% = 95,000, the band's lowest: the floor stops there.
+    expect(offerRentFloorFils(10_000_000, marina.policy)).toBe(9_500_000);
+    // Asking at the band's bottom: a 5% discount would go under the band, so the band's lowest is the floor.
+    expect(offerRentFloorFils(9_500_000, marina.policy)).toBe(9_500_000);
+    // Asking above the band (approved by a manager): the discount applies from the asking rent.
+    expect(offerRentFloorFils(12_000_000, marina.policy)).toBe(11_400_000);
+    // Asking below the band (approved by a manager): the band floor doesn't push it up.
+    expect(offerRentFloorFils(9_000_000, marina.policy)).toBe(8_550_000);
+    // A rule with no discount, and a unit with no rule: the company default.
+    const sharjah = await run((tx) => offerPolicyAndRuleFor(tx, unit({ emirate: "sharjah" }), TODAY));
+    expect(sharjah.discountFrom).toBe("company default");
+    expect(sharjah.policy.maxRentDiscountPercent).toBe(defaultCompanyPolicy.maxRentDiscountPercent);
+    const none = await run((tx) => offerPolicyAndRuleFor(tx, unit({ companyId: otherId }), TODAY));
+    expect(none).toMatchObject({ discountFrom: "company default", rentRuleId: null });
+    expect(none.policy.offerFloorMinFils).toBeNull();
+  });
+
   test("offerPolicyFor returns the contract rule's cheque range", async () => {
     await database.db.insert(contractRules).values({
       id: newId(),
@@ -157,6 +193,28 @@ describe.skipIf(noDb)("pricing: rent rule, SRI and range lookups", () => {
     const plain = await run((tx) => offerPolicyFor(tx, unit({ companyId: otherId }), TODAY));
     expect(plain.maxCheques).not.toBe(6);
   });
+  test("contract rules per emirate (D58): another emirate never applies; the unit's emirate beats any emirate", async () => {
+    const cr = (over: Partial<typeof contractRules.$inferInsert>) =>
+      database.db.insert(contractRules).values({
+        id: newId(),
+        companyId,
+        category: "residential",
+        tenures: ["annual"],
+        minCheques: 1,
+        maxCheques: 4,
+        createdBy: "test",
+        ...over,
+      });
+    await cr({ emirate: "dubai", maxCheques: 6 });
+    // A Sharjah unit gets no Dubai rule: the company defaults stand.
+    const sharjah = await run((tx) => offerPolicyFor(tx, unit({ emirate: "sharjah" }), TODAY));
+    expect(sharjah.maxCheques).not.toBe(6);
+    // An any-emirate apartment rule is newer and more specific by type, but the Dubai rule names the unit's emirate.
+    await cr({ subtype: "apartment", maxCheques: 3 });
+    expect((await run((tx) => offerPolicyFor(tx, unit(), TODAY))).maxCheques).toBe(6);
+    expect((await run((tx) => offerPolicyFor(tx, unit({ emirate: "sharjah" }), TODAY))).maxCheques).toBe(3);
+  });
+
   test("lookupSri gives no residential average for a commercial unit, even with bedrooms set", async () => {
     const t = testContext(database, "2026-10-19T04:00:00Z");
     await importLeasesCsv(

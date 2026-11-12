@@ -9,6 +9,7 @@ describe("HUB", () => {
       "/settings/companies",
       "/settings/rent-rules",
       "/settings/contracts",
+      "/settings/registration",
       "/settings/rent-index",
       "/settings/kyc",
       "/settings/rulebook",
@@ -32,7 +33,7 @@ describe("HUB", () => {
 describe("filterHub", () => {
   test("trims and ignores case", () => {
     const r = filterHub("  SRI ", { demo: false });
-    expect(r.flatMap((g) => g.items.map((i) => i.title))).toEqual(["Smart Rental Index"]);
+    expect(r.flatMap((g) => g.items.map((i) => i.title))).toEqual(["Rent index"]);
   });
   test("ejari matches an item by keyword", () => {
     const titles = filterHub("ejari", { demo: false }).flatMap((g) => g.items.map((i) => i.title));

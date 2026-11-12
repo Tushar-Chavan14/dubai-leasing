@@ -31,8 +31,8 @@ export async function renderPdf(meta: { title: string; subject: string }, blocks
   const doc = await PDFDocument.create();
   doc.setTitle(safe(meta.title));
   doc.setSubject(safe(meta.subject));
-  doc.setProducer("Dubai Leasing");
-  doc.setCreator("Dubai Leasing");
+  doc.setProducer("UAE Leasing");
+  doc.setCreator("UAE Leasing");
   const regular = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
   let page = doc.addPage(A4);

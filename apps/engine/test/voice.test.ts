@@ -58,11 +58,21 @@ describe("transcribeVoice", () => {
     expect(await transcribeVoice(ctxOf(undefined), clip)).toEqual({ ok: false, message: "Voice input isn't set up." });
   });
 
-  test("a transcriber that is down: retried once, then try again", async () => {
+  test("a transcriber that errors: retried once, then try again", async () => {
     let n = 0;
-    const down = llmWith(() => (++n, new Error("ECONNREFUSED")));
+    const down = llmWith(() => (++n, new Error("whisper-server answered 500")));
     expect((await transcribeVoice(ctxOf(down), clip)).ok).toBe(false);
     expect(n).toBe(2);
+  });
+
+  test("a whisper-server that isn't running says voice is unavailable, not 'I didn't catch that'", async () => {
+    let n = 0;
+    const off = llmWith(() => (++n, Object.assign(new Error("connection refused"), { name: "VoiceUnavailable" })));
+    expect(await transcribeVoice(ctxOf(off), clip)).toEqual({
+      ok: false,
+      message: "Voice input is unavailable right now. Please type your message.",
+    });
+    expect(n).toBe(1);
   });
 
   test("silence and low confidence ask to try again, in Arabic when the clip was Arabic", async () => {

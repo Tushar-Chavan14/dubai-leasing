@@ -1,14 +1,17 @@
-import { EjariUnavailableError } from "@leasing/adapters";
+import { EjariUnavailableError, type RegistrationAdapter } from "@leasing/adapters";
 import {
   type Actor,
   compareNames,
   EJARI_AUTOFIXABLE,
   EJARI_FIELDS,
   type EjariAutofix,
+  addDays,
+  type CalendarDate,
   isCalendarDate,
   type EjariPayload,
   maskPiiText,
   newId,
+  registrationSystemName,
 } from "@leasing/core";
 import { sha256Hex } from "@leasing/core/tokens";
 import {
@@ -24,6 +27,7 @@ import {
   type Tx,
   withTx,
 } from "@leasing/db";
+import { registrationFeeFils, registrationFeeFor } from "@leasing/rulebook";
 import { buildEjariPayload, RegistrationSchemas, registrationHelper } from "@leasing/helpers";
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
@@ -36,6 +40,8 @@ import { effectiveProposal, type EjariRejectedProposal, EjariSubmissionProposal 
 import { runAndRecord } from "./helpers.ts";
 import { queueLeaseMail } from "./lease-mail.ts";
 import { createTask } from "./milestones.ts";
+import { leaseEmirate, raiseUnsupportedRegistration, registryFor } from "./registries.ts";
+import { settingsFor } from "./registration-settings.ts";
 
 /**
  * Step 6 (architecture §3 Lease: REGISTRATION). The payload is built from the signed contract
@@ -54,13 +60,17 @@ const payloadHash = (p: EjariPayload) => sha256Hex(JSON.stringify(p));
 
 /** Proposes an Ejari submission from the signed contract (on entering REGISTRATION, or after a person retries). */
 export async function proposeEjariSubmission(ctx: EngineContext, tx: Tx, lease: LeaseRow, actor: Actor) {
+  const emirate = await leaseEmirate(tx, lease);
+  const settings = await settingsFor(ctx, tx, emirate);
+  const manual = settings.mode === "manual";
+  const systemName = registrationSystemName(emirate);
   const contract = await signedContract(tx, lease.id);
   if (!contract?.signedSha256) throw conflict("The lease has no signed contract to register.", "no_contract");
   const built = buildEjariPayload(contract.fields);
   if (!built.ok) {
     await createTask(ctx, tx, lease.id, {
       kind: "ejari_payload_incomplete",
-      title: `Ejari submission for ${lease.ref} can't be built: ${built.problems.join("; ")}`,
+      title: `${systemName} submission for ${lease.ref} can't be built: ${built.problems.join("; ")}`,
       details: { contractId: contract.id, problems: built.problems },
       assigneeRole: "leasing_officer",
       dueOn: ctx.clock.today(),
@@ -72,7 +82,10 @@ export async function proposeEjariSubmission(ctx: EngineContext, tx: Tx, lease: 
     .select({ id: approvals.id, status: approvals.status })
     .from(approvals)
     .where(and(eq(approvals.entityId, lease.id), eq(approvals.gate, "ejari_submission")));
-  if (open.some((a) => a.status === "pending")) throw conflict("An Ejari submission is already waiting for approval.");
+  if (open.some((a) => a.status === "pending"))
+    throw conflict(`A ${systemName} submission is already waiting for approval.`);
+  const feeRule = registrationFeeFor(emirate, ctx.clock.today());
+  const policy = await getCompanyPolicy(tx, ctx.clock.today());
   const proposal: EjariSubmissionProposal = {
     leaseId: lease.id,
     leaseRef: lease.ref,
@@ -80,6 +93,11 @@ export async function proposeEjariSubmission(ctx: EngineContext, tx: Tx, lease: 
     signedSha256: contract.signedSha256,
     payload: built.payload,
     payloadSha256: payloadHash(built.payload),
+    emirate,
+    systemName,
+    feeFils: feeRule ? registrationFeeFils(feeRule.rule, lease.annualRentFils) : null,
+    feePaidBy: policy.registrationFeePaidBy,
+    ...(manual ? { mode: "manual" as const, portalName: settings.portalName, portalUrl: settings.portalUrl } : {}),
   };
   // The officer task raised when `ejari_draft_auto` is off is done once the draft exists.
   await tx.db
@@ -90,9 +108,15 @@ export async function proposeEjariSubmission(ctx: EngineContext, tx: Tx, lease: 
     gate: "ejari_submission",
     entity: { kind: "lease", id: lease.id },
     dedupeKey: `${lease.id}:ejari_submission#${open.length + 1}`,
-    title: `Submit ${lease.ref} to Ejari${ctx.demoMode ? " (simulated)" : ""}`,
+    title: manual
+      ? `Register lease ${lease.ref} on ${settings.portalName} by hand (approve the pack)`
+      : `Submit ${lease.ref} to ${systemName}${ctx.demoMode ? " (simulated)" : ""}`,
     proposal,
-    reasons: ["Every value is copied from the signed contract. Check it against the signed PDF before submitting."],
+    reasons: [
+      manual
+        ? `Approving tells the officer to register this lease on ${settings.portalName} by hand and record the result. Every value is copied from the signed contract.`
+        : "Every value is copied from the signed contract. Check it against the signed PDF before submitting.",
+    ],
     sources: contract.signedDocumentId
       ? [
           {
@@ -135,22 +159,38 @@ export async function onEjariSubmissionDecided(
     throw unprocessable("The signed contract no longer matches this submission. Propose it again.", [], "stale");
   }
   const submissionId = newId();
+  const manual = p.mode === "manual";
+  const prior = await tx.db
+    .select({ attempt: ejariSubmissions.attempt })
+    .from(ejariSubmissions)
+    .where(eq(ejariSubmissions.approvalId, a.id));
   await tx.db.insert(ejariSubmissions).values({
     id: submissionId,
     leaseId: lease.id,
     approvalId: a.id,
-    attempt: 1,
+    attempt: prior.length + 1,
     payload: built.payload,
     payloadSha256: p.payloadSha256,
-    status: "queued",
+    status: manual ? "awaiting_manual" : "queued",
+    mode: manual ? "manual" : "online",
     createdAt: ctx.clock.now(),
   });
-  await queueSubmit(ctx, tx, lease.id, submissionId);
+  if (manual) {
+    const today = ctx.clock.today();
+    await createTask(ctx, tx, lease.id, {
+      kind: "register_by_hand",
+      title: `Register lease ${lease.ref} on ${p.portalName ?? "the registration portal"} and record the reference`,
+      details: { portalUrl: p.portalUrl ?? null, portalName: p.portalName ?? null, submissionId },
+      assigneeRole: "leasing_officer",
+      dueOn: addDays(today, 3),
+      dedupeKey: `${lease.id}:register_by_hand:${submissionId}`,
+    });
+  } else await queueSubmit(ctx, tx, lease.id, submissionId);
   await appendEvent(tx, ctx, {
     entity: { kind: "lease", id: lease.id },
     type: "EJARI_SUBMISSION_QUEUED",
     actor: a.decidedBy ? `user:${a.decidedBy}` : "system",
-    payload: { submissionId, approvalId: a.id, attempt: 1 },
+    payload: { submissionId, approvalId: a.id, attempt: prior.length + 1, ...(manual ? { mode: "manual" } : {}) },
     rulesVersion: lease.rulesVersion,
   });
 }
@@ -180,14 +220,25 @@ export async function submitToEjari(ctx: EngineContext, submissionId: string) {
         .where(eq(ejariSubmissions.id, s.id));
       return null;
     }
+    const emirate = await leaseEmirate(tx, lease);
+    const adapter = registryFor(ctx, emirate);
+    if (!adapter) {
+      await tx.db
+        .update(ejariSubmissions)
+        .set({ status: "error", error: "no registration system for this emirate", completedAt: ctx.clock.now() })
+        .where(eq(ejariSubmissions.id, s.id));
+      await raiseUnsupportedRegistration(ctx, tx, lease, emirate);
+      return null;
+    }
     await tx.db.update(ejariSubmissions).set({ status: "sending" }).where(eq(ejariSubmissions.id, s.id));
-    return s;
+    return { ...s, adapter, systemName: registrationSystemName(emirate) };
   });
   if (!sub) return { done: false as const };
 
-  let result: Awaited<ReturnType<EngineContext["ejari"]["register"]>>;
+  const { adapter, systemName } = sub;
+  let result: Awaited<ReturnType<RegistrationAdapter["register"]>>;
   try {
-    result = await ctx.ejari.register(sub.payload, { requestId: sub.id });
+    result = await adapter.register(sub.payload, { requestId: sub.id });
   } catch (e) {
     const unavailable = e instanceof EjariUnavailableError;
     const error = maskPiiText(e instanceof Error ? e.message : String(e));
@@ -209,7 +260,7 @@ export async function submitToEjari(ctx: EngineContext, submissionId: string) {
         });
         await createTask(ctx, tx, sub.leaseId, {
           kind: "ejari_unreachable",
-          title: `Ejari submission for ${lease?.ref ?? sub.leaseId} failed: ${error}. Check in the registry whether it was registered before proposing it again.`,
+          title: `${systemName} submission for ${lease?.ref ?? sub.leaseId} failed: ${error}. Check in the registry whether it was registered before proposing it again.`,
           details: { submissionId: sub.id, error },
           assigneeRole: "leasing_officer",
           dueOn: ctx.clock.today(),
@@ -220,18 +271,23 @@ export async function submitToEjari(ctx: EngineContext, submissionId: string) {
     });
     if (giveUp) return { done: false as const, error };
     // pg-boss retries the job with backoff.
-    throw new Error(`Ejari unavailable, will retry: ${error}`, { cause: e });
+    throw new Error(`${systemName} unavailable, will retry: ${error}`, { cause: e });
   }
 
   if (result.ok) {
     // The certificate is a convenience: if it can't be fetched now, staff can fetch it later.
     let certificate: Uint8Array | null = null;
     try {
-      certificate = await ctx.ejari.certificate(result.ejariNo);
+      certificate = await adapter.certificate(result.ejariNo);
     } catch {
       certificate = null;
     }
-    return withTx(ctx.database, async (tx) => recordIssued(ctx, tx, sub, result.ejariNo, result.issuedOn, certificate));
+    return withTx(ctx.database, async (tx) =>
+      recordIssued(ctx, tx, sub, result.ejariNo, result.issuedOn, certificate, {
+        actor: "system",
+        simulated: ctx.demoMode,
+      }),
+    );
   }
   return withTx(ctx.database, async (tx) => {
     const [s] = await tx.db.select().from(ejariSubmissions).where(eq(ejariSubmissions.id, sub.id)).for("update");
@@ -255,16 +311,30 @@ export async function submitToEjari(ctx: EngineContext, submissionId: string) {
   });
 }
 
-async function recordIssued(
+export type RecordIssuedOptions = {
+  actor: Actor;
+  /** The date the lease records; default: online rules (demo clock, or the registry's date). */
+  issuedOn?: CalendarDate;
+  simulated: boolean;
+  /** An officer registered by hand and recorded the result. */
+  manual?: boolean;
+  feePaidFils?: number | null;
+  /** Extra audit fields for the EJARI_ISSUED event (manual: reference, fee flags). */
+  extraPayload?: Record<string, unknown>;
+};
+
+/** Marks a submission issued, stores the certificate, and applies EJARI_ISSUED (consumes the approval). */
+export async function recordIssued(
   ctx: EngineContext,
   tx: Tx,
   sub: SubmissionRow,
   ejariNo: string,
   registryIssuedOn: string,
   certificate: Uint8Array | null,
+  opts: RecordIssuedOptions,
 ) {
   const [s] = await tx.db.select().from(ejariSubmissions).where(eq(ejariSubmissions.id, sub.id)).for("update");
-  if (s?.status !== "sending") return { done: false as const };
+  if (s?.status !== (opts.manual ? "awaiting_manual" : "sending")) return { done: false as const };
   let certificateDocumentId: string | null = null;
   if (certificate) {
     const stored = await ctx.documents.put(certificate, "pdf");
@@ -276,33 +346,44 @@ async function recordIssued(
       sha256: stored.sha256,
       path: stored.path,
       mime: "application/pdf",
-      extracted: { ejariNo, simulated: ctx.demoMode },
+      extracted: { ejariNo, simulated: opts.simulated, ...(opts.manual ? { manual: true } : {}) },
     });
   }
   await tx.db
     .update(ejariSubmissions)
-    .set({ status: "issued", ejariNo, certificateDocumentId, completedAt: ctx.clock.now() })
+    .set({
+      status: "issued",
+      ejariNo,
+      certificateDocumentId,
+      completedAt: ctx.clock.now(),
+      ...(opts.manual ? { feePaidFils: opts.feePaidFils ?? null, recordedBy: opts.actor } : {}),
+    })
     .where(eq(ejariSubmissions.id, sub.id));
   // The lease records the engine's calendar date (the demo clock may run ahead of the registry's).
   await advance(ctx, { kind: "lease", id: sub.leaseId }, "EJARI_ISSUED", {
-    actor: "system",
+    actor: opts.actor,
     approvalId: sub.approvalId,
     payload: {
       ejariNo,
       // Demo: the engine's calendar date (the demo clock may run ahead of the simulated registry).
       // Otherwise the registry's date. CONFIRM WITH LEGAL which date the lease should carry.
-      issuedOn: ctx.demoMode || !isCalendarDate(registryIssuedOn) ? ctx.clock.today() : registryIssuedOn,
+      issuedOn:
+        opts.issuedOn ?? (ctx.demoMode || !isCalendarDate(registryIssuedOn) ? ctx.clock.today() : registryIssuedOn),
       registryIssuedOn,
       submissionId: sub.id,
       attempt: sub.attempt,
-      simulated: ctx.demoMode,
+      simulated: opts.simulated,
+      ...(opts.manual ? { manual: true } : {}),
+      ...opts.extraPayload,
     },
     tx,
   });
   if (!certificate) {
     await createTask(ctx, tx, sub.leaseId, {
       kind: "ejari_certificate_missing",
-      title: `Ejari ${ejariNo} was issued but its certificate could not be downloaded: fetch it from the registry`,
+      title: opts.manual
+        ? `Registration ${ejariNo} was recorded without its certificate: upload it from the portal`
+        : `Ejari ${ejariNo} was issued but its certificate could not be downloaded: fetch it from the registry`,
       details: { submissionId: sub.id, ejariNo },
       assigneeRole: "leasing_officer",
       dueOn: ctx.clock.today(),
@@ -454,12 +535,13 @@ export async function reviewEjariRejection(ctx: EngineContext, submissionId: str
       helperRunId,
       helperReasons: run.result.reasons,
     };
+    const systemName = registrationSystemName(await leaseEmirate(tx, lease));
     const approval = await requestApproval(ctx, tx, {
       gate: "ejari_rejected_twice",
       entity: { kind: "lease", id: lease.id },
       dedupeKey: `${lease.id}:ejari_rejected:${s.approvalId}`,
-      title: `Ejari rejected ${lease.ref}${s.attempt > 1 ? " twice" : ""}: decide how to proceed`,
-      proposal,
+      title: `${systemName} rejected ${lease.ref}${s.attempt > 1 ? " twice" : ""}: decide how to proceed`,
+      proposal: { ...proposal, systemName },
       reasons: [...s.reasons.map((r) => `${r.code}: ${r.message}`), ...run.result.reasons],
       sources: [{ kind: "helper_run", helperRunId, label: "Registration helper run" }],
       rulesVersion: lease.rulesVersion,
@@ -539,8 +621,13 @@ export async function reproposeEjariSubmission(ctx: EngineContext, leaseId: stri
     const inFlight = await tx.db
       .select({ id: ejariSubmissions.id })
       .from(ejariSubmissions)
-      .where(and(eq(ejariSubmissions.leaseId, leaseId), inArray(ejariSubmissions.status, ["queued", "sending"])));
-    if (inFlight.length) throw conflict("A submission is already on its way to Ejari.");
+      .where(
+        and(
+          eq(ejariSubmissions.leaseId, leaseId),
+          inArray(ejariSubmissions.status, ["queued", "sending", "awaiting_manual"]),
+        ),
+      );
+    if (inFlight.length) throw conflict("A registration is already in progress for this lease.");
     const r = await proposeEjariSubmission(ctx, tx, lease, actor);
     if (!r) throw unprocessable("The submission can't be built; see the task list.");
     return r;

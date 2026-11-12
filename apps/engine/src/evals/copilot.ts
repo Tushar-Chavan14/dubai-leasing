@@ -93,7 +93,7 @@ const ctx: EngineContext = {
   mailer: new FakeMailer(),
   documents: new LocalDiskStore(mkdtempSync(join(tmpdir(), "eval-docs-"))),
   uploads: new LocalDiskStore(mkdtempSync(join(tmpdir(), "eval-uploads-"))),
-  ejari: new FakeEjari(() => new Error("the copilot eval doesn't call Ejari")),
+  registries: { dubai: new FakeEjari(() => new Error("the copilot eval doesn't call Ejari")) },
   llm: Object.assign(new FakeLlm(() => new Error("unused")), injected),
   webUrl: "http://localhost:3000",
   serverSecret: "eval-server-secret",

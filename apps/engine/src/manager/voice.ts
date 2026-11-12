@@ -97,6 +97,9 @@ export async function transcribeVoice(
     } catch (e) {
       // A server that timed out once won't answer a second time in time: ask the person to try again.
       if (e instanceof Error && e.name === "TimeoutError") break;
+      // No server at all: say so, rather than blaming the recording.
+      if (e instanceof Error && e.name === "VoiceUnavailable")
+        return { ok: false, message: "Voice input is unavailable right now. Please type your message." };
       continue;
     }
     const parsed = VoiceTranscript.safeParse(raw);

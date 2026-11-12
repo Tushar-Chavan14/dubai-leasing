@@ -135,6 +135,15 @@ describe.skipIf(noDb)("units API (Postgres)", () => {
     return call(role, `/api/units/${unitId}/photos`, { method: "POST", body: form });
   };
 
+  test("create: any UAE emirate is accepted, unknown ones are rejected", async () => {
+    expect(
+      (await json("leasing_officer", "/api/units", "POST", unitBody({ code: "AUH-1", emirate: "mars" }))).status,
+    ).toBe(400);
+    const r = await json("leasing_officer", "/api/units", "POST", unitBody({ code: "AUH-1", emirate: "abu_dhabi" }));
+    expect(r.status).toBe(201);
+    expect(((await r.json()) as { emirate: string }).emirate).toBe("abu_dhabi");
+  });
+
   test("create: validated, normalised, audited; finance can't create", async () => {
     expect((await json("finance", "/api/units", "POST", unitBody())).status).toBe(403);
     expect((await json("leasing_officer", "/api/units", "POST", unitBody({ makaniNo: "123" }))).status).toBe(400);
@@ -600,6 +609,23 @@ describe.skipIf(noDb)("units API (Postgres)", () => {
     expect(((await r.json()) as { reasons: string[] }).reasons.join(" ")).toContain("missing bedrooms");
     // Clearing bedrooms on a commercial unit is fine.
     expect((await json("admin", `/api/units/${id}`, "PATCH", { bedrooms: null })).status).toBe(200);
+  });
+
+  test("a lease import for a unit in an emirate without a rulebook is a row error", async () => {
+    const created = await json(
+      "leasing_officer",
+      "/api/units",
+      "POST",
+      unitBody({ code: "SHJ-IMP-1", emirate: "sharjah" }),
+    );
+    expect(created.status).toBe(201);
+    const res = await importLeasesCsv(
+      t.ctx,
+      leaseCsv([{ unit_code: "SHJ-IMP-1", start_on: "2026-06-01", end_on: "2027-05-31" }]),
+      "import",
+      await testCompany(t.ctx.database),
+    );
+    expect(res[0]).toMatchObject({ status: "error", reasons: ["no rulebook for Sharjah yet"] });
   });
 
   test("the company is locked once the unit has a lease", async () => {

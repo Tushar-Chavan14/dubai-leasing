@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Emirate } from "./emirates.ts";
 import { PropertyCategory } from "./portfolio.ts";
 
 /**
@@ -101,6 +102,8 @@ export const StatusItem = z.object({
   stage: StatusStageName,
   stages: z.array(z.object({ name: StatusStageName, state: z.enum(["done", "current", "todo"]) })),
   nextStep: z.string(),
+  /** Label of the last stage for this unit's emirate (Ejari, Tawtheeq, Attestation, …); the stage key stays "Ejari". */
+  registration: z.string().max(40).optional(),
   offer: z.object({ annualRentFils: z.number().int(), annualRent: z.string(), cheques: z.number().int() }).optional(),
   actions: z.array(ChannelButton),
 });
@@ -136,7 +139,7 @@ export const ChannelReply = z.object({
 });
 export type ChannelReply = z.infer<typeof ChannelReply>;
 
-export const EnquiryEmirate = z.enum(["dubai"]);
+export const EnquiryEmirate = Emirate;
 export type EnquiryEmirate = z.infer<typeof EnquiryEmirate>;
 /** Size bands for commercial and retail units: up to 1,000, 1,000 to 3,000, over 3,000 sq ft. */
 export const SizeBand = z.enum(["small", "medium", "large"]);

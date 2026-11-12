@@ -12,6 +12,15 @@ const APPROVE =
 const OUTLINE =
   "inline-flex h-9 cursor-pointer items-center justify-center rounded-full border border-on-accent/40 bg-transparent px-4 font-sans text-sm font-semibold text-on-accent hover:border-on-accent disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-on-accent";
 
+/** Banner names of the fields the engine can flag in a decision. */
+const FIELD_LABEL: Record<string, string> = {
+  annualRentFils: "Annual rent",
+  cheques: "Cheques",
+  moveInOn: "Move-in",
+  proposedRentFils: "Renewal rent",
+  note: "Note",
+};
+
 const DONE: Record<string, string> = {
   approved: "Approved. The decision is in the audit trail.",
   edited: "Approved with your edit. The decision is in the audit trail.",
@@ -23,12 +32,18 @@ export function DecisionForm({
   canEditRent,
   canEditNote = false,
   currentRentAed,
+  editOffer,
 }: {
   id: string;
   canEditRent: boolean;
   /** A gate whose only editable field is the note (not the rent). */
   canEditNote?: boolean;
   currentRentAed: string | null;
+  /**
+   * An offer outside limits (D51): the manager may counter with rent, cheques and move-in. The engine
+   * recomputes deposit, reservation, term and expiry from them.
+   */
+  editOffer?: { rentAed: string; cheques: number; moveInOn: string; today: string } | undefined;
 }) {
   const [state, action, pending] = useActionState<DecisionState, FormData>(decide, {});
   const [editing, setEditing] = useState(false);
@@ -42,9 +57,9 @@ export function DecisionForm({
     );
   }
   return (
-    <ActionForm state={state} action={action} className="grid gap-3">
+    <ActionForm state={state} fieldErrors={state.fieldErrors} action={action} className="grid gap-3">
       <input type="hidden" name="id" value={id} />
-      <input type="hidden" name="editField" value={canEditRent ? "rent" : "note"} />
+      <input type="hidden" name="editField" value={editOffer ? "offer" : canEditRent ? "rent" : "note"} />
       {state.error && (
         <div
           className="flex items-start gap-2 rounded-xl border border-danger bg-page px-3.5 py-2.5 text-sm text-danger"
@@ -53,14 +68,64 @@ export function DecisionForm({
           <IconWarning size={16} className="mt-0.5 shrink-0" />
           <div>
             <strong>{state.error}</strong>
-            {state.reasons && state.reasons.length > 0 && (
+            {(state.reasons?.length || Object.keys(state.fieldErrors ?? {}).length) > 0 && (
               <ul className="m-0 mt-1 pl-4">
-                {state.reasons.map((r) => (
+                {Object.entries(state.fieldErrors ?? {}).map(([k, v]) => (
+                  <li key={k}>
+                    {FIELD_LABEL[k] ?? k}: {v}
+                  </li>
+                ))}
+                {(state.reasons ?? []).map((r) => (
                   <li key={r}>{r}</li>
                 ))}
               </ul>
             )}
           </div>
+        </div>
+      )}
+      {editOffer && editing && (
+        <div className="grid gap-3">
+          <label className="grid gap-1.5">
+            <span className="text-xs font-semibold">Annual rent</span>
+            <span className="flex items-center gap-2">
+              <b className="text-sm">AED</b>
+              <input
+                name="annualRentFils"
+                defaultValue={editOffer.rentAed}
+                inputMode="decimal"
+                autoFocus
+                className={INPUT}
+              />
+            </span>
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="grid gap-1.5">
+              <span className="text-xs font-semibold">Cheques</span>
+              <input
+                name="cheques"
+                type="number"
+                min={1}
+                max={12}
+                step={1}
+                defaultValue={editOffer.cheques}
+                className={INPUT}
+              />
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-xs font-semibold">Move-in</span>
+              <input
+                name="moveInOn"
+                type="date"
+                min={editOffer.today || undefined}
+                defaultValue={editOffer.moveInOn}
+                className={INPUT}
+              />
+            </label>
+          </div>
+          <span className="text-xs opacity-75">
+            Deposit, reservation, the 12-month term and a new answer-by date are worked out from these. The applicant
+            gets the revised offer by email.
+          </span>
         </div>
       )}
       {canEditRent && editing && (
@@ -94,7 +159,11 @@ export function DecisionForm({
         {editing ? (
           <>
             <button type="submit" name="decision" value="edit" className={APPROVE} disabled={pending}>
-              {canEditRent ? "Approve with this rent" : "Approve with this note"}
+              {editOffer
+                ? "Approve with these terms"
+                : canEditRent
+                  ? "Approve with this rent"
+                  : "Approve with this note"}
             </button>
             <button type="button" className={OUTLINE} onClick={() => setEditing(false)}>
               Cancel edit
@@ -105,9 +174,9 @@ export function DecisionForm({
             <button type="submit" name="decision" value="approve" className={APPROVE} disabled={pending}>
               Approve
             </button>
-            {(canEditRent || canEditNote) && (
+            {(canEditRent || canEditNote || editOffer) && (
               <button type="button" className={OUTLINE} onClick={() => setEditing(true)}>
-                {canEditRent ? "Change rent" : "Edit note"}
+                {editOffer ? "Change terms" : canEditRent ? "Change rent" : "Edit note"}
               </button>
             )}
             <button type="submit" name="decision" value="reject" className={OUTLINE} disabled={pending}>

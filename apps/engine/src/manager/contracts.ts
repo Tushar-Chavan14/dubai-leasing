@@ -51,7 +51,7 @@ import { conflict, DomainError, notFound, unprocessable } from "../errors.ts";
 import { advance } from "./advance.ts";
 import { approvedClauses, resolveCompanyClauses } from "./clause-refs.ts";
 import {
-  approvedTemplateFor,
+  templateForUnit,
   parseTemplate,
   renderCompanyContract,
   templateKey,
@@ -110,12 +110,19 @@ export async function defaultAddendumFor(tx: Pick<Tx, "db">, leaseId: string): P
 export async function contractConfigHash(tx: Pick<Tx, "db">, unit: PricingUnit): Promise<string> {
   const rule = await matchContractRule(tx, unit);
   let templateHash: string | null = null;
-  if (rule?.templateId) {
-    try {
-      templateHash = templateKey(await approvedTemplateFor(tx, unit.companyId, rule.templateId)).contentHash;
-    } catch (e) {
-      if (!(e instanceof DomainError)) throw e;
+  let templateId: string | null = rule?.templateId ?? null;
+  try {
+    const chosen = await templateForUnit(tx, {
+      companyId: unit.companyId,
+      ruleTemplateId: rule?.templateId,
+      emirate: unit.emirate,
+    });
+    if (chosen) {
+      templateHash = templateKey(chosen).contentHash;
+      templateId = chosen.id;
     }
+  } catch (e) {
+    if (!(e instanceof DomainError)) throw e;
   }
   // Only clauses that reach this unit's contracts: the rule's own and those inside the company template.
   const used = new Set((rule?.clauseIds ?? []).filter(isCompanyClauseRef).map(companyClauseIdOf));
@@ -128,7 +135,7 @@ export async function contractConfigHash(tx: Pick<Tx, "db">, unit: PricingUnit):
       rule: rule
         ? { id: rule.id, tenures: rule.tenures, min: rule.minCheques, max: rule.maxCheques, clauseIds: rule.clauseIds }
         : null,
-      templateId: rule?.templateId ?? null,
+      templateId,
       templateHash,
       clauses,
     }),
@@ -214,13 +221,15 @@ export async function contractInputs(tx: Tx, leaseId: string) {
   const rule = await matchContractRule(tx, unit);
   let template: TemplateRow | null = null;
   let templateIssue: DomainError | null = null;
-  if (rule?.templateId) {
-    try {
-      template = await approvedTemplateFor(tx, unit.companyId, rule.templateId);
-    } catch (e) {
-      if (!(e instanceof DomainError)) throw e;
-      templateIssue = e;
-    }
+  try {
+    template = await templateForUnit(tx, {
+      companyId: unit.companyId,
+      ruleTemplateId: rule?.templateId,
+      emirate: unit.emirate,
+    });
+  } catch (e) {
+    if (!(e instanceof DomainError)) throw e;
+    templateIssue = e;
   }
   // Data-sheet values beyond the contract fields (unit, company, party and offer columns): copied verbatim.
   const extras = sheetExtras({ lease, unit, company, landlord, tenant, application: app });
@@ -384,6 +393,7 @@ export async function prepareContract(
       remapped,
       checks,
       clauseReasons: result.data.clauseReasons ?? [],
+      rewrites: result.data.rewrites ?? [],
     };
   });
   if (!pre.ok && pre.retry && input.actor === "system") {
@@ -485,6 +495,8 @@ export async function prepareContract(
         reference,
         subject,
         extras: i.extras,
+        emirate: i.unit.emirate,
+        rewrites: pre.rewrites,
         ...(remap ? { blanks: remap.blanks } : {}),
       }));
     } else {
@@ -493,6 +505,7 @@ export async function prepareContract(
         reference,
         preparedOn: ctx.clock.today(),
         demo: ctx.demoMode,
+        emirate: i.unit.emirate,
       });
       pdf = await renderPdf({ title: doc.title, subject }, doc.blocks);
     }
@@ -519,6 +532,7 @@ export async function prepareContract(
       sources: d.sources,
       addendum: d.addendum,
       flags: d.flags,
+      templateRewrites: i.template ? pre.rewrites : [],
       inputHash: i.inputHash,
       configHash: pre.configHash,
       helperRunId: pre.helperRunId,
@@ -539,6 +553,7 @@ export async function prepareContract(
       sources: d.sources,
       addendum: d.addendum,
       flags: d.flags,
+      ...(i.template && pre.rewrites.length ? { rewrites: pre.rewrites } : {}),
       reviewed: d.reviewed,
       ...(templateRef ? { template: templateRef } : {}),
     };
@@ -549,7 +564,14 @@ export async function prepareContract(
       title: `Final contract for ${i.lease.ref} (version ${version})`,
       proposal,
       reasons: [
+        // D64: a conflict the agent could not reword is listed first, so the approver checks it before anything else.
+        ...d.flags
+          .filter((f) => f.kind === "conflict")
+          .map((f) => `Unresolved conflict, check before approving: "${f.quote}" (${f.reason})`),
         ...(templateRef ? [`Company template v${templateRef.version}`] : []),
+        ...(i.template
+          ? pre.rewrites.map((r) => `Reworded to match the records: "${r.before}" -> "${r.after}" (${r.reason})`)
+          : []),
         ...(remap?.changes.length
           ? [
               `Blank mapping refreshed for the data held now (blank: stored -> now): ${remap.changes
@@ -567,7 +589,9 @@ export async function prepareContract(
           : []),
         ...(leftEmpty.length ? [`Left empty for hand-filling: ${leftEmpty.join(", ")}`] : []),
         ...(d.flags.length
-          ? d.flags.map((f) => `Addendum ${f.kind.replace("_", " ")}: "${f.quote}" (${f.reason})`)
+          ? d.flags
+              .filter((f) => f.kind !== "conflict")
+              .map((f) => `Addendum ${f.kind.replace("_", " ")}: "${f.quote}" (${f.reason})`)
           : ["Every field is copied from its record. Check them against the sources and the PDF before approving."]),
         ...pre.checks.map((c) => c.reason),
         ...pre.clauseReasons.map((r) => `Clause ${r.id}: ${r.reason}`),
@@ -592,6 +616,13 @@ export async function prepareContract(
         helperRunId: pre.helperRunId,
         approvalId: approval.id,
         addendumFlags: d.flags.length,
+        templateRewrites: i.template ? pre.rewrites.length : 0,
+        ...(i.template && pre.rewrites.length
+          ? {
+              rewrittenParagraphs: pre.rewrites.map((r) => r.key),
+              rewritesHash: sha256Hex(JSON.stringify(pre.rewrites)),
+            }
+          : {}),
         ...(templateRef
           ? { templateId: templateRef.id, templateVersion: templateRef.version, templateHash: templateRef.contentHash }
           : {}),

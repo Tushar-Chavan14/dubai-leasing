@@ -1,0 +1,1 @@
+ALTER TABLE "contracts" ADD COLUMN "template_rewrites" jsonb DEFAULT '[]'::jsonb NOT NULL;

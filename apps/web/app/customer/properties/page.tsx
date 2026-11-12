@@ -11,7 +11,11 @@ export default async function PropertiesPage({ searchParams }: PageProps<"/custo
   // Every open listing gives the chip options; the filtered list comes from the engine.
   const all = await publicEngine<PublicUnitSummary[]>("/public/units?category=all");
   const options = all.ok ? all.data : [];
-  const filters = fromParams(params, [...new Set(options.map((u) => u.community))]);
+  // Communities are scoped to the chosen emirate (an area from another emirate is dropped).
+  const emirate = fromParams(params, []).emirate;
+  const filters = fromParams(params, [
+    ...new Set(options.filter((u) => !emirate || u.emirate === emirate).map((u) => u.community)),
+  ]);
   const shown = all.ok ? await publicEngine<PublicUnitSummary[]>(`/public/units?${toEngineQuery(filters)}`) : all;
   return (
     <PropertyGrid

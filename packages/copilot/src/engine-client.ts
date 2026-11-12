@@ -20,8 +20,9 @@ async function parse<T>(res: Response, path: string): Promise<T> {
 const ID = "[0-9a-fA-F-]{36}";
 /** One query parameter of `/api/available-units` and of `/api/copilot/records`. */
 const AU =
-  "bedrooms=[0-4]|community=[^&]*|maxRentFils=\\d{1,12}|code=[A-Za-z0-9-]{2,40}|company=[^&]*|category=(?:residential|commercial|retail|all)|sizeBand=(?:small|medium|large)";
+  "bedrooms=[0-4]|community=[^&]*|maxRentFils=\\d{1,12}|code=[A-Za-z0-9-]{2,40}|company=[^&]*|category=(?:residential|commercial|retail|all)|sizeBand=(?:small|medium|large)|emirate=[a-z_]{4,20}";
 const RK = `stage=[A-Za-z]+|q=[^&]*|company=[^&]*|category=(?:residential|commercial|retail)|mine=[01]|id=${ID}|limit=\\d{1,2}`;
+const ES = "emirate=[a-z_]{4,20}|annualRentFils=\\d{1,13}";
 /**
  * The read routes copilot tools may call, and nothing else: no documents, no portal, no demo
  * controls, no write routes (which the client couldn't call anyway: it only sends GET).
@@ -30,6 +31,7 @@ const ALLOWED = [
   /^\/api\/search\?q=[^&]*$/,
   new RegExp(`^/api/leases/${ID}$`),
   new RegExp(`^/api/leases/${ID}/renewal-cap$`),
+  new RegExp(`^/api/leases/${ID}/registration$`),
   /^\/api\/approvals\?status=(pending|decided|all)$/,
   /^\/api\/deadlines\?days=\d{1,3}$/,
   /^\/api\/rules$/,
@@ -40,6 +42,7 @@ const ALLOWED = [
   new RegExp(`^/api/leases/${ID}/case-pack$`),
   new RegExp(`^/api/available-units(\\?(${AU})(&(${AU}))*)?$`),
   /^\/api\/copilot\/pipeline$/,
+  new RegExp(`^/api/copilot/emirate-setup(\\?(${ES})(&(${ES}))*)?$`),
   /^\/api\/copilot\/companies$/,
   /^\/api\/copilot\/company-settings\?company=[^&]{2,200}$/,
   /^\/api\/copilot\/kyc-config\?company=[^&]{2,200}$/,

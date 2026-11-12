@@ -8,6 +8,7 @@ import { get } from "../../../../lib/engine";
 import { possessive } from "../../../../lib/format";
 import { categoryOf } from "../../../../lib/portfolio";
 import type { CompanyRow, Me, RentRuleRow } from "../../../../lib/types";
+import { OfferDiscountForm } from "./offer-discount";
 import { RentRules } from "./rule-form";
 
 export const metadata: Metadata = { title: "Rent rules" };
@@ -19,10 +20,11 @@ export default async function RentRulesPage({
 }) {
   const sp = await searchParams;
   const category = categoryOf(sp.category);
-  const [rules, companies, me] = await Promise.all([
+  const [rules, companies, me, policy] = await Promise.all([
     get<RentRuleRow[]>(`/api/rent-rules?category=${category}`),
     get<CompanyRow[]>("/api/companies"),
     get<Me>("/api/me"),
+    get<{ maxRentDiscountPercent: number }>("/api/policy"),
   ]);
   const isAdmin = me?.role === "admin";
   const company = pickCompany(companies ?? [], sp.company);
@@ -31,9 +33,14 @@ export default async function RentRulesPage({
   return (
     <SetPage
       title="Rent rules"
-      lede="How far above or below the Smart Rental Index a company may ask, with optional AED limits. A unit's allowed price range comes from the rule that fits its company, type and area best. Anything outside it needs a manager."
+      lede="How far above or below the Smart Rental Index a company may ask, with optional AED limits. A unit's allowed asking-rent range comes from the rule that fits its company, type and area best; an asking rent outside it needs a manager. Offers and tenant counters are limited separately, by the offer discount below the asking rent."
       actions={<AskAiMenu label="Ask AI" prompts={askPrompts.settingsPage("Rent rules")} />}
     >
+      <OfferDiscountForm
+        key={policy?.maxRentDiscountPercent}
+        value={policy?.maxRentDiscountPercent ?? 0}
+        canEdit={isAdmin}
+      />
       <CategoryControl value={category} base="/settings/rent-rules" />
       <CompanySplit
         companies={companies ?? []}

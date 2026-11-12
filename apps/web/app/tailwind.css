@@ -70,6 +70,38 @@
 }
 
 /* Shimmer for the label of a running "thinking" block. */
+/* Copilot "Thinking…" dot and the answer appearing (chat-ui/thinking.tsx, copilot/chat.tsx). */
+@keyframes think-dot {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes think-ring {
+  0% {
+    opacity: 0.6;
+    transform: scale(0.8);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.2);
+  }
+}
+@keyframes answer-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
 @keyframes shimmer {
   to {
     background-position: -200% 0;

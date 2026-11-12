@@ -1,18 +1,29 @@
-import type { EnquiryLanguage } from "@leasing/core";
+import type { Emirate, EnquiryLanguage } from "@leasing/core";
 
 /**
  * Every fixed reply of the Telegram enquiry bot, in English and Arabic. Code picks the line;
  * no model writes these. The Arabic needs a native speaker's review before a client pitch.
  */
+/** One names map for all seven emirates, used by every fixed reply. */
+export const EMIRATE_NAMES: Record<Emirate, { en: string; ar: string }> = {
+  dubai: { en: "Dubai", ar: "دبي" },
+  abu_dhabi: { en: "Abu Dhabi", ar: "أبوظبي" },
+  sharjah: { en: "Sharjah", ar: "الشارقة" },
+  ajman: { en: "Ajman", ar: "عجمان" },
+  ras_al_khaimah: { en: "Ras Al Khaimah", ar: "رأس الخيمة" },
+  fujairah: { en: "Fujairah", ar: "الفجيرة" },
+  umm_al_quwain: { en: "Umm Al Quwain", ar: "أم القيوين" },
+};
+
 type Line = string | ((...args: never[]) => string);
 type Copy = Record<string, Line>;
 
 const en = {
   welcome:
-    "Hello! I'm the Dubai Leasing enquiry assistant. I can show you homes for rent and book a site visit.\nHow many bedrooms are you looking for?",
+    "Hello! I'm the UAE Leasing enquiry assistant. I can show you homes for rent and book a site visit.\nHow many bedrooms are you looking for?",
   help: "What I can do:\n/units – find a home\n/book – book a site visit of the home you picked\n/mybooking – your booked site visit\n/contact – your email and phone\n/agent – talk to a leasing officer\n/language – English or Arabic",
   askContactEmail:
-    "Hello! I'm the Dubai Leasing enquiry assistant. Before we start, what's your email address? We'll send site visit details there and use it to follow up on your enquiry.",
+    "Hello! I'm the UAE Leasing enquiry assistant. Before we start, what's your email address? We'll send site visit details there and use it to follow up on your enquiry.",
   askContactEmailAgain: "Please send your email address first, for example name@example.com.",
   askPhone:
     "Thanks. If you'd like a call back, send your phone number with the country code (for example +971 50 123 4567), or tap Skip.",
@@ -67,6 +78,9 @@ const en = {
   noAnswer: "I don't have that detail in the listing. A leasing officer will confirm it when you view the home.",
   noGeneralAnswer: "I don't have that information here. Send /agent and a leasing officer will answer.",
   greeting: "Hello! How many bedrooms are you looking for?",
+  /** Off-topic requests (coding, trivia, other subjects) get this fixed line; no chat model runs. */
+  offTopic:
+    "I can only help with renting a home or business space from us: finding a unit, booking a site visit or applying.",
   bookCta: "Book a site visit",
   backCta: "Other homes",
   bedrooms: (n: number) => (n === 0 ? "Studio" : n >= 4 ? "4+ bedrooms" : `${n} bedroom${n === 1 ? "" : "s"}`),
@@ -111,6 +125,8 @@ const en = {
       | "contractSigning"
       | "ejari"
       | "registered",
+    /** Name of the tenancy registration system in the unit's emirate. */
+    system = "Ejari",
   ) =>
     ({
       enquiry: "We are arranging your site visit. Watch your email for the time.",
@@ -121,13 +137,13 @@ const en = {
       reserved: "Thank you for accepting. We are preparing your contract.",
       contract: "Your contract is being prepared.",
       contractSigning: "Your contract is ready to sign. Use the signing link in your email.",
-      ejari: "We are registering your tenancy with Ejari.",
-      registered: "Your tenancy is registered. Your Ejari certificate has been emailed to you.",
+      ejari: `We are registering your tenancy with ${system}.`,
+      registered: `Your tenancy is registered. Your ${system} certificate has been emailed to you.`,
     })[k],
   actUpload: "Email me the upload link",
   actOffer: "Email me the offer",
   actSign: "Email me the signing link",
-  actEjari: "Email me the Ejari certificate",
+  actEjari: (system = "Ejari") => `Email me the ${system} certificate`,
   actQueued: "Done. We emailed the link to the address on your application.",
   actAlready: "We already emailed that today. Please check your inbox and spam folder.",
   actPreparing: "Your offer is being prepared. We'll email it soon.",
@@ -144,11 +160,8 @@ const en = {
   findAnother: "Find another home",
   // Public web chat: emirate, category, size and budget steps.
   askEmirate: "Which emirate are you looking in?",
-  emirateDubai: "Dubai",
-  emirateAbuDhabi: "Abu Dhabi",
-  emirateSharjah: "Sharjah",
   comingSoon: (label: string) => `${label} (Coming soon)`,
-  onlyDubai: "We only list homes in Dubai for now.",
+  noListingsIn: (label: string) => `We don't have homes listed in ${label} yet.`,
   askCategory: "What are you looking for?",
   categoryResidential: "Residential",
   categoryCommercial: "Commercial",
@@ -175,10 +188,10 @@ const en = {
 
 const ar: typeof en = {
   welcome:
-    "مرحباً! أنا مساعد الاستفسارات في Dubai Leasing. يمكنني أن أعرض عليك منازل للإيجار وأن أحجز لك موعد معاينة.\nكم عدد غرف النوم التي تبحث عنها؟",
+    "مرحباً! أنا مساعد الاستفسارات في تأجير الإمارات. يمكنني أن أعرض عليك منازل للإيجار وأن أحجز لك موعد معاينة.\nكم عدد غرف النوم التي تبحث عنها؟",
   help: "ما يمكنني فعله:\n/units – البحث عن منزل\n/book – حجز معاينة للمنزل الذي اخترته\n/mybooking – موعد معاينتك\n/contact – بريدك الإلكتروني وهاتفك\n/agent – التحدث مع موظف التأجير\n/language – العربية أو الإنجليزية",
   askContactEmail:
-    "مرحباً! أنا مساعد الاستفسارات في Dubai Leasing. قبل أن نبدأ، ما عنوان بريدك الإلكتروني؟ سنرسل إليه تفاصيل المعاينة ونتابع استفسارك من خلاله.",
+    "مرحباً! أنا مساعد الاستفسارات في تأجير الإمارات. قبل أن نبدأ، ما عنوان بريدك الإلكتروني؟ سنرسل إليه تفاصيل المعاينة ونتابع استفسارك من خلاله.",
   askContactEmailAgain: "يرجى إرسال بريدك الإلكتروني أولاً، مثلاً name@example.com.",
   askPhone: "شكراً. إذا رغبت في أن نتصل بك، أرسل رقم هاتفك مع رمز الدولة (مثلاً ‎+971 50 123 4567)، أو اضغط تخطي.",
   badPhone: "يبدو أن هذا ليس رقم هاتف. أرسله مع رمز الدولة، أو اضغط تخطي.",
@@ -232,6 +245,7 @@ const ar: typeof en = {
   noAnswer: "هذه المعلومة غير موجودة في الإعلان. سيؤكدها لك موظف التأجير عند المعاينة.",
   noGeneralAnswer: "لا تتوفر لدي هذه المعلومة هنا. أرسل /agent وسيجيبك موظف التأجير.",
   greeting: "مرحباً! كم عدد غرف النوم التي تبحث عنها؟",
+  offTopic: "يمكنني المساعدة فقط في استئجار منزل أو مساحة تجارية لدينا: البحث عن وحدة أو حجز معاينة أو تقديم طلب.",
   bookCta: "احجز معاينة",
   backCta: "منازل أخرى",
   bedrooms: (n: number) =>
@@ -272,6 +286,8 @@ const ar: typeof en = {
       | "contractSigning"
       | "ejari"
       | "registered",
+    /** Name of the tenancy registration system in the unit's emirate. */
+    system = "Ejari",
   ) =>
     ({
       enquiry: "نرتب موعد معاينتك. ترقب بريدك الإلكتروني.",
@@ -282,13 +298,14 @@ const ar: typeof en = {
       reserved: "شكراً لقبولك. نجهز عقدك.",
       contract: "عقدك قيد الإعداد.",
       contractSigning: "عقدك جاهز للتوقيع. استخدم رابط التوقيع في بريدك الإلكتروني.",
-      ejari: "نسجل عقد إيجارك في إيجاري.",
-      registered: "تم تسجيل عقد إيجارك. أرسلنا شهادة إيجاري إلى بريدك الإلكتروني.",
+      ejari: `نسجل عقد إيجارك في ${system === "Ejari" ? "إيجاري" : system === "Tawtheeq" ? "توثيق" : system}.`,
+      registered: `تم تسجيل عقد إيجارك. أرسلنا شهادة ${system === "Ejari" ? "إيجاري" : system === "Tawtheeq" ? "توثيق" : system} إلى بريدك الإلكتروني.`,
     })[k],
   actUpload: "أرسل لي رابط الرفع بالبريد",
   actOffer: "أرسل لي العرض بالبريد",
   actSign: "أرسل لي رابط التوقيع بالبريد",
-  actEjari: "أرسل لي شهادة إيجاري بالبريد",
+  actEjari: (system = "Ejari") =>
+    `أرسل لي شهادة ${system === "Ejari" ? "إيجاري" : system === "Tawtheeq" ? "توثيق" : system} بالبريد`,
   actQueued: "تم. أرسلنا الرابط إلى البريد المسجل في طلبك.",
   actAlready: "أرسلناه اليوم بالفعل. يرجى مراجعة بريدك الوارد والرسائل غير المرغوب فيها.",
   actPreparing: "عرضك قيد الإعداد. سنرسله إليك عبر البريد الإلكتروني قريباً.",
@@ -304,11 +321,8 @@ const ar: typeof en = {
   findHome: "ابحث عن منزل",
   findAnother: "ابحث عن منزل آخر",
   askEmirate: "في أي إمارة تبحث؟",
-  emirateDubai: "دبي",
-  emirateAbuDhabi: "أبوظبي",
-  emirateSharjah: "الشارقة",
   comingSoon: (label: string) => `${label} (قريباً)`,
-  onlyDubai: "نعرض المنازل في دبي فقط حالياً.",
+  noListingsIn: (label: string) => `ليس لدينا منازل معروضة في ${label} حالياً.`,
   askCategory: "ما الذي تبحث عنه؟",
   categoryResidential: "سكني",
   categoryCommercial: "تجاري",

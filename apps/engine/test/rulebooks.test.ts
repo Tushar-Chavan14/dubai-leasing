@@ -102,9 +102,13 @@ describe.skipIf(noDb)("rulebook versions (Postgres)", () => {
       );
       expect(list.active).toBe("dubai-2025-01");
       expect(list.versions).toMatchObject([{ version: "dubai-2025-01", isActive: true }]);
+      // Per emirate: only Dubai has rules in a plain install; the others take no offers or leases.
+      const byEmirate = (list as unknown as { activeByEmirate: Record<string, string | null> }).activeByEmirate;
+      expect(byEmirate).toMatchObject({ dubai: "dubai-2025-01", sharjah: null, abu_dhabi: null });
       expect((await call(role, "/rulebooks/dubai-2025-01")).status).toBe(200);
     }
     expect((await call("admin", "/rulebooks", "POST", { basedOn: "dubai-1999-01" })).status).toBe(404);
+    expect((await call("admin", "/rulebooks", "POST", { basedOn: "dubai-2025-01", emirate: "mars" })).status).toBe(400);
   });
 
   test("draft → edit → publish: new leases get the new version, existing leases keep theirs", async () => {

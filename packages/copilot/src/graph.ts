@@ -80,6 +80,10 @@ const toolSpec = (t: CopilotTool): ToolSpec => ({
   },
 });
 
+/** A reply that says a change was made ("has been updated", "saved directly", "now active"). */
+const CLAIMS_CHANGE =
+  /\b(?:has|have|was|were) been (?:saved|updated|changed|added|set|removed|deleted|published|created)\b|\b(?:I|I've|I have) (?:saved|updated|changed|added|set|removed|published|created)\b|\bsaved directly\b|\bnow active\b/i;
+
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
 /** Runs one tool call: parse arguments, call the engine as the user, parse and mask the output. */
@@ -187,6 +191,7 @@ export async function runCopilotTurn(opts: {
     messages: Annotation<BaseMessage[]>({ reducer: (a, b) => a.concat(b), default: () => [] }),
     toolCalls: Annotation<number>({ reducer: (a, b) => a + b, default: () => 0 }),
     nudged: Annotation<boolean>({ reducer: (_a, b) => b, default: () => false }),
+    claimNudged: Annotation<boolean>({ reducer: (_a, b) => b, default: () => false }),
   });
 
   const agent = async (s: typeof State.State) => {
@@ -214,6 +219,25 @@ export async function runCopilotTurn(opts: {
         messages: [
           new SystemMessage(
             "Your draft stated amounts, dates or percentages without calling a tool. Call the right tool now (pipeline_summary, list_records, get_record, explain_rule…) and answer only from its result.",
+          ),
+        ],
+      };
+    }
+    // A reply may only say something changed when a draft or propose tool succeeded this turn.
+    // A proposal waiting for Confirm is not a change.
+    const changed = records.some(
+      (r) =>
+        r.ok &&
+        tools.find((t) => t.name === r.name)?.kind !== "read" &&
+        !(r.output && typeof r.output === "object" && "proposalId" in r.output),
+    );
+    if (!calls.length && !s.claimNudged && !changed && CLAIMS_CHANGE.test(turn.content)) {
+      if (streamed) emit({ type: "discard" });
+      return {
+        claimNudged: true,
+        messages: [
+          new SystemMessage(
+            "Your draft says something was saved or changed, but no tool made a change this turn, so nothing has changed. If the user's latest message asks for a change, call the right tool now and answer from its result. Otherwise never say anything was saved, updated or changed.",
           ),
         ],
       };

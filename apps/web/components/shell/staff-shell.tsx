@@ -48,7 +48,7 @@ export function StaffShell({
         <div className="grid gap-0.5 leading-tight" title="All legal dates use Asia/Dubai calendar days">
           <strong className="font-semibold">{weekdayDate(clock.today)}</strong>
           <Link href="/settings/demo" className={`text-xs ${clock.offsetDays ? "!text-warning" : "!text-muted"}`}>
-            {clock.offsetDays ? `Demo clock, ${clock.offsetDays} days ahead` : "Dubai, demo clock"}
+            {clock.offsetDays ? `Demo clock, ${clock.offsetDays} days ahead` : "UAE time, demo clock"}
           </Link>
         </div>
       )}

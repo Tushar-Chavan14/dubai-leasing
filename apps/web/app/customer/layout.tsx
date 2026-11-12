@@ -25,7 +25,7 @@ export default async function CustomerLayout({ children }: { children: ReactNode
             className="flex w-fit items-center gap-2 text-[17px] font-semibold tracking-tight"
           >
             <BrandMark size={22} />
-            Dubai Leasing
+            UAE Leasing
           </Link>
           <div className="col-span-2 row-start-2 -mx-1 overflow-x-auto md:col-span-1 md:col-start-2 md:row-start-1 md:mx-0">
             <CustomerNav />
@@ -48,7 +48,7 @@ export default async function CustomerLayout({ children }: { children: ReactNode
         <div className="mx-auto flex w-full max-w-[1240px] flex-wrap items-center justify-between gap-2 px-4 md:px-8">
           <span className="flex items-center gap-2 font-semibold text-ink">
             <BrandMark size={18} />
-            Dubai Leasing
+            UAE Leasing
           </span>
           <span>Demo build. All homes are fictional.</span>
         </div>

@@ -1,3 +1,5 @@
+import type { Emirate } from "@leasing/core";
+
 /** Shapes and plain-English labels for rulebook versions (engine `GET /api/rulebooks/:version`). */
 
 export interface Band {
@@ -41,6 +43,7 @@ export interface Loosened {
 
 export interface RulebookSummary {
   version: string;
+  emirate: Emirate;
   status: "draft" | "published";
   basedOn: string | null;
   effectiveFrom: string;
@@ -55,7 +58,8 @@ export interface RulebookSummary {
 export interface RulebookDetail extends Omit<RulebookSummary, "referenceRuleCount"> {
   active: string | null;
   today: string;
-  baseVersion: string;
+  /** null: the emirate has no reviewed base (its first rulebook). */
+  baseVersion: string | null;
   updatedAt: string;
   values: RuleValues;
   referenceRules: ReferenceRule[];

@@ -3,10 +3,12 @@ import {
   type Actor,
   type CalendarDate,
   type DepositResponse,
+  EMIRATE_LABELS,
   formatAed,
   isCalendarDate,
   maskPiiText,
   newId,
+  registrationSystemName,
   type StaffRole,
   type StaffUser,
 } from "@leasing/core";
@@ -34,6 +36,7 @@ import type { RefundProposal } from "./gate-rules.ts";
 import { runAndRecord } from "./helpers.ts";
 import { queueLeaseMail } from "./lease-mail.ts";
 import { createTask } from "./milestones.ts";
+import { leaseEmirate, registryFor } from "./registries.ts";
 import { ensureMoveOutInspection, type FindingRecord, moveOutStatus, queueEjariCancel } from "./move-out.ts";
 
 /**
@@ -525,16 +528,21 @@ export async function cancelEjari(ctx: EngineContext, leaseId: string) {
   const [lease] = await ctx.database.db.select().from(leases).where(eq(leases.id, leaseId));
   if (!lease?.ejariNo || lease.ejariCancelledOn || lease.state !== "MOVE_OUT") return { cancelled: false };
   const ejariNo = lease.ejariNo;
+  const emirate = await withTx(ctx.database, (tx) => leaseEmirate(tx, lease));
+  const systemName = registrationSystemName(emirate);
+  const adapter = registryFor(ctx, emirate);
   let ok = false;
   try {
-    ok = (await ctx.ejari.cancel(ejariNo, `tenancy ${lease.ref} ended: tenant moved out`)).ok;
-    if (!ok) ok = (await ctx.ejari.status(ejariNo)).state === "cancelled";
+    // No adapter: not cancelled; the same retry and task path as an unreachable registry.
+    if (!adapter) throw new Error(`no registration system set up for ${EMIRATE_LABELS[emirate]}`);
+    ok = (await adapter.cancel(ejariNo, `tenancy ${lease.ref} ended: tenant moved out`)).ok;
+    if (!ok) ok = (await adapter.status(ejariNo)).state === "cancelled";
   } catch (e) {
     const reason = maskPiiText(e instanceof Error ? e.message : String(e));
     await withTx(ctx.database, (tx) =>
       createTask(ctx, tx, leaseId, {
         kind: "ejari_cancel_failed",
-        title: `${lease.ref}: Ejari ${ejariNo} could not be cancelled yet (${reason}); retrying`,
+        title: `${lease.ref}: ${systemName} ${ejariNo} could not be cancelled yet (${reason}); retrying`,
         details: { ejariNo, reason },
         assigneeRole: "leasing_officer",
         dueOn: ctx.clock.today(),
@@ -547,7 +555,7 @@ export async function cancelEjari(ctx: EngineContext, leaseId: string) {
     await withTx(ctx.database, (tx) =>
       createTask(ctx, tx, leaseId, {
         kind: "ejari_cancel_failed",
-        title: `${lease.ref}: the registry refused to cancel Ejari ${ejariNo}; check it`,
+        title: `${lease.ref}: the registry refused to cancel ${systemName} ${ejariNo}; check it`,
         details: { ejariNo },
         assigneeRole: "leasing_officer",
         dueOn: ctx.clock.today(),

@@ -20,6 +20,7 @@ export async function saveSri(_prev: SriState, formData: FormData): Promise<SriS
   const r = await engine("/api/sri", {
     method: "PUT",
     body: JSON.stringify({
+      emirate: String(formData.get("emirate") ?? "dubai"),
       community: String(formData.get("community") ?? ""),
       bedrooms: Number(formData.get("bedrooms")),
       avgAnnualRentFils,

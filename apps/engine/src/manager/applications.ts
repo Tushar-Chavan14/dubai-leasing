@@ -5,6 +5,8 @@ import {
   type MailReceipt,
   offerAcceptedEmail,
   noShowFollowupEmail,
+  counterDeclinedEmail,
+  offerExpiredEmail,
   offerEmail,
   sniffImage,
   stripImageMetadata,
@@ -22,12 +24,14 @@ import {
   maskPiiText,
   newId,
   type OfferResponded,
+  OfferCounter,
   type OfferTerms,
   startOfDubaiDay,
   checkAnswers,
   type DocsUploaded,
   applicantReason,
   MAX_AUTO_REUPLOAD_EMAILS,
+  EMIRATE_LABELS,
 } from "@leasing/core";
 import { sha256Hex, shortRef } from "@leasing/core/tokens";
 import {
@@ -49,6 +53,7 @@ import {
 } from "@leasing/db";
 import {
   KYC_DEFAULT_TIMEOUT_MS,
+  applyCounter,
   KycSchemas,
   kycHelper,
   OfferContext,
@@ -57,10 +62,11 @@ import {
   OfferReplyData,
   offerHelper,
   offerProblems,
+  offerRentFloorFils,
   offerReplyClassifier,
 } from "@leasing/helpers";
-import { rulesVersionForTerm } from "@leasing/rulebook";
-import { and, asc, eq, gt, inArray, isNull, lt, ne } from "drizzle-orm";
+import { hasRulebookFor, rulesVersionForTerm } from "@leasing/rulebook";
+import { and, asc, eq, gt, inArray, isNull, like, lt, ne } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
 import { conflict, DomainError, notFound, unprocessable } from "../errors.ts";
 import { logKycStep } from "./kyc-check.ts";
@@ -77,6 +83,7 @@ import { INBOUND_JOB } from "./inbound.ts";
 import { CONTRACT_PREPARE_JOB } from "./contracts.ts";
 import { createLink, type LinkRow } from "./links.ts";
 import { createTask, DEADLINE_JOB } from "./milestones.ts";
+import { offerRegistrationFeeLine } from "./registries.ts";
 import { type Autopilot, autopilotNow, hoursFrom, quietNow, scheduleTimed, sendTime } from "./agent-switches.ts";
 
 /**
@@ -94,7 +101,10 @@ export type ApplicationMailKind =
   // Switches (D37): sent by the same job, so every one is stored with its SMTP evidence.
   | "viewing_reminder"
   | "no_show"
-  | "docs_chase";
+  | "docs_chase"
+  // D51: the manager declined a counter (variant `open`: the offer stands; `closed`: it had lapsed) / an offer lapsed.
+  | "counter_declined"
+  | "offer_expired";
 /** Held offers released by `held_offer_auto_release`. */
 export const HELD_OFFER_RELEASE_JOB = "offer.release";
 
@@ -107,7 +117,7 @@ const MAX_UPLOADS_PER_LINK = 25;
 const appRef = (app: AppRow) => app.ref ?? app.id.slice(0, 8);
 const unitLabel = (u: UnitRow) => `${u.unitNo ?? u.code}, ${u.building}`;
 const unitAddress = (u: UnitRow) =>
-  [u.unitNo ? `Unit ${u.unitNo}` : null, u.building, u.community, "Dubai"].filter(Boolean).join(", ");
+  [u.unitNo ? `Unit ${u.unitNo}` : null, u.building, u.community, EMIRATE_LABELS[u.emirate]].filter(Boolean).join(", ");
 const task = (ctx: EngineContext, tx: Tx, appId: string, t: Parameters<typeof createTask>[3]) =>
   createTask(ctx, tx, appId, t, "application");
 
@@ -918,6 +928,19 @@ async function applyKyc(
   const pol = await getCompanyPolicyVersion(tx, ctx.clock.today());
   const autoVerify = pol.values.autopilot.auto_kyc_verify;
   if (data?.verdict === "verified" && !onFile && autoVerify) {
+    // The offer step needs the unit's emirate rulebook: without one, a person takes it (no advance, no retry loop).
+    const [kycUnit] = await tx.db.select().from(units).where(eq(units.id, app.unitId));
+    if (kycUnit && !hasRulebookFor(ctx.clock.today(), kycUnit.emirate)) {
+      await task(ctx, tx, app.id, {
+        kind: "no_rulebook",
+        title: `No rulebook for ${EMIRATE_LABELS[kycUnit.emirate]} yet: can't make an offer for application ${appRef(app)}`,
+        details: { emirate: kycUnit.emirate, helperRunId },
+        assigneeRole: "leasing_officer",
+        dueOn: ctx.clock.today(),
+        dedupeKey: `${app.id}:no_rulebook`,
+      });
+      return { applied: false, detail: { action: "no rulebook", emirate: kycUnit.emirate, helperRunId } };
+    }
     await advance(ctx, { kind: "application", id: app.id }, "KYC_VERIFIED", {
       actor: "helper:kyc",
       tx,
@@ -1131,11 +1154,19 @@ export async function applyVerifiedIdentity(
 async function unitAndPolicy(ctx: EngineContext, tx: Tx, app: AppRow) {
   const [unit] = await tx.db.select().from(units).where(eq(units.id, app.unitId));
   if (!unit?.askingRentFils) throw conflict("the unit has no approved asking rent");
-  const { policy, contractRuleId } = await offerPolicyAndRuleFor(tx, unit, ctx.clock.today());
+  const { policy, contractRuleId, rentRuleId, discountFrom } = await offerPolicyAndRuleFor(tx, unit, ctx.clock.today());
   return {
     unit,
     policy,
     contractRuleId,
+    // Rule 4: which limits the offer was judged against (D63), recorded on offer events and approvals.
+    limits: {
+      discountPercent: policy.maxRentDiscountPercent,
+      discountFrom,
+      rentRuleId,
+      lowestRentWithoutManagerFils: offerRentFloorFils(unit.askingRentFils, policy),
+      bandMinFils: policy.offerFloorMinFils ?? null,
+    },
     unitTerms: { askingRentFils: unit.askingRentFils, furnished: !!unit.furnished },
   };
 }
@@ -1211,12 +1242,22 @@ export async function sendHeldOffer(
     const held = events.some((e) => e.type === "OFFER_HELD" && eventRevision(e) === revision);
     const sent = events.some((e) => e.type === "OFFER_SENT" && eventRevision(e) === revision);
     if (!held || sent) throw conflict("no offer is held", "offer_not_held");
-    const { unit, policy, contractRuleId, unitTerms } = await unitAndPolicy(ctx, tx, app);
+    const { unit, policy, contractRuleId, unitTerms, limits } = await unitAndPolicy(ctx, tx, app);
     const today = ctx.clock.today();
     // The policy or the asking rent may have changed while the offer was held: check again now.
     const problems = noteDefaultLimits(offerProblems(app.offer, unitTerms, policy, today), contractRuleId);
     if (problems.length) {
-      await askManagerForOffer(ctx, tx, app, unit, { ...app.offer, revision: revision + 1 }, problems, revision, null);
+      await askManagerForOffer(
+        ctx,
+        tx,
+        app,
+        unit,
+        { ...app.offer, revision: revision + 1 },
+        problems,
+        revision,
+        null,
+        limits,
+      );
       return { problems };
     }
     const terms: OfferTerms = { ...app.offer, expiresOn: addDays(today, policy.offerValidDays) };
@@ -1294,8 +1335,16 @@ export async function autoReleaseHeldOffer(ctx: EngineContext, applicationId: st
   }
 }
 
+/** Fail closed: an emirate without a rulebook gets no offer and no lease; Dubai is never the fallback. */
+function assertRulebookFor(unit: Pick<UnitRow, "emirate">, startOn: CalendarDate) {
+  if (!hasRulebookFor(startOn, unit.emirate)) {
+    throw conflict(`no rulebook for ${EMIRATE_LABELS[unit.emirate]} yet`, "no_rulebook");
+  }
+}
+
 async function proposeFirstOffer(ctx: EngineContext, tx: Tx, app: AppRow, opts?: OfferEntryOpts) {
-  const { unit, policy, contractRuleId, unitTerms } = await unitAndPolicy(ctx, tx, app);
+  const { unit, policy, contractRuleId, unitTerms, limits } = await unitAndPolicy(ctx, tx, app);
+  assertRulebookFor(unit, ctx.clock.today());
   const { run, helperRunId } = await runAndRecord(
     ctx,
     tx,
@@ -1327,6 +1376,7 @@ async function proposeFirstOffer(ctx: EngineContext, tx: Tx, app: AppRow, opts?:
       noteDefaultLimits(data.problems, contractRuleId),
       null,
       helperRunId,
+      limits,
     );
     return;
   }
@@ -1335,7 +1385,7 @@ async function proposeFirstOffer(ctx: EngineContext, tx: Tx, app: AppRow, opts?:
     entity: { kind: "application", id: app.id },
     type: "OFFER_MADE",
     actor: "helper:offer",
-    payload: { revision: 1, terms: data.terms, helperRunId },
+    payload: { revision: 1, terms: data.terms, helperRunId, limits },
     rulesVersion: ctx.rulesVersion,
   });
   if (!(await autopilotFlag(ctx, tx, "auto_send_offer", opts))) {
@@ -1346,6 +1396,8 @@ async function proposeFirstOffer(ctx: EngineContext, tx: Tx, app: AppRow, opts?:
   await queueMail(ctx, tx, app.id, "offer", 1);
 }
 
+type OfferLimitsUsed = Awaited<ReturnType<typeof unitAndPolicy>>["limits"];
+
 async function askManagerForOffer(
   ctx: EngineContext,
   tx: Tx,
@@ -1355,6 +1407,7 @@ async function askManagerForOffer(
   problems: string[],
   fromRevision: number | null,
   helperRunId: string | null,
+  limits?: OfferLimitsUsed,
 ) {
   const proposal: OfferLimitsProposal = { applicationId: app.id, terms, problems, fromRevision };
   await requestApproval(ctx, tx, {
@@ -1369,6 +1422,15 @@ async function askManagerForOffer(
         ? { kind: "helper_run" as const, helperRunId, label: "Offer helper (limits check)" }
         : { kind: "field" as const, label: "Limits check", value: "re-run when the held offer was about to be sent" },
       { kind: "field", label: "Approved asking rent", value: formatAed(terms.askingRentFils) },
+      ...(limits
+        ? [
+            {
+              kind: "field" as const,
+              label: "Lowest rent without a manager",
+              value: `${formatAed(limits.lowestRentWithoutManagerFils)} (${limits.discountPercent}% discount from the ${limits.discountFrom})`,
+            },
+          ]
+        : []),
     ],
     rulesVersion: ctx.rulesVersion,
     proposedBy: "helper:offer",
@@ -1490,7 +1552,7 @@ async function applyOfferResponse(
   }
 
   // Counter-offer: a new revision from the structured fields only.
-  const { unit, policy, contractRuleId, unitTerms } = await unitAndPolicy(ctx, tx, app);
+  const { unit, policy, contractRuleId, unitTerms, limits } = await unitAndPolicy(ctx, tx, app);
   const { run, helperRunId } = await runAndRecord(
     ctx,
     tx,
@@ -1516,7 +1578,7 @@ async function applyOfferResponse(
     await advance(ctx, { kind: "application", id: app.id }, "OFFER_REVISED", {
       actor: "helper:offer",
       tx,
-      payload: { terms: data.terms, fromRevision: reply.revision, inboundRef: ev.ref, helperRunId },
+      payload: { terms: data.terms, fromRevision: reply.revision, inboundRef: ev.ref, helperRunId, limits },
     });
     return { applied: true, detail: { ...base, action: `revised offer ${data.terms.revision} sent (within limits)` } };
   }
@@ -1529,14 +1591,26 @@ async function applyOfferResponse(
     noteDefaultLimits(data.problems, contractRuleId),
     reply.revision,
     helperRunId,
+    limits,
   );
   return { applied: true, detail: { ...base, action: "counter outside limits: sent to a leasing manager" } };
 }
 
-async function scheduleOfferExpiry(ctx: EngineContext, tx: Tx, app: AppRow, terms: OfferTerms) {
+/**
+ * Schedules the morning an offer lapses (the day after `expiresOn`, Dubai). A recheck on another
+ * day (D51: a counter still with a manager, or a declined counter's offer standing) gets its own
+ * milestone `offer_expiry@<rev>~<dueOn>`, so a skipped earlier row never hides it. Idempotent.
+ */
+async function scheduleOfferExpiry(
+  ctx: EngineContext,
+  tx: Tx,
+  app: AppRow,
+  terms: OfferTerms,
+  recheckOn?: CalendarDate,
+) {
   // The offer is open through `expiresOn`; it lapses the next morning (Dubai).
-  const dueOn = addDays(terms.expiresOn as CalendarDate, 1);
-  const milestone = `offer_expiry@${terms.revision}`;
+  const dueOn = recheckOn ?? addDays(terms.expiresOn as CalendarDate, 1);
+  const milestone = recheckOn ? `offer_expiry@${terms.revision}~${recheckOn}` : `offer_expiry@${terms.revision}`;
   const [row] = await tx.db
     .insert(deadlines)
     .values({
@@ -1546,16 +1620,25 @@ async function scheduleOfferExpiry(ctx: EngineContext, tx: Tx, app: AppRow, term
       milestone,
       dueOn,
       status: "pending",
-      note: `Offer ${terms.revision} open until ${terms.expiresOn}`,
+      note: recheckOn
+        ? `Offer ${terms.revision} (open until ${terms.expiresOn}) checked again on ${recheckOn}`
+        : `Offer ${terms.revision} open until ${terms.expiresOn}`,
       rulesVersion: ctx.rulesVersion,
     })
     .onConflictDoNothing({ target: [deadlines.entityId, deadlines.milestone] })
     .returning();
-  // Earlier revisions no longer lapse on their own date.
+  // Earlier revisions (and earlier checks) no longer lapse on their own date.
   await tx.db
     .update(deadlines)
     .set({ status: "cancelled", note: "replaced by a newer offer" })
-    .where(and(eq(deadlines.entityId, app.id), eq(deadlines.status, "pending"), ne(deadlines.milestone, milestone)));
+    .where(
+      and(
+        eq(deadlines.entityId, app.id),
+        eq(deadlines.status, "pending"),
+        like(deadlines.milestone, "offer_expiry@%"),
+        ne(deadlines.milestone, milestone),
+      ),
+    );
   if (row && !ctx.demoMode) {
     const jobId = await ctx.scheduler.send(tx, {
       name: DEADLINE_JOB,
@@ -1567,6 +1650,26 @@ async function scheduleOfferExpiry(ctx: EngineContext, tx: Tx, app: AppRow, term
   }
 }
 
+/** A held offer revision nobody has sent yet (the applicant hasn't seen it). */
+async function offerHeldNotSent(tx: Tx, appId: string, revision: number): Promise<boolean> {
+  const events = await tx.db
+    .select({ type: leaseEvents.type, payload: leaseEvents.payload })
+    .from(leaseEvents)
+    .where(and(eq(leaseEvents.entityId, appId), inArray(leaseEvents.type, ["OFFER_HELD", "OFFER_SENT"])));
+  const held = events.some((e) => e.type === "OFFER_HELD" && eventRevision(e) === revision);
+  return held && !events.some((e) => e.type === "OFFER_SENT" && eventRevision(e) === revision);
+}
+
+const pendingOfferDecision = async (tx: Tx, appId: string) =>
+  (
+    await tx.db
+      .select({ id: approvals.id })
+      .from(approvals)
+      .where(
+        and(eq(approvals.entityId, appId), eq(approvals.gate, "offer_out_of_limits"), eq(approvals.status, "pending")),
+      )
+  )[0];
+
 /** Deadline handler: an unanswered offer lapses. Returns null when done, or why it didn't apply. */
 export async function handleApplicationMilestone(
   ctx: EngineContext,
@@ -1576,23 +1679,145 @@ export async function handleApplicationMilestone(
 ): Promise<string | null> {
   const [app] = await tx.db.select().from(applications).where(eq(applications.id, appId)).for("update");
   if (!app) return "application not found";
-  const rev = Number(milestone.split("@")[1]);
   if (!milestone.startsWith("offer_expiry@")) return `unknown milestone ${milestone}`;
+  // `offer_expiry@<rev>` or a recheck `offer_expiry@<rev>~<date>`.
+  const rev = Number(milestone.slice("offer_expiry@".length).split("~")[0]);
   if (app.state !== "OFFER" || app.offer?.revision !== rev) return `offer ${rev} is no longer open`;
   if (app.offerAcceptedAt) return "accepted; waiting for the reservation";
-  const [waiting] = await tx.db
-    .select({ id: approvals.id })
-    .from(approvals)
-    .where(
-      and(eq(approvals.entityId, app.id), eq(approvals.gate, "offer_out_of_limits"), eq(approvals.status, "pending")),
-    );
-  if (waiting) return "a leasing manager is deciding a counter-offer";
+  const today = ctx.clock.today();
+  // A counter with a manager: the offer doesn't lapse under them, but the check is never lost (D51).
+  if (await pendingOfferDecision(tx, app.id)) {
+    const next = addDays(today, 1);
+    await scheduleOfferExpiry(ctx, tx, app, app.offer, next);
+    return `a leasing manager is deciding a counter-offer; checked again on ${next}`;
+  }
+  if (app.offer.expiresOn >= today) {
+    const next = addDays(app.offer.expiresOn as CalendarDate, 1);
+    await scheduleOfferExpiry(ctx, tx, app, app.offer, next);
+    return `offer ${rev} is open until ${app.offer.expiresOn}; checked again on ${next}`;
+  }
   await advance(ctx, { kind: "application", id: app.id }, "OFFER_EXPIRED", {
     actor: "system",
     tx,
     payload: { revision: rev },
   });
+  await queueMail(ctx, tx, app.id, "offer_expired", rev);
   return null;
+}
+
+// ---------------------------------------------------------------- manager decisions on counters (D51)
+
+/** The manager's counter-terms: only rent, cheques and move-in; everything else is recomputed by code. */
+const OFFER_EDIT_KEYS = ["annualRentFils", "cheques", "moveInOn"] as const;
+
+/**
+ * The terms an approved `offer_out_of_limits` sends: the proposed terms with the manager's edits,
+ * re-issued on the day of the decision (deposit, reservation, term and a fresh expiry recomputed by
+ * `applyCounter`, never typed), and checked again against the limits.
+ */
+export async function reissueOfferProposal(
+  ctx: EngineContext,
+  tx: Tx,
+  proposal: OfferLimitsProposal,
+  edits: Record<string, unknown>,
+): Promise<{ proposal: OfferLimitsProposal; changes: Record<string, { before: unknown; after: unknown }> }> {
+  const [app] = await tx.db
+    .select()
+    .from(applications)
+    .where(eq(applications.id, proposal.applicationId))
+    .for("update");
+  if (!app) throw notFound("application");
+  const { policy, contractRuleId, unitTerms } = await unitAndPolicy(ctx, tx, app);
+  const counter = OfferCounter.parse(
+    Object.fromEntries(OFFER_EDIT_KEYS.filter((k) => edits[k] !== undefined).map((k) => [k, edits[k]])),
+  );
+  const today = ctx.clock.today();
+  const terms = applyCounter({
+    today,
+    unit: unitTerms,
+    policy,
+    revision: proposal.terms.revision,
+    current: proposal.terms,
+    counter,
+  });
+  const changes: Record<string, { before: unknown; after: unknown }> = {};
+  for (const k of OFFER_EDIT_KEYS) {
+    if (counter[k] !== undefined && counter[k] !== proposal.terms[k])
+      changes[k] = { before: proposal.terms[k], after: counter[k] };
+  }
+  return {
+    proposal: {
+      ...proposal,
+      ...counter,
+      terms,
+      problems: noteDefaultLimits(offerProblems(terms, unitTerms, policy, today), contractRuleId),
+    },
+    changes,
+  };
+}
+
+/**
+ * A manager declined an `offer_out_of_limits` (D51). A declined counter leaves the current offer
+ * standing until its own expiry, and the applicant is told; if that offer has lapsed meanwhile, the
+ * application closes and the email says so. A declined first offer has nothing to fall back to: a
+ * manager task asks for a new offer or a withdrawal.
+ */
+export async function onOfferLimitsRejected(
+  ctx: EngineContext,
+  tx: Tx,
+  approval: { id: string; entityId: string; proposal: unknown },
+) {
+  const p = approval.proposal as OfferLimitsProposal;
+  const [app] = await tx.db.select().from(applications).where(eq(applications.id, approval.entityId)).for("update");
+  // Closed meanwhile (withdrawn, declined, expired): the applicant was told by that step.
+  if (!app || app.state !== "OFFER") return;
+  const today = ctx.clock.today();
+  // No offer reached the applicant (a first offer, or a held one re-checked before sending): there is
+  // nothing to fall back to and no counter to answer, so a manager decides what happens next.
+  const unsent =
+    p.fromRevision === null ||
+    (app.offer?.revision === p.fromRevision && (await offerHeldNotSent(tx, app.id, p.fromRevision)));
+  if (unsent) {
+    if (p.fromRevision === null && app.offer) return; // an offer went out some other way meanwhile
+    await task(ctx, tx, app.id, {
+      kind: "offer_rejected_unsent",
+      title: `The offer for application ${appRef(app)} was rejected before it was sent: make a new offer or withdraw the application`,
+      details: { approvalId: approval.id, fromRevision: p.fromRevision },
+      assigneeRole: "leasing_manager",
+      dueOn: today,
+      dedupeKey: `${app.id}:offer_rejected_unsent:${approval.id}`,
+    });
+    return;
+  }
+  // The countered offer was replaced meanwhile (a newer revision went out by email) or accepted: the
+  // applicant already has a newer answer, so a "declined" email would only contradict it.
+  if (!app.offer || app.offer.revision !== p.fromRevision || app.offerAcceptedAt) return;
+  if (app.offer.expiresOn >= today) {
+    await queueMail(ctx, tx, app.id, "counter_declined", app.offer.revision, `open-${approval.id}`);
+    // The expiry may have been skipped while the counter was with the manager: make sure it runs.
+    const [pending] = await tx.db
+      .select({ id: deadlines.id })
+      .from(deadlines)
+      .where(
+        and(
+          eq(deadlines.entityId, app.id),
+          eq(deadlines.status, "pending"),
+          like(deadlines.milestone, "offer_expiry@%"),
+        ),
+      );
+    if (!pending) await scheduleOfferExpiry(ctx, tx, app, app.offer, addDays(app.offer.expiresOn as CalendarDate, 1));
+    return;
+  }
+  await advance(ctx, { kind: "application", id: app.id }, "OFFER_EXPIRED", {
+    actor: "system",
+    tx,
+    payload: {
+      revision: app.offer.revision,
+      reason: "the counter-offer was declined after the offer had lapsed",
+      approvalId: approval.id,
+    },
+  });
+  await queueMail(ctx, tx, app.id, "counter_declined", app.offer.revision, `closed-${approval.id}`);
 }
 
 // ---------------------------------------------------------------- reservation → lease
@@ -1679,7 +1904,8 @@ async function createLeaseFromApplication(ctx: EngineContext, tx: Tx, app: AppRo
   if (await unitHasContractedLease(tx, unit.id)) throw conflict(`unit ${unit.code} already has a lease being signed`);
   const id = newId();
   // The version in force on the day the term starts (D23).
-  const rulesVersion = rulesVersionForTerm(terms.startOn as CalendarDate);
+  assertRulebookFor(unit, terms.startOn as CalendarDate);
+  const rulesVersion = rulesVersionForTerm(terms.startOn as CalendarDate, unit.emirate);
   const ref = `${unit.code}/${terms.startOn.slice(0, 7)}`;
   await tx.db.insert(leases).values({
     id,
@@ -1883,6 +2109,8 @@ const PURPOSE: Record<ApplicationMailKind, "link" | "offer" | "receipt" | "remin
   viewing_reminder: "reminder",
   no_show: "reminder",
   docs_chase: "reminder",
+  counter_declined: "offer",
+  offer_expired: "reminder",
 };
 
 /**
@@ -1935,7 +2163,16 @@ export async function sendApplicationMail(
                 ? app.viewingOutcome === "no_show"
                 : kind === "docs_chase"
                   ? app.state === "SCREENING" && (await uploadedDocuments(tx, app.id)).length === 0
-                  : !!app.offerAcceptedAt;
+                  : kind === "counter_declined"
+                    ? variant?.startsWith("open")
+                      ? app.state === "OFFER" &&
+                        app.offer?.revision === seq &&
+                        !app.offerAcceptedAt &&
+                        app.offer.expiresOn >= ctx.clock.today()
+                      : app.state === "WITHDRAWN"
+                    : kind === "offer_expired"
+                      ? app.state === "WITHDRAWN"
+                      : !!app.offerAcceptedAt;
     if (!still) return null;
     const [party] = await tx.db.select().from(parties).where(eq(parties.id, app.partyId));
     const [unit] = await tx.db.select().from(units).where(eq(units.id, app.unitId));
@@ -2074,6 +2311,7 @@ export async function sendApplicationMail(
         partyId: party.id,
         ttlDays: Math.max(1, diffDays(ctx.clock.today(), t.expiresOn as CalendarDate) + 1),
       });
+      const feeLine = await offerRegistrationFeeLine(ctx, tx, unit.emirate, t.annualRentFils);
       mail = offerEmail({
         applicantName: first,
         unitLabel: unitLabel(unit),
@@ -2085,8 +2323,40 @@ export async function sendApplicationMail(
         reservation: formatAed(t.reservationFils),
         moveInOn: t.moveInOn,
         term: `${t.startOn} to ${t.endOn}`,
+        ...(feeLine ? { registrationFeeLine: feeLine } : {}),
         expiresOn: t.expiresOn,
         offerUrl: answer.url,
+        statusUrl: status.url,
+        demo: ctx.demoMode,
+      });
+    } else if (kind === "counter_declined") {
+      // `seq` is the standing offer's revision; the closed variant has no offer to answer.
+      const t = app.offer!;
+      const open = !!variant?.startsWith("open");
+      const answer = open
+        ? await createLink(ctx, tx, {
+            purpose: "offer",
+            entity: { kind: "application", id: app.id },
+            partyId: party.id,
+            ttlDays: Math.max(1, diffDays(ctx.clock.today(), t.expiresOn as CalendarDate) + 1),
+          })
+        : null;
+      mail = counterDeclinedEmail({
+        applicantName: first,
+        unitLabel: unitLabel(unit),
+        reference: appRef(app),
+        outcome: open ? "open" : "closed",
+        expiresOn: t.expiresOn,
+        offerUrl: answer?.url ?? null,
+        statusUrl: status.url,
+        demo: ctx.demoMode,
+      });
+    } else if (kind === "offer_expired") {
+      mail = offerExpiredEmail({
+        applicantName: first,
+        unitLabel: unitLabel(unit),
+        reference: appRef(app),
+        expiresOn: app.offer?.expiresOn ?? "",
         statusUrl: status.url,
         demo: ctx.demoMode,
       });

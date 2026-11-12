@@ -32,8 +32,8 @@ export function Rail({ items, footer }: { items: NavItem[]; footer: ReactNode })
     >
       <Link
         href="/"
-        aria-label="Dubai Leasing, overview"
-        title="Dubai Leasing Contract AI"
+        aria-label="UAE Leasing, overview"
+        title="UAE Leasing Contract AI"
         className="mb-3.5 grid size-[34px] place-items-center rounded-[10px] bg-primary text-[14px] font-bold tracking-[-0.04em] !text-on-primary no-underline"
       >
         DL

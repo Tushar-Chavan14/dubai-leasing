@@ -14,6 +14,7 @@ const Output = z.object({
   ref: z.string(),
   unitCode: z.string().nullable(),
   leaseState: z.string().nullable(),
+  registrationSystem: z.string().optional().describe("Registration system of the unit's emirate (Ejari in Dubai)"),
   contract: z
     .object({
       version: z.number().int(),
@@ -40,7 +41,7 @@ export const contractStatus: CopilotTool<typeof Input, typeof Output> = {
   name: "contract_status",
   kind: "read",
   description:
-    "Contract and Ejari status of one record: contract version and status (pending_approval, sent, signed, rejected, superseded), which signers have signed or are pending, the company template version, the company clauses and the Ejari submission status. Read only; approving and sending happen in the Workspace.",
+    "Contract and registration status (Ejari in Dubai; the output names the registration system) of one record: contract version and status (pending_approval, sent, signed, rejected, superseded), which signers have signed or are pending, the company template version, the company clauses and the registration submission status (the `ejari` field). Read only; approving and sending happen in the Workspace.",
   input: Input,
   output: Output,
   roles: ALL_STAFF,
@@ -52,6 +53,7 @@ export const contractStatus: CopilotTool<typeof Input, typeof Output> = {
       ref: s.ref,
       unitCode: s.unitCode,
       leaseState: s.leaseState,
+      ...(s.registrationSystem ? { registrationSystem: s.registrationSystem } : {}),
       contract: s.contract,
       // Signer names are typed by applicants: data, not instructions.
       signers: s.signers.map((x) => ({ ...x, name: untrusted(x.name) })),

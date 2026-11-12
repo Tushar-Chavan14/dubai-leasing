@@ -46,6 +46,25 @@ describe("whisper transcriber", () => {
     expect(whisperTranscriber("http://127.0.0.1:8178").transcribe(new Uint8Array([1]), "audio/webm")).rejects.toThrow();
   });
 
+  test("line breaks inside a transcript become spaces", async () => {
+    answer({ text: " ask not what your country can\n do for you ", language: "en" });
+    expect((await whisperTranscriber("http://127.0.0.1:8178").transcribe(new Uint8Array([1]), "audio/webm")).text).toBe(
+      "ask not what your country can do for you",
+    );
+  });
+
+  test("a server that isn't running throws VoiceUnavailable; ready() reports it", async () => {
+    globalThis.fetch = (async () => {
+      throw Object.assign(new TypeError("Unable to connect"), { code: "ConnectionRefused" });
+    }) as unknown as typeof fetch;
+    const t = whisperTranscriber("http://127.0.0.1:8179");
+    expect(t.transcribe(new Uint8Array([1]), "audio/webm")).rejects.toMatchObject({ name: "VoiceUnavailable" });
+    expect(await t.ready!()).toBe(false);
+    answer("<html></html>");
+    // Cached briefly so a page load doesn't probe on every request; a fresh transcriber probes again.
+    expect(await whisperTranscriber("http://127.0.0.1:8180").ready!()).toBe(true);
+  });
+
   test("a non-loopback whisper-server is refused (audio stays local)", () => {
     expect(() => whisperTranscriber("http://10.0.0.5:8178")).toThrow("local");
     expect(() => whisperTranscriber("https://whisper.example.com")).toThrow("local");

@@ -1,8 +1,9 @@
-import type { CalendarDate } from "@leasing/core";
+import type { CalendarDate, Emirate } from "@leasing/core";
 import { dubai2025_01 } from "./dubai/2025-01.ts";
 import { deepEqual } from "./schema.ts";
 import type { Rulebook } from "./types.ts";
 
+export * from "./fees.ts";
 export * from "./rules.ts";
 export * from "./schema.ts";
 export type * from "./types.ts";
@@ -54,7 +55,7 @@ export function getRulebook(version: string): Rulebook {
  * The version new leases get on `today`: the registered version with the latest
  * `effectiveFrom` on or before today (a tie goes to the one registered last). Null if none.
  */
-export function activeRulesVersion(today: CalendarDate, emirate: Rulebook["emirate"] = "dubai"): string | null {
+export function activeRulesVersion(today: CalendarDate, emirate: Emirate = "dubai"): string | null {
   let best: Rulebook | null = null;
   for (const r of registry.values()) {
     if (r.emirate !== emirate || r.effectiveFrom > today) continue;
@@ -68,7 +69,7 @@ export function activeRulesVersion(today: CalendarDate, emirate: Rulebook["emira
  * imported and renewed terms alike). A term starting before every registered version (an old
  * imported lease) gets the earliest code base version.
  */
-export function rulesVersionForTerm(startOn: CalendarDate, emirate: Rulebook["emirate"] = "dubai"): string {
+export function rulesVersionForTerm(startOn: CalendarDate, emirate: Emirate = "dubai"): string {
   const active = activeRulesVersion(startOn, emirate);
   if (active) return active;
   const base = baseRulebooks
@@ -76,4 +77,25 @@ export function rulesVersionForTerm(startOn: CalendarDate, emirate: Rulebook["em
     .toSorted((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom))[0];
   if (!base) throw new Error(`no base rulebook for ${emirate}`);
   return base.version;
+}
+
+/**
+ * True when a lease starting on `startOn` can be pinned for the emirate: a registered version is
+ * active on that day, or a code base version exists (the fallback of `rulesVersionForTerm`).
+ */
+/**
+ * The base a stored draft is compared with for loosened tenant protection: the code version with
+ * the latest `effectiveFrom` for the emirate (a tie goes to the one listed last). Null if none.
+ */
+export function latestBaseFor(bases: readonly Rulebook[], emirate: Emirate): Rulebook | null {
+  let best: Rulebook | null = null;
+  for (const r of bases) {
+    if (r.emirate !== emirate) continue;
+    if (!best || r.effectiveFrom >= best.effectiveFrom) best = r;
+  }
+  return best;
+}
+
+export function hasRulebookFor(startOn: CalendarDate, emirate: Emirate): boolean {
+  return activeRulesVersion(startOn, emirate) !== null || baseRulebooks.some((r) => r.emirate === emirate);
 }

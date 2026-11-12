@@ -20,7 +20,7 @@ import {
   CONTRACT_STRUCTURE_JOB,
   CONTRACT_TEMPLATE_JOB,
   contractJobExpireSeconds,
-  runContractStructure,
+  runContractStructureJob,
   runContractTemplateJob,
 } from "./manager/contract-templates.ts";
 import { INBOUND_JOB, processInbound } from "./manager/inbound.ts";
@@ -97,7 +97,14 @@ export async function startWorkers(
   // createQueue keeps an existing queue's settings; make an older install pick the new expiry up too.
   await boss.updateQueue(CONTRACT_TEMPLATE_JOB, { expireInSeconds: contractJobExpireSeconds(modelTimeout) });
   // Same local model reading the same sample: structure, blanks and look (slice 4).
-  await boss.createQueue(CONTRACT_STRUCTURE_JOB, { policy: "exclusive", retryLimit: 1, retryDelay: 60 });
+  // Its own deadline (budget) always fires first, so a reason is stored before pg-boss would expire the job.
+  await boss.createQueue(CONTRACT_STRUCTURE_JOB, {
+    policy: "exclusive",
+    retryLimit: 1,
+    retryDelay: 60,
+    expireInSeconds: contractJobExpireSeconds(modelTimeout),
+  });
+  await boss.updateQueue(CONTRACT_STRUCTURE_JOB, { expireInSeconds: contractJobExpireSeconds(modelTimeout) });
   await boss.createQueue(CONTRACT_FINISH_JOB, {
     policy: "exclusive",
     retryLimit: 4,
@@ -147,7 +154,8 @@ export async function startWorkers(
     for (const job of jobs) await runContractTemplateJob(ctx, job.data.documentId, modelTimeout);
   });
   await boss.work<{ documentId: string; force?: boolean }>(CONTRACT_STRUCTURE_JOB, async (jobs) => {
-    for (const job of jobs) await runContractStructure(ctx, job.data.documentId, job.data.force === true);
+    for (const job of jobs)
+      await runContractStructureJob(ctx, job.data.documentId, job.data.force === true, modelTimeout);
   });
   await boss.work<{ contractId: string }>(CONTRACT_FINISH_JOB, async (jobs) => {
     for (const job of jobs) await finishContract(ctx, job.data.contractId);

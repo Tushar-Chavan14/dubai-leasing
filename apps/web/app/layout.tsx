@@ -8,7 +8,7 @@ import "./tailwind.css";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: { default: "Dubai Leasing", template: "%s | Dubai Leasing" },
+  title: { default: "UAE Leasing", template: "%s | UAE Leasing" },
   description: "Leasing desk for Dubai residential portfolios: approvals, leases, units and legal deadlines.",
   icons: { icon: "/icon.svg" },
 };

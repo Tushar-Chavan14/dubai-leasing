@@ -1,5 +1,5 @@
 import type { LocalDiskStore } from "@leasing/adapters";
-import { PropertyCategory, PropertySubtype, type StaffRole } from "@leasing/core";
+import { Emirate, PropertyCategory, PropertySubtype, type StaffRole } from "@leasing/core";
 import { approvals, leaseParties, leases, parties, unitPhotos, units, withTx } from "@leasing/db";
 import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import type { Hono } from "hono";
@@ -33,6 +33,7 @@ const PriceRangeQuery = z.object({
   companyId: z.string().uuid(),
   category: PropertyCategory,
   subtype: PropertySubtype.nullable(),
+  emirate: Emirate.default("dubai"),
   community: z.string().trim().min(1).max(120),
   bedrooms: z.number().int().min(0).max(10).nullable(),
   areaSqft: z.number().int().min(50).max(100_000).nullable(),
@@ -133,7 +134,7 @@ export function registerUnitRoutes(api: Hono<AuthEnv>, ctx: EngineContext, store
   api.post("/units/price-range", async (c) => {
     const b = PriceRangeQuery.parse(await c.req.json());
     const out = await withTx(ctx.database, (tx) =>
-      priceRangeFor(tx, { ...b, emirate: "dubai", bedrooms: b.bedrooms, areaSqft: b.areaSqft }, ctx.clock.today()),
+      priceRangeFor(tx, { ...b, bedrooms: b.bedrooms, areaSqft: b.areaSqft }, ctx.clock.today()),
     );
     return c.json({ range: exposeRange(out.range), sriLabel: out.sriLabel, ruleId: out.ruleId });
   });

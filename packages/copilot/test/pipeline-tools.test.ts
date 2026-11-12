@@ -4,6 +4,7 @@ import { checkPathForTest } from "../src/engine-client.ts";
 import { type CopilotEvent, type ModelTurn, runCopilotTurn } from "../src/graph.ts";
 import { ScriptedModel } from "../src/models.ts";
 import { systemPrompt } from "../src/prompt.ts";
+import { getRegistrationStatus } from "../src/tools/get-registration-status.ts";
 import { getLease } from "../src/tools/get-lease.ts";
 import { type RecordRowDto, recordActions } from "../src/tools/list-records.ts";
 import { copilotTools, toolsFor } from "../src/tools/index.ts";
@@ -425,6 +426,18 @@ describe("record card quick actions", () => {
   const labels = (r: RecordRowDto, signers: string[] = []) =>
     recordActions(r, signers, "leasing_officer").map((a) => a.label);
 
+  test("a lease registered by hand offers the registration pack, to leasing roles only", () => {
+    const r = row({ kind: "lease", stage: "Ejari", registrationPackUrl: "/api/leases/x/registration/pack" });
+    expect(recordActions(r, [], "leasing_officer")).toContainEqual({
+      type: "link",
+      key: "pack",
+      label: "Download registration pack",
+      href: "/api/leases/x/registration/pack",
+    });
+    expect(recordActions(r, [], "finance").map((a) => a.key)).not.toContain("pack");
+    expect(labels(row({ kind: "lease", stage: "Ejari" }))).not.toContain("Download registration pack");
+  });
+
   test("chosen by stage, always ending with the Workspace link", () => {
     expect(labels(row({ stage: "Enquiry" }))).toEqual(["Invite to viewing", "Open in the Workspace"]);
     for (const stage of ["Viewing", "Documents"])
@@ -498,5 +511,63 @@ describe("get_record with an unknown ref", () => {
     };
     expect(out.found).toBe(false);
     expect(out.note).toContain("A-ZZZZZZ");
+  });
+});
+
+describe("get_registration_status", () => {
+  test("a rejected submission's reasons (array from the engine) are joined, masked and marked untrusted", async () => {
+    const leaseId = "01a15589-4d9e-7b5c-b273-1be27993e58e";
+    const reg = {
+      mode: "manual",
+      registration: {
+        system: "Tasdeeq",
+        portalName: "Tasdeeq",
+        portalUrl: null,
+        instructions: "Register by hand.",
+        referenceExample: "TSD-2026-123456",
+      },
+      pack: { leaseRef: "TST-0101", state: "REGISTRATION", fee: { feeFils: null, paidBy: "tenant" }, checklist: [] },
+      openTaskId: null,
+      submissions: [
+        {
+          id: "s1",
+          attempt: 1,
+          mode: "manual",
+          status: "rejected",
+          reference: null,
+          reasons: [
+            { code: "MANUAL", field: null, message: "Licence expired" },
+            { code: "MANUAL", field: null, message: "Name differs" },
+          ],
+          completedAt: "2026-11-02T04:00:00Z",
+        },
+        {
+          id: "s2",
+          attempt: 2,
+          mode: "manual",
+          status: "awaiting_manual",
+          reference: null,
+          reasons: [],
+          completedAt: null,
+        },
+      ],
+    };
+    const e: EngineClient = {
+      async get<T>() {
+        return reg as T;
+      },
+      async propose<T>(): Promise<T> {
+        throw new Error("no");
+      },
+    };
+    const out = await getRegistrationStatus.run(getRegistrationStatus.input.parse({ lease: leaseId }), {
+      engine: e,
+      user: officer,
+      today: "2026-11-02",
+    });
+    expect(() => getRegistrationStatus.output.parse(out)).not.toThrow();
+    expect(out.submissions[0]!.reasons).toBe("<untrusted>Licence expired; Name differs</untrusted>");
+    expect(out.submissions[1]!.reasons).toBeNull();
+    expect(out.portalUrl).toBeNull();
   });
 });

@@ -1,5 +1,5 @@
-import type { ChannelSender, EjariAdapter, LocalDiskStore, Mailer } from "@leasing/adapters";
-import type { Clock } from "@leasing/core";
+import type { ChannelSender, LocalDiskStore, Mailer, RegistrationAdapter } from "@leasing/adapters";
+import type { Clock, Emirate } from "@leasing/core";
 import type { Database, Tx } from "@leasing/db";
 import type { CopilotModel } from "@leasing/copilot";
 import type { AgentModel } from "@leasing/helpers";
@@ -35,14 +35,16 @@ export interface EngineContext {
   documents: LocalDiskStore;
   /** Tenant uploads (ID documents) under UPLOADS_DIR. Read only by the KYC helper and staff document views. */
   uploads: LocalDiskStore;
-  /** Ejari registry: the simulated service in demos (EJARI_MODE=mock), a fake in tests. */
-  ejari: EjariAdapter;
+  /** Registration systems by emirate: Ejari (the simulated service in demos, a fake in tests) for Dubai. No entry: staff register by hand. */
+  registries: Partial<Record<Emirate, RegistrationAdapter>>;
   /** Local models (decision model for tenant comments). */
   llm: Llm;
   /** Chat model for the leasing assistant (LEASING_ASSISTANT_MODEL). Absent: `llm`. */
   leasingAssistantLlm?: Llm;
   /** Chat model for Contract AI (CONTRACT_AI_MODEL). Absent: `llm`. */
   contractAiLlm?: Llm;
+  /** Seconds each Contract AI model call may take (BACKGROUND_MODEL_TIMEOUT_SECONDS); sets the reading jobs' budget. */
+  backgroundModelTimeoutSeconds?: number;
   /** Local whisper.cpp server for voice input (VOICE_URL). Absent: voice input is off. */
   transcriber?: Transcriber;
   /** Public base URL of the web app, for links in emails. */

@@ -55,7 +55,7 @@ export type ProposalView = ProposalBase &
     | {
         kind: "config_change";
         summary: {
-          change: "add_clause" | "rent_rule" | "contract_rule" | "sri_value" | "kyc_config";
+          change: "add_clause" | "rent_rule" | "contract_rule" | "sri_value" | "kyc_config" | "registration_settings";
           company?: string | null;
           /** Label/value lines formatted by the engine (older proposals have none). */
           facts?: [string, string][];
@@ -109,6 +109,8 @@ export interface ChatMessage {
   tools: ToolStep[];
   unverified: string[];
   status: "streaming" | "done" | "error";
+  /** The agent took back the text it had started and is writing again (shows "Thinking…" until new text). */
+  rethinking?: boolean;
   proposals?: ProposalView[];
   drafts?: DraftView[];
   /** Record and unit cards from this answer's tools (shown while the chat is open; not stored with the thread). */
@@ -206,10 +208,10 @@ export function useCopilotChat(opts: { page?: PageRef | undefined; threadId?: st
                 }));
                 break;
               case "token":
-                patchLast((m) => ({ ...m, content: m.content + e.text }));
+                patchLast((m) => ({ ...m, content: m.content + e.text, rethinking: false }));
                 break;
               case "discard":
-                patchLast((m) => ({ ...m, content: "" }));
+                patchLast((m) => ({ ...m, content: "", rethinking: true }));
                 break;
               case "done":
                 patchLast((m) => ({

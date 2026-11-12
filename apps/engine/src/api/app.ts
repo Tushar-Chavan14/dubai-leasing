@@ -2,7 +2,15 @@ import type { LocalDiskStore } from "@leasing/adapters";
 import { leasingMetrics } from "../manager/metrics.ts";
 import { resetDemoData } from "../demo/reset-data.ts";
 import { seedMissingDemoLeases } from "../demo/seed.ts";
-import { ApprovalDecision, AutopilotPatch, maskPiiText, newId, QUIET_HOURS_SAME } from "@leasing/core";
+import {
+  ApprovalDecision,
+  AutopilotPatch,
+  OfferPolicyPatch,
+  RegistrationPolicyPatch,
+  maskPiiText,
+  newId,
+  QUIET_HOURS_SAME,
+} from "@leasing/core";
 import { companies, companyPolicy, staffUsers, withTx } from "@leasing/db";
 import { asc, desc, eq, sql } from "drizzle-orm";
 
@@ -30,7 +38,9 @@ import { registerCopilotReadRoutes } from "./copilot-reads.ts";
 import { registerReadRoutes } from "./reads.ts";
 import { registerRenewalRoutes } from "./renewals.ts";
 import { registerStaffWorkRoutes } from "./staff-work.ts";
+import { registerRegistrationSettingsRoutes } from "./registration-settings.ts";
 import { registerSriRoutes } from "./sri.ts";
+import { registerRegistrationRoutes } from "./registration.ts";
 import { registerLeaseDocumentRoutes } from "./lease-documents.ts";
 import { registerRulebookRoutes } from "./rulebooks.ts";
 import { registerUnitRoutes } from "./units.ts";
@@ -38,6 +48,47 @@ import { registerWorkspaceRoutes } from "./workspace.ts";
 
 /** Advisory lock number that serializes autopilot saves. */
 const AUTOPILOT_LOCK = 7_301_001;
+
+type PolicyCur = Awaited<ReturnType<typeof getCompanyPolicyVersion>>;
+
+/** Versioned company-policy save: serialized by an advisory lock, merges onto the newest version, inserts
+ * latest+1 only when `mutate` reports changes, and appends the audit event (rule 4). */
+async function savePolicyVersion(
+  ctx: EngineContext,
+  userId: string,
+  eventType: "AUTOPILOT_CHANGED" | "POLICY_CHANGED",
+  mutate: (cur: PolicyCur) => { values: PolicyCur["values"]; changes: unknown[] },
+): Promise<{ version: number | null; values: PolicyCur["values"] }> {
+  return withTx(ctx.database, async (tx) => {
+    await tx.db.execute(sql`select pg_advisory_xact_lock(${AUTOPILOT_LOCK})`);
+    const [latest] = await tx.db
+      .select({ v: companyPolicy.version })
+      .from(companyPolicy)
+      .orderBy(desc(companyPolicy.version))
+      .limit(1);
+    const cur = await getCompanyPolicyVersion(tx, ctx.clock.today());
+    const { values, changes } = mutate(cur);
+    if (changes.length === 0 && cur.version !== null) return { version: cur.version, values: cur.values };
+    const version = (latest?.v ?? 0) + 1;
+    const policyId = newId();
+    await tx.db.insert(companyPolicy).values({
+      id: policyId,
+      version,
+      effectiveFrom: ctx.clock.today(),
+      values,
+      createdBy: `user:${userId}`,
+    });
+    // The policy is company-wide, so the entity is the new policy row (kind "company").
+    await appendEvent(tx, ctx, {
+      entity: { kind: "company", id: policyId },
+      type: eventType,
+      actor: `user:${userId}`,
+      payload: { policyVersion: version, previousVersion: cur.version, changes },
+      rulesVersion: null,
+    });
+    return { version, values };
+  });
+}
 
 /** POST /import/<kind>: admin or leasing manager; CSV body or {"csv": "..."}. */
 const importRoute = (
@@ -107,8 +158,14 @@ export function createApi(ctx: EngineContext, opts: ApiOptions) {
     return c.json({ error: "internal error", code: "internal" }, 500);
   });
 
-  app.get("/health", (c) =>
-    c.json({ ok: true, today: ctx.clock.today(), demoMode: ctx.demoMode, voice: !!ctx.transcriber }),
+  app.get("/health", async (c) =>
+    c.json({
+      ok: true,
+      today: ctx.clock.today(),
+      demoMode: ctx.demoMode,
+      // The microphone shows only while the whisper-server answers, not merely because VOICE_URL is set.
+      voice: !!ctx.transcriber && (await ctx.transcriber.ready?.()) !== false,
+    }),
   );
 
   // --- auth (demo login only in phase 0) ---
@@ -172,6 +229,7 @@ export function createApi(ctx: EngineContext, opts: ApiOptions) {
   registerUnitRoutes(api, ctx, opts.mediaStore);
   // Always on: the rent index (pricing) and generated contract documents.
   registerSriRoutes(api, ctx);
+  registerRegistrationSettingsRoutes(api, ctx);
   registerLeaseDocumentRoutes(api, ctx);
   registerStaffWorkRoutes(api, ctx);
   // Move-in through move-out: only with TENANCY_OPS.
@@ -183,6 +241,7 @@ export function createApi(ctx: EngineContext, opts: ApiOptions) {
   registerPortfolioRoutes(api, ctx);
   registerApplicationRoutes(api, ctx);
   registerContractRoutes(api, ctx);
+  registerRegistrationRoutes(api, ctx);
   registerConversationRoutes(api, ctx);
   if (ctx.tenancyOps) registerTenancyRoutes(api, ctx);
   // The copilot calls this same app in-process, as the user (architecture §8b).
@@ -191,49 +250,43 @@ export function createApi(ctx: EngineContext, opts: ApiOptions) {
   api.put("/policy/autopilot", async (c) => {
     requireRole(c.get("user"), ["admin"]);
     const body = AutopilotPatch.parse(await c.req.json());
-    const userId = c.get("user").id;
-    const out = await withTx(ctx.database, async (tx) => {
-      // Saves serialize: each reads the newest version and merges on its values.
-      await tx.db.execute(sql`select pg_advisory_xact_lock(${AUTOPILOT_LOCK})`);
-      const [latest] = await tx.db
-        .select({ v: companyPolicy.version })
-        .from(companyPolicy)
-        .orderBy(desc(companyPolicy.version))
-        .limit(1);
-      const cur = await getCompanyPolicyVersion(tx, ctx.clock.today());
+    const out = await savePolicyVersion(ctx, c.get("user").id, "AUTOPILOT_CHANGED", (cur) => {
       const values = { ...cur.values, autopilot: { ...cur.values.autopilot, ...body } };
       if (values.autopilot.quiet_hours_start === values.autopilot.quiet_hours_end)
         throw new DomainError(QUIET_HOURS_SAME, 400, "quiet_hours_same", ["quiet_hours_end: " + QUIET_HOURS_SAME]);
       const before = cur.values.autopilot as Record<string, unknown>;
-      const changed = Object.entries(body).some(([k, v]) => v !== undefined && before[k] !== v);
-      if (!changed && cur.version !== null) return { version: cur.version, autopilot: cur.values.autopilot };
-      const version = (latest?.v ?? 0) + 1;
-      const policyId = newId();
-      await tx.db.insert(companyPolicy).values({
-        id: policyId,
-        version,
-        effectiveFrom: ctx.clock.today(),
-        values,
-        createdBy: `user:${userId}`,
-      });
-      // Audit (rule 4): who changed which toggle, from what to what. The policy is company-wide, so
-      // the entity is the new policy row (kind "company").
-      await appendEvent(tx, ctx, {
-        entity: { kind: "company", id: policyId },
-        type: "AUTOPILOT_CHANGED",
-        actor: `user:${userId}`,
-        payload: {
-          policyVersion: version,
-          previousVersion: cur.version,
-          changes: Object.entries(body)
-            .filter(([k, v]) => v !== undefined && before[k] !== v)
-            .map(([step, to]) => ({ step, from: before[step], to })),
-        },
-        rulesVersion: null,
-      });
-      return { version, autopilot: values.autopilot };
+      const changes = Object.entries(body)
+        .filter(([k, v]) => v !== undefined && before[k] !== v)
+        .map(([step, to]) => ({ step, from: before[step], to }));
+      return { values, changes };
     });
-    return c.json(out);
+    return c.json({ version: out.version, autopilot: out.values.autopilot });
+  });
+  api.put("/policy/registration", async (c) => {
+    requireRole(c.get("user"), ["admin"]);
+    const body = RegistrationPolicyPatch.parse(await c.req.json());
+    const out = await savePolicyVersion(ctx, c.get("user").id, "POLICY_CHANGED", (cur) => {
+      const from = cur.values.registrationFeePaidBy;
+      const changes =
+        from === body.registrationFeePaidBy
+          ? []
+          : [{ field: "registrationFeePaidBy", from, to: body.registrationFeePaidBy }];
+      return { values: { ...cur.values, registrationFeePaidBy: body.registrationFeePaidBy }, changes };
+    });
+    return c.json({ version: out.version, registrationFeePaidBy: out.values.registrationFeePaidBy });
+  });
+  api.put("/policy/offers", async (c) => {
+    requireRole(c.get("user"), ["admin"]);
+    const body = OfferPolicyPatch.parse(await c.req.json());
+    const out = await savePolicyVersion(ctx, c.get("user").id, "POLICY_CHANGED", (cur) => {
+      const from = cur.values.maxRentDiscountPercent;
+      const changes =
+        from === body.maxRentDiscountPercent
+          ? []
+          : [{ field: "maxRentDiscountPercent", from, to: body.maxRentDiscountPercent }];
+      return { values: { ...cur.values, maxRentDiscountPercent: body.maxRentDiscountPercent }, changes };
+    });
+    return c.json({ version: out.version, maxRentDiscountPercent: out.values.maxRentDiscountPercent });
   });
   api.get("/deadlines", async (c) => {
     const days = z.coerce.number().int().min(1).max(400).catch(60).parse(c.req.query("days"));
@@ -283,7 +336,11 @@ export function createApi(ctx: EngineContext, opts: ApiOptions) {
     api.post("/demo/ejari/reject-next", async (c) => {
       requireRole(c.get("user"), ["admin", "leasing_manager", "leasing_officer"]);
       if (!opts.ejariMockUrl) throw unprocessable("the simulated registry isn't configured", [], "no_mock");
-      const r = await fetch(`${opts.ejariMockUrl.replace(/\/$/, "")}/api/v1/demo/reject-next`, {
+      const { system } = z
+        .object({ system: z.enum(["ejari", "tawtheeq"]).optional() })
+        .parse(await c.req.json().catch(() => ({})));
+      const prefix = system === "tawtheeq" ? "/tawtheeq" : "";
+      const r = await fetch(`${opts.ejariMockUrl.replace(/\/$/, "")}${prefix}/api/v1/demo/reject-next`, {
         method: "POST",
       }).catch(() => null);
       if (!r?.ok) throw unprocessable("the simulated registry didn't answer; is it running?", [], "mock_down");

@@ -94,6 +94,44 @@ describe.skipIf(noDb)("staff copilot (Postgres, scripted model)", () => {
     expect(search).toEqual([expect.objectContaining({ unitCode: "TST-0101", leaseId })]);
   });
 
+  test("emirate setup: fees, registration mode and rulebook come from code, for every role", async () => {
+    const { as } = await setup();
+    expect((await as(null, "/api/copilot/emirate-setup")).status).toBe(401);
+    type Row = {
+      emirate: string;
+      registration: string;
+      registrationSystem: string;
+      rulebook: { available: boolean; activeVersion: string | null };
+      registrationFee: { feeFils: number | null; fee: string | null };
+      paidBy: string;
+    };
+    for (const role of ROLES) {
+      const u = await addStaff(database, role);
+      const get = async (qs: string) =>
+        ((await (await as(u, `/api/copilot/emirate-setup${qs}`)).json()) as { emirates: Row[] }).emirates;
+      const all = await get("?annualRentFils=10000000");
+      expect(all.map((r) => r.emirate)).toHaveLength(7);
+      const by = Object.fromEntries(all.map((r) => [r.emirate, r]));
+      expect(by.sharjah!.registrationFee.feeFils).toBe(410_000);
+      expect(by.sharjah!.registrationFee.fee).toBe("AED 4,100.00");
+      expect(by.dubai!.registrationFee.feeFils).toBe(17_775);
+      expect(by.sharjah!.registration).toBe("by_hand");
+      expect(by.dubai!.registration).toBe("online");
+      expect(by.dubai!.registrationSystem).toBe("Ejari");
+      expect(by.dubai!.rulebook.available).toBe(true);
+      expect(by.dubai!.rulebook.activeVersion).toMatch(/^dubai-/);
+      expect(all.filter((r) => r.rulebook.available).map((r) => r.emirate)).toEqual(["dubai"]);
+      expect(by.dubai!.paidBy).toBe("tenant");
+      // No rent given: no fee computed.
+      expect((await get("?emirate=ajman"))[0]!.registrationFee.feeFils).toBeNull();
+      // Fujairah: flat AED 300 below AED 15,000, 2% from there.
+      expect((await get("?emirate=fujairah&annualRentFils=1499900"))[0]!.registrationFee.feeFils).toBe(30_000);
+      expect((await get("?emirate=fujairah&annualRentFils=1500000"))[0]!.registrationFee.feeFils).toBe(30_000);
+      expect((await get("?emirate=fujairah&annualRentFils=2000000"))[0]!.registrationFee.feeFils).toBe(40_000);
+    }
+    expect((await as(await addStaff(database, "admin"), "/api/copilot/emirate-setup?emirate=mars")).status).toBe(400);
+  });
+
   test("renewal-cap gives the same numbers as the renewal notice, and writes nothing", async () => {
     const { ctx, clock, leaseId, as } = await setup();
     const u = await addStaff(database, "leasing_officer");
@@ -226,11 +264,13 @@ describe.skipIf(noDb)("staff copilot (Postgres, scripted model)", () => {
       get_helper_run: { helperRunId: run!.id },
       list_outbound_messages: { lease: "TST-0101" },
       explain_rule: { rule: "rent_cap", lease: "TST-0101" },
+      get_emirate_setup: { emirate: "sharjah", annualRentAed: 100_000 },
       compute_renewal_cap: { lease: "TST-0101" },
       find_available_units: { bedrooms: 1 },
       list_payments: { lease: "TST-0101" },
       list_tickets: { lease: "TST-0101" },
       get_case_pack: { lease: "TST-0101" },
+      get_registration_status: { lease: "TST-0101" },
       pipeline_summary: {},
       list_records: { stage: "Contract", limit: 5 },
       get_record: { ref: "TST-0101" },

@@ -4,13 +4,15 @@
  * Published rows are immutable (DB trigger) and are loaded into the in-memory registry of
  * `packages/rulebook`, so every rule lookup stays synchronous and by version.
  */
-import { type Actor, type CalendarDate, isCalendarDate, newId } from "@leasing/core";
+import { type Actor, type CalendarDate, EMIRATE_LABELS, isCalendarDate, newId } from "@leasing/core";
 import { type Database, rulebooks, type Tx, withTx } from "@leasing/db";
+import { isDemoEmirateVersion } from "../demo/emirate-rulebooks.ts";
 import {
   activeRulesVersion,
   baseRulebooks,
   deepEqual,
   getRulebook,
+  latestBaseFor,
   type Loosened,
   loosenedVsBase,
   ReferenceRules,
@@ -73,11 +75,57 @@ export async function syncRulebooks(database: Database): Promise<void> {
   for (const row of rows) registerRulebook(rulebookFromRow(row));
 }
 
-/** The code version stored drafts are compared with for loosened tenant protection. */
+/**
+ * The base stored drafts are compared with for loosened tenant protection: the code version for
+ * the emirate, else the earliest-effective demo-seeded version registered for it (D55). A non-demo version never
+ * becomes a base: an emirate without a code base or demo seed fails closed.
+ */
 export function baseFor(emirate: Rulebook["emirate"]): Rulebook {
-  const base = baseRulebooks.find((r) => r.emirate === emirate);
-  if (!base) throw new Error(`no base rulebook for ${emirate}`);
-  return base;
+  const base = latestBaseFor(baseRulebooks, emirate);
+  if (base) return base;
+  const earliest = rulebookVersions()
+    .map((v) => getRulebook(v))
+    .filter((r) => r.emirate === emirate && isDemoEmirateVersion(r.version))
+    .toSorted((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom))[0];
+  if (!earliest) throw new Error(`no base rulebook for ${emirate}`);
+  return earliest;
+}
+
+/** The base an emirate's drafts are checked against, or null for an emirate with no rulebook yet. */
+export function baseOrNull(emirate: Rulebook["emirate"]): Rulebook | null {
+  try {
+    return baseFor(emirate);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * What a draft weakens compared with its emirate's base. Two cases always need a confirmed legal review, because
+ * nothing has checked these values for this emirate: an emirate with no reviewed base (its first rulebook), and a
+ * draft copied from another emirate's version (`basedOn`).
+ */
+export function loosenedFor(values: RulebookValues, emirate: Rulebook["emirate"], basedOn?: string | null): Loosened[] {
+  const base = baseOrNull(emirate);
+  if (!base)
+    return [
+      {
+        field: `First rulebook for ${EMIRATE_LABELS[emirate]}: nothing reviewed to compare with`,
+        base: null,
+        value: null,
+      },
+    ];
+  let from: Rulebook["emirate"] | null = null;
+  try {
+    from = basedOn ? getRulebook(basedOn).emirate : null;
+  } catch {
+    from = null;
+  }
+  const copied: Loosened[] =
+    from && from !== emirate
+      ? [{ field: `Values copied from ${EMIRATE_LABELS[from]} (${basedOn})`, base: null, value: null }]
+      : [];
+  return [...copied, ...loosenedVsBase(values, base)];
 }
 
 export interface Change {
@@ -149,19 +197,25 @@ function requireFutureOrToday(ctx: EngineContext, effectiveFrom: string) {
     );
 }
 
-/** New draft copied from a published version, named `dubai-YYYY-MM-NN` from today's date. */
-export async function createDraft(ctx: EngineContext, basedOn: string, actor: Actor): Promise<Row> {
+/** A draft copied from a published version; `emirate` (default: the source's) may start another emirate's rules. */
+export async function createDraft(
+  ctx: EngineContext,
+  basedOn: string,
+  actor: Actor,
+  emirate?: Rulebook["emirate"],
+): Promise<Row> {
   let source: Rulebook;
   try {
     source = getRulebook(basedOn);
   } catch {
     throw notFound("published rulebook version");
   }
+  const target = emirate ?? source.emirate;
   const today = ctx.clock.today();
   return withTx(ctx.database, async (tx) => {
     // Serialise version numbering.
     await tx.boss.executeSql("SELECT pg_advisory_xact_lock(hashtext('rulebooks:new-version'))", []);
-    const prefix = `${source.emirate}-${today.slice(0, 7)}-`;
+    const prefix = `${target}-${today.slice(0, 7)}-`;
     const taken = await tx.db
       .select({ version: rulebooks.version })
       .from(rulebooks)
@@ -174,7 +228,7 @@ export async function createDraft(ctx: EngineContext, basedOn: string, actor: Ac
       .values({
         id: newId(),
         version,
-        emirate: source.emirate,
+        emirate: target,
         status: "draft",
         basedOn,
         effectiveFrom: today,
@@ -187,7 +241,7 @@ export async function createDraft(ctx: EngineContext, basedOn: string, actor: Ac
       entity: { kind: "rulebook", id: row!.id },
       type: "RULEBOOK_DRAFT_CREATED",
       actor,
-      payload: { version, basedOn, effectiveFrom: today },
+      payload: { version, basedOn, emirate: target, effectiveFrom: today },
       rulesVersion: version,
     });
     return row!;
@@ -231,7 +285,7 @@ export async function updateDraft(ctx: EngineContext, version: string, patch: Dr
         entity: { kind: "rulebook", id: row.id },
         type: "RULEBOOK_DRAFT_UPDATED",
         actor,
-        payload: { version, changes, loosened: loosenedVsBase(after.values, baseFor(row.emirate)) },
+        payload: { version, changes, loosened: loosenedFor(after.values, row.emirate, row.basedOn) },
         rulesVersion: version,
       });
     return updated!;
@@ -269,11 +323,13 @@ export async function publishRulebook(
     requireDraft(row);
     requireFutureOrToday(ctx, row.effectiveFrom);
     const rulebook = rulebookFromRow(row);
-    const loosened = loosenedVsBase(rulebookValues(rulebook), baseFor(row.emirate));
+    const loosened = loosenedFor(rulebookValues(rulebook), row.emirate, row.basedOn);
     if (loosened.length && opts.confirmLegalReview !== true)
       throw unprocessable(
         "these changes weaken tenant protection compared with the base rules; confirm a legal review to publish",
-        loosened.map((l) => `${l.field}: ${String(l.base)} → ${String(l.value)}`),
+        loosened.map((l) =>
+          l.base === null && l.value === null ? l.field : `${l.field}: ${String(l.base)} → ${String(l.value)}`,
+        ),
         "legal_review_required",
       );
     const active = activeRulesVersion(ctx.clock.today(), row.emirate);

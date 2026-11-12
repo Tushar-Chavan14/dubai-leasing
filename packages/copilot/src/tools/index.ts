@@ -9,6 +9,7 @@ import { draftEmail } from "./draft-email.ts";
 import { listPayments } from "./list-payments.ts";
 import { listTickets } from "./list-tickets.ts";
 import { proposeApproval } from "./propose-approval.ts";
+import { getEmirateSetup } from "./get-emirate-setup.ts";
 import { explainRule } from "./explain-rule.ts";
 import { findAvailableUnits } from "./find-available-units.ts";
 import { getHelperRun } from "./get-helper-run.ts";
@@ -36,12 +37,15 @@ import { proposeResendSigningLink } from "./propose-resend-signing-link.ts";
 import { proposeViewingInvite } from "./propose-viewing-invite.ts";
 import { viewingSlots } from "./viewing-slots.ts";
 import { addContractClause } from "./add-contract-clause.ts";
+import { addSuggestedClause } from "./add-suggested-clause.ts";
 import { getCompanySettings } from "./get-company-settings.ts";
 import { getKycConfig } from "./get-kyc-config.ts";
 import { editKycConfig } from "./edit-kyc-config.ts";
 import { saveContractRule } from "./save-contract-rule.ts";
 import { saveRentRule } from "./save-rent-rule.ts";
 import { saveSriValue } from "./save-sri-value.ts";
+import { getRegistrationStatus } from "./get-registration-status.ts";
+import { saveRegistrationSettings } from "./save-registration-settings.ts";
 
 /**
  * The copilot tool registry (architecture §8b). The engine's chat endpoint and, later, the MCP
@@ -71,6 +75,8 @@ export const copilotTools: readonly CopilotTool[] = [
   getHelperRun,
   listOutboundMessages,
   explainRule,
+  getEmirateSetup,
+  getRegistrationStatus,
   computeRenewalCap,
   findAvailableUnits,
   listPayments,
@@ -81,10 +87,12 @@ export const copilotTools: readonly CopilotTool[] = [
   proposeResendSigningLink,
   proposePrepareContract,
   addContractClause,
+  addSuggestedClause,
   saveRentRule,
   editKycConfig,
   saveContractRule,
   saveSriValue,
+  saveRegistrationSettings,
   createTaskTool,
   proposeApproval,
   draftEmail,

@@ -39,7 +39,7 @@ export function proposalValue(key: string, value: unknown): string {
 }
 
 const KEY_LABELS: Record<string, string> = {
-  sriAverageFils: "SRI average",
+  sriAverageFils: "Rent index average",
   leaseRef: "Lease",
   leaseId: "Lease id",
   newTermStartOn: "New term starts",
@@ -329,6 +329,7 @@ export const STATE_LABELS: Record<string, string> = {
   superseded: "Replaced",
   queued: "Queued",
   sending: "Sending",
+  awaiting_manual: "Waiting for staff to register on the portal",
   issued: "Issued",
   error: "Failed",
 };

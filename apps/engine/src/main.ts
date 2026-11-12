@@ -77,7 +77,10 @@ const ctx: EngineContext = {
   mailer,
   documents: new LocalDiskStore(documentsRoot),
   uploads: new LocalDiskStore(uploadsRoot),
-  ejari: new HttpEjariClient({ baseUrl: env.EJARI_MOCK_URL }),
+  registries: {
+    dubai: new HttpEjariClient({ baseUrl: env.EJARI_MOCK_URL }),
+    abu_dhabi: new HttpEjariClient({ baseUrl: env.EJARI_MOCK_URL, pathPrefix: "/tawtheeq" }),
+  },
   llm: new OllamaLlm({
     url: env.OLLAMA_URL,
     decisionModel: env.DECISION_MODEL,
@@ -110,6 +113,7 @@ const ctx: EngineContext = {
         }),
       }
     : {}),
+  backgroundModelTimeoutSeconds: env.BACKGROUND_MODEL_TIMEOUT_SECONDS,
   kyc: { docTimeoutMs: env.KYC_DOC_TIMEOUT_SECONDS * 1000, stuckMinutes: env.KYC_STUCK_MINUTES },
   ...(env.COPILOT_MODEL || env.CHAT_MODEL
     ? { copilot: ollamaCopilotModel({ url: env.OLLAMA_URL, model: (env.COPILOT_MODEL || env.CHAT_MODEL)! }) }

@@ -1,4 +1,4 @@
-import { formatAed } from "@leasing/core";
+import { type Emirate, formatAed, rentIndexName } from "@leasing/core";
 
 /**
  * Renewal notice content (English). Structured blocks so the same content renders to PDF and
@@ -41,6 +41,8 @@ export interface RenewalNoticeInput {
   rulesVersion: string;
   /** Legal notice period from the rulebook for `rulesVersion` (never written into the text). */
   renewalNoticeDays: number;
+  /** Emirate of the lease's rulebook; names the rent index. Defaults to dubai. */
+  emirate?: Emirate;
   maxIncreasePercent: number;
   sriAverageFils: number | null;
   /** True when sent as the same-rent fallback after the 90-day deadline. */
@@ -101,7 +103,7 @@ export function renewalNotice(n: RenewalNoticeInput): NoticeDocument {
         ? ([
             {
               kind: "para",
-              text: `The increase is within the maximum allowed for this renewal (${n.maxIncreasePercent}%), based on the Smart Rental Index average for similar homes${n.sriAverageFils ? ` of ${formatAed(n.sriAverageFils)} a year` : ""}. This notice is given at least ${n.renewalNoticeDays} days before the end of the tenancy.`,
+              text: `The increase is within the maximum allowed for this renewal (${n.maxIncreasePercent}%), based on the ${rentIndexName(n.emirate ?? "dubai")} average for similar homes${n.sriAverageFils ? ` of ${formatAed(n.sriAverageFils)} a year` : ""}. This notice is given at least ${n.renewalNoticeDays} days before the end of the tenancy.`,
             },
           ] satisfies NoticeBlock[])
         : n.sameRentFallback

@@ -390,6 +390,30 @@ describe.skipIf(noDb)("web chat status check", () => {
     expect(e.actions.map((x) => x.data)).toEqual([`status:ej:${reg.leaseId}`]);
   });
 
+  test("leases: the registration step and button use the emirate's system name (Ejari in Dubai, Tawtheeq in Abu Dhabi)", async () => {
+    const w = await world();
+    const dubai = await w.lease("sara@example.com", "MOVE_IN", "L-DXB");
+    const ad = await w.lease("sara@example.com", "MOVE_IN", "L-AUH");
+    const adReg = await w.lease("sara@example.com", "REGISTRATION", "L-AUH2");
+    const [row] = await database.db.select({ unitId: leases.unitId }).from(leases).where(eq(leases.id, ad.leaseId));
+    await database.db.update(units).set({ emirate: "abu_dhabi" }).where(eq(units.id, row!.unitId));
+    const [row2] = await database.db.select({ unitId: leases.unitId }).from(leases).where(eq(leases.id, adReg.leaseId));
+    await database.db.update(units).set({ emirate: "abu_dhabi" }).where(eq(units.id, row2!.unitId));
+    const c = await w.chat();
+    const r = await w.verify(c);
+    const byRef = new Map(r.reply!.status!.apps.map((x) => [x.ref, x]));
+    expect(byRef.get("L-DXB")!.nextStep).toBe(
+      "Your tenancy is registered. Your Ejari certificate has been emailed to you.",
+    );
+    expect(byRef.get("L-DXB")!.actions[0]!.label).toContain("Email me the Ejari certificate");
+    expect(byRef.get("L-AUH")!.nextStep).toBe(
+      "Your tenancy is registered. Your Tawtheeq certificate has been emailed to you.",
+    );
+    expect(byRef.get("L-AUH")!.actions[0]!.label).toContain("Email me the Tawtheeq certificate");
+    expect(byRef.get("L-AUH2")!.nextStep).toBe("We are registering your tenancy with Tawtheeq.");
+    expect(dubai.leaseId).toBeTruthy();
+  });
+
   test("re-sends reuse the mail jobs, are idempotent per Dubai day, and go to the address on file", async () => {
     const w = await world();
     const a = await w.apply("sara@example.com");

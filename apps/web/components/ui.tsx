@@ -52,6 +52,7 @@ const TONES: Record<string, "good" | "warn" | "bad" | "quiet" | undefined> = {
   superseded: "quiet",
   queued: "quiet",
   sending: "warn",
+  awaiting_manual: "warn",
   issued: "good",
   error: "bad",
 };

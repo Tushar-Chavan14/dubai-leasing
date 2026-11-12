@@ -218,6 +218,55 @@
       "when": 1793707362306,
       "tag": "0030_kyc_draft",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1794236797301,
+      "tag": "0031_emirates",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1794238312379,
+      "tag": "0032_registration_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1794250904176,
+      "tag": "0033_template_emirate",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1794250905176,
+      "tag": "0034_template_emirate_backfill",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1794308715722,
+      "tag": "0035_contract_rule_emirate",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1794397156088,
+      "tag": "0036_rent_rule_offer_discount",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1794406132247,
+      "tag": "0037_contract_template_rewrites",
+      "breakpoints": true
     }
   ]
 }

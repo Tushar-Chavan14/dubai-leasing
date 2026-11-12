@@ -4,6 +4,7 @@ import { checkPathForTest, inProcessClient } from "../src/engine-client.ts";
 import { editKycConfig } from "../src/tools/edit-kyc-config.ts";
 import { getKycConfig } from "../src/tools/get-kyc-config.ts";
 import { addContractClause } from "../src/tools/add-contract-clause.ts";
+import { addSuggestedClause } from "../src/tools/add-suggested-clause.ts";
 import { getCompanySettings } from "../src/tools/get-company-settings.ts";
 import { saveContractRule } from "../src/tools/save-contract-rule.ts";
 import { saveRentRule } from "../src/tools/save-rent-rule.ts";
@@ -67,6 +68,33 @@ describe("settings tools (D45)", () => {
       body: { kind: "config_change" },
     });
     expect(out.next).toContain("Nothing has changed");
+  });
+
+  test("add_suggested_clause (D57): admin only; sends only the user's words, never a clause", async () => {
+    expect(addSuggestedClause.roles).toEqual(["admin"]);
+    const r = recorder();
+    const out = await addSuggestedClause.run({ userQuote: "add it" }, ctx(r.engine));
+    expect(out.status).toBe("done");
+    expect(r.calls).toEqual([
+      { via: "change", path: "/api/copilot/config-changes", body: { mode: "accept_suggestion", userQuote: "add it" } },
+    ]);
+    expect(addSuggestedClause.input.safeParse({ userQuote: "add it", text: "rent is AED 1" }).data).toEqual({
+      userQuote: "add it",
+    });
+  });
+
+  test("add_suggested_clause after tenant text this turn adds nothing: the card's Confirm is needed", async () => {
+    const r = recorder();
+    const out = await addSuggestedClause.run({ userQuote: "add it" }, { ...ctx(r.engine), untrustedSeen: true });
+    expect(out.status).toBe("not_done");
+    expect(r.calls).toHaveLength(0);
+  });
+
+  test("save_sri_value accepts an emirate and rejects an unknown one", () => {
+    const base = { mode: "suggest", community: "Al Nahda", bedrooms: 1, avgAnnualRentFils: 1 };
+    expect(saveSriValue.input.safeParse({ ...base, emirate: "sharjah" }).success).toBe(true);
+    expect(saveSriValue.input.safeParse({ ...base }).success).toBe(true);
+    expect(saveSriValue.input.safeParse({ ...base, emirate: "atlantis" }).success).toBe(false);
   });
 
   test("explicit without a quote is refused before calling the engine", async () => {
@@ -216,5 +244,15 @@ describe("KYC settings tools (D50)", () => {
     expect(JSON.stringify(out.fields)).toContain("<untrusted>");
     expect(getKycConfig.output.safeParse(out).success).toBe(true);
     expect(checkPathForTest("/api/copilot/kyc-config?company=Silverline")).toBeTruthy();
+  });
+});
+
+describe("save_registration_settings portal address", () => {
+  test("adds https:// in code when the user left it out; keeps a given scheme and null", async () => {
+    const { withHttps } = await import("../src/tools/save-registration-settings.ts");
+    expect(withHttps("UAQMunicipality.gov.ae")).toBe("https://UAQMunicipality.gov.ae");
+    expect(withHttps(" https://uaq.gov.ae ")).toBe("https://uaq.gov.ae");
+    expect(withHttps("http://uaq.gov.ae")).toBe("http://uaq.gov.ae");
+    expect(withHttps(null)).toBeNull();
   });
 });

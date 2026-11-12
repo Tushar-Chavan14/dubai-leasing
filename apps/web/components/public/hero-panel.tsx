@@ -44,7 +44,7 @@ export function HeroPanel({ count, from, areas }: { count: number; from: string 
       <Skyline />
       <div className="relative flex items-center gap-2 text-sm font-semibold">
         <BuildingsIcon size={18} aria-hidden="true" />
-        Dubai, ready to view
+        Homes across the UAE, ready to view
       </div>
       <dl className="relative m-0 grid grid-cols-2 gap-3">
         <div className="rounded-2xl bg-page/80 p-4 text-ink backdrop-blur">

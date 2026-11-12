@@ -63,7 +63,7 @@ export default async function HomePage() {
           Hello
           {first ? `, ${first}` : ""}
         </h1>
-        {today && <p className="m-0 mt-1 text-sm text-muted">{weekdayDate(today)} in Dubai</p>}
+        {today && <p className="m-0 mt-1 text-sm text-muted">{weekdayDate(today)} UAE time</p>}
       </header>
       <HomeStarters suggestions={suggestions} />
       <HomeTiles initial={h} top={top} />

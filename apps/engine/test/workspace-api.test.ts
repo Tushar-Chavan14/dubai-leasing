@@ -42,6 +42,30 @@ describe("nextStepFor and stageFor (pure)", () => {
     ["Ejari", "Ejari submission"],
     ["Registered", "Nothing to do"],
   ] as const)("%s", (stage, part) => expect(nextStepFor({ stage })).toContain(part));
+  test("registration texts name the unit's own system, never Ejari outside Dubai", () => {
+    expect(nextStepFor({ stage: "Ejari" })).toContain("Ejari submission");
+    expect(nextStepFor({ stage: "Ejari", system: "Tawtheeq" })).toBe(
+      "Approve the Tawtheeq submission and wait for the registration.",
+    );
+    expect(
+      describeEntry({
+        source: "approval",
+        gate: "ejari_submission",
+        status: "pending",
+        subject: "x",
+        canDecide: true,
+        system: "RAK Municipality attestation",
+      }),
+    ).toBe("Your approval is needed for the RAK Municipality attestation submission.");
+    expect(
+      describeEntry({ source: "event", type: "EJARI_ISSUED", payload: {}, subject: "Sam", system: "Tawtheeq" }),
+    ).toBe("Sam recorded the Tawtheeq registration.");
+    // Other texts are untouched even when a system is given.
+    expect(
+      describeEntry({ source: "event", type: "OFFER_REVISED", payload: {}, subject: "Sam", system: "Tawtheeq" }),
+    ).toBe("Sam revised the offer.");
+  });
+
   test("held offer and held contract prep", () => {
     expect(nextStepFor({ stage: "Offer", offerHeld: true })).toBe("Send the offer to the applicant.");
     expect(nextStepFor({ stage: "Contract", contractHeld: true })).toBe("Prepare the contract.");

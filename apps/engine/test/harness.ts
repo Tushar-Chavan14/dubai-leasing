@@ -63,6 +63,8 @@ export function testContext(
     customerAgent?: AgentModel;
     contractAgent?: AgentModel;
     ejari?: FakeEjari;
+    /** The simulated Abu Dhabi registry (Tawtheeq); absent unless a test needs it. */
+    tawtheeq?: FakeEjari;
   } = {},
 ) {
   const clock = new FixedClock(new Date(startIso));
@@ -83,7 +85,7 @@ export function testContext(
     mailer,
     documents: new LocalDiskStore(mkdtempSync(join(tmpdir(), "leasing-docs-"))),
     uploads: new LocalDiskStore(mkdtempSync(join(tmpdir(), "leasing-uploads-"))),
-    ejari,
+    registries: { dubai: ejari, ...(opts.tawtheeq ? { abu_dhabi: opts.tawtheeq } : {}) },
     llm,
     webUrl: "http://portal.test",
     serverSecret: "test-server-secret",

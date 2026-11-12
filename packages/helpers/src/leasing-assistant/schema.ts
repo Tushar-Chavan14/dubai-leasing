@@ -1,4 +1,4 @@
-import { EnquiryFlow, PropertyCategory, SizeBand } from "@leasing/core";
+import { Emirate, EnquiryFlow, PropertyCategory, SizeBand } from "@leasing/core";
 import { z } from "zod";
 
 export const ENQUIRY_INTENTS = [
@@ -9,6 +9,7 @@ export const ENQUIRY_INTENTS = [
   "talk_to_person",
   "existing_tenant",
   "greeting",
+  "off_topic",
   "none",
 ] as const;
 export type EnquiryIntent = (typeof ENQUIRY_INTENTS)[number];
@@ -62,7 +63,7 @@ export const LeasingAssistantData = z.object({
     bedrooms: z.number().int().min(0).max(4).optional(),
     community: z.string().optional(),
     /** Web chat only. Code checks every value against what is bookable. */
-    emirate: z.enum(["dubai", "abu_dhabi", "sharjah"]).optional(),
+    emirate: Emirate.optional(),
     category: PropertyCategory.optional(),
     sizeBand: SizeBand.optional(),
   }),

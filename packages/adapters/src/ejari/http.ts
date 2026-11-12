@@ -14,8 +14,14 @@ const Answer = z.discriminatedUnion("status", [Issued, Rejected]);
 export class HttpEjariClient implements EjariAdapter {
   private readonly base: string;
   private readonly fetch: (req: Request) => Promise<Response>;
-  constructor(opts: { baseUrl: string; fetch?: (req: Request) => Promise<Response>; timeoutMs?: number }) {
-    this.base = opts.baseUrl.replace(/\/$/, "");
+  constructor(opts: {
+    baseUrl: string;
+    fetch?: (req: Request) => Promise<Response>;
+    timeoutMs?: number;
+    /** Prepended to every path, e.g. "/tawtheeq" for the simulated Abu Dhabi registry. */
+    pathPrefix?: string;
+  }) {
+    this.base = opts.baseUrl.replace(/\/$/, "") + (opts.pathPrefix ?? "");
     const timeoutMs = opts.timeoutMs ?? 15_000;
     this.fetch = opts.fetch ?? ((req) => fetch(req, { signal: AbortSignal.timeout(timeoutMs) }));
   }

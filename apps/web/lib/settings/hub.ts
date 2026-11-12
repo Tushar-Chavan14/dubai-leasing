@@ -41,10 +41,10 @@ export const HUB: HubGroup[] = [
       },
       {
         href: "/settings/rent-index",
-        title: "Smart Rental Index",
+        title: "Rent index",
         blurb: "The index values rent is compared with, by area and unit type.",
         who: "Admins and leasing managers change it. Everyone can read it.",
-        keywords: ["sri", "index", "rent", "benchmark", "band", "area"],
+        keywords: ["sri", "smart rental index", "index", "rent", "benchmark", "band", "area"],
       },
       {
         href: "/settings/rulebook",
@@ -64,6 +64,13 @@ export const HUB: HubGroup[] = [
         blurb: "Contract templates and clauses per company, with a preview of the generated contract.",
         who: "Admins change it. Everyone can read it.",
         keywords: ["template", "clauses", "contract rules", "preview", "tenancy contract", "ejari"],
+      },
+      {
+        href: "/settings/registration",
+        title: "Registration",
+        blurb: "How a tenancy contract is registered in each emirate: portal, documents to bring and reference format.",
+        who: "Admins change it. Everyone can read it.",
+        keywords: ["ejari", "tawtheeq", "attestation", "municipality", "registration", "tasdeeq", "ejaar"],
       },
     ],
   },

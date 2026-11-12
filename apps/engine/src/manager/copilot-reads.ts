@@ -1,5 +1,15 @@
+import { offerRentFloorFils } from "@leasing/helpers";
 import { formatDubaiDateTime } from "@leasing/adapters";
-import { formatAed, maskPii } from "@leasing/core";
+import {
+  type Emirate,
+  documentKeyLabel,
+  EMIRATE_LABELS,
+  EMIRATES,
+  formatAed,
+  maskPii,
+  registrationSystemName,
+  rentIndexName,
+} from "@leasing/core";
 import {
   applications,
   companies,
@@ -18,9 +28,12 @@ import {
 } from "@leasing/db";
 import { and, asc, desc, eq, isNotNull, sql } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
-import { notFound } from "../errors.ts";
+import { DomainError, notFound } from "../errors.ts";
+import { templateForUnit } from "./company-templates.ts";
+import { hasRulebookFor, activeRulesVersion, registrationFeeFils, registrationFeeFor } from "@leasing/rulebook";
 import { getCompanyPolicy } from "./events.ts";
-import { findRentRule, findSri, matchContractRule, priceRangeFor } from "./pricing.ts";
+import { allSettings, registrationDocumentOptions } from "./registration-settings.ts";
+import { findRentRule, findSri, matchContractRule, offerPolicyAndRuleFor, priceRangeFor } from "./pricing.ts";
 import { exposeRange } from "./units.ts";
 import { freeViewingSlots } from "./viewing-slots.ts";
 import { takenViewings } from "./availability.ts";
@@ -118,7 +131,16 @@ export async function contractStatus(ctx: EngineContext, ref: string) {
       .limit(1);
     const rule = await matchContractRule(tx, unit);
     let template: { version: number; status: string } | null = null;
-    if (rule?.templateId) {
+    try {
+      const t = await templateForUnit(tx, {
+        companyId: unit.companyId,
+        ruleTemplateId: rule?.templateId,
+        emirate: unit.emirate,
+      });
+      template = t ? { version: t.version, status: t.status } : null;
+    } catch (e) {
+      // The rule's template is not usable (retired, other company): shown as it was, by its stored status.
+      if (!(e instanceof DomainError) || !rule?.templateId) throw e;
       const [t] = await tx.db
         .select({ version: companyContractTemplates.version, status: companyContractTemplates.status })
         .from(companyContractTemplates)
@@ -150,6 +172,7 @@ export async function contractStatus(ctx: EngineContext, ref: string) {
         signed: s.signedAt !== null,
         signedAt: s.signedAt?.toISOString() ?? null,
       })),
+      registrationSystem: registrationSystemName(unit.emirate),
       ejari: sub
         ? { status: sub.status, attempt: sub.attempt, ejariNo: sub.ejariNo, submittedAt: sub.createdAt.toISOString() }
         : null,
@@ -186,6 +209,8 @@ export async function unitWithPricing(ctx: EngineContext, ref: string) {
     const rule = await findRentRule(tx, u);
     const exposed = exposeRange(range);
     const money = (f: number | null) => (f === null ? null : { fils: f, text: formatAed(f) });
+    // Negotiation limits: the same policy and contract rule the offer check uses.
+    const { policy, contractRuleId, discountFrom } = await offerPolicyAndRuleFor(tx, u, today);
     return {
       unitId: u.id,
       code: u.code,
@@ -194,6 +219,7 @@ export async function unitWithPricing(ctx: EngineContext, ref: string) {
       company: company?.name ?? null,
       category: u.category,
       subtype: u.subtype,
+      emirate: u.emirate,
       state: u.state,
       bedrooms: u.bedrooms,
       bathrooms: u.bathrooms,
@@ -210,6 +236,16 @@ export async function unitWithPricing(ctx: EngineContext, ref: string) {
         hasRule: rule !== null,
         withinRange:
           u.askingRentFils === null || !range ? null : u.askingRentFils >= range.min && u.askingRentFils <= range.max,
+      },
+      offerLimits: {
+        maxDiscountPercent: policy.maxRentDiscountPercent,
+        discountFrom,
+        lowestRentWithoutApproval: money(
+          u.askingRentFils === null ? null : offerRentFloorFils(u.askingRentFils, policy),
+        ),
+        minCheques: policy.minCheques,
+        maxCheques: policy.maxCheques,
+        chequesFrom: contractRuleId ? "contract rule" : "company default",
       },
     };
   });
@@ -263,7 +299,10 @@ export async function companySettings(ctx: EngineContext, companyId: string) {
       .select()
       .from(companyClauses)
       .where(and(eq(companyClauses.companyId, companyId), eq(companyClauses.status, "approved"))),
-    db.select().from(sriAverages).orderBy(asc(sriAverages.community), asc(sriAverages.bedrooms)),
+    db
+      .select()
+      .from(sriAverages)
+      .orderBy(asc(sriAverages.emirate), asc(sriAverages.community), asc(sriAverages.bedrooms)),
   ]);
   return {
     rentRules: rent.map((r) => ({
@@ -275,11 +314,14 @@ export async function companySettings(ctx: EngineContext, companyId: string) {
       maxPctBp: r.maxPctBp,
       minRentFils: r.minRentFils,
       maxRentFils: r.maxRentFils,
+      emirate: r.emirate,
+      maxOfferDiscountPct: r.maxOfferDiscountPct,
     })),
     contractRules: contract.map((r) => ({
       id: r.id,
       category: r.category,
       subtype: r.subtype,
+      emirate: r.emirate,
       tenures: r.tenures,
       minCheques: r.minCheques,
       maxCheques: r.maxCheques,
@@ -293,6 +335,7 @@ export async function companySettings(ctx: EngineContext, companyId: string) {
       inTemplate: c.inTemplateId !== null,
     })),
     sri: sri.map((r) => ({
+      emirate: r.emirate,
       community: r.community,
       category: r.category,
       bedrooms: r.bedrooms,
@@ -300,4 +343,49 @@ export async function companySettings(ctx: EngineContext, companyId: string) {
       effectiveFrom: r.effectiveFrom,
     })),
   };
+}
+
+/**
+ * Per emirate: registration system, whether we submit online, rulebook, rent index name and the
+ * registration fee (computed here from the code-versioned schedule when an annual rent is given).
+ */
+export async function emirateSetup(
+  ctx: EngineContext,
+  emirate: Emirate | undefined,
+  annualRentFils: number | undefined,
+) {
+  const today = ctx.clock.today();
+  const { paidBy, settings, options } = await withTx(ctx.database, async (tx) => ({
+    paidBy: (await getCompanyPolicy(tx, today)).registrationFeePaidBy,
+    settings: await allSettings(ctx, tx),
+    options: await registrationDocumentOptions(ctx, tx),
+  }));
+  const optionLabels = new Map(options.map((o) => [o.key, o.label]));
+  return (emirate ? [emirate] : [...EMIRATES]).map((e) => {
+    const schedule = registrationFeeFor(e, today);
+    const feeFils =
+      schedule && annualRentFils !== undefined ? registrationFeeFils(schedule.rule, annualRentFils) : null;
+    const set = settings[e];
+    return {
+      emirate: e,
+      label: EMIRATE_LABELS[e],
+      registrationSystem: registrationSystemName(e),
+      registration: set.mode === "online" ? "online" : "by_hand",
+      registrationMode: set.mode,
+      portalName: set.portalName,
+      portalUrl: set.portalUrl,
+      requiredDocuments: set.requiredDocuments.map((k) => optionLabels.get(k) ?? documentKeyLabel(k)),
+      requiredDocumentKeys: [...set.requiredDocuments],
+      settingsSource: set.source,
+      rulebook: { available: hasRulebookFor(today, e), activeVersion: activeRulesVersion(today, e) },
+      rentIndexName: rentIndexName(e),
+      registrationFee: {
+        rule: schedule?.rule ?? null,
+        sources: schedule ? [...schedule.sources] : [],
+        feeFils,
+        fee: feeFils === null ? null : formatAed(feeFils),
+      },
+      paidBy,
+    };
+  });
 }

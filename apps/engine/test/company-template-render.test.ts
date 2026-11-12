@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LocalDiskStore } from "@leasing/adapters";
-import { type CalendarDate, newId, type OfferTerms } from "@leasing/core";
+import { type CalendarDate, type Emirate, newId, type OfferTerms } from "@leasing/core";
 import {
   applications,
   actionLinks,
@@ -28,6 +28,8 @@ import {
   EMPTY_REVIEW,
   encodePng,
   extractPdf,
+  ScriptedAgentModel,
+  say,
   type TemplateBlank,
   type TemplateSections,
   type TemplateStyle,
@@ -228,6 +230,7 @@ async function setup() {
       style?: TemplateStyle;
       logo?: boolean;
       sections?: TemplateSections;
+      emirate?: Emirate | null;
     } = {},
   ) => {
     const cid = over.companyId ?? companyId;
@@ -275,6 +278,7 @@ async function setup() {
               .map((p) => p.key),
       },
       logoDocumentId,
+      emirate: over.emirate ?? null,
       version:
         (await database.db.select().from(companyContractTemplates).where(eq(companyContractTemplates.companyId, cid)))
           .length + 1,
@@ -759,6 +763,69 @@ describe.skipIf(noDb)("contract rendered in the company template", () => {
     const b = buildEjariPayload(withTemplate!.fields);
     expect(a.ok && b.ok).toBe(true);
     expect(b).toEqual(a);
+  });
+
+  const withDescription = (line: string): TemplateSections => ({
+    ...SECTIONS,
+    items: SECTIONS.items.map((it) => (it.id === "s1" ? { ...it, paragraphs: [...it.paragraphs, line] } : it)),
+  });
+  const agentAnswer = (text: string, reason: string, flags: unknown[] = []) =>
+    say(JSON.stringify({ extraClauseIds: [], clauseReasons: [], flags, rewrites: [{ key: "s1:1", text, reason }] }));
+  const finalApproval = async (leaseId: string) =>
+    (
+      await database.db
+        .select()
+        .from(approvals)
+        .where(and(eq(approvals.entityId, leaseId), eq(approvals.gate, "final_contract")))
+    )[0]!;
+
+  test("D64: unit wording that disagrees with the records is reworded, checked by code, shown at the gate", async () => {
+    const s = await setup();
+    const before = "Description: Four-bedroom villa with a private pool.";
+    const id = await s.propose({ sections: withDescription(before) });
+    await s.approve(id);
+    expect((await s.rule(id)).status).toBe(201);
+    const view = await withTx(s.ctx.database, async (tx) =>
+      contractAgentContext(s.ctx, tx, await contractInputs(tx, s.leaseId), DEFAULT_ADDENDUM),
+    );
+    expect(view.unitFacts?.bedrooms).toBe(2);
+    expect(view.template!.paragraphs.find((p) => p.key === "s1:1")).toMatchObject({ rewritable: true });
+    const good = "Description: Two-bedroom apartment.";
+    const reason = "The unit record has 2 bedrooms";
+    // A wrong first try is refused by code and sent back once; the fixed one is used.
+    s.ctx.contractAgent = new ScriptedAgentModel([
+      () => agentAnswer("Description: Three-bedroom apartment.", reason),
+      () => agentAnswer(good, reason),
+    ]);
+    const p = await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system" });
+    expect(p.status).toBe("prepared");
+    const [c] = await contractRows(s.leaseId);
+    const text = await pdfText(s, c!.documentId!);
+    expect(text).toContain(good);
+    expect(text).not.toContain("Four-bedroom");
+    expect(c!.templateRewrites).toEqual([{ key: "s1:1", before, after: good, reason }]);
+    const a = await finalApproval(s.leaseId);
+    expect((a.reasons as string[]).join("\n")).toContain("Reworded to match the records");
+    expect((a.proposal as { rewrites?: unknown[] }).rewrites).toHaveLength(1);
+    expect(a.status).toBe("pending"); // still a person's approval (rule 3)
+  });
+
+  test("D64: a rewording that stays wrong is dropped; the template wording prints and the conflict leads the gate", async () => {
+    const s = await setup();
+    const id = await s.propose({ sections: withDescription("Description: Four-bedroom villa.") });
+    await s.approve(id);
+    await s.rule(id);
+    const flag = [{ kind: "conflict", quote: "Four-bedroom", reason: "the unit has 2 bedrooms" }];
+    const bad = () => agentAnswer("Description: Five-bedroom villa, AED 9,000.", "x", flag);
+    s.ctx.contractAgent = new ScriptedAgentModel([bad, bad]);
+    const p = await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system" });
+    expect(p.status).toBe("prepared"); // no task: the approver decides
+    const [c] = await contractRows(s.leaseId);
+    expect(await pdfText(s, c!.documentId!)).toContain("Description: Four-bedroom villa.");
+    expect(c!.templateRewrites).toEqual([]);
+    expect(((await finalApproval(s.leaseId)).reasons as string[])[0]).toStartWith(
+      "Unresolved conflict, check before approving",
+    );
   });
 
   test("D47: the contract agent checks the wording as printed, not the sample's original", async () => {
@@ -1270,5 +1337,134 @@ describe.skipIf(noDb)("contract rendered in the company template", () => {
     expect(text).not.toContain("Company template");
     const rules = await database.db.select().from(contractRules).where(eq(contractRules.companyId, s.companyId));
     expect(rules).toHaveLength(0);
+  });
+});
+
+describe.skipIf(noDb)("company templates per emirate (D56)", () => {
+  beforeEach(async () => {
+    database = await freshDatabase();
+  });
+
+  const setEmirate = (s: S, emirate: Emirate) =>
+    database.db.update(units).set({ emirate }).where(eq(units.id, s.unitId));
+  const prepared = async (s: S) => {
+    const p = await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system" });
+    expect(p.status).toBe("prepared");
+    const rows = await contractRows(s.leaseId);
+    return pdfText(s, rows[rows.length - 1]!.documentId!);
+  };
+  const activeTemplates = async (s: S) =>
+    (
+      await database.db
+        .select()
+        .from(companyContractTemplates)
+        .where(eq(companyContractTemplates.companyId, s.companyId))
+    )
+      .filter((t) => t.status === "approved")
+      .map((t) => t.id);
+
+  test("an Abu Dhabi unit uses the company's Abu Dhabi template", async () => {
+    const s = await setup();
+    await setEmirate(s, "abu_dhabi");
+    const dubai = await s.propose({ emirate: "dubai" });
+    await s.approve(dubai);
+    const ad = await s.propose({ emirate: "abu_dhabi" });
+    await s.approve(ad);
+    const text = await prepared(s);
+    expect(text).toContain("Article I Premises");
+    const [c] = await contractRows(s.leaseId);
+    expect((c!.addendum as unknown) !== undefined).toBe(true);
+    const inputs = await withTx(database, (tx) => contractInputs(tx, s.leaseId));
+    expect(inputs.template?.id).toBe(ad);
+    // Approving the Abu Dhabi one did not retire the Dubai one.
+    expect(await activeTemplates(s)).toHaveLength(2);
+    expect((await templateRow(dubai)).status).toBe("approved");
+  });
+
+  test("an Abu Dhabi unit with only a Dubai template gets the emirate-aware standard form, never the Dubai template", async () => {
+    const s = await setup();
+    await setEmirate(s, "abu_dhabi");
+    const dubai = await s.propose({ emirate: "dubai" });
+    await s.approve(dubai);
+    // A rule pointing at the Dubai template is not honoured for this unit either.
+    expect((await s.rule(dubai)).status).toBe(201);
+    const inputs = await withTx(database, (tx) => contractInputs(tx, s.leaseId));
+    expect(inputs.template).toBeNull();
+    const text = await prepared(s);
+    expect(text).toContain("Tenancy contract (demo template)");
+    expect(text).toContain("Emirate of Abu Dhabi");
+    expect(text).toContain("Tawtheeq");
+    expect(text).not.toContain("Ejari");
+    expect(text).not.toContain("Article I Premises");
+  });
+
+  test("a contract rule for one emirate can't point at another emirate's template (D58)", async () => {
+    const s = await setup();
+    const dubai = await s.propose({ emirate: "dubai" });
+    await s.approve(dubai);
+    const any = await s.propose();
+    await s.approve(any);
+    const body = (templateId: string, emirate: Emirate | null) => ({
+      companyId: s.companyId,
+      category: "residential",
+      emirate,
+      tenures: ["annual"],
+      minCheques: 1,
+      maxCheques: 12,
+      templateId,
+    });
+    const bad = await s.api("/contract-rules", "POST", body(dubai, "sharjah"));
+    expect(bad.status).toBe(422);
+    expect(((await bad.json()) as { code: string }).code).toBe("template_emirate");
+    expect((await s.api("/contract-rules", "POST", body(dubai, "dubai"))).status).toBe(201);
+    expect((await s.api("/contract-rules", "POST", body(any, "sharjah"))).status).toBe(201);
+    expect((await s.api("/contract-rules", "POST", body(dubai, null))).status).toBe(201);
+  });
+
+  test("an any-emirate template is the fallback; the emirate's own template wins", async () => {
+    const s = await setup();
+    await setEmirate(s, "abu_dhabi");
+    const any = await s.propose();
+    await s.approve(any);
+    expect((await withTx(database, (tx) => contractInputs(tx, s.leaseId))).template?.id).toBe(any);
+    const ad = await s.propose({ emirate: "abu_dhabi" });
+    await s.approve(ad);
+    expect((await withTx(database, (tx) => contractInputs(tx, s.leaseId))).template?.id).toBe(ad);
+    // Approving another any-emirate version retires only the any-emirate one.
+    const any2 = await s.propose();
+    await s.approve(any2);
+    expect((await templateRow(any)).status).toBe("retired");
+    expect((await templateRow(ad)).status).toBe("approved");
+    // Retiring the Abu Dhabi template falls back to the any-emirate one.
+    expect((await s.api(`/contract-templates/${ad}/retire`, "POST")).status).toBe(200);
+    expect((await withTx(database, (tx) => contractInputs(tx, s.leaseId))).template?.id).toBe(any2);
+  });
+
+  test("the chosen template is part of the input hash, so a new emirate template stales a pending contract", async () => {
+    const s = await setup();
+    await setEmirate(s, "abu_dhabi");
+    const before = (await withTx(database, (tx) => contractInputs(tx, s.leaseId))).inputHash;
+    const ad = await s.propose({ emirate: "abu_dhabi" });
+    await s.approve(ad);
+    const after = (await withTx(database, (tx) => contractInputs(tx, s.leaseId))).inputHash;
+    expect(after).not.toBe(before);
+  });
+
+  test("a Dubai unit with a Dubai template or a null-emirate template is unchanged", async () => {
+    const s = await setup();
+    const id = await s.propose();
+    await s.approve(id);
+    expect((await s.rule(id)).status).toBe(201);
+    expect(await prepared(s)).toContain("Article I Premises");
+  });
+
+  test("the sample upload carries the emirate to the template row", async () => {
+    const s = await setup();
+    const id = await s.propose({ emirate: "sharjah" });
+    expect((await templateRow(id)).emirate).toBe("sharjah");
+    const panel = (await (await s.api(`/companies/${s.companyId}/contract-template`)).json()) as {
+      templates: { id: string; emirate: string | null }[];
+    };
+    expect(panel.templates.find((t) => t.id === id)?.emirate).toBe("sharjah");
   });
 });

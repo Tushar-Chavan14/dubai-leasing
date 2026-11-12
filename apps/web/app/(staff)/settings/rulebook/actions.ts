@@ -22,7 +22,10 @@ const fail = (r: Awaited<ReturnType<typeof engine>>): RuleActionState => ({
 export async function createDraftAction(formData: FormData): Promise<void> {
   const r = await engine<{ version: string }>("/api/rulebooks", {
     method: "POST",
-    body: JSON.stringify({ basedOn: String(formData.get("basedOn") ?? "") }),
+    body: JSON.stringify({
+      basedOn: String(formData.get("basedOn") ?? ""),
+      ...(formData.get("emirate") ? { emirate: String(formData.get("emirate")) } : {}),
+    }),
   });
   if (!r.ok) throw new Error(r.error?.error ?? `engine returned ${r.status}`);
   revalidatePath("/settings/rulebook");

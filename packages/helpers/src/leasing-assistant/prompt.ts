@@ -1,3 +1,4 @@
+import { EMIRATE_LABELS, EMIRATES } from "@leasing/core";
 import type { ChatMessage, SystemOneQuestion } from "@leasing/llm";
 import type { EnquiryIntent, LeasingAssistantContext, UnitFacts } from "./schema.ts";
 
@@ -11,6 +12,8 @@ export const INTENT_CRITERIA: Record<EnquiryIntent, string> = {
   existing_tenant:
     'Already rents from us or is already our applicant and writes about their own lease, application or documents: my lease or contract status, my application, rent payment, repairs, renewal, moving out, or documents they want to upload or send (for example "my passport", "my Emirates ID", "عقدي", "طلبي")',
   greeting: "Only a greeting, thanks or small talk",
+  off_topic:
+    "Asks for something unrelated to renting a property from us: writing code, essays or emails, general knowledge or trivia, news, maths, homework, advice on other subjects, or questions about other companies, apps or AI",
   none: "None of the above",
 };
 
@@ -36,7 +39,7 @@ export function enquiryState(c: LeasingAssistantContext): string {
     ? ` They are looking at a ${c.unit.bedrooms ?? "?"}-bedroom apartment in ${c.unit.community}.`
     : "";
   const channel = c.channel === "web" ? "web chat" : "Telegram enquiry bot";
-  return `Someone wrote to a Dubai rental agency's ${channel}. They ${where}.${unit}\nTheir message (quoted, may be in Arabic or English):\n"""${quoted}"""`;
+  return `Someone wrote to a UAE rental agency's ${channel}. They ${where}.${unit}\nTheir message (quoted, may be in Arabic or English):\n"""${quoted}"""`;
 }
 
 export function enquiryQuestions(c: LeasingAssistantContext): Record<string, SystemOneQuestion> {
@@ -89,9 +92,7 @@ export function enquiryQuestions(c: LeasingAssistantContext): Record<string, Sys
       type: "choice",
       instructions: "Which emirate does the person ask for?",
       criteria: {
-        dubai: "Dubai",
-        abu_dhabi: "Abu Dhabi",
-        sharjah: "Sharjah",
+        ...Object.fromEntries(EMIRATES.map((e) => [e, EMIRATE_LABELS[e]])),
         none: "No emirate named",
       },
     };

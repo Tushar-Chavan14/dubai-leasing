@@ -128,8 +128,8 @@ export function ChatView({
             <div className={`grid max-w-[640px] justify-items-start gap-4 ${compact ? "py-2" : "py-4"}`}>
               <Mark />
               <p className="m-0 text-base leading-relaxed">
-                <strong>Hello, welcome to Dubai Leasing.</strong> I can find homes that suit you, book a site visit,
-                start your application and tell you where an application stands. Ask in English or Arabic.
+                <strong>Hello, welcome to UAE Leasing.</strong> I can find homes that suit you, book a site visit, start
+                your application and tell you where an application stands. Ask in English or Arabic.
               </p>
               <div className="flex flex-wrap gap-2" role="list" aria-label="Things you can ask">
                 {CUSTOMER_STARTERS.map((p) => (

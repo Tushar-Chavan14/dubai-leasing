@@ -1,0 +1,2 @@
+ALTER TABLE "rent_rules" ADD COLUMN "max_offer_discount_pct" smallint;--> statement-breakpoint
+ALTER TABLE "rent_rules" ADD CONSTRAINT "rent_rules_offer_discount_ck" CHECK ("rent_rules"."max_offer_discount_pct" IS NULL OR ("rent_rules"."max_offer_discount_pct" >= 0 AND "rent_rules"."max_offer_discount_pct" <= 50));

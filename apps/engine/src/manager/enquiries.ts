@@ -5,6 +5,8 @@ import {
   type ChannelUpdate,
   type ChatFilters,
   type CompanyPolicy,
+  EMIRATES,
+  Emirate,
   PropertyCategory,
   SIZE_BAND_LIMITS,
   SizeBand,
@@ -22,6 +24,8 @@ import {
 } from "@leasing/core";
 import { applications, conversations, messages, parties, tasks, type Tx, unitPhotos, units, withTx } from "@leasing/db";
 import {
+  checkScope,
+  EMIRATE_NAMES,
   enquiryCopy,
   formatSlot,
   type LeasingAssistantData,
@@ -43,6 +47,7 @@ import {
   openWebApplicationsFor,
 } from "./applications.ts";
 import {
+  bookableEmirates,
   bookableFacets,
   budgetBands,
   type Filters,
@@ -55,7 +60,7 @@ import { appendEvent, getCompanyPolicy, getCompanyPolicyVersion } from "./events
 import { recordRun, runOnly } from "./helpers.ts";
 import { createTask } from "./milestones.ts";
 import { freeViewingSlots, parseSlotKey, slotKey } from "./viewing-slots.ts";
-import { answersStepQuestion, recordAndOutcome, runCustomerAgent } from "./customer-agent.ts";
+import { answersStepQuestion, detectLanguage, recordAndOutcome, runCustomerAgent } from "./customer-agent.ts";
 import { endStatusSession, hasStatusSession, webStatusStep } from "./web-chat-status.ts";
 
 /**
@@ -232,6 +237,32 @@ export async function handleChannelUpdate(
 
   // Web free text goes to the customer agent (D36). Telegram, and a web chat without an agent model, use the assistant below.
   if (isWeb(conv) && ctx.customerAgent) {
+    // Scope gate: an off-topic request (write a program, what is Meta) gets a fixed line from code and
+    // the tool-using chat model never runs. Skipped while the chat waits for a name, email or code,
+    // which can read as off topic. The gate fails open: any doubt goes to the agent.
+    if (!conv.flow.step.startsWith("asking_")) {
+      const scope = await checkScope(ctx.leasingAssistantLlm ?? ctx.llm, text, await lastReply(ctx, conv.id));
+      if (scope.offTopic) {
+        const out = await withTx(ctx.database, async (tx) => {
+          const [now] = await tx.db.select().from(conversations).where(eq(conversations.id, conv.id)).for("update");
+          if (!now) throw notFound("conversation");
+          const lang = detectLanguage(text, langOf(now));
+          return finish(
+            ctx,
+            tx,
+            now,
+            {
+              reply: { text: enquiryCopy[lang].offTopic, buttons: webMenuButtons(lang) },
+              kind: "off_topic",
+              language: lang,
+            },
+            update.updateId,
+            inboundId,
+          );
+        });
+        return { conversationId: conv.id, ...out };
+      }
+    }
     const turn = await runCustomerAgent(ctx, conv, policy, text, inboundId, opts.codeQuota);
     const out = await withTx(ctx.database, async (tx) => {
       const [now] = await tx.db.select().from(conversations).where(eq(conversations.id, conv.id)).for("update");
@@ -551,7 +582,7 @@ async function contactStep(
   });
   const done = async (kind: string): Promise<Outcome> =>
     isWeb(conv)
-      ? { ...askEmirate(conv, `${t.contactSavedWeb}\n\n`), kind }
+      ? { ...(await askEmirate(tx, ctx.clock.today(), conv, `${t.contactSavedWeb}\n\n`)), kind }
       : { reply: { text: t.contactSaved, buttons: bedroomButtons(lang) }, kind, flow: IDLE_FLOW };
 
   if (show && conv.contactEmail) {
@@ -832,24 +863,25 @@ async function webCallback(
 ): Promise<Outcome | null> {
   const today = ctx.clock.today();
   const flow = conv.flow;
-  if (d === "units") return askEmirate(conv);
+  if (d === "units") return askEmirate(tx, today, conv);
   // The web chat's quick-action pills: fixed buttons, handled in code (no model).
   if (d === "chat:book" || d === "chat:apply") {
     const t = enquiryCopy[langOf(conv)];
-    if (!flow.unitId) return askEmirate(conv, d === "chat:book" ? t.pillPickToBook : t.pillPickToApply);
+    if (!flow.unitId) return askEmirate(tx, today, conv, d === "chat:book" ? t.pillPickToBook : t.pillPickToApply);
     return d === "chat:book"
       ? showUnit(ctx, tx, conv, flow.unitId, policy)
       : startApply(ctx, tx, conv, flow.unitId, policy);
   }
-  const emirate = /^emi:(dubai|abu_dhabi|sharjah)$/.exec(d);
+  const emirate = new RegExp(`^emi:(${EMIRATES.join("|")})$`).exec(d);
   if (emirate) {
-    if (emirate[1] !== "dubai") return emirateComingSoon(conv);
-    return askArea(tx, today, conv, "dubai");
+    const chosen = Emirate.parse(emirate[1]);
+    if (!(await bookableEmirates(tx, today)).includes(chosen)) return emirateNoListings(tx, today, conv, chosen);
+    return askArea(tx, today, conv, chosen);
   }
   const area = /^area:([0-9a-f]{10}|any)$/.exec(d);
   if (area) {
     // The key is a hash of the community name, matched against today's list; a stale or unknown key asks again.
-    const em = flow.emirate ?? "dubai";
+    const em = flow.emirate ?? DEFAULT_EMIRATE;
     const community =
       area[1] === "any"
         ? undefined
@@ -862,7 +894,7 @@ async function webCallback(
   const cat = /^cat:(residential|commercial|retail)$/.exec(d);
   if (cat) {
     const category = PropertyCategory.parse(cat[1]);
-    const sel: Sel = { emirate: flow.emirate ?? "dubai", community: flow.community, category };
+    const sel: Sel = { emirate: flow.emirate ?? DEFAULT_EMIRATE, community: flow.community, category };
     return category === "residential" ? askBedrooms(tx, today, conv, sel) : askSize(tx, today, conv, sel);
   }
   const bed = /^bed:([0-4])$/.exec(d);
@@ -902,33 +934,42 @@ async function webCallback(
   return null;
 }
 
-const COMING_SOON = ["abu_dhabi", "sharjah"] as const;
+/** Only for flows stored before the emirate choice existed (they never held one). */
+const DEFAULT_EMIRATE: Emirate = "dubai";
 
-/** The first web question: the emirate. Dubai is open; the others are shown as coming soon and can't be picked. */
-function askEmirate(conv: ConvRow, lead = ""): Outcome {
+const emirateName = (lang: EnquiryLanguage, e: Emirate) => EMIRATE_NAMES[e][lang];
+
+/**
+ * The first web question: the emirate. All seven are listed; those with a bookable home are buttons,
+ * the others are shown as coming soon and can't be picked.
+ */
+async function askEmirate(tx: Tx, today: CalendarDate, conv: ConvRow, lead = ""): Promise<Outcome> {
   const lang = langOf(conv);
   const t = enquiryCopy[lang];
-  const names = { abu_dhabi: t.emirateAbuDhabi, sharjah: t.emirateSharjah };
+  const open = await bookableEmirates(tx, today);
   return {
     reply: {
       text: `${lead}${t.askEmirate}`,
-      buttons: [
-        { label: t.emirateDubai, data: "emi:dubai" },
-        ...COMING_SOON.map((e) => ({ label: buttonLabel(t.comingSoon(names[e])), data: `emi:${e}`, disabled: true })),
-      ],
+      buttons: EMIRATES.map((e) =>
+        open.includes(e)
+          ? { label: emirateName(lang, e), data: `emi:${e}` }
+          : { label: buttonLabel(t.comingSoon(emirateName(lang, e))), data: `emi:${e}`, disabled: true },
+      ),
     },
     kind: "ask_emirate",
     flow: { step: "choosing_emirate" },
   };
 }
 
-/** Someone typed or tapped an emirate we don't list yet: say so, ask again. */
-function emirateComingSoon(conv: ConvRow): Outcome {
-  return { ...askEmirate(conv, `${enquiryCopy[langOf(conv)].onlyDubai}\n\n`), kind: "emirate_coming_soon" };
+/** Someone typed or tapped an emirate with no bookable homes: say so, ask again. */
+async function emirateNoListings(tx: Tx, today: CalendarDate, conv: ConvRow, emirate: Emirate): Promise<Outcome> {
+  const lang = langOf(conv);
+  const lead = `${enquiryCopy[lang].noListingsIn(emirateName(lang, emirate))}\n\n`;
+  return { ...(await askEmirate(tx, today, conv, lead)), kind: "emirate_coming_soon" };
 }
 
 /** The area question. Buttons come from communities with a bookable home (code, any category), plus "Any area". */
-async function askArea(tx: Tx, today: CalendarDate, conv: ConvRow, emirate: "dubai", lead = ""): Promise<Outcome> {
+async function askArea(tx: Tx, today: CalendarDate, conv: ConvRow, emirate: Emirate, lead = ""): Promise<Outcome> {
   const lang = langOf(conv);
   const t = enquiryCopy[lang];
   const communities = (await bookableFacets(tx, today, { category: "all", emirate })).communities.slice(
@@ -1053,9 +1094,9 @@ async function promptForStep(ctx: EngineContext, tx: Tx, conv: ConvRow, policy: 
     case "asking_email":
       return { reply: { text: t.askEmail(conv.flow.nameEn ?? "") } };
     case "choosing_emirate":
-      return askEmirate(conv);
+      return askEmirate(tx, ctx.clock.today(), conv);
     case "choosing_community":
-      return askArea(tx, ctx.clock.today(), conv, "dubai");
+      return askArea(tx, ctx.clock.today(), conv, conv.flow.emirate ?? DEFAULT_EMIRATE);
     case "choosing_category":
       return askCategory(tx, ctx.clock.today(), conv, selOf(conv.flow));
     case "choosing_size":
@@ -1641,11 +1682,11 @@ async function myBooking(tx: Tx, conv: ConvRow): Promise<Outcome> {
  * is only kept where it is a valid option (a listed area, a category, a size band for a
  * non-residential category); the budget comes from the text by code, never from the model.
  */
-function webTyped(conv: ConvRow, data: LeasingAssistantData, text: string): { sel: Sel; comingSoon: boolean } {
+function webTyped(conv: ConvRow, data: LeasingAssistantData, text: string): { sel: Sel; asked?: Emirate } {
   const s = data.search;
   const flow = conv.flow;
   const sel: Sel = selOf(flow);
-  const comingSoon = s.emirate === "abu_dhabi" || s.emirate === "sharjah";
+  if (s.emirate) sel.emirate = s.emirate;
   if (s.community) sel.community = s.community;
   if (s.category) sel.category = s.category;
   else if (s.bedrooms !== undefined) sel.category = "residential";
@@ -1657,8 +1698,8 @@ function webTyped(conv: ConvRow, data: LeasingAssistantData, text: string): { se
   if (sel.category && sel.category !== "residential") delete sel.bedrooms;
   if (sel.category === "residential" || !sel.category) delete sel.sizeBand;
   if (sel.sizeBand && !sel.category) sel.category = "commercial";
-  if (!sel.emirate && Object.values(compact(sel)).length) sel.emirate = "dubai";
-  return { sel, comingSoon };
+  if (!sel.emirate && Object.values(compact(sel)).length) sel.emirate = DEFAULT_EMIRATE;
+  return { sel, ...(s.emirate ? { asked: s.emirate } : {}) };
 }
 
 /** Web search from free text: ask the next guided question when the message gave too little, else show units. */
@@ -1669,11 +1710,14 @@ async function webNext(
   sel: Sel,
   enough: boolean,
   policy: CompanyPolicy,
+  asked?: Emirate,
 ): Promise<Outcome> {
   if (!enough)
     return sel.community
-      ? askCategory(tx, today, conv, { emirate: sel.emirate ?? "dubai", community: sel.community })
-      : askEmirate(conv);
+      ? askCategory(tx, today, conv, { emirate: sel.emirate ?? DEFAULT_EMIRATE, community: sel.community })
+      : asked
+        ? askArea(tx, today, conv, asked)
+        : askEmirate(tx, today, conv);
   const early = ["choosing_emirate", "choosing_community", "choosing_category"].includes(conv.flow.step);
   if (early && sel.category === "residential" && sel.bedrooms === undefined) return askBedrooms(tx, today, conv, sel);
   if (early && sel.category && sel.category !== "residential" && !sel.sizeBand) return askSize(tx, today, conv, sel);
@@ -1721,9 +1765,14 @@ async function applyAssistant(
     community: data.search.community ?? conv.flow.community,
     furnished: conv.flow.furnished,
   };
-  // An emirate we don't list yet, asked for in a search.
-  if (web && (data.intent === "search_units" || data.intent === "book_viewing") && typed?.comingSoon)
-    return withLang(emirateComingSoon(c));
+  // An emirate with no bookable homes, asked for in a search.
+  if (
+    web &&
+    (data.intent === "search_units" || data.intent === "book_viewing") &&
+    typed?.asked &&
+    !(await bookableEmirates(tx, today)).includes(typed.asked)
+  )
+    return withLang(await emirateNoListings(tx, today, c, typed.asked));
   const enough = web
     ? !!(filters.category || filters.bedrooms !== undefined || filters.sizeBand)
     : filters.bedrooms !== undefined || !!filters.community;
@@ -1736,7 +1785,7 @@ async function applyAssistant(
             : await search(tx, today, c, filters, policy),
         );
       }
-      return withLang(await webNext(tx, today, c, filters, enough, policy));
+      return withLang(await webNext(tx, today, c, filters, enough, policy, typed?.asked));
     case "unit_question":
     case "general_question": {
       // With a unit picked, the answer sits above that unit's slots; otherwise above the size picker.
@@ -1748,7 +1797,7 @@ async function applyAssistant(
       }
       const answer = data.answer ?? (isWeb(c) ? t.noGeneralAnswerWeb : t.noGeneralAnswer);
       const kind = data.answer ? "answer" : "no_answer";
-      if (isWeb(c)) return withLang({ ...askEmirate(c, `${answer}\n\n`), kind });
+      if (isWeb(c)) return withLang({ ...(await askEmirate(tx, today, c, `${answer}\n\n`)), kind });
       return withLang({ reply: { text: `${answer}\n\n${t.askBedrooms}`, buttons: bedroomButtons(lang) }, kind });
     }
     case "book_viewing":
@@ -1758,9 +1807,26 @@ async function applyAssistant(
           ? await search(tx, today, c, filters, policy)
           : { reply: { text: t.pickUnitFirst, buttons: bedroomButtons(lang) }, kind: "pick_unit_first" },
       );
+    case "off_topic":
+      // Coding, trivia and other subjects: a fixed line; no chat model ran for it.
+      return withLang({
+        reply: { text: t.offTopic, buttons: web ? webMenuButtons(lang) : bedroomButtons(lang) },
+        kind: "off_topic",
+      });
     default:
       return withLang({ reply: { text: t.greeting, buttons: bedroomButtons(lang) }, kind: "greeting" });
   }
+}
+
+/** The bot's latest reply in the conversation, as context for the scope gate ("yes" after a question is in scope). */
+async function lastReply(ctx: EngineContext, conversationId: string): Promise<string | null> {
+  const [m] = await ctx.database.db
+    .select({ body: messages.body })
+    .from(messages)
+    .where(and(eq(messages.conversationId, conversationId), eq(messages.direction, "out")))
+    .orderBy(desc(messages.at))
+    .limit(1);
+  return m?.body ?? null;
 }
 
 /**

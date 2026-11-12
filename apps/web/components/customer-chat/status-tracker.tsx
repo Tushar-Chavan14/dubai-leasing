@@ -26,7 +26,7 @@ export function StatusTracker({
             <b className="text-[15px] font-semibold tracking-tight">{a.unitCode}</b>
             <span className="font-mono text-xs text-muted">{a.ref}</span>
           </header>
-          <StageStepper stages={a.stages} />
+          <StageStepper stages={a.stages} registration={a.registration} />
           <p className="m-0 rounded-xl bg-accent px-3.5 py-2.5 text-sm text-on-accent" dir="auto">
             {a.nextStep}
           </p>

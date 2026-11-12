@@ -95,6 +95,14 @@ export const AutopilotPatch = z
   .strict() as z.ZodType<Partial<Record<AutopilotStep, boolean>> & Partial<Record<AutopilotNumber, number>>>;
 export type AutopilotPatch = z.infer<typeof AutopilotPatch>;
 
+/** Settings → Registration: who pays the government registration fee. */
+export const RegistrationPolicyPatch = z.strictObject({ registrationFeePaidBy: z.enum(["tenant", "landlord"]) });
+export type RegistrationPolicyPatch = z.infer<typeof RegistrationPolicyPatch>;
+
+/** Negotiation limit: how far below the approved asking rent an offer or counter may go without a manager. */
+export const OfferPolicyPatch = z.strictObject({ maxRentDiscountPercent: z.number().int().min(0).max(50) });
+export type OfferPolicyPatch = z.infer<typeof OfferPolicyPatch>;
+
 export type AutopilotGroup = "Chat agent" | "Reminders" | "Offers and contracts" | "Copilot" | "Limits";
 export const AUTOPILOT_GROUPS: AutopilotGroup[] = [
   "Chat agent",
@@ -290,6 +298,8 @@ export const CompanyPolicy = z.object({
   signLinkValidDays: z.number().int().min(1).max(60).default(14),
   /** Times an Ejari submission is retried when the registry is unreachable (not when it rejects). */
   ejariMaxAttempts: z.number().int().min(1).max(10).default(3),
+  /** Who pays the government registration fee (Ejari in Dubai): shown on the offer when the tenant pays. */
+  registrationFeePaidBy: z.enum(["tenant", "landlord"]).default("tenant"),
   /** Below this decision-model confidence, an Ejari rejection is not mapped to a field (a person reads it). */
   ejariFieldMinConfidence: z.number().min(0).max(1).default(0.6),
   // --- Telegram enquiries and viewings (policy placeholders; docs/specs.md §10) ---
@@ -426,6 +436,7 @@ export const defaultCompanyPolicy: CompanyPolicy = {
   kycMinConfidence: 0.8,
   signLinkValidDays: 14,
   ejariMaxAttempts: 3,
+  registrationFeePaidBy: "tenant",
   ejariFieldMinConfidence: 0.6,
   viewingDays: [1, 2, 3, 4, 5, 6],
   viewingStartHour: 10,

@@ -24,11 +24,14 @@ interface Settings {
     maxPctBp: number;
     minRentFils: number | null;
     maxRentFils: number | null;
+    emirate?: string;
+    maxOfferDiscountPct?: number | null;
   }[];
   contractRules: {
     id: string;
     category: string;
     subtype: string | null;
+    emirate?: string | null;
     tenures: string[];
     minCheques: number;
     maxCheques: number;
@@ -37,6 +40,7 @@ interface Settings {
   }[];
   clauses: { ref: string; title: string; text: string; inTemplate: boolean }[];
   sri: {
+    emirate: string;
     community: string;
     category: string;
     bedrooms: number | null;
@@ -52,7 +56,7 @@ export const getCompanySettings: CopilotTool<typeof Input, typeof Output> = {
   name: "get_company_settings",
   kind: "read",
   description:
-    "A company's rent rules (band around the Smart Rental Index, AED limits), contract rules (tenures, cheque range, clauses), approved contract clauses and the Smart Rental Index values. Use it to answer questions about a company's rules, and before save_rent_rule or save_contract_rule to find the id of a rule to replace.",
+    "A company's rent rules (band around the Smart Rental Index, AED limits, emirate, and the offer discount below the asking rent without a manager), contract rules (tenures, cheque range, clauses), approved contract clauses and the Smart Rental Index values. Use it to answer questions about a company's rules, and before save_rent_rule or save_contract_rule to find the id of a rule to replace.",
   input: Input,
   output: Output,
   roles: ALL_STAFF,
@@ -71,11 +75,17 @@ export const getCompanySettings: CopilotTool<typeof Input, typeof Output> = {
         maxPctBp: r.maxPctBp,
         lowestRent: r.minRentFils === null ? null : formatAed(r.minRentFils),
         highestRent: r.maxRentFils === null ? null : formatAed(r.maxRentFils),
+        ...(r.emirate ? { emirate: r.emirate } : {}),
+        offerDiscount:
+          r.maxOfferDiscountPct === null || r.maxOfferDiscountPct === undefined
+            ? "company default"
+            : `${r.maxOfferDiscountPct}% below the asking rent`,
       })),
       contractRules: s.contractRules.map((r) => ({
         id: r.id,
         category: r.category,
         subtype: r.subtype ?? "all types",
+        emirate: r.emirate ?? "any emirate",
         tenures: r.tenures,
         cheques: `${r.minCheques} to ${r.maxCheques}`,
         clauseIds: r.clauseIds,
@@ -89,13 +99,14 @@ export const getCompanySettings: CopilotTool<typeof Input, typeof Output> = {
         inTemplate: c.inTemplate,
       })),
       sri: s.sri.map((r) => ({
+        emirate: r.emirate,
         community: r.community,
         category: r.category,
         bedrooms: r.bedrooms,
         averageAnnualRent: r.avgAnnualRentFils === null ? null : formatAed(r.avgAnnualRentFils),
         from: r.effectiveFrom,
       })),
-      note: "Rent rules set each company's allowed band around the Smart Rental Index (SRI); the SRI is the official DLD average by area and size.",
+      note: "Rent rules set each company's allowed band around the rent index; in Dubai that is the Smart Rental Index (SRI), the official DLD average by area and size.",
     };
   },
 };

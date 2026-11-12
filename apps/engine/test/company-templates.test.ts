@@ -14,6 +14,7 @@ import {
   CONTRACT_STRUCTURE_JOB,
   CONTRACT_TEMPLATE_JOB,
   runContractStructure,
+  runContractStructureJob,
 } from "../src/manager/contract-templates.ts";
 import { generatePdf, SAMPLES } from "../../../packages/helpers/src/contract-structure/evals/fixtures.ts";
 import { addStaff, freshDatabase, noDb, testCompany, testContext } from "./harness.ts";
@@ -177,8 +178,12 @@ describe.skipIf(noDb)("company contract templates (structure extraction)", () =>
   test("a reading that stopped shows Try again; after it the panel reads again (not still stopped)", async () => {
     const s = await setup(structureLlm());
     await s.upload(await generatePdf(SAMPLES[0]!.spec));
-    // No job ran (the engine restarted mid-read): after 15 minutes it counts as stopped.
-    s.clock.set(new Date(s.clock.now().getTime() + 16 * 60_000));
+    // No job ran (the engine restarted mid-read): past the job's own deadline (17 min) and a margin it counts as stopped.
+    s.clock.set(new Date(s.clock.now().getTime() + 19 * 60_000));
+    expect((await (await s.call(`/companies/${s.companyId}/contract-template`)).json()) as unknown).toMatchObject({
+      extraction: { status: "reading", limitMinutes: 17 },
+    });
+    s.clock.set(new Date(s.clock.now().getTime() + 2 * 60_000));
     const panel = async () =>
       (
         (await (await s.call(`/companies/${s.companyId}/contract-template`)).json()) as {
@@ -188,6 +193,41 @@ describe.skipIf(noDb)("company contract templates (structure extraction)", () =>
     expect(await panel()).toMatchObject({ status: "failed", reasons: ["The reading job stopped; try again."] });
     expect((await s.call(`/companies/${s.companyId}/contract-template/retry`, "POST")).status).toBe(202);
     expect((await panel()).status).toBe("reading");
+  });
+
+  test("a model that never answers: the job stops at its deadline, says why, and Try again reads again", async () => {
+    class SilentLlm extends FakeLlm {
+      override chat(): never {
+        return new Promise(() => {}) as never;
+      }
+    }
+    const s = await setup(new SilentLlm(() => new Error("no decide")));
+    const { documentId } = await s.upload(await generatePdf(SAMPLES[0]!.spec));
+    const res = await runContractStructureJob(s.ctx, documentId, false, 300, 0.05);
+    expect(res).toMatchObject({ status: "failed" });
+    const panel = async () =>
+      (
+        (await (await s.call(`/companies/${s.companyId}/contract-template`)).json()) as {
+          extraction: { status: string; reasons: string[] };
+        }
+      ).extraction;
+    // Shown at once, with the reason (not "reading" for 20 minutes, then "stopped").
+    expect(await panel()).toMatchObject({ status: "failed" });
+    expect((await panel()).reasons.join(" ")).toContain("Timed out");
+    const [run] = await database.db.select().from(helperRuns).where(eq(helperRuns.helper, "contract_structure"));
+    expect(run).toMatchObject({ status: "failed" });
+    expect((await s.call(`/companies/${s.companyId}/contract-template/retry`, "POST")).status).toBe(202);
+    expect((await panel()).status).toBe("reading");
+  });
+
+  test("a deadline after a version was proposed records no failure", async () => {
+    const s = await setup(structureLlm());
+    const { documentId } = await s.upload(await generatePdf(SAMPLES[0]!.spec));
+    await runContractStructure(s.ctx, documentId);
+    const { failStructure } = await import("../src/manager/company-templates.ts");
+    expect(await failStructure(s.ctx, documentId, "late")).toBe(false);
+    const runs = await database.db.select().from(helperRuns).where(eq(helperRuns.helper, "contract_structure"));
+    expect(runs.map((r) => r.status)).toEqual(["ok"]);
   });
 
   test("a read-again the model fails shows as failed, not reading", async () => {

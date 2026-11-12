@@ -8,7 +8,9 @@ import type {
   ContractFields,
   ContractStatus,
   EjariAutofix,
+  Emirate,
   EjariPayload,
+  RegistrationSettings as RegistrationSettingsValues,
   EjariRejection,
   EntityKind,
   EnquiryFlow,
@@ -135,7 +137,7 @@ export const units = pgTable(
       .references(() => companies.id),
     category: text("category").$type<PropertyCategory>().notNull().default("residential"),
     subtype: text("subtype").$type<PropertySubtype>(),
-    emirate: text("emirate").notNull().default("dubai"),
+    emirate: text("emirate").$type<Emirate>().notNull().default("dubai"),
     country: text("country").notNull().default("AE"),
     state: text("state").$type<UnitState>().notNull().default("PREP"),
     dldPropertyNo: text("dld_property_no"),
@@ -709,6 +711,7 @@ export const sriAverages = pgTable(
   "sri_averages",
   {
     id: id(),
+    emirate: text("emirate").$type<Emirate>().notNull().default("dubai"),
     community: text("community").notNull(),
     category: text("category").$type<PropertyCategory>().notNull().default("residential"),
     bedrooms: smallint("bedrooms"),
@@ -720,7 +723,7 @@ export const sriAverages = pgTable(
     createdAt: createdAt(),
   },
   (t) => [
-    unique("sri_averages_uq").on(t.community, t.category, t.bedrooms, t.effectiveFrom).nullsNotDistinct(),
+    unique("sri_averages_uq").on(t.emirate, t.community, t.category, t.bedrooms, t.effectiveFrom).nullsNotDistinct(),
     check("sri_averages_one_rent_ck", sql`(${t.avgAnnualRentPerSqftFils} IS NULL) <> (${t.avgAnnualRentFils} IS NULL)`),
   ],
 );
@@ -735,12 +738,17 @@ export const rentRules = pgTable(
       .references(() => companies.id),
     category: text("category").$type<PropertyCategory>().notNull(),
     subtype: text("subtype").$type<PropertySubtype>(),
-    emirate: text("emirate").notNull(),
+    emirate: text("emirate").$type<Emirate>().notNull(),
     community: text("community"),
     minPctBp: integer("min_pct_bp").notNull(),
     maxPctBp: integer("max_pct_bp").notNull(),
     minRentFils: fils("min_rent_fils"),
     maxRentFils: fils("max_rent_fils"),
+    /**
+     * D63: how far below the approved asking rent an offer or counter on a unit this rule prices may go without a
+     * manager (whole percent). Null: the company policy default applies.
+     */
+    maxOfferDiscountPct: smallint("max_offer_discount_pct"),
     active: boolean("active").notNull().default(true),
     supersedesId: uuid("supersedes_id"),
     createdBy: text("created_by").notNull(),
@@ -748,6 +756,10 @@ export const rentRules = pgTable(
   },
   (t) => [
     check("rent_rules_pct_ck", sql`${t.minPctBp} <= ${t.maxPctBp}`),
+    check(
+      "rent_rules_offer_discount_ck",
+      sql`${t.maxOfferDiscountPct} IS NULL OR (${t.maxOfferDiscountPct} >= 0 AND ${t.maxOfferDiscountPct} <= 50)`,
+    ),
     index("rent_rules_company_idx").on(t.companyId, t.category, t.active),
   ],
 );
@@ -762,6 +774,8 @@ export const contractRules = pgTable(
       .references(() => companies.id),
     category: text("category").$type<PropertyCategory>().notNull(),
     subtype: text("subtype").$type<PropertySubtype>(),
+    /** The emirate this rule is for; null = any emirate (D58). A rule for the unit's emirate beats an any-emirate one. */
+    emirate: text("emirate").$type<Emirate>(),
     tenures: text("tenures").array().$type<("annual" | "short_term")[]>().notNull(),
     minCheques: smallint("min_cheques").notNull(),
     maxCheques: smallint("max_cheques").notNull(),
@@ -888,6 +902,8 @@ export const companyContractTemplates = pgTable(
      * confirmation. Written only while `proposed`; frozen with the row on approval.
      */
     review: jsonb("review").notNull().default({}),
+    /** The emirate this template is for; null = any emirate (D56). Approval and retirement work per (company, emirate). */
+    emirate: text("emirate").$type<Emirate>(),
     version: integer("version").notNull(),
     helperRunId: uuid("helper_run_id"),
     approvedBy: text("approved_by"),
@@ -968,7 +984,7 @@ export const outboundMessages = pgTable(
 export const rulebooks = pgTable("rulebooks", {
   id: id(),
   version: text("version").notNull().unique(),
-  emirate: text("emirate").$type<"dubai">().notNull(),
+  emirate: text("emirate").$type<Emirate>().notNull(),
   status: text("status").$type<"draft" | "published">().notNull(),
   basedOn: text("based_on"),
   effectiveFrom: calDate("effective_from").notNull(),
@@ -1183,6 +1199,11 @@ export const contracts = pgTable(
     sources: jsonb("sources").$type<Record<string, FieldSource>>().notNull(),
     addendum: jsonb("addendum").$type<Addendum>().notNull(),
     flags: jsonb("flags").$type<AddendumFlag[]>().notNull().default([]),
+    /** D64: template paragraphs the contract agent reworded from the unit's records (code-checked), shown at the gate. */
+    templateRewrites: jsonb("template_rewrites")
+      .$type<{ key: string; before: string; after: string; reason: string }[]>()
+      .notNull()
+      .default([]),
     /** Hash of the records the fields were copied from; a change makes the approval stale. */
     inputHash: text("input_hash").notNull(),
     /** Hash of the contract config used (rule, template, approved clauses): a different current hash means "rules changed". */
@@ -1248,7 +1269,13 @@ export const ejariSubmissions = pgTable(
     attempt: smallint("attempt").notNull(),
     payload: jsonb("payload").$type<EjariPayload>().notNull(),
     payloadSha256: text("payload_sha256").notNull(),
-    status: text("status").$type<"queued" | "sending" | "issued" | "rejected" | "error">().notNull(),
+    status: text("status")
+      .$type<"queued" | "sending" | "issued" | "rejected" | "error" | "awaiting_manual">()
+      .notNull(),
+    /** "manual": an officer registers by hand and records the result. */
+    mode: text("mode").$type<"online" | "manual">().notNull().default("online"),
+    feePaidFils: fils("fee_paid_fils"),
+    recordedBy: text("recorded_by"),
     /** Unreachable-registry retries for this attempt. */
     tries: smallint("tries").notNull().default(0),
     ejariNo: text("ejari_no"),
@@ -1280,3 +1307,11 @@ export const savedViews = pgTable(
   },
   (t) => [uniqueIndex("saved_views_user_name_uq").on(t.staffUserId, t.name)],
 );
+
+/** Admin-edited registration settings per emirate; the code defaults apply where there is no row. */
+export const registrationSettings = pgTable("registration_settings", {
+  emirate: text("emirate").$type<Emirate>().primaryKey(),
+  values: jsonb("values").$type<RegistrationSettingsValues>().notNull(),
+  updatedBy: text("updated_by").notNull(),
+  updatedAt: ts("updated_at").notNull(),
+});

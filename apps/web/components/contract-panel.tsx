@@ -8,6 +8,8 @@ import {
   ReprepareContractButton,
   ResendSignLinkButton,
 } from "./contract-forms";
+import { ManualGuide, ManualRecordForms, type ManualRegistration } from "./manual-registration";
+import { TemplateRewrites, type TemplateRewrite } from "./template-rewrites";
 import { Status } from "./ui";
 import { buttonClass } from "./ui/button";
 import { NOTE_TEXT, ROW_CARD, Section, TENANT_TEXT } from "./ui/record";
@@ -28,6 +30,8 @@ export interface ContractRow {
     companyClauses?: { id: string; title: string; text: string }[];
   };
   flags: { kind: string; quote: string; reason: string }[];
+  /** D64: template wording reworded from the unit's records. */
+  templateRewrites?: TemplateRewrite[];
   sha256: string;
   signedSha256: string | null;
   approvalId: string | null;
@@ -289,6 +293,8 @@ export function ContractPanel({
             </ul>
           )}
 
+          <TemplateRewrites rewrites={current.templateRewrites ?? []} />
+
           {current.signers.length > 0 && (
             <div className={TABLE}>
               <table className="data">
@@ -415,36 +421,48 @@ export function EjariPanel({
   pendingApprovalId,
   mockUrl,
   demo,
+  systemName = "Ejari",
+  manual = null,
+  today = "",
 }: {
   leaseId: string;
   state: string;
+  systemName?: string;
   attempts: EjariAttempt[];
   canAct: boolean;
   pendingApprovalId: string | null;
   mockUrl: string | null;
   demo: boolean;
+  /** Manual registration (D52): the pack and portal details, for leasing roles; null when online or not allowed. */
+  manual?: ManualRegistration | null;
+  today?: string;
 }) {
   if (!attempts.length && state !== "REGISTRATION") return null;
   const issued = attempts.find((a) => a.status === "issued");
   const inFlight = attempts.some((a) => a.status === "queued" || a.status === "sending");
+  const isManual = manual?.mode === "manual";
+  const awaiting = isManual ? manual.submissions.find((s) => s.status === "awaiting_manual") : undefined;
   return (
     <Section
       id="ejari-h"
-      title={`Ejari${demo ? " (simulated)" : ""}`}
+      title={`${systemName}${demo ? " (simulated)" : ""}`}
       hint={
         issued
           ? `Registered, ${issued.ejariNo}`
-          : inFlight
-            ? "On its way to the registry"
-            : pendingApprovalId
-              ? "Waiting for approval"
-              : attempts.length
-                ? "Needs a person"
-                : "Not submitted yet"
+          : awaiting
+            ? "Waiting for staff to register on the portal"
+            : inFlight
+              ? "On its way to the registry"
+              : pendingApprovalId
+                ? "Waiting for approval"
+                : attempts.length
+                  ? "Needs a person"
+                  : "Not submitted yet"
       }
     >
       <div className="grid gap-3">
-        {attempts.length === 0 && (
+        {isManual && !issued && <ManualGuide leaseId={leaseId} reg={manual} />}
+        {attempts.length === 0 && !isManual && (
           <p className="m-0 text-sm text-muted">
             The submission is built from the signed contract and waits for an officer&apos;s approval.
           </p>
@@ -496,6 +514,9 @@ export function EjariPanel({
             )}
           </div>
         ))}
+        {awaiting && canAct && (
+          <ManualRecordForms leaseId={leaseId} submissionId={awaiting.id} reg={manual!} today={today} />
+        )}
         <div className="flex flex-wrap items-center gap-2">
           {pendingApprovalId && (
             <Link className={buttonClass("ghost", "sm")} href={`/work?approval=${pendingApprovalId}`}>
@@ -505,7 +526,7 @@ export function EjariPanel({
           {canAct && state === "REGISTRATION" && !pendingApprovalId && !inFlight && !issued && (
             <ProposeEjariButton leaseId={leaseId} />
           )}
-          {mockUrl && (
+          {mockUrl && manual?.mode !== "manual" && (
             <a className={buttonClass("ghost", "sm")} href={mockUrl} target="_blank" rel="noreferrer">
               Open the simulated registry
             </a>

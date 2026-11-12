@@ -1,5 +1,7 @@
 /** Shapes returned by the engine API (only the fields the staff app reads). */
 
+import type { Emirate } from "@leasing/core";
+
 export interface Me {
   id: string;
   name: string;
@@ -23,7 +25,7 @@ export interface UnitRow {
   companyId: string;
   category: "residential" | "commercial" | "retail";
   subtype: string | null;
-  emirate: string;
+  emirate: Emirate;
   state: string;
   unitNo: string | null;
   floor: number | null;
@@ -207,12 +209,14 @@ export interface RentRuleRow {
   companyId: string;
   category: "residential" | "commercial" | "retail";
   subtype: string | null;
-  emirate: string;
+  emirate: Emirate;
   community: string | null;
   minPctBp: number;
   maxPctBp: number;
   minRentFils: number | null;
   maxRentFils: number | null;
+  /** D63: offer discount below the asking rent without a manager; null = company default. */
+  maxOfferDiscountPct?: number | null;
 }
 
 export interface ContractRuleRow {
@@ -220,6 +224,8 @@ export interface ContractRuleRow {
   companyId: string;
   category: "residential" | "commercial" | "retail";
   subtype: string | null;
+  /** The emirate the rule is for; null: any emirate (D58). */
+  emirate: Emirate | null;
   tenures: ("annual" | "short_term")[];
   minCheques: number;
   maxCheques: number;
@@ -281,6 +287,8 @@ export interface CompanyTemplateView {
   id: string;
   version: number;
   status: "proposed" | "approved" | "retired";
+  /** The emirate the template is for; null = any emirate. */
+  emirate: Emirate | null;
   sampleDocumentId: string | null;
   sections: {
     numbering: string;
@@ -335,6 +343,8 @@ export interface CompanyTemplatePanel {
     status: "reading" | "ready" | "failed" | "retired";
     reasons: string[];
     minutes?: number;
+    /** Whole minutes after which the reading stops itself and says why. */
+    limitMinutes?: number;
   } | null;
   catalogue: { name: string; type: string; label: string }[];
   /** Active rules that point at a retired template (their contracts can't be prepared). */
@@ -381,6 +391,8 @@ export interface RecordRow {
   ref: string;
   title: string;
   unitCode: string;
+  /** The unit's emirate (sent by the engine); names the registration stage. */
+  emirate?: Emirate;
   stage: Stage;
   nextStep: string;
   owner: Owner;

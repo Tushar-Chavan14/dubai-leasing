@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { stageLabel } from "../../../lib/stage-label";
 import { MagnifyingGlassIcon, PlusIcon } from "@phosphor-icons/react/dist/ssr";
 import { AskAiMenu } from "../../../components/ask-ai";
 import { Pill } from "../../../components/ui/pill";
@@ -141,7 +142,7 @@ export function RecordList({
                 id={`wk-g-${g.stage}`}
                 className="m-0 flex justify-between px-2 pb-1.5 pt-3 font-sans text-xs font-normal text-muted"
               >
-                <span>{g.stage}</span>
+                <span>{stageLabel(g.stage)}</span>
                 <span className="font-mono">{g.rows.length}</span>
               </h2>
               <ul className="m-0 grid list-none gap-0.5 p-0">

@@ -34,10 +34,12 @@ import {
   sriAverages,
   tasks,
   units,
+  withTx,
 } from "@leasing/db";
 import { type AgentModel, callTool, extractPdf, ScriptedAgentModel, say } from "@leasing/helpers";
 import { FakeLlm, type SystemOneResponse } from "@leasing/llm";
 import { and, eq } from "drizzle-orm";
+import { dubai2025_01, registerRulebook, resetRulebookRegistry } from "@leasing/rulebook";
 import { PDFDocument } from "pdf-lib";
 import { createApi } from "../src/api/app.ts";
 import { issueToken } from "../src/api/auth.ts";
@@ -53,6 +55,7 @@ import {
   reportTemplateFailure,
 } from "../src/manager/contracts.ts";
 import { LEASE_MAIL_JOB, type LeaseMailJob, sendLeaseMail } from "../src/manager/lease-mail.ts";
+import { proposeEjariSubmission } from "../src/manager/registration.ts";
 import {
   applyFixes,
   EJARI_REVIEW_JOB,
@@ -95,10 +98,18 @@ const fieldAnswer = (choice: string, confidence = 0.94): SystemOneResponse => ({
  * passport MRZ prints it), on a unit with full property data. All fictional.
  */
 async function setup(
-  o: { ejari?: FakeEjari; llm?: FakeLlm; dldPropertyNo?: string | null; contractAgent?: AgentModel } = {},
+  o: {
+    ejari?: FakeEjari;
+    tawtheeq?: FakeEjari;
+    emirate?: "abu_dhabi";
+    llm?: FakeLlm;
+    dldPropertyNo?: string | null;
+    contractAgent?: AgentModel;
+  } = {},
 ) {
   const t = testContext(database, START, {
     ...(o.ejari ? { ejari: o.ejari } : {}),
+    ...(o.tawtheeq ? { tawtheeq: o.tawtheeq } : {}),
     ...(o.contractAgent ? { contractAgent: o.contractAgent } : {}),
     llm: o.llm ?? new FakeLlm(agreeingDecision),
   });
@@ -133,6 +144,7 @@ async function setup(
     furnished: false,
     state: "LISTED",
     askingRentFils: 13_500_000,
+    ...(o.emirate ? { emirate: o.emirate } : {}),
   });
   const appId = newId();
   await database.db.insert(applications).values({
@@ -1064,6 +1076,57 @@ describe.skipIf(noDb)("Ejari registration (step 6)", () => {
     expect((await approvalOf(s.leaseId, "ejari_rejected_twice")).status).toBe("pending");
   });
 
+  test("an Abu Dhabi lease registers through the abu_dhabi registry (Tawtheeq), not Ejari", async () => {
+    // Test-only Abu Dhabi rulebook, so the lease's emirate has rules; the registry is reset after.
+    registerRulebook({ ...dubai2025_01, version: "abu_dhabi-2025-01", emirate: "abu_dhabi" });
+    try {
+      const ejari = new FakeEjari(() => new Error("Abu Dhabi must not use Ejari"));
+      const tawtheeq = new FakeEjari(() => ({ ok: true, ejariNo: "SIM-TWQ-2026-0000007", issuedOn: "2026-11-01" }));
+      const s = await setup({ ejari, tawtheeq, emirate: "abu_dhabi" });
+      await toRegistration(s);
+      await approveSubmission(s);
+      await s.drain({ ejari: true });
+      expect(ejari.calls).toHaveLength(0);
+      expect(tawtheeq.calls).toHaveLength(1);
+      expect(await leaseRow(s.leaseId)).toMatchObject({
+        state: "MOVE_IN",
+        ejariNo: "SIM-TWQ-2026-0000007",
+        ejariIssuedOn: "2026-11-01",
+      });
+    } finally {
+      resetRulebookRegistry();
+    }
+  });
+
+  test("the Ejari proposal carries the system name and the registration fee from the schedule", async () => {
+    const s = await setup();
+    await toRegistration(s);
+    const a = await approvalOf(s.leaseId, "ejari_submission");
+    const p = a.proposal as { emirate?: string; systemName?: string; feeFils?: number | null; feePaidBy?: string };
+    expect(p.emirate).toBe("dubai");
+    expect(p.systemName).toBe("Ejari");
+    expect(p.feeFils).toBe(17775);
+    expect(p.feePaidBy).toBe("tenant");
+  });
+
+  test("an emirate without a registration system: manual mode, the approval gate still applies, no unsupported task", async () => {
+    const s = await setup();
+    await toRegistration(s);
+    const a = await approvalOf(s.leaseId, "ejari_submission");
+    await decideApproval(s.ctx, a.id, s.officer, { decision: "reject", note: "retry" });
+    s.ctx.registries = {};
+    const lease = await leaseRow(s.leaseId);
+    const r = await withTx(database, (tx) => proposeEjariSubmission(s.ctx, tx, lease, "system"));
+    expect(r).not.toBeNull();
+    const ts = await database.db.select().from(tasks).where(eq(tasks.entityId, s.leaseId));
+    expect(ts.some((x) => x.kind === "registration_unsupported")).toBe(false);
+    const manual = await approvalOf(s.leaseId, "ejari_submission");
+    expect(manual.status).toBe("pending");
+    expect(manual.title).toContain("by hand");
+    expect(manual.proposal).toMatchObject({ mode: "manual" });
+    expect(await database.db.select().from(ejariSubmissions)).toHaveLength(0);
+  });
+
   test("a rejected submission leaves a task; EJARI_ISSUED needs an issued submission of the approval", async () => {
     const s = await setup();
     await toRegistration(s);
@@ -1176,7 +1239,7 @@ describe.skipIf(noDb)("end to end: contract → Ejari → move-in → rent → c
     const { completeMoveInChecklist } = await import("./harness.ts");
     const { sweepDueDeadlines } = await import("../src/manager/milestones.ts");
     const { createLink } = await import("../src/manager/links.ts");
-    const { withTx, payments, complaints, maintenanceTickets } = await import("@leasing/db");
+    const { payments, complaints, maintenanceTickets } = await import("@leasing/db");
 
     // Steps 5–6: contract signed, Ejari issued.
     await toRegistration(s);

@@ -6,6 +6,7 @@ import {
   EjariAutofix,
   EjariPayload,
   EjariRejection,
+  Emirate,
   formatAed,
   type GateId,
   isCalendarDate,
@@ -201,6 +202,18 @@ export const OfferLimitsProposal = z.object({
   /** The revision the applicant (or staff) countered. */
   fromRevision: z.number().int().min(1).nullable(),
   note: z.string().max(2000).optional(),
+  /**
+   * A manager's counter-terms (D51), editable when deciding. Code recomputes everything else
+   * (deposit, reservation, term, expiry) from these; nothing else in `terms` can be edited.
+   */
+  annualRentFils: z.number({ error: "enter the rent in AED" }).int().positive("rent must be positive").optional(),
+  cheques: z
+    .number({ error: "enter the number of cheques" })
+    .int("cheques must be a whole number")
+    .min(1, "cheques must be between 1 and 12")
+    .max(12, "cheques must be between 1 and 12")
+    .optional(),
+  moveInOn: calDate.optional(),
 });
 export type OfferLimitsProposal = z.infer<typeof OfferLimitsProposal>;
 
@@ -221,6 +234,10 @@ export const FinalContractProposal = z.object({
   sources: z.record(z.string(), z.object({ entity: z.string(), id: z.string(), column: z.string() })),
   addendum: Addendum,
   flags: z.array(AddendumFlag),
+  /** D64: template paragraphs reworded from the unit's records (old and new wording, shown side by side). */
+  rewrites: z
+    .array(z.object({ key: z.string(), before: z.string(), after: z.string(), reason: z.string() }))
+    .optional(),
   reviewed: z.boolean(),
   /** The company template the PDF was rendered in (shown as "Company template v<N>"); absent for the standard template. */
   template: z.object({ id: z.string(), version: z.number().int().min(1), contentHash: z.string() }).optional(),
@@ -237,6 +254,15 @@ export const EjariSubmissionProposal = z.object({
   payload: EjariPayload,
   payloadSha256: z.string(),
   note: z.string().max(2000).optional(),
+  /** Registration system context (absent in older stored proposals). The fee is from the code-versioned schedule. */
+  emirate: Emirate.optional(),
+  systemName: z.string().optional(),
+  feeFils: z.number().int().nullable().optional(),
+  feePaidBy: z.enum(["tenant", "landlord"]).optional(),
+  /** "manual": approving means "go register by hand on the portal"; absent means online. */
+  mode: z.enum(["online", "manual"]).optional(),
+  portalName: z.string().optional(),
+  portalUrl: z.string().nullable().optional(),
 });
 export type EjariSubmissionProposal = z.infer<typeof EjariSubmissionProposal>;
 
@@ -347,19 +373,21 @@ const rules: Partial<Record<GateId, GateRule>> = {
     },
   },
   offer_out_of_limits: {
-    editable: ["note"],
+    editable: ["annualRentFils", "cheques", "moveInOn", "note"],
     check(raw, today) {
       const p = OfferLimitsProposal.safeParse(raw);
       if (!p.success) return p.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
-      // Out of company limits is what the manager is approving; hard bounds still apply.
+      // Out of company limits is what the manager is approving; hard bounds still apply. The terms
+      // that go out are re-issued by code on the day of the decision (fresh expiry, D51), so lapsed
+      // terms no longer block a decision; these bounds are checked again on the re-issued terms.
       const t = p.data.terms;
       const problems: string[] = [];
-      // A decision that arrives late can't send terms that are already out of date.
-      if (t.expiresOn < today)
-        problems.push(`These terms lapsed on ${t.expiresOn}; ask the applicant for a new answer.`);
-      if (t.moveInOn <= today) problems.push(`The move-in date ${t.moveInOn} has passed.`);
-      if (t.cheques < 1 || t.cheques > 12) problems.push("cheques must be between 1 and 12");
-      if (t.annualRentFils <= 0) problems.push("rent must be positive");
+      if (p.data.moveInOn !== undefined && p.data.moveInOn <= today)
+        problems.push(`moveInOn: the move-in date must be after ${today}`);
+      if (p.data.moveInOn === undefined && t.moveInOn <= today)
+        problems.push(`moveInOn: the move-in date ${t.moveInOn} has passed; set a new one`);
+      if (t.cheques < 1 || t.cheques > 12) problems.push("cheques: must be between 1 and 12");
+      if (t.annualRentFils <= 0) problems.push("annualRentFils: rent must be positive");
       if (t.startOn !== t.moveInOn) problems.push("the term must start on the move-in date");
       return problems;
     },

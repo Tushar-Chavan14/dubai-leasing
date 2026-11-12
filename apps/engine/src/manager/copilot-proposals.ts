@@ -14,8 +14,9 @@ import {
   units,
   withTx,
 } from "@leasing/db";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
+import { hasValues, normalizeWs } from "@leasing/helpers";
 import type { EngineContext } from "../context.ts";
 import { conflict, DomainError, forbidden, notFound, unprocessable } from "../errors.ts";
 import { bookViewing, createApplication, requestDocuments } from "./applications.ts";
@@ -208,7 +209,7 @@ export async function confirmProposal(ctx: EngineContext, user: StaffUser, propo
       assertPending(p, now.getTime());
       let done: {
         result: Record<string, unknown>;
-        entity: { kind: "application" | "lease" | "company" | "rulebook"; id: string };
+        entity: { kind: "application" | "lease" | "company" | "rulebook" | "settings"; id: string };
       };
       try {
         done =
@@ -647,6 +648,146 @@ export async function cancelProposal(ctx: EngineContext, user: StaffUser, propos
       .where(eq(copilotProposals.id, p.id))
       .returning();
     return proposalView(row!, now.getTime());
+  });
+}
+
+const normText = (s: string) => normalizeWs(s).toLowerCase();
+/** Letters and digits only, so markdown, quotes and line breaks around a shown clause don't matter. */
+const bare = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+/** The words an acceptance may consist of ("ok, add it please", "yes go ahead", "add the clause"). */
+const ACCEPT_WORDS = new Set(
+  "add adding include go ahead do it that this the clause one please pls yes yeah yep ok okay sure great good looks fine perfect thanks thank you now and".split(
+    " ",
+  ),
+);
+/** An acceptance must say add, include or go ahead; a bare "yes" or "ok" is not enough. */
+const ACCEPT_VERB = /\b(add|include|go ahead)\b/i;
+const MAX_ACCEPT_CHARS = 80;
+
+/**
+ * D57: the user types "add it" after the copilot suggested a contract clause. Amends rule 11 like D45, narrowly: the
+ * clause is applied exactly as suggested (wording, title and rules unchanged) when
+ * - the user's latest message in this conversation is a short acceptance with no negation or edit, and contains
+ *   `userQuote` (their own words, never tool output or tenant text);
+ * - one pending `add_clause` suggestion of this user and thread was made in the copilot's previous answer (after the
+ *   user's message before this one), or the latest message names its title;
+ * - the user may add clauses (admin), checked again by `applyConfigChange`.
+ * The client refuses this after untrusted text in the turn. Audited as `copilot:<userId>` with the quote.
+ */
+export async function acceptSuggestedClause(ctx: EngineContext, user: StaffUser, threadId: string, userQuote: string) {
+  return withTx(ctx.database, async (tx) => {
+    const [thread] = await tx.db
+      .select({ id: copilotThreads.id })
+      .from(copilotThreads)
+      .where(and(eq(copilotThreads.id, threadId), eq(copilotThreads.userId, user.id)));
+    if (!thread) throw notFound("conversation");
+    const [last, prev] = await tx.db
+      .select()
+      .from(copilotMessages)
+      .where(and(eq(copilotMessages.threadId, threadId), eq(copilotMessages.role, "user")))
+      .orderBy(desc(copilotMessages.at), desc(copilotMessages.id))
+      .limit(2);
+    const said = last ? normText(last.content) : "";
+    const quote = normText(userQuote);
+    const refuse = (why: string) =>
+      unprocessable(
+        `${why} The suggested clause is added only when your latest message accepts it as it is; otherwise click Confirm on its card.`,
+        [],
+        "not_your_words",
+      );
+    if (!last || quote.length < 3 || !said.includes(quote))
+      throw refuse("Your words weren't found in your latest message.");
+    const now = ctx.clock.now();
+    // Pending clause suggestions of this user and thread made before the latest message (UUIDv7 ids are in order).
+    const rows = (
+      await tx.db
+        .select()
+        .from(copilotProposals)
+        .where(
+          and(
+            eq(copilotProposals.threadId, threadId),
+            eq(copilotProposals.userId, user.id),
+            eq(copilotProposals.kind, "config_change"),
+            eq(copilotProposals.status, "pending"),
+          ),
+        )
+        .orderBy(desc(copilotProposals.createdAt))
+    ).filter((p) => {
+      const change = (p.payload as { change?: { kind?: string } }).change;
+      return change?.kind === "add_clause" && p.expiresAt.getTime() > now.getTime() && p.id < last.id;
+    });
+    const titleOf = (p: (typeof rows)[number]) =>
+      String((p.payload as { change: { title?: string } }).change.title ?? "");
+    const titled = rows.filter((p) => titleOf(p).length >= 3 && said.includes(normText(titleOf(p))));
+    // The message may consist only of acceptance words (and the clause's title): "add it to Beta", "add it for all
+    // companies", "should I add it?" or "add it but…" are not "add it as it is".
+    const allowed = new Set([...ACCEPT_WORDS, ...titled.flatMap((p) => normText(titleOf(p)).split(/\W+/))]);
+    const words = said.split(/[^\p{L}\p{N}']+/u).filter(Boolean);
+    if (
+      said.length > MAX_ACCEPT_CHARS ||
+      said.includes("?") ||
+      !ACCEPT_VERB.test(said) ||
+      words.some((w) => !allowed.has(w))
+    )
+      throw refuse("Your latest message doesn't simply accept the suggestion.");
+    const recent = rows.filter((p) => !prev || p.id > prev.id);
+    const pick = titled.length === 1 ? titled : recent;
+    if (pick.length === 0) throw refuse("There is no clause suggestion from my last answer waiting to be added.");
+    if (pick.length > 1) throw refuse("Several clauses are waiting; name the one to add by its title.");
+    const chosen = pick[0]!;
+    const change = (chosen.payload as { change: { text: string; title: string } }).change;
+    if ((chosen.payload as { afterUntrusted?: boolean }).afterUntrusted)
+      throw refuse("That clause was suggested after reading text from outside the company.");
+    // The user must have been shown the wording: the copilot's answer in that turn quotes its start.
+    const shown = await tx.db
+      .select({ content: copilotMessages.content, id: copilotMessages.id })
+      .from(copilotMessages)
+      .where(and(eq(copilotMessages.threadId, threadId), eq(copilotMessages.role, "assistant")));
+    const start = bare(change.text).slice(0, 40);
+    if (!shown.some((m) => m.id > chosen.id && m.id < last.id && bare(m.content).includes(start)))
+      throw refuse("I didn't show you that clause's wording.");
+    // Amounts, dates and periods in a clause the model wrote need the admin's own confirmation (D35).
+    if (hasValues(change.text))
+      throw refuse("The clause has an amount, a date or a period, so it needs your Confirm on the card.");
+    const p = await lockOwn(tx, user, pick[0]!.id);
+    assertPending(p, now.getTime());
+    const done = await confirmConfigChange(ctx, tx, p, user);
+    const actor = `copilot:${user.id}` as const;
+    await appendEvent(tx, ctx, {
+      entity: done.entity,
+      type: "COPILOT_PROPOSAL_CONFIRMED",
+      actor,
+      payload: { proposalId: p.id, threadId: p.threadId, kind: p.kind, via: "typed_acceptance" },
+      rulesVersion: ctx.rulesVersion,
+    });
+    await appendEvent(tx, ctx, {
+      entity: done.entity,
+      type: "COPILOT_CONFIG_CHANGED",
+      actor,
+      payload: {
+        kind: "add_clause",
+        id: done.result.id,
+        proposalId: p.id,
+        acceptedSuggestion: true,
+        userQuote,
+        // The message the engine checked (the user's own words), not just what the model passed.
+        userMessage: last.content,
+        messageId: last.id,
+        threadId,
+      },
+      rulesVersion: ctx.rulesVersion,
+    });
+    await tx.db
+      .update(copilotProposals)
+      .set({ status: "confirmed", result: done.result, decidedAt: now })
+      .where(eq(copilotProposals.id, p.id));
+    return {
+      status: "done" as const,
+      kind: "add_clause",
+      id: done.result.id,
+      summary: done.result.summary,
+      proposalId: p.id,
+    };
   });
 }
 

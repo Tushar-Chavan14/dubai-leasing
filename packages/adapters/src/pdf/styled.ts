@@ -68,8 +68,8 @@ export async function renderStyledPdf(
   const doc = await PDFDocument.create();
   doc.setTitle(safe(meta.title));
   doc.setSubject(safe(meta.subject));
-  doc.setProducer("Dubai Leasing");
-  doc.setCreator("Dubai Leasing");
+  doc.setProducer("UAE Leasing");
+  doc.setCreator("UAE Leasing");
   const regular = await doc.embedFont(STANDARD[look.font.regular] ?? StandardFonts.Helvetica);
   const bold = await doc.embedFont(STANDARD[look.font.bold] ?? StandardFonts.HelveticaBold);
   const W = clamp(look.page.widthPt, 200, 1200);

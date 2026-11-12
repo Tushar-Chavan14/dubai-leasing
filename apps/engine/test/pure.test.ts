@@ -56,6 +56,14 @@ describe("unit import row", () => {
       },
     });
   });
+  test("emirate column: ids and labels in any case, empty is Dubai, unknown is an error", () => {
+    expect(toUnitFields(UnitImportRow.parse({ ...good, emirate: "Abu Dhabi" }), COMPANY).emirate).toBe("abu_dhabi");
+    expect(toUnitFields(UnitImportRow.parse({ ...good, emirate: "ras_al_khaimah" }), COMPANY).emirate).toBe(
+      "ras_al_khaimah",
+    );
+    expect(toUnitFields(UnitImportRow.parse({ ...good, emirate: "" }), COMPANY).emirate).toBe("dubai");
+    expect(parseUnitRow({ ...good, emirate: "Mars" }, COMPANY).ok).toBe(false);
+  });
   test("asking_rent 'AED 85,000' → fils", () => {
     const row = UnitImportRow.parse({ ...good, asking_rent_aed: "AED 85,000" });
     expect(toUnitFields(row, COMPANY).askingRentFils).toBe(8_500_000);

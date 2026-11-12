@@ -14,16 +14,18 @@ type Sub = typeof submissions.$inferSelect;
  * outline colour for state): no DLD logo, colours, layout or screen copy.
  */
 export function page(regs: Reg[], subs: Sub[]): string {
+  const prefix = (system: string) => (system === "tawtheeq" ? "/tawtheeq" : "");
+  const label = (system: string) => (system === "tawtheeq" ? "Tawtheeq (simulated)" : "Ejari (simulated)");
   const regRows = regs
     .map(
       (r) =>
-        `<tr><td><a href="/api/v1/registrations/${encodeURIComponent(r.ejariNo)}/certificate.pdf">${esc(r.ejariNo)}</a></td><td>${esc(r.dldPropertyNo)}</td><td>${esc(r.tenantName)}</td><td>${esc(r.startOn)} → ${esc(r.endOn)}</td><td>${esc(r.issuedOn)}</td><td><span class="tag ${esc(r.state)}">${esc(r.state)}</span></td></tr>`,
+        `<tr><td>${label(r.system)}</td><td><a href="${prefix(r.system)}/api/v1/registrations/${encodeURIComponent(r.ejariNo)}/certificate.pdf">${esc(r.ejariNo)}</a></td><td>${esc(r.dldPropertyNo)}</td><td>${esc(r.tenantName)}</td><td>${esc(r.startOn)} → ${esc(r.endOn)}</td><td>${esc(r.issuedOn)}</td><td><span class="tag ${esc(r.state)}">${esc(r.state)}</span></td></tr>`,
     )
     .join("");
   const subRows = subs
     .map(
       (s) =>
-        `<tr><td>${esc(s.receivedAt.toISOString().replace("T", " ").slice(0, 19))}</td><td>${esc(s.kind)}</td><td>${esc(s.payload.dldPropertyNo)}</td><td>${esc(s.payload.tenantNameEn)}</td><td><span class="tag ${esc(s.outcome)}">${esc(s.outcome)}</span></td><td>${
+        `<tr><td>${label(s.system)}</td><td>${esc(s.receivedAt.toISOString().replace("T", " ").slice(0, 19))}</td><td>${esc(s.kind)}</td><td>${esc(s.payload.dldPropertyNo)}</td><td>${esc(s.payload.tenantNameEn)}</td><td><span class="tag ${esc(s.outcome)}">${esc(s.outcome)}</span></td><td>${
           s.outcome === "issued"
             ? esc(s.ejariNo)
             : s.reasons.map((r) => `<div><b>${esc(r.code)}</b> ${esc(r.message)}</div>`).join("")
@@ -31,7 +33,7 @@ export function page(regs: Reg[], subs: Sub[]): string {
     )
     .join("");
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Simulated Ejari (demo)</title>
+<title>Simulated registries (demo)</title>
 <style>
 body{margin:0;font-family:system-ui,sans-serif;color:#222;background:#fafafa}
 header{padding:20px 24px;border-bottom:1px solid #ddd;background:#fff}
@@ -47,12 +49,13 @@ th{color:#666;font-weight:600}
 .empty{color:#777;padding:12px 0}
 a{color:#222}
 </style></head><body>
-<header><h1>Simulated Ejari (demo)</h1>
-<p class="warn">A mock registry for demos and tests. It is not connected to the Dubai Land Department and its certificates are not valid anywhere.</p></header>
+<header><h1>Simulated registries (demo)</h1>
+<p class="warn"><b>Simulated Ejari (demo)</b> and <b>Simulated Tawtheeq (demo)</b>, side by side.</p>
+<p class="warn">A mock registry for demos and tests. The simulated Ejari is not connected to the Dubai Land Department, and the simulated Tawtheeq is not connected to any Abu Dhabi government system. Their certificates are not valid anywhere.</p></header>
 <main>
 <h2>Registrations</h2>
-${regs.length ? `<table><tr><th>Number</th><th>Property</th><th>Tenant</th><th>Period</th><th>Issued</th><th>State</th></tr>${regRows}</table>` : '<p class="empty">No registrations yet.</p>'}
+${regs.length ? `<table><tr><th>System</th><th>Number</th><th>Property</th><th>Tenant</th><th>Period</th><th>Issued</th><th>State</th></tr>${regRows}</table>` : '<p class="empty">No registrations yet.</p>'}
 <h2>Latest requests</h2>
-${subs.length ? `<table><tr><th>Received (UTC)</th><th>Kind</th><th>Property</th><th>Tenant</th><th>Outcome</th><th>Detail</th></tr>${subRows}</table>` : '<p class="empty">No requests yet.</p>'}
+${subs.length ? `<table><tr><th>System</th><th>Received (UTC)</th><th>Kind</th><th>Property</th><th>Tenant</th><th>Outcome</th><th>Detail</th></tr>${subRows}</table>` : '<p class="empty">No requests yet.</p>'}
 </main></body></html>`;
 }

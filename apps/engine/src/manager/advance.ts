@@ -10,6 +10,7 @@ import {
   type LeaseEvent,
   leaseMachine,
   OfferTerms,
+  registrationSystemName,
   type UnitEvent,
   unitMachine,
 } from "@leasing/core";
@@ -36,6 +37,7 @@ import { sentAtOfApproval } from "./outbound.ts";
 import { applyVerifiedIdentity, onEnterApplication, type OfferEntryOpts } from "./applications.ts";
 import { assertSignedContract } from "./contracts.ts";
 import { assertIssuedSubmission, proposeEjariSubmission } from "./registration.ts";
+import { leaseEmirate } from "./registries.ts";
 import {
   effectiveProposal,
   identityExpiryProblems,
@@ -121,6 +123,9 @@ async function advanceInTx(
     case "rulebook":
       // Rulebook versions have no state machine; drafts are published through the rulebook API.
       throw new Error("advance() does not apply to rulebook versions");
+    case "settings":
+      // Settings rows (e.g. registration settings, D53) have no state machine; they only carry audit events.
+      throw new Error("advance() does not apply to settings");
     case "conversation":
       // Enquiry conversations have no state machine; their bookings go through the application.
       throw new Error("advance() does not apply to conversations");
@@ -222,7 +227,8 @@ async function advanceApplication(
       ),
       contractRuleId,
     );
-    if (problems.length)
+    // A manager's decision is consumed even when their edited terms (D51) ended up within limits.
+    if (problems.length || opts.approvalId)
       approval = await usableApproval(tx, "offer_out_of_limits", { kind: "application", id }, opts.approvalId);
     patch.offer = terms;
     patch.offerAcceptedAt = null;
@@ -337,7 +343,10 @@ async function advanceLease(
 
   // The renewal itself was checked under the lease's pinned version; the new term is pinned to the
   // version in force on its start date, so its notice and cap milestones follow those rules (D23).
-  const repin = event === "RENEWED" ? { rulesVersion: rulesVersionForTerm(merged.startOn) } : {};
+  const repin =
+    event === "RENEWED"
+      ? { rulesVersion: rulesVersionForTerm(merged.startOn, getRulebook(lease.rulesVersion).emirate) }
+      : {};
   await tx.db
     .update(leases)
     .set({ ...patch, ...repin, state: t.to, updatedAt: ctx.clock.now() })
@@ -441,12 +450,16 @@ async function onEnterLease(ctx: EngineContext, tx: Tx, lease: LeaseRow, from: s
       // Step 6: the submission is built from the signed contract and waits for an officer.
       // `ejari_draft_auto` (D37) only controls who drafts it: off, an officer is asked to draft it.
       // Either way a person approves the `ejari_submission` gate; nothing is submitted here.
-      if ((await getCompanyPolicy(tx, ctx.clock.today())).autopilot.ejari_draft_auto) {
+      // No registration system for the emirate: the proposal step raises the "register by hand" task.
+      if (
+        !ctx.registries[await leaseEmirate(tx, lease)] ||
+        (await getCompanyPolicy(tx, ctx.clock.today())).autopilot.ejari_draft_auto
+      ) {
         await proposeEjariSubmission(ctx, tx, lease, "system");
       } else {
         await createTask(ctx, tx, lease.id, {
           kind: "draft_ejari_submission",
-          title: `Draft the Ejari submission for ${lease.ref} (the contract is signed)`,
+          title: `Draft the ${registrationSystemName(await leaseEmirate(tx, lease))} submission for ${lease.ref} (the contract is signed)`,
           details: {},
           assigneeRole: "leasing_officer",
           dueOn: ctx.clock.today(),
@@ -482,7 +495,7 @@ async function onEnterLease(ctx: EngineContext, tx: Tx, lease: LeaseRow, from: s
         await cancelPendingApprovals(ctx, tx, lease.id, ["renewal_notice"]);
         await createTask(ctx, tx, lease.id, {
           kind: "ejari_renewal",
-          title: `Renew the Ejari registration for ${lease.ref} (new term ${lease.startOn} → ${lease.endOn})`,
+          title: `Renew the ${registrationSystemName(await leaseEmirate(tx, lease))} registration for ${lease.ref} (new term ${lease.startOn} → ${lease.endOn})`,
           details: { ejariNo: lease.ejariNo },
           assigneeRole: "leasing_officer",
           dueOn: lease.startOn,

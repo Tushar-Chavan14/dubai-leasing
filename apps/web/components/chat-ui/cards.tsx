@@ -51,6 +51,7 @@ export function CardRow({
 
 function cardKey(c: CopilotCardData): string {
   if (c.kind === "record") return `r-${c.ref}`;
-  if (c.kind === "decision") return `d-${c.decision}-${c.decision === "approval" ? c.approvalId : c.applicationId}`;
+  if (c.kind === "decision")
+    return `d-${c.decision}-${c.decision === "approval" ? c.approvalId : "leaseId" in c ? c.leaseId : c.applicationId}`;
   return `u-${c.card.unitId}`;
 }

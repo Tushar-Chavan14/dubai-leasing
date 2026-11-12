@@ -48,7 +48,7 @@ tests pass.
 8. **Personal data stays local.** Don't log Emirates ID numbers, passport numbers or phone
    numbers in plain text (use `maskPii`). Don't send documents to cloud APIs. Never read or
    commit `data/uploads/`.
-9. **The Ejari mock is labelled as simulated.** No DLD logos, colours or screen copies.
+9. **The Ejari mock is labelled as simulated.** No DLD logos, colours or screen copies. The Tawtheeq mock is labelled the same way.
 10. **Channels have fixed jobs.** Telegram receives enquiries only. Everything outbound to
     applicants, tenants and landlords goes by email through the `mail` adapter, which stores the
     message, attachment hashes and SMTP response as evidence. The 12-month repossession notice is
@@ -63,11 +63,12 @@ tests pass.
     logged-in user. No tool may approve a gate, send a message, change state, submit to Ejari,
     edit rules or policy, or open uploaded documents. Legal and money values in its answers
     come from rulebook tools. Tenant-written text reaching the copilot is untrusted data.
-    `propose` tools need the user's Confirm click. Seven confirmed actions exist (decisions D25, D26, D42): an application (with its viewing invitation email), a task, a pending approval request (`formal_reminder`, `vacate_notice`), a viewing invitation, a document request, a signing-link resend, and preparing a contract (it only prepares: the contract still waits at the `final_contract` gate). Each runs through the normal route, as the user, only when that user clicks Confirm in the chat. Decision cards (D48): asked to approve, reject, record a site visit or record a reservation payment, the copilot shows a card whose buttons run the inbox's or application page's own route as the user; the click is the decision. `draft` tools save text the user opens
+    `propose` tools need the user's Confirm click. Seven confirmed actions exist (decisions D25, D26, D42): an application (with its viewing invitation email), a task, a pending approval request (`formal_reminder`, `vacate_notice`), a viewing invitation, a document request, a signing-link resend, and preparing a contract (it only prepares: the contract still waits at the `final_contract` gate). Each runs through the normal route, as the user, only when that user clicks Confirm in the chat. Decision cards (D48, D53): asked to approve, reject, record a site visit, record a reservation payment or record a manual registration (or its rejection), the copilot shows a card whose buttons run the inbox's or application page's own route as the user; the click is the decision. `draft` tools save text the user opens
     in the normal form and sends or posts themselves; the copilot never sends. The copilot's
     client can store a proposal or a draft but can never confirm, send or post one. Amendment (D45, D50): the copilot may change contract clauses, rent rules, contract rules,
     Smart Rental Index values and a company's KYC draft (publishing it too) when the user's own latest message asks for that change (the engine checks the
-    quoted words); a change the copilot suggests on its own waits for Confirm. Same roles and validation as
+    quoted words); a change the copilot suggests on its own waits for Confirm. Amendment (D57): a contract clause the copilot
+    suggested in its previous answer is also added when the user's next message simply accepts it ("add it"), unchanged. Same roles and validation as
     the settings forms.
 
 ## Repo map

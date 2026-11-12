@@ -4,6 +4,7 @@ import { type CalendarDate, DEMO_COMPANY_LEGAL, type EjariPayload, FixedClock, l
 import { PDFDocument } from "pdf-lib";
 import { count, sql } from "drizzle-orm";
 import { createEjariMock } from "../src/app.ts";
+import { CERTIFICATE_WORDING } from "../src/certificate.ts";
 import { bootstrap, createMockDatabase, type MockDb, reset } from "../src/db.ts";
 import { registrations, submissions } from "../src/schema.ts";
 
@@ -199,5 +200,147 @@ describe.skipIf(noDb)("simulated Ejari", () => {
       }),
     );
     expect(bad.status).toBe(400);
+  });
+
+  describe("simulated Tawtheeq (Abu Dhabi)", () => {
+    const twq = (opts: { demoMode?: boolean } = {}) => {
+      const app = createEjariMock({ db, clock, failureRate: 0, random: () => 0.5, demoMode: opts.demoMode ?? true });
+      const fetcher = async (r: Request) => app.fetch(r);
+      return {
+        app,
+        ejari: new HttpEjariClient({ baseUrl: "http://ejari.test", fetch: fetcher }),
+        tawtheeq: new HttpEjariClient({ baseUrl: "http://ejari.test", fetch: fetcher, pathPrefix: "/tawtheeq" }),
+      };
+    };
+    // The seeded Abu Dhabi demo apartment (AUH-0101) and its sibling office.
+    const abuDhabi = (over: Partial<EjariPayload> = {}) =>
+      priya({ dldPropertyNo: "DEMO-AUH-002101", unitNo: "2101", makaniNo: "DEMO-ADDR-AUH-0101", ...over });
+
+    test("the same requestId on the Ejari and Tawtheeq routes is not replayed across systems", async () => {
+      const { ejari, tawtheeq } = twq();
+      const id = rid();
+      const e = await ejari.register(priya(), { requestId: id });
+      const t = await tawtheeq.register(abuDhabi(), { requestId: id });
+      if (!e.ok || !t.ok) throw new Error(`expected both issued: ${JSON.stringify({ e, t })}`);
+      expect(e.ejariNo).toMatch(/^SIM-2026-/);
+      expect(t.ejariNo).toMatch(/^SIM-TWQ-2026-/);
+      expect(await tawtheeq.register(abuDhabi(), { requestId: id })).toEqual(t);
+    });
+
+    test("issues SIM-TWQ numbers, replays a repeated request and serves a simulated certificate", async () => {
+      const { tawtheeq } = twq();
+      const id = rid();
+      const r = await tawtheeq.register(abuDhabi(), { requestId: id });
+      if (!r.ok) throw new Error(`expected issued: ${JSON.stringify(r)}`);
+      expect(r.ejariNo).toMatch(/^SIM-TWQ-2026-\d{7}$/);
+      expect(await tawtheeq.register(abuDhabi(), { requestId: id })).toEqual(r);
+      expect(await tawtheeq.status(r.ejariNo)).toEqual({ state: "active" });
+      const pdf = await tawtheeq.certificate(r.ejariNo);
+      const doc = await PDFDocument.load(pdf, { updateMetadata: false });
+      expect(doc.getProducer()).toBe("Simulated Tawtheeq (demo)");
+      // The drawn wording (PDF streams are compressed, so the strings are checked at their source).
+      expect(CERTIFICATE_WORDING.tawtheeq).toEqual({
+        title: "Tenancy contract registration (simulated Tawtheeq)",
+        subline: "Demo service for testing. It is not connected to any Abu Dhabi government system.",
+        watermark: "SIMULATED - NOT ISSUED BY ANY ABU DHABI AUTHORITY",
+        producer: "Simulated Tawtheeq (demo)",
+      });
+    });
+
+    test("checks the property for Tawtheeq as for Ejari", async () => {
+      const { tawtheeq } = twq();
+      const unknown = await tawtheeq.register(abuDhabi({ dldPropertyNo: "AD-PROP-1" }), { requestId: rid() });
+      expect(unknown.ok ? [] : unknown.reasons.map((r) => r.code)).toEqual(["PROPERTY_NOT_FOUND"]);
+      const wrongUnit = await tawtheeq.register(abuDhabi({ unitNo: "9" }), { requestId: rid() });
+      expect(wrongUnit.ok ? [] : wrongUnit.reasons.map((r) => r.code)).toEqual(["PROPERTY_DATA_MISMATCH"]);
+    });
+
+    test("overlap is per system: an Ejari registration doesn't block Tawtheeq, and vice versa", async () => {
+      const { ejari, tawtheeq } = twq();
+      expect((await ejari.register(priya(), { requestId: rid() })).ok).toBe(true);
+      // Same property number, same period, in Tawtheeq.
+      expect((await tawtheeq.register(priya(), { requestId: rid() })).ok).toBe(true);
+      // A second one in Tawtheeq overlaps the first; so does a second one in Ejari.
+      const t2 = await tawtheeq.register(priya(), { requestId: rid() });
+      expect(t2.ok ? [] : t2.reasons.map((r) => r.code)).toEqual(["ACTIVE_REGISTRATION_EXISTS"]);
+      const e2 = await ejari.register(priya(), { requestId: rid() });
+      expect(e2.ok ? [] : e2.reasons.map((r) => r.code)).toEqual(["ACTIVE_REGISTRATION_EXISTS"]);
+    });
+
+    test("reject-next is per system", async () => {
+      const { app, ejari, tawtheeq } = twq();
+      const post = (path: string, body?: unknown) =>
+        app.fetch(
+          new Request(`http://ejari.test${path}`, { method: "POST", ...(body ? { body: JSON.stringify(body) } : {}) }),
+        );
+      expect((await post("/tawtheeq/api/v1/demo/reject-next")).status).toBe(200);
+      // Ejari is not affected.
+      expect(await ejari.register(priya(), { requestId: rid() })).toMatchObject({ ok: true });
+      expect(await tawtheeq.register(abuDhabi(), { requestId: rid() })).toMatchObject({
+        ok: false,
+        reasons: [{ code: "NAME_MISMATCH" }],
+      });
+      expect(await tawtheeq.register(abuDhabi(), { requestId: rid() })).toMatchObject({ ok: true });
+      // The root path takes the system in the body.
+      expect((await post("/api/v1/demo/reject-next", { system: "tawtheeq" })).status).toBe(200);
+      expect(
+        await tawtheeq.register(
+          abuDhabi({
+            dldPropertyNo: "DEMO-AUH-002102",
+            unitNo: "2102",
+            makaniNo: "DEMO-ADDR-AUH-0201",
+            propertyUsage: "commercial",
+          }),
+          { requestId: rid() },
+        ),
+      ).toMatchObject({
+        ok: false,
+        reasons: [{ code: "NAME_MISMATCH" }],
+      });
+    });
+
+    test("a number of one system is 404 on the other system's routes", async () => {
+      const { app } = twq();
+      const get = (path: string) => app.fetch(new Request(`http://ejari.test${path}`));
+      const post = (path: string) =>
+        app.fetch(
+          new Request(`http://ejari.test${path}`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ reason: "test cancel" }),
+          }),
+        );
+      const { tawtheeq, ejari } = twq();
+      const t = await tawtheeq.register(
+        abuDhabi({
+          dldPropertyNo: "DEMO-AUH-002102",
+          unitNo: "2102",
+          makaniNo: "DEMO-ADDR-AUH-0201",
+          propertyUsage: "commercial",
+        }),
+        { requestId: rid() },
+      );
+      const e = await ejari.register(priya({ dldPropertyNo: "DEMO-DLD-000413", unitNo: "413" }), { requestId: rid() });
+      if (!t.ok) throw new Error("expected issued");
+      const tNo = t.ejariNo;
+      expect((await get(`/api/v1/registrations/${tNo}`)).status).toBe(404);
+      expect((await get(`/api/v1/registrations/${tNo}/certificate.pdf`)).status).toBe(404);
+      expect((await post(`/api/v1/registrations/${tNo}/cancel`)).status).toBe(404);
+      expect((await post(`/api/v1/registrations/${tNo}/renew`)).status).toBe(404);
+      expect((await get(`/tawtheeq/api/v1/registrations/${tNo}`)).status).toBe(200);
+      if (e.ok) {
+        expect((await get(`/tawtheeq/api/v1/registrations/${e.ejariNo}`)).status).toBe(404);
+        expect((await get(`/tawtheeq/api/v1/registrations/${e.ejariNo}/certificate.pdf`)).status).toBe(404);
+        expect((await post(`/tawtheeq/api/v1/registrations/${e.ejariNo}/cancel`)).status).toBe(404);
+      }
+    });
+
+    test("the page lists both systems, labelled simulated", async () => {
+      const { app, tawtheeq } = twq();
+      await tawtheeq.register(abuDhabi(), { requestId: rid() });
+      const html = await (await app.fetch(new Request("http://ejari.test/"))).text();
+      expect(html).toContain("Tawtheeq (simulated)");
+      expect(html).toContain("not connected to any Abu Dhabi government system");
+    });
   });
 });

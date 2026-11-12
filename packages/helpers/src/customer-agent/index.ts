@@ -12,6 +12,7 @@ import { actionClaim, verifyAnswer } from "./verify.ts";
 export * from "./schema.ts";
 export { AGENT_TOOLS, type AgentBackend, type ToolOutcome, toolsFor } from "./tools.ts";
 export { systemPrompt, untrusted } from "./prompt.ts";
+export { checkScope, OFF_TOPIC_THRESHOLD, type ScopeCheck, SCOPE_CRITERIA } from "./scope.ts";
 export { actionClaim, asciiDigits, verifyAnswer } from "./verify.ts";
 
 /** At most this many tool calls per visitor message (decision D36). */

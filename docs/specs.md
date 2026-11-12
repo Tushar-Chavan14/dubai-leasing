@@ -60,7 +60,7 @@ person, and never miss a deadline.
 
 - Real DLD Ejari API, DEWA, payment gateways, bank cheque clearing
 - WhatsApp (channel adapter is ready; added when API keys are available)
-- Abu Dhabi rules (rulebook is per emirate so it can be added)
+- Reviewed rules and real registration systems for other emirates (the foundation exists, D52; demo rulebooks and units for six emirates are seed-only, D55; only Dubai has a rulebook in code)
 - Multi-company SaaS tenancy, billing, SSO
 - Arabic web UI (bot handles Arabic; staff UI is English)
 - Commercial leases beyond flagging them for a person

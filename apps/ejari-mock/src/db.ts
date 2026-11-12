@@ -78,10 +78,11 @@ export async function seed(db: MockDb): Promise<void> {
   await db
     .insert(properties)
     .values(
-      PROPERTIES.map(([dldPropertyNo, unitNo, makaniNo, company]) => ({
+      PROPERTIES.map(([dldPropertyNo, unitNo, makaniNo, company, usage]) => ({
         dldPropertyNo,
         unitNo,
         makaniNo,
+        usage: usage ?? "residential",
         ownerName: ownerOf(company),
       })),
     )
@@ -121,5 +122,6 @@ export async function seed(db: MockDb): Promise<void> {
 export async function reset(db: MockDb): Promise<void> {
   await db.execute(sql`TRUNCATE ${registrations}, ${submissions}, ${properties}, ${icpPeople}`);
   await db.execute(sql`ALTER SEQUENCE ejari_mock.ejari_seq RESTART`);
+  await db.execute(sql`ALTER SEQUENCE ejari_mock.tawtheeq_seq RESTART`);
   await seed(db);
 }

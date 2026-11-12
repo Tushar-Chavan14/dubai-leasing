@@ -127,6 +127,21 @@ describe.skipIf(noDb)("public listings and enquiry routes", () => {
     expect((await get("/public/units/not-a-uuid")).status).toBe(404);
   });
 
+  test("summaries carry the emirate and `?emirate=` filters", async () => {
+    const abu = await addUnit({
+      emirate: "abu_dhabi",
+      community: "Al Reem Island",
+      priceApprovedAt: new Date("2026-10-01T08:00:00Z"),
+    });
+    const rows = async (q: string) =>
+      (await (await get(`/public/units${q}`)).json()) as { id: string; emirate: string }[];
+    expect((await rows("")).find((u) => u.id === listed)!.emirate).toBe("dubai");
+    expect((await rows("?emirate=abu_dhabi")).map((u) => u.id)).toEqual([abu]);
+    expect((await rows("?emirate=dubai")).map((u) => u.id)).not.toContain(abu);
+    expect(await rows("?emirate=ajman")).toEqual([]);
+    expect((await get("/public/units?emirate=narnia")).status).toBe(400);
+  });
+
   test("the category filter widens the list; commercial units show size and open as listings, not for the form", async () => {
     const shop = await addUnit({ category: "retail", subtype: "shop", bedrooms: null, areaSqft: 650 });
     const ids = async (q: string) =>

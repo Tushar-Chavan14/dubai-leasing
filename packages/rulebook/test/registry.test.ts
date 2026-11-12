@@ -6,6 +6,7 @@ import {
   deepEqual,
   dubai2025_01 as base,
   getRulebook,
+  latestBaseFor,
   loosenedVsBase,
   maxIncreasePercent,
   ReferenceRules,
@@ -286,4 +287,17 @@ describe("rulesVersionForTerm", () => {
     expect(rulesVersionForTerm(d("2023-03-01"))).toBe("dubai-2025-01"));
   test("unknown emirate throws", () =>
     expect(() => rulesVersionForTerm(d("2026-10-22"), "abu-dhabi" as "dubai")).toThrow());
+});
+
+describe("latestBaseFor", () => {
+  const later = { ...base, version: "dubai-2026-01", effectiveFrom: "2026-01-01" };
+  const sharjah = { ...base, version: "sharjah-2027-01", emirate: "sharjah" as const, effectiveFrom: "2027-01-01" };
+  test("picks the latest base of the emirate, whatever the list order", () => {
+    expect(latestBaseFor([later, base], "dubai")?.version).toBe("dubai-2026-01");
+    expect(latestBaseFor([base, later], "dubai")?.version).toBe("dubai-2026-01");
+  });
+  test("ignores other emirates and returns null when the emirate has none", () => {
+    expect(latestBaseFor([base, sharjah], "dubai")?.version).toBe("dubai-2025-01");
+    expect(latestBaseFor([base], "ajman")).toBeNull();
+  });
 });

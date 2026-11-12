@@ -57,7 +57,7 @@ export function HomeTiles({ initial, top }: { initial: Counts; top: { key: strin
           <b className="num font-semibold !text-ink">{h.awaitingSignature}</b> awaiting signature
         </Link>
         <Link href="/work?stage=Ejari" className={`${sub} !text-muted`}>
-          <b className="num font-semibold !text-ink">{h.ejariPending}</b> Ejari pending
+          <b className="num font-semibold !text-ink">{h.ejariPending}</b> registrations pending
         </Link>
       </div>
       <div className={`${CARD} bg-page`}>

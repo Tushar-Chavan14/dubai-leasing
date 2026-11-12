@@ -11,6 +11,8 @@ import {
   nameFix,
   type RegistrationContext,
   registrationHelper,
+  REQUIRED_TERMS,
+  requiredTerms,
   RegistrationSchemas,
   runHelper,
 } from "../src/index.ts";
@@ -183,6 +185,31 @@ describe("contract fields", () => {
     );
     expect(run.result.status).toBe("needs_human");
     expect(llm.chatCalls).toHaveLength(2);
+  });
+
+  test("the standard form follows the unit's emirate; Dubai output is unchanged (D56)", () => {
+    const r = buildContractFields(ctx());
+    if (!r.ok) throw new Error("expected fields");
+    const fields = { ...r.fields, building: "Demo Tower", community: "Al Majaz", dldPropertyNo: "DEMO-PROP-1" };
+    const add = { clauses: ["no_pets" as const], freeText: null };
+    const o = { version: 1, reference: "C-TEST02", preparedOn: d("2026-11-01") };
+    const dubai = JSON.stringify(contractDocument(r.fields, add, { ...o, demo: true }));
+    expect(JSON.stringify(contractDocument(r.fields, add, { ...o, demo: true, emirate: "dubai" }))).toBe(dubai);
+    expect(dubai).toContain("DLD property no.");
+    expect(dubai).toContain("under Dubai law");
+    expect(dubai).toContain("registered in Ejari after both parties sign");
+    for (const demo of [true, false]) {
+      const text = JSON.stringify(contractDocument(fields, add, { ...o, demo, emirate: "sharjah" }));
+      expect(text).toContain("under the laws of the Emirate of Sharjah");
+      expect(text).toContain("registered in Sharjah Municipality attestation after both parties sign");
+      expect(text).toContain("Property no.");
+      for (const word of ["Dubai", "DLD", "Ejari"]) expect(text).not.toContain(word);
+    }
+    expect(JSON.stringify(contractDocument(fields, add, { ...o, demo: false, emirate: "abu_dhabi" }))).toContain(
+      "TO BE REVIEWED BY A PROPERTY LAWYER IN ABU DHABI",
+    );
+    expect(requiredTerms("dubai")).toEqual(REQUIRED_TERMS);
+    expect(requiredTerms("ajman").ejari).toBe("This contract is registered in Tasdeeq after both parties sign.");
   });
 
   test("the document prints the fields as stored and says it is a demo template", () => {

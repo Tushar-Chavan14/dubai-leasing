@@ -9,7 +9,7 @@ export type { EjariRejection };
 
 export type EjariResult = { ok: true; ejariNo: string; issuedOn: string } | { ok: false; reasons: EjariRejection[] };
 
-export interface EjariAdapter {
+export interface RegistrationAdapter {
   /** `requestId` makes a retry safe: the same id returns the first answer, never a second registration. */
   register(c: EjariContractPayload, opts: { requestId: string }): Promise<EjariResult>;
   renew(ejariNo: string, c: EjariContractPayload, opts: { requestId: string }): Promise<EjariResult>;
@@ -18,6 +18,9 @@ export interface EjariAdapter {
   /** The registration certificate as PDF. */
   certificate(ejariNo: string): Promise<Uint8Array>;
 }
+
+/** The Dubai name for the registration adapter. */
+export type EjariAdapter = RegistrationAdapter;
 
 /** The registry could not be reached or failed (network, 5xx, maintenance): retry later. Not a rejection. */
 export class EjariUnavailableError extends Error {

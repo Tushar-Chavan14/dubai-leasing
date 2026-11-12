@@ -1,3 +1,4 @@
+import { Emirate } from "@leasing/core";
 import { z } from "zod";
 import { ALL_STAFF, type CopilotTool } from "../types.ts";
 import { type UnitCard } from "@leasing/core";
@@ -18,6 +19,7 @@ const Input = z.object({
     .optional()
     .describe("Property type; homes only when left out, 'all' for every type"),
   sizeBand: z.enum(["small", "medium", "large"]).optional().describe("Floor-area band for commercial and retail units"),
+  emirate: Emirate.optional().describe("Only units in this emirate"),
   maxRentAed: z.number().int().positive().max(10_000_000).optional().describe("Highest annual asking rent, in AED"),
 });
 const Output = z.object({
@@ -27,6 +29,7 @@ const Output = z.object({
       code: z.string(),
       company: z.string().nullable(),
       category: z.string(),
+      emirate: Emirate.optional(),
       building: z.string(),
       community: z.string(),
       bedrooms: z.number().nullable(),
@@ -44,6 +47,7 @@ interface Row {
   unitId: string;
   company: string | null;
   category: string;
+  emirate?: Emirate;
   card: UnitCard | null;
   code: string;
   building: string;
@@ -59,11 +63,11 @@ export const findAvailableUnits: CopilotTool<typeof Input, typeof Output> = {
   name: "find_available_units",
   kind: "read",
   description:
-    "Units that can be booked for a viewing now (listed, approved price, no lease being signed), cheapest first (up to 10), with the approved annual asking rent and the next free viewing slots (Dubai time). Filter by area, bedrooms, company, category, size band and maximum rent. Use it for 'what is available' and 'find a 2-bed in Marina under 120k' questions, and before proposing an application. When the user names a unit, pass only unitCode. An empty list means nothing matches. The units show as cards in the chat.",
+    "Units that can be booked for a viewing now (listed, approved price, no lease being signed), cheapest first (up to 10), with the approved annual asking rent and the next free viewing slots (Dubai time). Filter by emirate, area, bedrooms, company, category, size band and maximum rent. Use it for 'what is available' and 'find a 2-bed in Marina under 120k' questions, and before proposing an application. When the user names a unit, pass only unitCode. An empty list means nothing matches. The units show as cards in the chat.",
   input: Input,
   output: Output,
   roles: ALL_STAFF,
-  async run({ unitCode, bedrooms, community, company, category, sizeBand, maxRentAed }, { engine }) {
+  async run({ unitCode, bedrooms, community, company, category, sizeBand, emirate, maxRentAed }, { engine }) {
     const q = [
       unitCode ? `code=${unitCode}` : null,
       bedrooms !== undefined ? `bedrooms=${bedrooms}` : null,
@@ -71,6 +75,7 @@ export const findAvailableUnits: CopilotTool<typeof Input, typeof Output> = {
       company ? `company=${encodeURIComponent(company)}` : null,
       category ? `category=${category}` : null,
       sizeBand ? `sizeBand=${sizeBand}` : null,
+      emirate ? `emirate=${emirate}` : null,
       maxRentAed ? `maxRentFils=${maxRentAed * 100}` : null,
     ].filter(Boolean);
     const rows = await engine.get<Row[]>(`/api/available-units${q.length ? `?${q.join("&")}` : ""}`);
@@ -80,6 +85,7 @@ export const findAvailableUnits: CopilotTool<typeof Input, typeof Output> = {
         code: r.code,
         company: r.company,
         category: r.category,
+        ...(r.emirate ? { emirate: r.emirate } : {}),
         building: r.building,
         community: r.community,
         bedrooms: r.bedrooms,

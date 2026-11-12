@@ -241,6 +241,19 @@ describe("rendering a company template", () => {
     expect(r.blocks.filter((b) => b.kind === "sigline")).toHaveLength(2);
   });
 
+  test("required terms follow the emirate (D56)", () => {
+    const r = templateContractBlocks(
+      input(),
+      SAMPLE_CONTRACT_FIELDS,
+      { clauses: [], freeText: null },
+      { ...opts, emirate: "abu_dhabi" },
+    );
+    const text = textOf(r.blocks);
+    expect(text).toContain("under the laws of the Emirate of Abu Dhabi");
+    expect(text).toContain("registered in Tawtheeq after both parties sign");
+    expect(text).not.toContain("Ejari");
+  });
+
   test("a template that has the exact standard sentences (any case or spacing) gets no law section", () => {
     const full: TemplateSections = {
       numbering: "none",

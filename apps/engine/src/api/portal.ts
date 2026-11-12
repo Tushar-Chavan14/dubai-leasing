@@ -24,6 +24,7 @@ import { z } from "zod";
 import type { EngineContext } from "../context.ts";
 import { conflict, DomainError, unprocessable } from "../errors.ts";
 import { effectiveProposal, RenewalNoticeProposal } from "../manager/gate-rules.ts";
+import { offerRegistrationFee } from "../manager/registries.ts";
 import { receiveInbound, storeInboundWhileTenancyOff, termReplies } from "../manager/inbound.ts";
 import { addApplicationDocument, removeApplicationDocument, uploadedDocuments } from "../manager/applications.ts";
 import { contractPdf, signContract, signView } from "../manager/contracts.ts";
@@ -510,6 +511,8 @@ export function registerPortalRoutes(app: Hono<AuthEnv>, ctx: EngineContext, med
               endOn: a.offer.endOn,
               expiresOn: a.offer.expiresOn,
               acceptedAt: a.offerAcceptedAt,
+              // Shown only when the tenant pays it; computed from the schedule, not stored in the terms.
+              registrationFee: await offerRegistrationFee(ctx, tx, unit.emirate, a.offer.annualRentFils),
             }
           : null,
       canRespond: link.purpose === "offer" && !link.usedAt && offerOpen,
@@ -521,6 +524,7 @@ export function registerPortalRoutes(app: Hono<AuthEnv>, ctx: EngineContext, med
         ? {
             building: unit.building,
             community: unit.community,
+            emirate: unit.emirate,
             unitNo: unit.unitNo,
             bedrooms: unit.bedrooms,
             bathrooms: unit.bathrooms,

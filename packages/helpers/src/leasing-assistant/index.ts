@@ -1,5 +1,5 @@
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
-import { type Helper, PropertyCategory, SizeBand } from "@leasing/core";
+import { Emirate, type Helper, PropertyCategory, SizeBand } from "@leasing/core";
 import type { Llm, SystemOneAnswer } from "@leasing/llm";
 import {
   answerMessages,
@@ -17,7 +17,7 @@ import {
   type LeasingAssistantData,
 } from "./schema.ts";
 
-export { enquiryCopy, formatSlot, isStatusStandIn } from "./copy.ts";
+export { EMIRATE_NAMES, enquiryCopy, formatSlot, isStatusStandIn } from "./copy.ts";
 export { checkAnswer, enquiryQuestions, enquiryState, factSheet, listingsSheet } from "./prompt.ts";
 export * from "./schema.ts";
 
@@ -119,7 +119,7 @@ export function leasingAssistant(llm: Llm): Helper<LeasingAssistantContext, Leas
         search: {
           ...(bedroomsN !== undefined && Number.isInteger(bedroomsN) ? { bedrooms: bedroomsN } : {}),
           ...(community !== "none" && c.communities.includes(community) ? { community } : {}),
-          ...(emirate === "dubai" || emirate === "abu_dhabi" || emirate === "sharjah" ? { emirate } : {}),
+          ...(Emirate.safeParse(emirate).success ? { emirate: emirate as Emirate } : {}),
           ...(PropertyCategory.safeParse(category).success ? { category: category as PropertyCategory } : {}),
           ...(SizeBand.safeParse(sizeBand).success ? { sizeBand: sizeBand as SizeBand } : {}),
         },

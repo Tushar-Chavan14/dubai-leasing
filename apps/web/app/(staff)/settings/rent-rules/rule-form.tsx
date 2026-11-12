@@ -1,5 +1,6 @@
 "use client";
 
+import { EMIRATE_LABELS, EMIRATES } from "@leasing/core";
 import { useActionState, useState, type ReactNode } from "react";
 import { RowAction } from "../../../../components/row-action";
 import { PencilSimpleIcon as IconPencil, PlusIcon as IconPlus, TrashIcon as IconTrash } from "@phosphor-icons/react";
@@ -70,6 +71,15 @@ function RuleEditor({
             ))}
           </select>
         </SField>
+        <SField label="Emirate" error={fe.emirate} className={SPAN[3]}>
+          <select name="emirate" defaultValue={rule?.emirate ?? "dubai"} className={SET_SELECT}>
+            {EMIRATES.map((e) => (
+              <option key={e} value={e}>
+                {EMIRATE_LABELS[e]}
+              </option>
+            ))}
+          </select>
+        </SField>
         <SField label="Area" error={fe.community} help="Leave empty for all areas" className={SPAN[3]}>
           <input
             name="community"
@@ -127,6 +137,21 @@ function RuleEditor({
               inputMode="numeric"
               defaultValue={rule ? aedInput(rule.maxRentFils) : ""}
               {...inv("maxRentFils")}
+            />
+          </Affix>
+        </SField>
+        <SField
+          label="Offer discount without a manager (optional)"
+          error={fe.maxOfferDiscountPct}
+          help="How far below the asking rent an offer or a tenant's counter on these units may go, 0 to 50. Never below this rule's lowest rent. Empty: the company default"
+          className={SPAN[3]}
+        >
+          <Affix unit="%">
+            <input
+              name="offerDiscount"
+              inputMode="numeric"
+              defaultValue={rule?.maxOfferDiscountPct ?? ""}
+              {...inv("maxOfferDiscountPct")}
             />
           </Affix>
         </SField>
@@ -199,9 +224,11 @@ export function RentRules({
             <thead>
               <tr>
                 <th className={TH}>Type</th>
+                <th className={TH}>Emirate</th>
                 <th className={TH}>Area</th>
                 <th className={TH}>Band</th>
                 <th className={TH}>AED limits</th>
+                <th className={TH}>Offer discount</th>
                 {canEdit && <th className={TH} />}
               </tr>
             </thead>
@@ -209,19 +236,27 @@ export function RentRules({
               {rules.map((r) =>
                 editing === r.id ? (
                   <tr key={r.id} className="group">
-                    <td className={TD} colSpan={canEdit ? 5 : 4}>
+                    <td className={TD} colSpan={canEdit ? 7 : 6}>
                       <RuleEditor rule={r} company={company} category={category} onDone={closeEdit} />
                     </td>
                   </tr>
                 ) : (
                   <tr key={r.id} className="group">
                     <td className={`${TD} whitespace-nowrap font-semibold`}>{subtypeLabel(r.subtype)}</td>
+                    <td className={`${TD} whitespace-nowrap`}>{EMIRATE_LABELS[r.emirate]}</td>
                     <td className={TD}>{r.community ?? "All areas"}</td>
                     <td className={`${TD} whitespace-nowrap font-mono tabular-nums`}>
                       SRI {pctLabel(r.minPctBp)} to {pctLabel(r.maxPctBp)}
                     </td>
                     <td className={`${TD} whitespace-nowrap font-mono tabular-nums`}>
                       {aedLimitsLabel(r.minRentFils, r.maxRentFils)}
+                    </td>
+                    <td className={`${TD} whitespace-nowrap font-mono tabular-nums`}>
+                      {r.maxOfferDiscountPct === null || r.maxOfferDiscountPct === undefined ? (
+                        <span className="font-sans text-muted">Default</span>
+                      ) : (
+                        `${r.maxOfferDiscountPct}%`
+                      )}
                     </td>
                     {canEdit && (
                       <td className={`${TD} whitespace-nowrap`}>

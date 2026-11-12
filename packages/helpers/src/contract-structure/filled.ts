@@ -58,10 +58,21 @@ interface LabelDef {
   /** Label printed for the blank. */
   label: string;
   /** One entry per value of a compound label ("Phone / Email"). `null`: a known label with no contract field. */
-  fields: (ContractFieldName | null | { landlord: ContractFieldName | null; tenant: ContractFieldName | null })[];
+  fields: (SheetKey | null | { landlord: SheetKey | null; tenant: SheetKey | null })[];
 }
 
-const both = (landlord: ContractFieldName | null, tenant: ContractFieldName | null) => ({ landlord, tenant });
+/** A contract field or a data-sheet key (`SHEET_KEYS`); the caller validates it against the blank. */
+type SheetKey =
+  | ContractFieldName
+  | "unitDescription"
+  | "furnishing"
+  | "bathrooms"
+  | "areaSqft"
+  | "parkingSpaces"
+  | "floor"
+  | "propertySubtype";
+
+const both = (landlord: SheetKey | null, tenant: SheetKey | null) => ({ landlord, tenant });
 const ROLE = String.raw`(?:(?:owner|landlord|lessor|tenant|lessee)(?:'s)?\s+)?`;
 
 /** Longest and most specific first. `\b` anchors keep "Name" from matching inside other words. */
@@ -100,7 +111,22 @@ const LABELS: LabelDef[] = [
   { re: String.raw`annual\s+rent`, label: "Annual rent", fields: ["annualRentFils"] },
   { re: String.raw`payment\s+method`, label: "Payment method", fields: [null] },
   { re: String.raw`(?:security\s+)?deposit(?:\s+amount)?`, label: "Security deposit", fields: ["depositFils"] },
-  { re: String.raw`property\s+(?:type|usage)|usage`, label: "Property usage", fields: [null] },
+  // D64: lines that describe the unit print from the unit record, never the sample's wording.
+  {
+    re: String.raw`(?:property|unit)\s+description|description(?:\s+of\s+(?:the\s+)?(?:property|unit|premises))?`,
+    label: "Unit description",
+    fields: ["unitDescription"],
+  },
+  { re: String.raw`(?:property|unit)\s+type`, label: "Property type", fields: ["propertySubtype"] },
+  { re: String.raw`(?:property\s+)?usage`, label: "Property usage", fields: ["propertyUsage"] },
+  {
+    re: String.raw`built[-\s]?up\s+area|(?:property|unit)\s+(?:area|size)|(?:area|size)\s*\(\s*sq\.?\s*f(?:ee)?t\.?\s*\)`,
+    label: "Area (sq ft)",
+    fields: ["areaSqft"],
+  },
+  { re: String.raw`(?:no\.?\s+of\s+)?bathrooms?`, label: "Bathrooms", fields: ["bathrooms"] },
+  { re: String.raw`parking(?:\s+(?:spaces?|bays?))?`, label: "Parking spaces", fields: ["parkingSpaces"] },
+  { re: String.raw`floor(?:\s*(?:no\.?|number))?(?=\s*:)`, label: "Floor", fields: ["floor"] },
   { re: String.raw`building(?:\s+name)?`, label: "Building", fields: ["building"] },
   { re: String.raw`(?:community|area|location)`, label: "Community", fields: ["community"] },
   { re: String.raw`(?:unit|flat|apartment)\s*(?:no\.?|number)?`, label: "Unit number", fields: ["unitNo"] },
@@ -110,7 +136,7 @@ const LABELS: LabelDef[] = [
   { re: String.raw`(?:no\.?\s+of\s+)?bedrooms?`, label: "Bedrooms", fields: ["bedrooms"] },
   // Stops for the value before them (their own value is a blank token already, so they are left as printed).
   { re: String.raw`(?:signature|signed|date|initials?|witness|stamp)(?=\s*:)`, label: "Signature", fields: [null] },
-  { re: String.raw`furnish(?:ed|ing)(?:\s+status)?`, label: "Furnishing", fields: [null] },
+  { re: String.raw`furnish(?:ed|ing)(?:\s+status)?`, label: "Furnishing", fields: ["furnishing"] },
 ];
 
 const ALT = new RegExp(`(?<![\\w'])(${LABELS.map((l, i) => `(?<l${i}>${l.re})`).join("|")})(?![\\w])\\s*:?`, "gi");
@@ -119,7 +145,7 @@ const partyOf = (w: string): Party => (/^(?:landlord|owner|lessor)$/i.test(w) ? 
 
 export interface FilledBlank extends RawBlank {
   /** Set when code found a known label: the proposed field (validated by the caller), or "unmapped". */
-  proposedField?: ContractFieldName | "unmapped";
+  proposedField?: SheetKey | "unmapped";
   /** Label chosen by code; the model's label is ignored for it. */
   fixedLabel?: string;
 }
@@ -167,10 +193,13 @@ export function detectFilledValues(lines: string[], startIndex: number): { lines
   };
   let carry: { def: LabelDef; role: Party | null } | null = null;
   const out = lines.map((line, lineNo) => {
-    const found = [...line.matchAll(ALT)].map((m) => {
+    const all = [...line.matchAll(ALT)].map((m) => {
       const idx = LABELS.findIndex((_, i) => m.groups?.[`l${i}`] !== undefined);
       return { idx, start: m.index, end: m.index + m[0].length, text: m[0] };
     });
+    // A description is free text to the end of its line: words in it ("Four-bedroom", "parking") are not labels.
+    const desc = all.findIndex((f) => LABELS[f.idx]!.label === "Unit description");
+    const found = desc >= 0 ? all.slice(0, desc + 1) : all;
     if (!found.length) {
       if (carry && line.trim() && line.trim().length <= 120 && !/\{\{b\d+\}\}/.test(line)) {
         const t = tokensFor(carry.def, carry.role, line.trim(), lineNo);

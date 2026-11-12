@@ -1,6 +1,7 @@
 import { degrees, PDFDocument, rgb, StandardFonts } from "pdf-lib";
 
 export interface CertificateData {
+  system?: "ejari" | "tawtheeq";
   ejariNo: string;
   issuedOn: string;
   dldPropertyNo: string;
@@ -13,6 +14,22 @@ export interface CertificateData {
   annualRent: string;
 }
 
+/** The visible wording per system, kept in one place so tests can check it (PDF streams are compressed). */
+export const CERTIFICATE_WORDING = {
+  ejari: {
+    title: "Tenancy registration certificate (simulated)",
+    subline: "Demo service for testing. It is not connected to the Dubai Land Department.",
+    watermark: "SIMULATED - NOT ISSUED BY DUBAI LAND DEPARTMENT",
+    producer: "Simulated Ejari (demo)",
+  },
+  tawtheeq: {
+    title: "Tenancy contract registration (simulated Tawtheeq)",
+    subline: "Demo service for testing. It is not connected to any Abu Dhabi government system.",
+    watermark: "SIMULATED - NOT ISSUED BY ANY ABU DHABI AUTHORITY",
+    producer: "Simulated Tawtheeq (demo)",
+  },
+} as const;
+
 const safe = (s: string) => s.replace(/[^\x20-\x7e\xa0-\xff]/g, "?");
 
 /**
@@ -21,16 +38,18 @@ const safe = (s: string) => s.replace(/[^\x20-\x7e\xa0-\xff]/g, "?");
  */
 export async function certificatePdf(d: CertificateData): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
+  const twq = d.system === "tawtheeq";
+  const w = CERTIFICATE_WORDING[twq ? "tawtheeq" : "ejari"];
   doc.setTitle(`Simulated tenancy registration ${d.ejariNo}`);
-  doc.setProducer("Simulated Ejari (demo)");
+  doc.setProducer(w.producer);
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
   const page = doc.addPage([595.28, 841.89]);
   const ink = rgb(0.15, 0.15, 0.15);
-  page.drawText("SIMULATED - NOT ISSUED BY DUBAI LAND DEPARTMENT", {
+  page.drawText(w.watermark, {
     x: 70,
     y: 250,
-    size: 26,
+    size: twq ? 22 : 26,
     font: bold,
     color: rgb(0.6, 0.6, 0.6),
     opacity: 0.35,
@@ -41,8 +60,8 @@ export async function certificatePdf(d: CertificateData): Promise<Uint8Array> {
     page.drawText(safe(s), { x: 56, y, size, font: f, color: ink });
     y -= size * 1.7;
   };
-  text("Tenancy registration certificate (simulated)", 18, bold);
-  text("Demo service for testing. It is not connected to the Dubai Land Department.", 9);
+  text(w.title, 18, bold);
+  text(w.subline, 9);
   y -= 14;
   for (const [k, v] of [
     ["Registration no.", d.ejariNo],

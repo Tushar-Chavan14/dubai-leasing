@@ -1,3 +1,5 @@
+import type { Emirate } from "@leasing/core";
+
 /** Shapes and helpers for the public listings (engine `/public/units`). Safe to import from client code. */
 export type PropertyCategory = "residential" | "commercial" | "retail";
 
@@ -6,6 +8,7 @@ export interface PublicUnitSummary {
   code: string;
   building: string;
   community: string;
+  emirate: Emirate;
   bedrooms: number | null;
   bathrooms: number | null;
   areaSqft: number | null;

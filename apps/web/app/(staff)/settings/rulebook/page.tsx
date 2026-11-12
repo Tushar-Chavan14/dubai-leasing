@@ -1,9 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { PlusIcon as IconPlus } from "@phosphor-icons/react/dist/ssr";
+import { type Emirate, EMIRATE_LABELS } from "@leasing/core";
 import { AskAiMenu } from "../../../../components/ask-ai";
 import { Status } from "../../../../components/ui";
-import { Button } from "../../../../components/ui/button";
 import { EmptyState } from "../../../../components/ui/empty-state";
 import { Sub } from "../../../../components/ui/record";
 import { FormGrid, Panel, Preview, SetPage, TABLE, TD, TH } from "../../../../components/ui/settings";
@@ -11,14 +10,19 @@ import { askPrompts } from "../../../../lib/ask-ai/prompts";
 import { get } from "../../../../lib/engine";
 import { dateTime, longDate } from "../../../../lib/format";
 import type { Me } from "../../../../lib/types";
-import { createDraftAction } from "./actions";
 import type { RulebookSummary } from "./labels";
+import { NewDraft } from "./new-draft";
 
 export const metadata: Metadata = { title: "Rules" };
 
 export default async function RulesPage() {
   const [data, me] = await Promise.all([
-    get<{ today: string; active: string | null; versions: RulebookSummary[] }>("/api/rulebooks"),
+    get<{
+      today: string;
+      active: string | null;
+      activeByEmirate: Record<Emirate, string | null>;
+      versions: RulebookSummary[];
+    }>("/api/rulebooks"),
     get<Me>("/api/me"),
   ]);
   const isAdmin = me?.role === "admin";
@@ -26,18 +30,17 @@ export default async function RulesPage() {
   return (
     <SetPage
       title="Rulebook"
-      lede="Versioned Dubai leasing rules: notice periods, rent-cap bands, deadlines and company reference notes. Each lease keeps the version it was created under; new leases get the active one."
+      lede="Versioned leasing rules per emirate: notice periods, rent-cap bands, deadlines and company reference notes. Each lease keeps the version it was created under; new leases get the active version of their emirate. An emirate with no version takes no offers or leases."
       actions={
         <>
           <AskAiMenu label="Ask AI" prompts={askPrompts.settingsPage("Rulebook")} />
-          {isAdmin && data?.active ? (
-            <form action={createDraftAction}>
-              <input type="hidden" name="basedOn" value={data.active} />
-              <Button type="submit" variant="primary" size="sm">
-                <IconPlus size={16} />
-                New draft from active
-              </Button>
-            </form>
+          {isAdmin && data ? (
+            <NewDraft
+              activeByEmirate={data.activeByEmirate}
+              published={versions
+                .filter((v) => v.status === "published")
+                .map((v) => ({ version: v.version, emirate: v.emirate }))}
+            />
           ) : undefined}
         </>
       }
@@ -55,9 +58,9 @@ export default async function RulesPage() {
                 version for every notice and deadline.
               </p>
               <p className="m-0 text-muted">
-                Changes that weaken tenant protection (shorter notices, higher caps) need confirmation that a Dubai
-                property lawyer reviewed them. Reference notes are guidance for staff; the engine doesn&apos;t enforce
-                them.
+                Changes that weaken tenant protection (shorter notices, higher caps) need confirmation that a property
+                lawyer in that emirate reviewed them. So does the first version of an emirate with no rules yet.
+                Reference notes are guidance for staff; the engine doesn&apos;t enforce them.
               </p>
               {!isAdmin && <p className="m-0 text-muted">Only admins can edit rules.</p>}
             </div>
@@ -72,6 +75,7 @@ export default async function RulesPage() {
               <thead>
                 <tr>
                   <th className={TH}>Version</th>
+                  <th className={TH}>Emirate</th>
                   <th className={TH}>Status</th>
                   <th className={TH}>Effective from</th>
                   <th className={TH}>Published</th>
@@ -89,6 +93,7 @@ export default async function RulesPage() {
                       </Link>
                       {v.basedOn && <Sub>From {v.basedOn}</Sub>}
                     </td>
+                    <td className={`${TD} whitespace-nowrap`}>{EMIRATE_LABELS[v.emirate]}</td>
                     <td className={TD}>
                       <span className="flex flex-wrap gap-1.5">
                         <Status

@@ -14,8 +14,15 @@ import { eq } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
 import { conflict, forbidden, notFound, unprocessable } from "../errors.ts";
 import { type AnyEvent, advance } from "./advance.ts";
-import { appendEvent } from "./events.ts";
-import { checkDecision, effectiveProposal, FormalReminderProposal, RenewalNoticeProposal } from "./gate-rules.ts";
+import { appendEvent, unitRulesVersion } from "./events.ts";
+import {
+  checkDecision,
+  effectiveProposal,
+  FormalReminderProposal,
+  OfferLimitsProposal,
+  RenewalNoticeProposal,
+} from "./gate-rules.ts";
+import { onOfferLimitsRejected, reissueOfferProposal } from "./applications.ts";
 import { onFormalReminderApproved } from "./collections.ts";
 import { onSafetyComplaintDecided } from "./complaints.ts";
 import { onRefundDecided } from "./deposit.ts";
@@ -46,6 +53,10 @@ export async function requestApproval(
   req: ApprovalRequest,
 ): Promise<{ id: string; created: boolean }> {
   const id = newId();
+  // Units and applications record their own emirate's version (rule 4), as their events do.
+  const rv = await unitRulesVersion(tx, ctx, req.entity, req.rulesVersion);
+  const { rulesVersion: _given, ...rest } = req;
+  req = rv ? { ...rest, rulesVersion: rv } : rest;
   const [row] = await tx.db
     .insert(approvals)
     .values({
@@ -118,9 +129,29 @@ export async function decideApproval(
       if (problems.length) throw unprocessable("decision breaks a rule or limit", problems, "rule_violation");
     }
 
+    // D51: an approved offer outside limits is re-issued by code on the day of the decision, with the
+    // manager's rent, cheques and move-in (if edited) and everything else recomputed; the bounds are
+    // checked again on what actually goes out.
+    let issuedOffer: Record<string, unknown> | null = null;
+    let offerChanges: Record<string, { before: unknown; after: unknown }> | null = null;
+    if (a.gate === "offer_out_of_limits" && decision.decision !== "reject") {
+      const edits = decision.decision === "edit" ? decision.proposal : {};
+      const r = await reissueOfferProposal(ctx, tx, OfferLimitsProposal.parse(a.proposal), edits);
+      issuedOffer = {
+        ...r.proposal,
+        ...(decision.decision === "edit" && decision.proposal.note !== undefined
+          ? { note: decision.proposal.note }
+          : {}),
+      };
+      offerChanges = r.changes;
+      const problems = checkDecision(a.gate, issuedOffer, { decision: "approve" }, ctx.clock.today());
+      if (problems.length) throw unprocessable("decision breaks a rule or limit", problems, "rule_violation");
+    }
+
     const status =
       decision.decision === "approve" ? "approved" : decision.decision === "reject" ? "rejected" : "edited";
-    const editedProposal = decision.decision === "edit" ? { ...a.proposal, ...decision.proposal } : null;
+    const editedProposal =
+      decision.decision === "edit" ? (issuedOffer ?? { ...a.proposal, ...decision.proposal }) : null;
     const [updated] = await tx.db
       .update(approvals)
       .set({
@@ -144,9 +175,13 @@ export async function decideApproval(
         status,
         note: decision.note ?? null,
         ...(editedProposal ? { editedProposal } : {}),
+        ...(offerChanges && Object.keys(offerChanges).length ? { changes: offerChanges } : {}),
+        // What an approved offer outside limits actually sends (re-issued on the decision day, D51).
+        ...(issuedOffer ? { issuedTerms: issuedOffer.terms } : {}),
       },
       rulesVersion: a.rulesVersion,
     });
+    if (status === "rejected" && a.gate === "offer_out_of_limits") await onOfferLimitsRejected(ctx, tx, updated);
 
     // An approved renewal notice goes out at T−100, or straight away if that date has passed.
     if (status !== "rejected" && a.gate === "renewal_notice") {
@@ -172,7 +207,8 @@ export async function decideApproval(
       await advance(ctx, { kind: a.entityKind, id: a.entityId }, a.onApproveEvent as AnyEvent, {
         actor: userActor(user.id),
         approvalId: a.id,
-        payload: effectiveProposal(updated),
+        // An approved offer outside limits sends the re-issued terms (fresh expiry), never the stale proposal.
+        payload: issuedOffer ?? effectiveProposal(updated),
         tx,
       });
     }

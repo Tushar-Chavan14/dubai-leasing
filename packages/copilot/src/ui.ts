@@ -33,6 +33,8 @@ export const RecordCard = z.object({
   name: z.string(),
   unit: z.string(),
   stage: z.string(),
+  /** Label of the registration stage for the unit's emirate (Ejari, Tawtheeq, Attestation, …). */
+  registration: z.string().optional(),
   nextStep: z.string(),
   /** The Workspace, `/work?kind=…&id=…`. */
   href: z.string(),
@@ -90,6 +92,38 @@ export const DecisionCard = z.discriminatedUnion("decision", [
     paidOn: z.string(),
     today: z.string(),
     reference: z.string(),
+    href: z.string(),
+    blocked: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal("decision"),
+    decision: z.literal("registration"),
+    leaseId: z.string(),
+    ref: z.string(),
+    unit: z.string(),
+    systemName: z.string(),
+    portalName: z.string(),
+    submissionId: z.string(),
+    /** Prefills the user can change before clicking; the engine validates them on click (pattern, date range). */
+    reference: z.string(),
+    issuedOn: z.string(),
+    today: z.string(),
+    /** The engine's expected registration fee in AED ("892.50"), never the model's. */
+    feePaidAed: z.string(),
+    /** The lease page, where the certificate PDF is uploaded. */
+    href: z.string(),
+    blocked: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal("decision"),
+    decision: z.literal("registration_rejected"),
+    leaseId: z.string(),
+    ref: z.string(),
+    unit: z.string(),
+    systemName: z.string(),
+    portalName: z.string(),
+    submissionId: z.string(),
+    reasons: z.string(),
     href: z.string(),
     blocked: z.string().optional(),
   }),

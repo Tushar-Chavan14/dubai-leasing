@@ -30,7 +30,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
         <div className="w-full max-w-[440px]">
           <div className="mb-6 flex items-center gap-2.5 text-lg font-semibold tracking-tight">
             <BrandMark size={26} />
-            Dubai Leasing
+            UAE Leasing
           </div>
           <div className="rounded-[22px] border border-line bg-page p-6 md:p-8">
             <h1 className="m-0 mb-1.5! text-[28px] leading-tight font-semibold tracking-[-0.03em]">Sign in</h1>
@@ -101,10 +101,10 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
 
       <aside className="relative hidden flex-col justify-between overflow-hidden bg-accent p-12 text-on-accent md:flex">
         <Skyline />
-        <p className="relative m-0 text-sm font-semibold">Leasing for Dubai, from enquiry to move-out</p>
+        <p className="relative m-0 text-sm font-semibold">Leasing for the UAE, from enquiry to move-out</p>
         <div className="relative">
           <h2 className="m-0 max-w-[14ch] text-5xl leading-[1.04] font-semibold tracking-[-0.035em]">
-            Every Dubai lease, on time and on record.
+            Every UAE lease, on time and on record.
           </h2>
           <p className="mt-5! mb-0 max-w-[44ch] text-base">
             Notice dates come from the published rulebook, a person approves every step that creates a legal or money

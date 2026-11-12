@@ -5,9 +5,11 @@ import {
   type CompanyPolicy,
   type PriceRange,
   type SriBasis,
+  rentIndexName,
 } from "@leasing/core";
 import { contractRules, rentRules, sriAverages, type Tx, units } from "@leasing/db";
 import { and, desc, eq, isNull, lte } from "drizzle-orm";
+import type { OfferPolicy } from "@leasing/helpers";
 import { getCompanyPolicy } from "./events.ts";
 
 export type UnitRow = typeof units.$inferSelect;
@@ -52,7 +54,7 @@ export async function findRentRule(tx: Tx, unit: PricingUnit): Promise<RentRuleR
 /** Latest SRI row in effect on `today` for the unit's community, category and bedrooms (residential only). */
 export async function findSri(
   tx: Tx,
-  unit: Pick<PricingUnit, "community" | "category" | "bedrooms">,
+  unit: Pick<PricingUnit, "emirate" | "community" | "category" | "bedrooms">,
   today: CalendarDate,
 ): Promise<(SriBasis & { id: string }) | null> {
   if (unit.category === "residential" && unit.bedrooms === null) return null;
@@ -61,6 +63,7 @@ export async function findSri(
     .from(sriAverages)
     .where(
       and(
+        eq(sriAverages.emirate, unit.emirate),
         eq(sriAverages.community, unit.community),
         eq(sriAverages.category, unit.category),
         unit.category === "residential" ? eq(sriAverages.bedrooms, unit.bedrooms!) : isNull(sriAverages.bedrooms),
@@ -76,7 +79,7 @@ export async function findSri(
     id: row.id,
     avgAnnualRentFils: row.avgAnnualRentFils,
     avgAnnualRentPerSqftFils: row.avgAnnualRentPerSqftFils,
-    label: `SRI ${unit.community} ${what}`,
+    label: `${unit.emirate === "dubai" ? "SRI" : rentIndexName(unit.emirate)} ${unit.community} ${what}`,
   };
 }
 
@@ -107,7 +110,10 @@ export async function priceSettledFor(tx: Tx, unit: UnitRow, today: CalendarDate
   return range !== null && unit.askingRentFils >= range.min && unit.askingRentFils <= range.max;
 }
 
-/** The active contract rule for the unit's company and category (a subtype match wins, then the newest). */
+/**
+ * The active contract rule for the unit's company and category. A rule for another emirate never applies (D58); the
+ * most specific wins: a rule for the unit's emirate, then a subtype match, then the newest.
+ */
 export async function matchContractRule(tx: Pick<Tx, "db">, unit: PricingUnit): Promise<ContractRuleRow | null> {
   const rows = await tx.db
     .select()
@@ -119,20 +125,47 @@ export async function matchContractRule(tx: Pick<Tx, "db">, unit: PricingUnit): 
         eq(contractRules.active, true),
       ),
     );
-  const fits = rows.filter((r) => r.subtype === null || r.subtype === unit.subtype);
-  fits.sort((a, b) => Number(b.subtype !== null) - Number(a.subtype !== null) || newestFirst(a, b));
+  const fits = rows.filter(
+    (r) => (r.subtype === null || r.subtype === unit.subtype) && (r.emirate === null || r.emirate === unit.emirate),
+  );
+  fits.sort(
+    (a, b) =>
+      Number(b.emirate !== null) - Number(a.emirate !== null) ||
+      Number(b.subtype !== null) - Number(a.subtype !== null) ||
+      newestFirst(a, b),
+  );
   return fits[0] ?? null;
 }
 
-/** Company policy with the cheque range of the matching active contract rule. */
+/**
+ * Offer limits for a unit: company policy with the cheque range of the matching contract rule, the offer discount of
+ * the rent rule that prices the unit (D63; else the policy default) and that rule's lowest allowed asking rent.
+ */
 export async function offerPolicyAndRuleFor(
   tx: Tx,
   unit: PricingUnit,
   today: CalendarDate,
-): Promise<{ policy: CompanyPolicy; contractRuleId: string | null }> {
+): Promise<{
+  policy: OfferPolicy;
+  contractRuleId: string | null;
+  rentRuleId: string | null;
+  discountFrom: "rent rule" | "company default";
+}> {
   const policy = await getCompanyPolicy(tx, today);
   const rule = await matchContractRule(tx, unit);
-  return { policy: applyContractRule(policy, rule), contractRuleId: rule?.id ?? null };
+  const rentRule = await findRentRule(tx, unit);
+  const { range } = await priceRangeFor(tx, unit, today);
+  const fromRule = rentRule?.maxOfferDiscountPct ?? null;
+  return {
+    policy: {
+      ...applyContractRule(policy, rule),
+      ...(fromRule !== null ? { maxRentDiscountPercent: fromRule } : {}),
+      offerFloorMinFils: range?.min ?? null,
+    },
+    contractRuleId: rule?.id ?? null,
+    rentRuleId: rentRule?.id ?? null,
+    discountFrom: fromRule !== null ? "rent rule" : "company default",
+  };
 }
 
 /** Says so when the cheque limits are the company defaults because no contract rule matched. */

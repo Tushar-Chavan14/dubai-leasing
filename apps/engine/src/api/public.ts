@@ -1,5 +1,5 @@
 import type { LocalDiskStore } from "@leasing/adapters";
-import { type Actor, formatAed, newId, normalisePhone, SIZE_BAND_LIMITS } from "@leasing/core";
+import { type Actor, Emirate, formatAed, newId, normalisePhone, SIZE_BAND_LIMITS } from "@leasing/core";
 import { type Tx, unitPhotos, units, withTx } from "@leasing/db";
 import { formatSlot } from "@leasing/helpers";
 import { and, asc, eq, inArray } from "drizzle-orm";
@@ -54,6 +54,7 @@ function summary(u: UnitRow) {
     code: u.code,
     building: u.building,
     community: u.community,
+    emirate: u.emirate,
     bedrooms: u.bedrooms,
     bathrooms: u.bathrooms,
     areaSqft: u.areaSqft,
@@ -68,6 +69,7 @@ function summary(u: UnitRow) {
 const ListQuery = z.object({
   category: z.enum(["residential", "commercial", "retail", "all"]).default("residential"),
   community: z.string().trim().min(1).max(120).optional(),
+  emirate: Emirate.optional(),
   /** 0 is a studio; 4 means four or more (as the chat filter). */
   bedrooms: z.coerce.number().int().min(0).max(4).optional(),
   /** Floor-area band; only narrows commercial and retail units. */
@@ -124,6 +126,7 @@ export function registerPublicRoutes(
     const q = ListQuery.parse({
       category: c.req.query("category"),
       community: c.req.query("community"),
+      emirate: c.req.query("emirate"),
       bedrooms: c.req.query("bedrooms"),
       size: c.req.query("size"),
       budget: c.req.query("budget"),
@@ -137,6 +140,7 @@ export function registerPublicRoutes(
           {
             category: q.category,
             community: q.community,
+            emirate: q.emirate,
             bedrooms: q.bedrooms,
             maxRentFils: q.budget === undefined ? undefined : q.budget * 100,
           },

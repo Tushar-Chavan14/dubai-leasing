@@ -181,6 +181,60 @@ describe("copilot tool loop (scripted model)", () => {
     expect(plain.calls).toHaveLength(1);
   });
 
+  test("a reply claiming a change with no change tool is sent back once", async () => {
+    const model = new ScriptedModel([
+      () => say("The portal URL has been updated and saved directly. The change is now active."),
+      () => say("I haven't changed anything yet."),
+    ]);
+    const turn = await runCopilotTurn({ model, tenancyOps: true, ctx: ctx(), message: "set the portal link" });
+    expect(turn.answer).toBe("I haven't changed anything yet.");
+    expect(model.calls).toHaveLength(2);
+    expect(String(model.calls[1]!.messages.at(-1)!.content)).toContain("nothing has changed");
+    const stubborn = new ScriptedModel([() => say("It has been saved.")]);
+    await runCopilotTurn({ model: stubborn, tenancyOps: true, ctx: ctx(), message: "x" });
+    expect(stubborn.calls).toHaveLength(2);
+  });
+
+  test("a suggestion waiting for Confirm is not a change; a saved explicit change is", async () => {
+    class ProposingEngine extends FakeEngine {
+      override async propose<T>(): Promise<T> {
+        return { id: "p1", status: "pending" } as T;
+      }
+      async change<T>(): Promise<T> {
+        return { status: "applied", summary: "saved" } as T;
+      }
+    }
+    const admin = { ...officer, role: "admin" as const };
+    const turn = (mode: string) =>
+      new ScriptedModel([
+        () =>
+          call("save_registration_settings", {
+            mode,
+            userQuote: "uaq.gov.ae",
+            emirate: "umm_al_quwain",
+            portalUrl: "uaq.gov.ae",
+          }),
+        () => say("It has been saved."),
+        () => say("Click Confirm to save it."),
+      ]);
+    const suggest = turn("suggest");
+    const a = await runCopilotTurn({
+      model: suggest,
+      tenancyOps: true,
+      ctx: { ...ctx(new ProposingEngine()), user: admin },
+      message: "x",
+    });
+    expect(a.answer).toBe("Click Confirm to save it.");
+    const explicit = turn("explicit");
+    const b = await runCopilotTurn({
+      model: explicit,
+      tenancyOps: true,
+      ctx: { ...ctx(new ProposingEngine()), user: admin },
+      message: "set uaq.gov.ae",
+    });
+    expect(b.answer).toBe("It has been saved.");
+  });
+
   test("preamble text before a tool call is discarded from the stream", async () => {
     const model = new ScriptedModel([
       () => ({ content: "Let me check.", toolCalls: [{ id: "a", name: "get_lease", args: { lease: "MRN-1204" } }] }),
@@ -201,6 +255,7 @@ describe("registry and client", () => {
         .toSorted();
     expect(by("propose")).toEqual([
       "add_contract_clause",
+      "add_suggested_clause",
       "create_task",
       "edit_kyc_config",
       "propose_application",
@@ -210,6 +265,7 @@ describe("registry and client", () => {
       "propose_resend_signing_link",
       "propose_viewing_invite",
       "save_contract_rule",
+      "save_registration_settings",
       "save_rent_rule",
       "save_sri_value",
     ]);
@@ -236,9 +292,11 @@ describe("registry and client", () => {
     expect(names("finance")).toEqual(["draft_approval_note", "draft_email", "propose_approval"]);
     expect(names("admin")).toEqual([
       "add_contract_clause",
+      "add_suggested_clause",
       "draft_approval_note",
       "edit_kyc_config",
       "save_contract_rule",
+      "save_registration_settings",
       "save_rent_rule",
       "save_sri_value",
     ]);
@@ -252,7 +310,9 @@ describe("registry and client", () => {
         toolsFor(role, { tenancyOps: true })
           .filter((t) => t.kind === "read")
           .map((t) => t.name),
-      ).toEqual(readers.filter((t) => t.name !== "get_case_pack").map((t) => t.name));
+      ).toEqual(
+        readers.filter((t) => t.name !== "get_case_pack" && t.name !== "get_registration_status").map((t) => t.name),
+      );
     }
     expect(new Set(copilotTools.map((t) => t.name)).size).toBe(copilotTools.length);
   });

@@ -52,8 +52,8 @@ export const CUSTOMER_STARTERS: readonly Pill[] = [
   },
   {
     key: "q-how",
-    label: "How does renting in Dubai work?",
-    action: { kind: "send", text: "How does renting in Dubai work?" },
+    label: "How does renting in the UAE work?",
+    action: { kind: "send", text: "How does renting in the UAE work?" },
   },
 ];
 

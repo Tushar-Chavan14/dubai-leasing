@@ -1,5 +1,14 @@
 /** The record's stage tracker: one bar per stage, finished bars solid, the current one tinted and named in bold. */
-export function RecordStepper({ stages, current }: { stages: readonly string[]; current: string }) {
+/** `labels` renames stages for display (the Ejari stage is Tawtheeq, Attestation, … outside Dubai). */
+export function RecordStepper({
+  stages,
+  current,
+  labels,
+}: {
+  stages: readonly string[];
+  current: string;
+  labels?: Partial<Record<string, string>>;
+}) {
   const at = stages.indexOf(current);
   return (
     <ol aria-label="Stage" className="m-0 flex list-none gap-1 p-0">
@@ -16,7 +25,7 @@ export function RecordStepper({ stages, current }: { stages: readonly string[]; 
               className={`h-1 rounded ${state === "done" ? "bg-ink" : state === "now" ? "bg-accent outline outline-1 -outline-offset-1 outline-ink/20" : "bg-line"}`}
             />
             <span className="truncate">
-              {s}
+              {labels?.[s] ?? s}
               <span className="sr-only">
                 {state === "done" ? " (done)" : state === "now" ? " (current)" : " (to do)"}
               </span>

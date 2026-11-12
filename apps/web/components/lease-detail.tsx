@@ -6,6 +6,7 @@ import { CasePanel } from "./case-panel";
 import { MoveOutPanel, type MoveOutView } from "./move-out-panel";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import type { ManualRegistration } from "./manual-registration";
 import { type ClauseOptions, ContractPanel, type ContractRow, type EjariAttempt, EjariPanel } from "./contract-panel";
 import { type InboundRow, type OutboundRow, RenewalPanel } from "./renewal-panel";
 import { RenewalTimeline } from "./renewal-timeline";
@@ -23,7 +24,7 @@ import { AskAi } from "./ask-ai";
 import { askPrompts } from "../lib/ask-ai/prompts";
 import { Fact, FactGrid, FactKey, FactList, FactVal, ROW_CARD, Section, Sub } from "./ui/record";
 import { AddTaskForm, EmailTenantForm, TaskActions, VacateNoticeForm } from "./work-forms";
-import { get, publicGet } from "../lib/engine";
+import { engine, get, publicGet } from "../lib/engine";
 import {
   actorLabel,
   aedShort,
@@ -82,6 +83,8 @@ interface LeaseView {
   clauseOptions?: ClauseOptions;
   prepareNeeded?: "failed" | "rejected" | "not_prepared" | "rules_changed" | null;
   ejari: EjariAttempt[];
+  /** The registration system of the unit's emirate (Ejari in Dubai). */
+  registration?: { emirate: string; systemName: string };
 }
 
 interface DraftRow {
@@ -118,6 +121,11 @@ export async function LeaseDetail({ id, draftId }: { id: string; draftId?: strin
     ? await get<MoveOutView>(`/api/leases/${id}/move-out`)
     : null;
   const canAct = me?.role === "leasing_officer" || me?.role === "leasing_manager";
+  // Manual registration (D52): the portal details and pack, for leasing roles once the lease reaches registration.
+  const manual =
+    canAct && (l.state === "REGISTRATION" || (l.ejari ?? []).length > 0)
+      ? await engine<ManualRegistration>(`/api/leases/${id}/registration`).then((r) => (r.ok ? r.data : null))
+      : null;
   const canEmail = canAct || me?.role === "finance";
   // Finance cannot open Units, so the unit card is not a link for them.
   const unitCard = (body: ReactNode) =>
@@ -167,7 +175,7 @@ export async function LeaseDetail({ id, draftId }: { id: string; draftId?: strin
           <Fact label="Annual rent">{aedShort(l.annualRentFils)}</Fact>
           <Fact label="Cheques">{l.cheques}</Fact>
           <Fact label="Deposit">{aedShort(l.depositFils)}</Fact>
-          <Fact label="Ejari" mono={!!l.ejariNo}>
+          <Fact label={l.registration?.systemName ?? "Ejari"} mono={!!l.ejariNo}>
             {l.ejariNo ?? "Not registered"}
           </Fact>
         </FactGrid>
@@ -223,7 +231,9 @@ export async function LeaseDetail({ id, draftId }: { id: string; draftId?: strin
 
       <div className="grid gap-5">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="m-0 font-sans text-[15px] font-semibold tracking-tight">Contract and Ejari</h2>
+          <h2 className="m-0 font-sans text-[15px] font-semibold tracking-tight">
+            Contract and {l.registration?.systemName ?? "Ejari"}
+          </h2>
           <AskAi compact prompt={contractAsk.prompt} label={contractAsk.label} page={{ kind: "lease", id: l.id }} />
         </div>
         <ContractPanel
@@ -238,10 +248,13 @@ export async function LeaseDetail({ id, draftId }: { id: string; draftId?: strin
           leaseId={l.id}
           state={l.state}
           attempts={l.ejari ?? []}
+          systemName={l.registration?.systemName ?? "Ejari"}
           canAct={canAct}
           pendingApprovalId={ejariApproval?.id ?? null}
           mockUrl={demo ? (process.env.EJARI_MOCK_URL ?? "http://localhost:4100") : null}
           demo={demo}
+          manual={manual}
+          today={today}
         />
       </div>
 

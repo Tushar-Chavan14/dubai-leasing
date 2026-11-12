@@ -112,13 +112,34 @@ export function applyCounter(c: {
   };
 }
 
+/**
+ * Offer limits for one unit (D63): the company policy with `maxRentDiscountPercent` taken from the unit's rent rule
+ * when the rule sets one, and the rule's lowest allowed asking rent (`offerFloorMinFils`), below which a counter
+ * always needs a manager.
+ */
+export type OfferPolicy = Policy & { offerFloorMinFils?: number | null };
+
+/**
+ * The lowest annual rent an offer may have without a manager: the approved asking rent less the discount, but never
+ * below the rent rule's lowest allowed rent (unless the asking rent itself is already below it, approved by a manager).
+ * This is the negotiation limit; the rent rule's range limits the asking rent itself.
+ */
+export function offerRentFloorFils(
+  askingRentFils: number,
+  p: Pick<OfferPolicy, "maxRentDiscountPercent" | "offerFloorMinFils">,
+): number {
+  const discounted = askingRentFils - percentOfFloor(askingRentFils, p.maxRentDiscountPercent);
+  const bandMin = p.offerFloorMinFils ?? null;
+  return bandMin !== null && bandMin <= askingRentFils ? Math.max(discounted, bandMin) : discounted;
+}
+
 /** Company limits. Empty list = inside the limits (no approval needed). */
-export function offerProblems(t: OfferTerms, unit: Unit, p: Policy, today: CalendarDate): string[] {
+export function offerProblems(t: OfferTerms, unit: Unit, p: OfferPolicy, today: CalendarDate): string[] {
   const problems: string[] = [];
-  const minRent = unit.askingRentFils - percentOfFloor(unit.askingRentFils, p.maxRentDiscountPercent);
+  const minRent = offerRentFloorFils(unit.askingRentFils, p);
   if (t.annualRentFils < minRent) {
     problems.push(
-      `Rent ${formatAed(t.annualRentFils)} is below the approved asking rent ${formatAed(unit.askingRentFils)}${p.maxRentDiscountPercent ? ` less ${p.maxRentDiscountPercent}%` : ""} (lowest allowed ${formatAed(minRent)}).`,
+      `Rent ${formatAed(t.annualRentFils)} is below the approved asking rent ${formatAed(unit.askingRentFils)}${p.maxRentDiscountPercent ? ` less ${p.maxRentDiscountPercent}%` : ""} (lowest allowed ${formatAed(minRent)}${p.offerFloorMinFils !== null && p.offerFloorMinFils !== undefined && minRent === p.offerFloorMinFils && p.maxRentDiscountPercent ? ", the rent rule's lowest rent" : ""}).`,
     );
   }
   if (t.cheques < p.minCheques || t.cheques > p.maxCheques) {

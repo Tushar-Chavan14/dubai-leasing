@@ -1,3 +1,4 @@
+import { Emirate } from "@leasing/core";
 import { z } from "zod";
 import { EngineError, ALL_STAFF, type CopilotTool } from "../types.ts";
 import { unitHref, type UnitCardItem } from "../ui.ts";
@@ -11,6 +12,7 @@ const Output = z.object({
   community: z.string(),
   company: z.string().nullable(),
   category: z.string(),
+  emirate: Emirate.optional(),
   state: z.string(),
   bedrooms: z.number().nullable(),
   areaSqft: z.number().nullable(),
@@ -25,6 +27,19 @@ const Output = z.object({
     hasRule: z.boolean(),
     withinRange: z.boolean().nullable(),
   }),
+  offerLimits: z
+    .object({
+      maxDiscountPercent: z.number(),
+      discountFrom: z
+        .string()
+        .optional()
+        .describe("rent rule: the unit's rent rule sets it; company default otherwise"),
+      lowestRentWithoutApproval: Money.nullable(),
+      minCheques: z.number(),
+      maxCheques: z.number(),
+      chequesFrom: z.string(),
+    })
+    .optional(),
   note: z.string(),
   ui: z.object({ cards: z.array(z.custom<UnitCardItem>()) }),
 });
@@ -36,6 +51,7 @@ interface Unit {
   community: string;
   company: string | null;
   category: "residential" | "commercial" | "retail";
+  emirate?: z.infer<typeof Emirate>;
   subtype: string | null;
   state: string;
   bedrooms: number | null;
@@ -52,13 +68,21 @@ interface Unit {
     hasRule: boolean;
     withinRange: boolean | null;
   };
+  offerLimits?: {
+    maxDiscountPercent: number;
+    discountFrom?: string;
+    lowestRentWithoutApproval: { fils: number; text: string } | null;
+    minCheques: number;
+    maxCheques: number;
+    chequesFrom: string;
+  };
 }
 
 export const getUnit: CopilotTool<typeof Input, typeof Output> = {
   name: "get_unit",
   kind: "read",
   description:
-    "One unit by code or id: its details, state, approved asking rent, the Smart Rental Index (SRI) average for its area and bedrooms, and the allowed asking-rent range from the company's rent rule, all computed by the engine. Use it for 'SRI range for JVC-0412' and 'what is the rent of …'. A range side that is null has no limit.",
+    "One unit by code or id: its details (including its emirate), state, approved asking rent, the Smart Rental Index (SRI) average for its area and bedrooms, the rent rule's range for the asking rent (pricing.allowedMin/allowedMax: where staff may set the asking rent, never a negotiation limit), and offerLimits: the lowest rent and the cheques an offer or a tenant's counter may have without a manager. All computed by the engine. Use it for 'SRI range for JVC-0412', 'what is the rent of …' and 'how low can the offer go'. A range side that is null has no limit.",
   input: Input,
   output: Output,
   roles: ALL_STAFF,
@@ -81,6 +105,7 @@ export const getUnit: CopilotTool<typeof Input, typeof Output> = {
       community: u.community,
       company: u.company,
       category: u.category,
+      ...(u.emirate ? { emirate: u.emirate } : {}),
       state: u.state,
       bedrooms: u.bedrooms,
       areaSqft: u.areaSqft,
@@ -88,9 +113,17 @@ export const getUnit: CopilotTool<typeof Input, typeof Output> = {
       askingRent: u.askingRent,
       priceApproved: u.priceApproved,
       pricing: u.pricing,
-      note: u.pricing.hasRule
-        ? "Limits come from the company's rent rule applied to the SRI average, computed by the engine."
-        : "No rent rule applies to this unit, so no allowed range is set.",
+      ...(u.offerLimits ? { offerLimits: u.offerLimits } : {}),
+      note: [
+        u.pricing.hasRule
+          ? "pricing.allowedMin/allowedMax: the rent rule's range for setting the asking rent (company rent rule applied to the SRI average). It is not a negotiation limit."
+          : "No rent rule applies to this unit, so no asking-rent range is set.",
+        u.offerLimits?.lowestRentWithoutApproval
+          ? `Offers and counters: rent from ${u.offerLimits.lowestRentWithoutApproval.text} (asking rent less ${u.offerLimits.maxDiscountPercent}%) and ${u.offerLimits.minCheques} to ${u.offerLimits.maxCheques} cheques go out without a manager; anything else needs a manager's offer_out_of_limits approval.`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" "),
       ui: {
         cards: [
           {

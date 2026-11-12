@@ -10,6 +10,7 @@ import { createApi } from "../src/api/app.ts";
 import { issueToken } from "../src/api/auth.ts";
 import { EngineDemoClock } from "../src/clock.ts";
 import { bossScheduler } from "../src/jobs.ts";
+import { offerRegistrationFeeLine } from "../src/manager/registries.ts";
 import { sweepDueDeadlines } from "../src/manager/milestones.ts";
 import { addStaff, freshDatabase, leaseCsv, noDb, TEST_DB_URL, testCompany, testContext, unitCsv } from "./harness.ts";
 
@@ -104,11 +105,11 @@ describe.skipIf(noDb)("HTTP API (Postgres)", () => {
     const bad = await post([
       { unit_code: "API-B1", category: "commercial", subtype: "villa" },
       { unit_code: "API-B2", category: "retail", kind: "commercial" },
-      { unit_code: "API-B3", emirate: "abu_dhabi" },
+      { unit_code: "API-B3", emirate: "mars" },
     ]);
     expect(bad.rows[0]?.reasons.join()).toContain("subtype villa isn't a commercial type");
     expect(bad.rows[1]?.reasons.join()).toContain("differ");
-    expect(bad.rows[2]?.reasons.join()).toContain("only Dubai units can be imported for now");
+    expect(bad.rows[2]?.reasons.join()).toContain('unknown emirate "mars"');
     const stored = await database.db.execute(
       sql`select u.code, u.category, u.subtype, c.slug from units u join companies c on c.id = u.company_id where u.code in ('API-R1','API-K1') order by u.code`,
     );
@@ -297,6 +298,62 @@ describe.skipIf(noDb)("HTTP API (Postgres)", () => {
     );
     expect(changes).toContainEqual({ step: "agent_daily_action_cap", from: 5, to: 12 });
     expect(changes.filter((c) => c.step === "quiet_hours")).toHaveLength(2);
+  });
+
+  test("registration fee payer: admin only, versioned, audited, unchanged adds no version", async () => {
+    const put = (role: string, body: unknown) =>
+      call(role, "/api/policy/registration", { method: "PUT", body: JSON.stringify(body) });
+    const read = async () => (await (await call("admin", "/api/policy")).json()) as { registrationFeePaidBy: string };
+    const ver = async () =>
+      (
+        (await (await call("admin", "/api/policy/autopilot", { method: "PUT", body: "{}" })).json()) as {
+          version: number;
+        }
+      ).version;
+    expect((await put("leasing_manager", { registrationFeePaidBy: "landlord" })).status).toBe(403);
+    expect((await put("admin", { registrationFeePaidBy: "nobody" })).status).toBe(400);
+    expect((await put("admin", { registrationFeePaidBy: "landlord", extra: 1 })).status).toBe(400);
+    expect((await read()).registrationFeePaidBy).toBe("tenant");
+    const before = await ver();
+    const r = await put("admin", { registrationFeePaidBy: "landlord" });
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as { version: number }).version).toBe(before + 1);
+    expect((await read()).registrationFeePaidBy).toBe("landlord");
+    const same = await put("admin", { registrationFeePaidBy: "landlord" });
+    expect(((await same.json()) as { version: number }).version).toBe(before + 1);
+    const audit = await database.db.select().from(leaseEvents).where(eq(leaseEvents.type, "POLICY_CHANGED"));
+    expect(audit).toHaveLength(1);
+    expect(audit[0]!.payload).toMatchObject({
+      policyVersion: before + 1,
+      previousVersion: before,
+      changes: [{ field: "registrationFeePaidBy", from: "tenant", to: "landlord" }],
+    });
+    // Landlord pays: the offer carries no tenant fee line.
+    const line = await withTx(database, (tx) => offerRegistrationFeeLine(t.ctx, tx, "dubai", 10_000_000));
+    expect(line).toBeNull();
+    await put("admin", { registrationFeePaidBy: "tenant" });
+    expect(await withTx(database, (tx) => offerRegistrationFeeLine(t.ctx, tx, "dubai", 10_000_000))).toContain(
+      "paid by you",
+    );
+  });
+
+  test("offer discount: admin only, 0 to 50, versioned and audited", async () => {
+    const put = (role: string, body: unknown) =>
+      call(role, "/api/policy/offers", { method: "PUT", body: JSON.stringify(body) });
+    const read = async () => (await (await call("admin", "/api/policy")).json()) as { maxRentDiscountPercent: number };
+    expect((await put("leasing_manager", { maxRentDiscountPercent: 5 })).status).toBe(403);
+    expect((await put("admin", { maxRentDiscountPercent: 51 })).status).toBe(400);
+    expect((await put("admin", { maxRentDiscountPercent: 2.5 })).status).toBe(400);
+    expect((await put("admin", { maxRentDiscountPercent: 5, extra: 1 })).status).toBe(400);
+    const before = (await read()).maxRentDiscountPercent;
+    const r = await put("admin", { maxRentDiscountPercent: 7 });
+    expect(r.status).toBe(200);
+    expect((await read()).maxRentDiscountPercent).toBe(7);
+    const audit = await database.db.select().from(leaseEvents).where(eq(leaseEvents.type, "POLICY_CHANGED"));
+    expect(audit.map((a) => a.payload)).toContainEqual(
+      expect.objectContaining({ changes: [{ field: "maxRentDiscountPercent", from: before, to: 7 }] }),
+    );
+    await put("admin", { maxRentDiscountPercent: before });
   });
 
   test("demo routes are absent outside demo mode", async () => {

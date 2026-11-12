@@ -35,6 +35,7 @@ const UNIT_COLUMNS: [string, string, string, FieldType][] = [
   ["floor", "floor", "Floor number", "int"],
   ["parkingSpaces", "parkingSpaces", "Number of parking spaces", "int"],
   ["furnishing", "furnished", "Furnished or unfurnished", "text"],
+  ["unitDescription", "description", "Unit description (as written on the unit record)", "text"],
   ["propertySubtype", "subtype", "Property type (apartment, villa, office ...)", "text"],
   ["emirate", "emirate", "Emirate", "text"],
 ];

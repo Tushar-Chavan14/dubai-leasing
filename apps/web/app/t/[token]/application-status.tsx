@@ -112,6 +112,14 @@ export function ApplicationStatus({ v, token }: { v: ApplicationPortalView; toke
               { label: "Cheques", value: v.offer.cheques },
               { label: "Security deposit", value: formatAed(v.offer.depositFils) },
               { label: "Reservation", value: formatAed(v.offer.reservationFils) },
+              ...(v.offer.registrationFee
+                ? [
+                    {
+                      label: `Registration fee (${v.offer.registrationFee.systemName})`,
+                      value: `${formatAed(v.offer.registrationFee.feeFils)}, paid by you`,
+                    },
+                  ]
+                : []),
               { label: "Tenancy", value: `${longDate(v.offer.startOn)} to ${longDate(v.offer.endOn)}`, wide: true },
             ]}
           />

@@ -57,6 +57,7 @@ function script(state: string): SystemOneResponse {
   if (/next rent payment/i.test(msg)) return decision({ intent: "existing_tenant" });
   if (/real person/i.test(msg)) return decision({ intent: "talk_to_person" });
   if (/which areas/i.test(msg)) return decision({ intent: "general_question" });
+  if (/ajman/i.test(msg)) return decision({ intent: "search_units", emirate: "ajman", bedrooms: "2" });
   if (/abu dhabi/i.test(msg)) return decision({ intent: "search_units", emirate: "abu_dhabi", bedrooms: "2" });
   if (/offices? in business bay/i.test(msg))
     return decision({ intent: "search_units", category: "commercial", community: "Business Bay" });
@@ -280,8 +281,12 @@ describe.skipIf(noDb)("web chat autopilot", () => {
       "Dubai",
       "Abu Dhabi (Coming soon)",
       "Sharjah (Coming soon)",
+      "Ajman (Coming soon)",
+      "Ras Al Khaimah (Coming soon)",
+      "Fujairah (Coming soon)",
+      "Umm Al Quwain (Coming soon)",
     ]);
-    expect(emirate.reply!.buttons!.map((x) => x.disabled)).toEqual([undefined, true, true]);
+    expect(emirate.reply!.buttons!.map((x) => x.disabled)).toEqual([undefined, true, true, true, true, true, true]);
     expect(emirate.filters).toEqual({
       emirate: null,
       community: null,
@@ -315,22 +320,61 @@ describe.skipIf(noDb)("web chat autopilot", () => {
     expect((await s.conv()).flow).toMatchObject({ step: "choosing_unit", bedrooms: 1, furnished: true });
   });
 
-  test("Abu Dhabi and Sharjah are not selectable: typed or tapped, the reply says Dubai only", async () => {
+  test("an emirate without listings is not selectable: typed or tapped, the reply says so", async () => {
     const s = await setup();
     await s.tap("units");
     for (const d of ["emi:abu_dhabi", "emi:sharjah"]) {
       const r = await s.tap(d);
-      expect(r.reply!.text).toStartWith("We only list homes in Dubai for now.");
+      expect(r.reply!.text).toStartWith(
+        `We don't have homes listed in ${d === "emi:sharjah" ? "Sharjah" : "Abu Dhabi"} yet.`,
+      );
       expect((await s.conv()).flow.step).toBe("choosing_emirate");
     }
-    const typed = await s.say("2 bed in abu dhabi please");
-    expect(typed.reply!.text).toStartWith("We only list homes in Dubai for now.");
+    const typed = await s.say("2 bed in ajman please");
+    expect(typed.reply!.text).toStartWith("We don't have homes listed in Ajman yet.");
     expect(typed.reply!.buttons!.every((b) => b.data.startsWith("emi:"))).toBe(true);
     await database.db
       .update(conversations)
       .set({ language: "ar" })
       .where(eq(conversations.id, (await s.conv()).id));
-    expect((await s.tap("emi:sharjah")).reply!.text).toStartWith("نعرض المنازل في دبي فقط حالياً.");
+    expect((await s.tap("emi:sharjah")).reply!.text).toStartWith("ليس لدينا منازل معروضة في الشارقة حالياً.");
+  });
+
+  test("an emirate with a listed unit is a button; choosing it shows its areas and homes, Dubai is unaffected", async () => {
+    const s = await setup();
+    await database.db
+      .update(units)
+      .set({
+        emirate: "abu_dhabi",
+        community: "Al Reem Island",
+        priceApprovedAt: new Date("2026-10-01T08:00:00Z"),
+      })
+      .where(eq(units.id, s.marina));
+    const emirate = await s.tap("units");
+    expect(emirate.reply!.buttons!.map((x) => x.disabled)).toEqual([
+      undefined,
+      undefined,
+      true,
+      true,
+      true,
+      true,
+      true,
+    ]);
+    const area = await s.tap("emi:abu_dhabi");
+    expect(area.reply!.buttons!.map((x) => x.label)).toEqual(["Al Reem Island", "Any area"]);
+    expect(area.filters).toMatchObject({ emirate: "abu_dhabi" });
+    await s.tap("area:any");
+    await s.tap("cat:residential");
+    const found = await s.tap("bed:2");
+    expect(found.reply!.cards!.map((c) => c.unitId)).toEqual([s.marina]);
+    // Dubai keeps only its own homes.
+    await s.tap("units");
+    const dubai = await s.tap("emi:dubai");
+    expect(dubai.reply!.buttons!.map((x) => x.label)).toEqual(["Jumeirah Village Circle", "Any area"]);
+    // Typed: the emirate is read, then its areas are asked.
+    await s.tap("units");
+    const typed = await s.say("2 bed in abu dhabi please");
+    expect(typed.reply!.cards!.map((c) => c.unitId)).toEqual([s.marina]);
   });
 
   test("a unit with missing facts reaches the card as null, not 0", async () => {
@@ -700,7 +744,15 @@ describe.skipIf(noDb)("web chat autopilot", () => {
       .where(eq(conversations.id, (await s.conv()).id));
     const emirate = await s.tap("units");
     expect(emirate.reply!.text).toBe("في أي إمارة تبحث؟");
-    expect(emirate.reply!.buttons!.map((x) => x.label)).toEqual(["دبي", "أبوظبي (قريباً)", "الشارقة (قريباً)"]);
+    expect(emirate.reply!.buttons!.map((x) => x.label)).toEqual([
+      "دبي",
+      "أبوظبي (قريباً)",
+      "الشارقة (قريباً)",
+      "عجمان (قريباً)",
+      "رأس الخيمة (قريباً)",
+      "الفجيرة (قريباً)",
+      "أم القيوين (قريباً)",
+    ]);
     expect((await s.tap("emi:dubai")).reply!.text).toBe("في أي منطقة تفضل السكن؟");
     const cats = await s.tap("area:any");
     expect(cats.reply!.text).toBe("ما الذي تبحث عنه؟");

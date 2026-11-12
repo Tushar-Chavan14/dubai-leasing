@@ -11,11 +11,13 @@ import {
   DEMO_COMPANIES,
   DEMO_COMPANY_LEGAL,
   DEMO_CONTRACT_RULES,
+  DEMO_EMIRATE_UNITS,
   DEMO_LISTED_UNITS,
   DEMO_RENT_RULES,
   DEMO_SRI,
   DEMO_MRN_1502_MAKANI,
   demoDldNo,
+  demoPropertyNo,
   loadEnv,
   luhnCheckDigit,
   newId,
@@ -54,6 +56,7 @@ import { appendEvent } from "../manager/events.ts";
 import { importLeasesCsv } from "../manager/import.ts";
 import { companyLandlord, updateCompanyLegal } from "../manager/company-legal.ts";
 import { syncRulebooks } from "../manager/rulebooks.ts";
+import { seedEmirateRulebooks } from "./emirate-rulebooks.ts";
 
 /**
  * Demo data: 4 staff users, company policy v1, one company (Silverline Properties) with its rules and
@@ -226,7 +229,7 @@ export function demoLeasesCsv(today: CalendarDate): string {
 }
 
 const unused = () => Promise.reject(new Error("the demo seed doesn't call Ejari"));
-const noEjari: EngineContext["ejari"] = {
+const noEjari: NonNullable<EngineContext["registries"]["dubai"]> = {
   register: unused,
   renew: unused,
   cancel: unused,
@@ -248,6 +251,9 @@ const DEMO_COMPANY = "silverline";
 export async function seedDemo(database: Database): Promise<void> {
   // Store the base version and load published ones, so seeded leases get the version in force.
   await syncRulebooks(database);
+  // Demo rulebooks for the other six emirates, then register them.
+  await seedEmirateRulebooks(database);
+  await syncRulebooks(database);
   const clock = await createEngineClock(database, true);
   const noJobs: Scheduler = {
     send: () => Promise.reject(new Error("demo seed runs in demo mode; deadlines are fired by the sweep")),
@@ -266,7 +272,7 @@ export async function seedDemo(database: Database): Promise<void> {
     mailer: { send: () => Promise.reject(new Error("the demo seed doesn't send email")) },
     documents: new LocalDiskStore(join(tmpdir(), "leasing-seed-documents")),
     uploads: new LocalDiskStore(join(tmpdir(), "leasing-seed-uploads")),
-    ejari: noEjari,
+    registries: { dubai: noEjari, abu_dhabi: noEjari },
     llm: new FakeLlm(() => new Error("the demo seed doesn't call models")),
     webUrl: "http://localhost:3000",
     serverSecret: "demo-only-session-secret",
@@ -317,14 +323,28 @@ export async function seedDemo(database: Database): Promise<void> {
       );
     }
   });
-  const [hasRule] = await database.db.select({ id: rentRules.id }).from(rentRules).limit(1);
-  if (!hasRule) {
+  // Rent rules: insert the ones missing per (company, emirate, category, community), so a demo database seeded
+  // before the other emirates existed gets their rules on re-seed. Existing (possibly edited) rules are kept.
+  const existingRules = await database.db
+    .select({
+      companyId: rentRules.companyId,
+      emirate: rentRules.emirate,
+      category: rentRules.category,
+      community: rentRules.community,
+    })
+    .from(rentRules);
+  const ruleKey = (c: string, e: string, cat: string, com: string | null) => `${c}|${e}|${cat}|${com ?? ""}`;
+  const haveRule = new Set(existingRules.map((r) => ruleKey(r.companyId, r.emirate, r.category, r.community)));
+  const missingRules = DEMO_RENT_RULES.filter(
+    (r) => !haveRule.has(ruleKey(companyOf(r.company), r.emirate ?? "dubai", r.category, r.community ?? null)),
+  );
+  if (missingRules.length) {
     await database.db.insert(rentRules).values(
-      DEMO_RENT_RULES.map((r) => ({
+      missingRules.map((r) => ({
         id: newId(),
         companyId: companyOf(r.company),
         category: r.category,
-        emirate: "dubai",
+        emirate: r.emirate ?? ("dubai" as const),
         community: r.community ?? null,
         minPctBp: r.minPctBp,
         maxPctBp: r.maxPctBp,
@@ -333,6 +353,9 @@ export async function seedDemo(database: Database): Promise<void> {
         createdBy: "demo",
       })),
     );
+  }
+  const [hasContractRule] = await database.db.select({ id: contractRules.id }).from(contractRules).limit(1);
+  if (!hasContractRule) {
     await database.db.insert(contractRules).values(
       DEMO_CONTRACT_RULES.map((r) => ({
         id: newId(),
@@ -352,6 +375,7 @@ export async function seedDemo(database: Database): Promise<void> {
     .values(
       DEMO_SRI.map((r) => ({
         id: newId(),
+        emirate: r.emirate ?? ("dubai" as const),
         community: r.community,
         category: r.category,
         bedrooms: r.bedrooms,
@@ -423,6 +447,7 @@ export async function seedDemo(database: Database): Promise<void> {
       .values({
         id,
         code: u.code,
+        emirate: u.emirate ?? "dubai",
         building: u.building,
         community: u.community,
         companyId: companyOf(u.company),
@@ -448,6 +473,43 @@ export async function seedDemo(database: Database): Promise<void> {
     await advance(ctx, { kind: "unit", id }, "PUBLISH", { actor: "demo" });
     newlyListed.add(u.code);
     console.log(`  unit ${u.code}: LISTED`);
+  }
+
+  // Two listed units in each of the six other emirates (D55), walked the same way.
+  for (const u of DEMO_EMIRATE_UNITS) {
+    const emirate = u.emirate ?? "dubai";
+    const id = newId();
+    const inserted = await database.db
+      .insert(units)
+      .values({
+        id,
+        code: u.code,
+        emirate,
+        building: u.building,
+        community: u.community,
+        companyId: companyOf(u.company),
+        category: u.category,
+        subtype: u.subtype,
+        unitNo: u.unitNo,
+        dldPropertyNo: demoPropertyNo(emirate, u.unitNo),
+        makaniNo: u.makaniNo,
+        dewaPremiseNo: `DEMO-UTIL-${u.unitNo}`,
+        areaSqft: u.areaSqft,
+        bedrooms: u.bedrooms,
+        furnished: u.furnished,
+        askingRentFils: u.askingRentFils,
+        floor: u.category === "retail" ? 0 : Number(u.unitNo.slice(0, -2)) || 2,
+        bathrooms: Math.max(1, u.bedrooms ?? 1),
+        parkingSpaces: u.bedrooms === 0 ? 0 : 1,
+        description: u.description,
+      })
+      .onConflictDoNothing({ target: units.code })
+      .returning({ id: units.id });
+    if (!inserted.length) continue;
+    await advance(ctx, { kind: "unit", id }, "MARK_READY", { actor: "demo" });
+    await advance(ctx, { kind: "unit", id }, "PUBLISH", { actor: "demo" });
+    newlyListed.add(u.code);
+    console.log(`  unit ${u.code}: LISTED (${emirate})`);
   }
 
   // Every demo unit gets a virtual tour; a tour an admin set later is kept.

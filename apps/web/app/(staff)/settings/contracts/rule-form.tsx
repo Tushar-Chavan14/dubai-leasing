@@ -1,5 +1,6 @@
 "use client";
 
+import { EMIRATE_LABELS, EMIRATES } from "@leasing/core";
 import { Fragment, type ReactNode, useActionState, useState } from "react";
 import { RowAction } from "../../../../components/row-action";
 import { PencilSimpleIcon as IconPencil, PlusIcon as IconPlus, TrashIcon as IconTrash } from "@phosphor-icons/react";
@@ -46,7 +47,7 @@ function RuleEditor({
       <input type="hidden" name="category" value={category} />
       <input type="hidden" name="companyId" value={rule?.companyId ?? company.id} />
       <div className={GRID6}>
-        <label className={`${FIELD} ${SPAN[3]}`}>
+        <label className={`${FIELD} ${SPAN[2]}`}>
           <span className={LABEL}>Contract template</span>
           <select className={SET_SELECT} name="templateId" defaultValue={rule?.templateId ?? ""}>
             <option value="">Standard contract</option>
@@ -57,7 +58,19 @@ function RuleEditor({
             ))}
           </select>
         </label>
-        <label className={`${FIELD} ${SPAN[3]}`}>
+        <label className={`${FIELD} ${SPAN[2]}`}>
+          <span className={LABEL}>Emirate</span>
+          <select className={SET_SELECT} name="emirate" defaultValue={rule?.emirate ?? ""} {...inv("emirate")}>
+            <option value="">Any emirate</option>
+            {EMIRATES.map((e) => (
+              <option key={e} value={e}>
+                {EMIRATE_LABELS[e]}
+              </option>
+            ))}
+          </select>
+          {err("emirate")}
+        </label>
+        <label className={`${FIELD} ${SPAN[2]}`}>
           <span className={LABEL}>Type</span>
           <select className={SET_SELECT} name="subtype" defaultValue={rule?.subtype ?? ""}>
             <option value="">All types</option>
@@ -152,7 +165,7 @@ export function ContractRules({
   const closeAdd = () => setAdding(false);
   const closeEdit = () => setEditing(null);
   return (
-    <section aria-labelledby="rules-h" className="grid gap-4">
+    <section aria-labelledby="rules-h" className="grid min-w-0 gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 id="rules-h" className="m-0 font-sans text-[15px] font-semibold tracking-tight text-ink">
@@ -177,7 +190,7 @@ export function ContractRules({
           <RuleEditor company={company} templates={templates} category={category} onDone={closeAdd} />
         </div>
       )}
-      <div className="rounded-card border border-line bg-page">
+      <div className="min-w-0 rounded-card border border-line bg-page">
         {rules.length === 0 ? (
           <p className="m-0 p-5 text-sm text-muted">
             No {category} contract rules for {company.name} yet. Offers use the company defaults.
@@ -187,7 +200,7 @@ export function ContractRules({
             <table className={TABLE}>
               <thead>
                 <tr>
-                  <th className={TH}>Type</th>
+                  <th className={TH}>Type and emirate</th>
                   <th className={TH}>Tenure</th>
                   <th className={TH}>Cheques</th>
                   <th className={TH}>Contract</th>
@@ -211,16 +224,25 @@ export function ContractRules({
                   ) : (
                     <Fragment key={r.id}>
                       <tr className="group">
-                        <td className={`${TD} whitespace-nowrap font-semibold`}>{subtypeLabel(r.subtype)}</td>
+                        <td className={`${TD} whitespace-nowrap`}>
+                          <span className="block font-semibold">{subtypeLabel(r.subtype)}</span>
+                          <span className="block text-xs text-muted">
+                            {r.emirate ? EMIRATE_LABELS[r.emirate] : "Any emirate"}
+                          </span>
+                        </td>
                         <td className={TD}>{r.tenures.map((t) => TENURE_LABEL[t] ?? t).join(", ")}</td>
                         <td className={`${TD} whitespace-nowrap font-mono tabular-nums`}>
                           {r.minCheques} to {r.maxCheques}
                         </td>
-                        <td className={TD}>{templateLabel(r, templates)}</td>
+                        <td className={TD}>
+                          <div className="grid gap-2">
+                            <span>{templateLabel(r, templates)}</span>
+                            {canEdit && <UploadSample rule={r} label="Upload sample" />}
+                          </div>
+                        </td>
                         {canEdit && (
                           <td className={`${TD} whitespace-nowrap`}>
-                            <div className="flex items-start gap-2">
-                              <UploadSample rule={r} label="Upload sample" />
+                            <div className="flex items-start justify-end gap-2">
                               <button
                                 type="button"
                                 className={iconButtonClass()}

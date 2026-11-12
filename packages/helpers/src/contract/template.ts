@@ -1,4 +1,13 @@
-import { type Addendum, CONTRACT_CLAUSES, type ContractClauseId, type ContractFields, formatAed } from "@leasing/core";
+import {
+  type Addendum,
+  CONTRACT_CLAUSES,
+  type ContractClauseId,
+  type ContractFields,
+  EMIRATE_LABELS,
+  type Emirate,
+  formatAed,
+  registrationSystemName,
+} from "@leasing/core";
 import type { NoticeBlock, NoticeDocument } from "../renewal/notice.ts";
 
 /**
@@ -7,13 +16,27 @@ import type { NoticeBlock, NoticeDocument } from "../renewal/notice.ts";
  * the period comes from the rulebook, never from this text), and how the parties sign. A company
  * template that lacks one gets it appended under "Additional terms required by law".
  */
-export const REQUIRED_TERMS = {
-  rentChange:
-    "The rent above is fixed for the whole term. It can only change at renewal, with written notice given in time under Dubai law.",
-  ejari: "This contract is registered in Ejari after both parties sign.",
-  signatures:
-    "Each party signs this contract electronically through a personal link. The signature record is added as the last page of the signed copy.",
-} as const;
+export function requiredTerms(emirate: Emirate = "dubai"): {
+  rentChange: string;
+  ejari: string;
+  signatures: string;
+} {
+  return {
+    rentChange:
+      emirate === "dubai"
+        ? "The rent above is fixed for the whole term. It can only change at renewal, with written notice given in time under Dubai law."
+        : `The rent above is fixed for the whole term. It can only change at renewal, with written notice given in time under the laws of the Emirate of ${EMIRATE_LABELS[emirate]}.`,
+    ejari:
+      emirate === "dubai"
+        ? "This contract is registered in Ejari after both parties sign."
+        : `This contract is registered in ${registrationSystemName(emirate)} after both parties sign.`,
+    signatures:
+      "Each party signs this contract electronically through a personal link. The signature record is added as the last page of the signed copy.",
+  };
+}
+
+/** The Dubai wording (default); other emirates use `requiredTerms(emirate)`. */
+export const REQUIRED_TERMS = requiredTerms("dubai");
 
 /**
  * The addendum as document blocks: standard clauses, approved company clauses (wording copied in by
@@ -60,8 +83,11 @@ const dash = (v: string | number | null) => (v === null || v === "" ? "-" : Stri
 export function contractDocument(
   f: ContractFields,
   addendum: Addendum,
-  o: { version: number; reference: string; preparedOn: string; demo: boolean },
+  o: { version: number; reference: string; preparedOn: string; demo: boolean; emirate?: Emirate },
 ): NoticeDocument {
+  const emirate = o.emirate ?? "dubai";
+  const dubai = emirate === "dubai";
+  const terms = requiredTerms(emirate);
   const tenantId: [string, string][] =
     f.tenantKind === "company"
       ? [["Trade licence no.", dash(f.tenantTradeLicenceNo)]]
@@ -97,7 +123,7 @@ export function contractDocument(
       rows: [
         ["Building", `${f.building}, ${f.community}`],
         ["Unit no.", f.unitNo],
-        ["DLD property no.", f.dldPropertyNo],
+        [dubai ? "DLD property no." : "Property no.", f.dldPropertyNo],
         ["Makani no.", f.makaniNo],
         ["Plot no.", dash(f.plotNo)],
         ["Use", f.propertyUsage === "residential" ? "Residential" : "Commercial"],
@@ -119,12 +145,12 @@ export function contractDocument(
     {
       kind: "list",
       items: [
-        REQUIRED_TERMS.rentChange,
+        terms.rentChange,
         "The tenant pays the rent by the cheques listed above. A bounced cheque is handled under the law and the company's collection process.",
         "The security deposit is refunded at the end of the tenancy, less the cost of any damage beyond normal wear.",
         "The landlord keeps the unit fit to live in and does structural repairs and repairs to the building's main systems.",
         "The tenant uses the unit for the use stated above and keeps it in good condition.",
-        REQUIRED_TERMS.ejari,
+        terms.ejari,
       ],
     },
   ];
@@ -132,13 +158,17 @@ export function contractDocument(
   blocks.push({ kind: "heading", text: "Signatures" });
   blocks.push({
     kind: "para",
-    text: REQUIRED_TERMS.signatures,
+    text: terms.signatures,
   });
   blocks.push({
     kind: "small",
     text: o.demo
-      ? "Demo template written for this product. It is not the Dubai Land Department's standard form and has not been reviewed by a lawyer. All people and numbers in the demo are fictional."
-      : "Template wording to be reviewed by a Dubai property lawyer before use.",
+      ? dubai
+        ? "Demo template written for this product. It is not the Dubai Land Department's standard form and has not been reviewed by a lawyer. All people and numbers in the demo are fictional."
+        : "Demo template written for this product. It is not an official standard form and has not been reviewed by a lawyer. All people and numbers in the demo are fictional."
+      : dubai
+        ? "Template wording to be reviewed by a Dubai property lawyer before use."
+        : `TO BE REVIEWED BY A PROPERTY LAWYER IN ${EMIRATE_LABELS[emirate].toUpperCase()} before use.`,
   });
   return { title: `Tenancy contract ${f.leaseRef} (v${o.version})`, blocks };
 }

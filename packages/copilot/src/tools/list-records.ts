@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { StaffRole } from "@leasing/core";
+import { Emirate, registrationStageName, type StaffRole } from "@leasing/core";
 import { ALL_STAFF, type CopilotTool } from "../types.ts";
 import { untrusted } from "../untrusted.ts";
 import { type RecordAction, type RecordCard, workHref } from "../ui.ts";
@@ -23,6 +23,7 @@ const Output = z.object({
       kind: z.enum(["application", "lease"]),
       name: z.string(),
       unit: z.string(),
+      emirate: Emirate.optional(),
       stage: z.string(),
       nextStep: z.string(),
       owner: z.string(),
@@ -38,6 +39,7 @@ export interface RecordRowDto {
   ref: string;
   title: string;
   unitCode: string;
+  emirate?: Emirate;
   stage: string;
   nextStep: string;
   owner: string;
@@ -47,6 +49,8 @@ export interface RecordRowDto {
   contractSent?: boolean;
   /** The applicant accepted; the reservation (fils, from the accepted offer) waits to be recorded. */
   reservationDueFils?: number | null;
+  /** Registered by hand: the web path of the one-file registration pack (engine-built, leasing roles only). */
+  registrationPackUrl?: string;
 }
 
 /**
@@ -95,6 +99,8 @@ export function recordActions(r: RecordRowDto, pendingSigners: string[], role: S
         `Propose resending the signing link to the ${role} on lease ${r.ref}.`,
       );
   }
+  if (r.registrationPackUrl && PROPOSERS.includes(role))
+    out.push({ type: "link", key: "pack", label: "Download registration pack", href: r.registrationPackUrl });
   out.push({ type: "link", key: "open", label: "Open in the Workspace", href: workHref(r.kind, r.id) });
   return out;
 }
@@ -108,6 +114,7 @@ export const recordCard = (r: RecordRowDto, pendingSigners: string[], role: Staf
   name: r.title,
   unit: r.unitCode,
   stage: r.stage,
+  ...(r.emirate ? { registration: registrationStageName(r.emirate) } : {}),
   nextStep: r.nextStep,
   href: workHref(r.kind, r.id),
   actions: recordActions(r, pendingSigners, role),
@@ -119,6 +126,7 @@ export const recordForModel = (r: RecordRowDto) => ({
   kind: r.kind,
   name: r.kind === "application" ? untrusted(r.title) : r.title,
   unit: r.unitCode,
+  ...(r.emirate ? { emirate: r.emirate } : {}),
   stage: r.stage,
   nextStep: r.nextStep,
   owner: r.owner,
@@ -128,7 +136,7 @@ export const listRecords: CopilotTool<typeof Input, typeof Output> = {
   name: "list_records",
   kind: "read",
   description:
-    "Applications and leases on the pipeline, newest first, with ref, name, unit, stage, next step and owner, plus the total that match. Filter by stage, name or unit, company, category, or 'mine' (waiting for the user). Use it to list or count what is in a stage, e.g. offers waiting on applicants. The records show as cards in the chat.",
+    "Applications and leases on the pipeline, newest first, with ref, name, unit (and its emirate), stage, next step and owner, plus the total that match. Filter by stage, name or unit, company, category, or 'mine' (waiting for the user). Use it to list or count what is in a stage, e.g. offers waiting on applicants. The records show as cards in the chat.",
   input: Input,
   output: Output,
   roles: ALL_STAFF,

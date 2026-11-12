@@ -37,7 +37,7 @@ export async function lookupSri(
     };
   }
   const [row] = await tx.db
-    .select({ community: units.community, bedrooms: units.bedrooms, category: units.category })
+    .select({ emirate: units.emirate, community: units.community, bedrooms: units.bedrooms, category: units.category })
     .from(leases)
     .innerJoin(units, eq(units.id, leases.unitId))
     .where(eq(leases.id, leaseId));
@@ -47,6 +47,7 @@ export async function lookupSri(
     .from(sriAverages)
     .where(
       and(
+        eq(sriAverages.emirate, row.emirate),
         eq(sriAverages.community, row.community),
         eq(sriAverages.category, "residential"),
         eq(sriAverages.bedrooms, row.bedrooms),

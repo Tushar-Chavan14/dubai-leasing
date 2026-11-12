@@ -5,7 +5,7 @@ import {
   type MailAttachment,
   type MailReceipt,
 } from "@leasing/adapters";
-import { maskPiiText, newId } from "@leasing/core";
+import { maskPiiText, newId, registrationSystemName } from "@leasing/core";
 import { sha256Hex } from "@leasing/core/tokens";
 import {
   actionLinks,
@@ -28,6 +28,7 @@ import { quietNow, scheduleTimed, sendTime } from "./agent-switches.ts";
 import { createLink } from "./links.ts";
 import { onFormalReminderSent } from "./collections.ts";
 import { createTask } from "./milestones.ts";
+import { leaseEmirate } from "./registries.ts";
 import { composeTenancyMail, type TenancyMailKind } from "./tenancy-mail.ts";
 
 /**
@@ -238,6 +239,7 @@ export async function sendLeaseMail(ctx: EngineContext, j: LeaseMailJob) {
         unitLabel,
         ejariNo: sub.ejariNo,
         tenancyUrl: tenancy.url,
+        systemName: registrationSystemName(await leaseEmirate(tx, lease)),
         demo: ctx.demoMode,
       });
     }

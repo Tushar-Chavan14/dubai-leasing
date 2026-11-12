@@ -165,7 +165,7 @@ const ctx: EngineContext = {
   mailer: new FakeMailer(),
   documents: new LocalDiskStore(mkdtempSync(join(tmpdir(), "eval-docs-"))),
   uploads: new LocalDiskStore(mkdtempSync(join(tmpdir(), "eval-uploads-"))),
-  ejari: new FakeEjari(() => new Error("the customer agent eval doesn't call Ejari")),
+  registries: { dubai: new FakeEjari(() => new Error("the customer agent eval doesn't call Ejari")) },
   llm: new FakeLlm(() => {
     throw new Error("the classifier is not used on the web with an agent");
   }),

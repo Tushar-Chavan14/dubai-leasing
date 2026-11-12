@@ -3,6 +3,7 @@
 import { ActionForm } from "../../../../components/ui/action-form";
 import { useRouter } from "next/navigation";
 import { useActionState, useEffect } from "react";
+import { EMIRATE_LABELS, EMIRATES } from "@leasing/core";
 import { WarningIcon as IconWarning } from "@phosphor-icons/react";
 import { subtypeLabel } from "../../../../lib/portfolio";
 import type { RuleResult } from "../../../../lib/portfolio";
@@ -102,11 +103,21 @@ function Changes({ t }: { t: CompanyTemplateView }) {
   );
 }
 
+/** Which emirate a template is for: a badge on its card. */
+export function EmirateBadge({ emirate }: { emirate: CompanyTemplateView["emirate"] }) {
+  return (
+    <span className="inline-flex rounded-full border border-line px-2 py-0.5 text-xs font-semibold text-muted">
+      {emirate ? EMIRATE_LABELS[emirate] : "Any emirate"}
+    </span>
+  );
+}
+
 function TemplateHead({ t }: { t: CompanyTemplateView }) {
   const fields = t.blanks.filter((b) => b.role === "field").length;
   return (
     <div className="flex flex-wrap items-center gap-2.5">
       <b>Version {t.version}</b>
+      <EmirateBadge emirate={t.emirate} />
       <span className="text-xs font-semibold" data-tone={STATUS_TONE[t.status]}>
         {STATUS_LABEL[t.status]}
       </span>
@@ -255,7 +266,7 @@ function SampleReview({
 }
 
 /** Where a template reading has got to: the text and layout are read in seconds; the model step is the slow part. */
-function ReadingProgress({ mins }: { mins: number | null }) {
+function ReadingProgress({ mins, limit }: { mins: number | null; limit: number | null }) {
   const step = 1;
   const steps = [
     "Reading the text and layout of the PDF",
@@ -275,7 +286,10 @@ function ReadingProgress({ mins }: { mins: number | null }) {
           </li>
         ))}
       </ol>
-      <p className="m-0 text-muted">This usually takes about 5 minutes on this machine; it stops itself after 15.</p>
+      <p className="m-0 text-muted">
+        This usually takes about 5 minutes on this machine
+        {limit ? `; if the model hasn't finished after ${limit} minutes it stops and says why` : ""}.
+      </p>
     </div>
   );
 }
@@ -303,8 +317,14 @@ export function CompanyTemplatePanelView({
   const proposed = panel.review?.templateId
     ? panel.templates.find((t) => t.id === panel.review!.templateId)
     : undefined;
-  const inUse = panel.templates.find((t) => t.status === "approved");
-  const rest = panel.templates.filter((t) => t !== inUse && t !== proposed);
+  // One group per emirate ("any emirate" first): its template in use and its other versions (D56).
+  const groups = [null, ...EMIRATES]
+    .map((emirate) => {
+      const all = panel.templates.filter((t) => t.emirate === emirate);
+      const inUse = all.find((t) => t.status === "approved");
+      return { emirate, inUse, rest: all.filter((t) => t !== inUse && t !== proposed) };
+    })
+    .filter((g) => g.inUse || g.rest.length > 0);
   const showReview = !!panel.review && (panel.review.clauses.length > 0 || !!proposed);
   return (
     <section
@@ -314,12 +334,17 @@ export function CompanyTemplatePanelView({
     >
       <div className="flex flex-wrap items-center gap-2.5">
         <h3 className="m-0 text-base font-semibold">Company template: {company.name}</h3>
-        {inUse && (
-          <span
-            className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${"bg-accent text-on-accent"}`}
-          >
-            Version {inUse.version} in use
-          </span>
+        {groups.flatMap((g) =>
+          g.inUse
+            ? [
+                <span
+                  key={g.emirate ?? "any"}
+                  className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${"bg-accent text-on-accent"}`}
+                >
+                  {g.emirate ? EMIRATE_LABELS[g.emirate] : "Any emirate"}: version {g.inUse.version} in use
+                </span>,
+              ]
+            : [],
         )}
       </div>
       {panel.rulesOnRetired > 0 && (
@@ -332,7 +357,9 @@ export function CompanyTemplatePanelView({
           </div>
         </div>
       )}
-      {reading && <ReadingProgress mins={panel.extraction?.minutes ?? null} />}
+      {reading && (
+        <ReadingProgress mins={panel.extraction?.minutes ?? null} limit={panel.extraction?.limitMinutes ?? null} />
+      )}
       {(panel.extraction?.status === "failed" || panel.extraction?.status === "retired") && (
         <div className="grid gap-2">
           {panel.extraction.status === "failed" ? (
@@ -377,22 +404,28 @@ export function CompanyTemplatePanelView({
           canEdit={canEdit}
         />
       )}
-      {inUse && <TemplateCard t={inUse} canEdit={canEdit} />}
-      {rest.length > 0 && (
-        <details className="grid gap-2.5 text-sm">
-          <summary className="cursor-pointer text-[13.5px] text-muted">Other versions ({rest.length})</summary>
-          <div className="grid gap-3">
-            {rest.map((t) => (
-              <details key={t.id} className="grid gap-2.5 text-sm">
-                <summary className="cursor-pointer text-[13.5px] text-muted">
-                  Version {t.version}: {STATUS_LABEL[t.status]}
-                </summary>
-                <TemplateCard t={t} canEdit={canEdit} />
-              </details>
-            ))}
-          </div>
-        </details>
-      )}
+      {groups.map((g) => (
+        <div key={g.emirate ?? "any"} className="grid gap-3">
+          {g.inUse && <TemplateCard t={g.inUse} canEdit={canEdit} />}
+          {g.rest.length > 0 && (
+            <details className="grid gap-2.5 text-sm">
+              <summary className="cursor-pointer text-[13.5px] text-muted">
+                Other versions, {g.emirate ? EMIRATE_LABELS[g.emirate] : "any emirate"} ({g.rest.length})
+              </summary>
+              <div className="grid gap-3">
+                {g.rest.map((t) => (
+                  <details key={t.id} className="grid gap-2.5 text-sm">
+                    <summary className="cursor-pointer text-[13.5px] text-muted">
+                      Version {t.version}: {STATUS_LABEL[t.status]}
+                    </summary>
+                    <TemplateCard t={t} canEdit={canEdit} />
+                  </details>
+                ))}
+              </div>
+            </details>
+          )}
+        </div>
+      ))}
     </section>
   );
 }

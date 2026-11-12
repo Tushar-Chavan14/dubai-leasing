@@ -61,6 +61,19 @@ async function rejectNextEjari() {
   redirect(`/settings/demo?${new URLSearchParams(r.ok ? { ejari: msg } : { error: msg })}`);
 }
 
+/** Tawtheeq demo: the simulated Abu Dhabi registry rejects the next registration (name mismatch). */
+async function rejectNextTawtheeq() {
+  "use server";
+  const r = await engine("/api/demo/ejari/reject-next", {
+    method: "POST",
+    body: JSON.stringify({ system: "tawtheeq" }),
+  });
+  const msg = r.ok
+    ? "The next Tawtheeq submission will be rejected for a name mismatch (simulated)."
+    : (r.error?.error ?? "That didn't work");
+  redirect(`/settings/demo?${new URLSearchParams(r.ok ? { ejari: msg } : { error: msg })}`);
+}
+
 /** Move-out demo: record the tenant's notice to vacate at the lease end. */
 async function giveNotice(formData: FormData) {
   "use server";
@@ -310,6 +323,11 @@ export default async function DemoPage({
               <form action={rejectNextEjari}>
                 <Button type="submit" variant="ghost" size="sm">
                   Reject the next Ejari submission
+                </Button>
+              </form>
+              <form action={rejectNextTawtheeq}>
+                <Button type="submit" variant="ghost" size="sm">
+                  Reject the next Tawtheeq submission (simulated)
                 </Button>
               </form>
             </div>

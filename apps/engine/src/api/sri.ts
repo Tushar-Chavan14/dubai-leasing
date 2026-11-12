@@ -1,3 +1,4 @@
+import { Emirate } from "@leasing/core";
 import { sriAverages, withTx } from "@leasing/db";
 import { asc } from "drizzle-orm";
 import type { Hono } from "hono";
@@ -16,7 +17,12 @@ export function registerSriRoutes(api: Hono<AuthEnv>, ctx: EngineContext) {
       await db
         .select()
         .from(sriAverages)
-        .orderBy(asc(sriAverages.community), asc(sriAverages.category), asc(sriAverages.bedrooms)),
+        .orderBy(
+          asc(sriAverages.emirate),
+          asc(sriAverages.community),
+          asc(sriAverages.category),
+          asc(sriAverages.bedrooms),
+        ),
     ),
   );
 
@@ -24,6 +30,7 @@ export function registerSriRoutes(api: Hono<AuthEnv>, ctx: EngineContext) {
     requireRole(c.get("user"), ["admin", "leasing_manager"]);
     const b = z
       .object({
+        emirate: Emirate.default("dubai"),
         community: z.string().trim().min(1).max(120),
         bedrooms: z.number().int().min(0).max(10),
         avgAnnualRentFils: z.number().int().positive().max(100_000_000_00),

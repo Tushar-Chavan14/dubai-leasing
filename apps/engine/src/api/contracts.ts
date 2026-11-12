@@ -1,4 +1,4 @@
-import { Addendum, maskPii, type StaffRole } from "@leasing/core";
+import { Addendum, maskPii, registrationSystemName, type StaffRole } from "@leasing/core";
 import { contracts, contractSigners, ejariSubmissions, leases, tasks, units } from "@leasing/db";
 import { and, asc, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { Hono } from "hono";
@@ -89,13 +89,16 @@ export async function leaseContractView(db: EngineContext["database"]["db"], lea
   // What the prepare form offers: the unit's company clauses that are approved, and what the
   // matching contract rule preselects.
   const [lu] = await db
-    .select({ companyId: units.companyId })
+    .select({ companyId: units.companyId, emirate: units.emirate })
     .from(leases)
     .innerJoin(units, eq(units.id, leases.unitId))
     .where(eq(leases.id, leaseId));
   const approved = lu ? await approvedClauses({ db }, lu.companyId) : [];
   const suggested = lu ? (await defaultAddendumFor({ db }, leaseId)).clauses : [];
+  const emirate = lu?.emirate ?? "dubai";
   return {
+    // The registration system of the unit's emirate (Ejari in Dubai) for headings and labels.
+    registration: { emirate, systemName: registrationSystemName(emirate) },
     prepareNeeded: await prepareNeeded(db, leaseId, cs),
     clauseOptions: {
       suggested,
@@ -115,6 +118,7 @@ export async function leaseContractView(db: EngineContext["database"]["db"], lea
         sources: c.sources,
         addendum: c.addendum,
         flags: c.flags,
+        templateRewrites: c.templateRewrites,
         sha256: c.sha256,
         signedSha256: c.signedSha256,
         approvalId: c.approvalId,

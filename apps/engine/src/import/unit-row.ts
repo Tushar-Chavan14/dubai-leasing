@@ -1,5 +1,12 @@
 import { z } from "zod";
-import { PropertyCategory, SUBTYPES_BY_CATEGORY, PropertySubtype } from "@leasing/core";
+import {
+  EMIRATES,
+  EMIRATE_LABELS,
+  type Emirate,
+  PropertyCategory,
+  SUBTYPES_BY_CATEGORY,
+  PropertySubtype,
+} from "@leasing/core";
 import { UnitFields } from "../manager/units.ts";
 import { aed, opt, yesNo } from "./lease-row.ts";
 
@@ -27,9 +34,13 @@ export const UnitImportRow = z
     /** Alias of `category` from the old template. */
     kind: opt.transform((v) => v?.toLowerCase() ?? null).pipe(PropertyCategory.nullable()),
     subtype: opt.transform((v) => v?.toLowerCase() ?? null).pipe(PropertySubtype.nullable()),
-    emirate: opt
-      .transform((v) => v?.toLowerCase() ?? null)
-      .refine((v) => v === null || v === "dubai", "only Dubai units can be imported for now"),
+    emirate: opt.transform((v, ctx): Emirate | null => {
+      if (v === null) return null;
+      const key = v.toLowerCase().replace(/[\s-]+/g, "_");
+      const hit = EMIRATES.find((e) => e === key || EMIRATE_LABELS[e].toLowerCase().replace(/[\s-]+/g, "_") === key);
+      if (!hit) ctx.addIssue({ code: "custom", message: `unknown emirate "${v}"` });
+      return hit ?? null;
+    }),
     dld_property_no: opt,
     makani_no: opt,
     plot_no: opt,
@@ -60,7 +71,7 @@ export function toUnitFields(r: UnitImportRow, companyId: string): z.input<typeo
   return {
     companyId,
     subtype: r.subtype,
-    emirate: "dubai",
+    emirate: r.emirate ?? "dubai",
     code: r.unit_code,
     building: r.building,
     community: r.community,

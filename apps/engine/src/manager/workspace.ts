@@ -3,13 +3,16 @@ import {
   approvalGates,
   canDecideGate,
   type CalendarDate,
+  type Emirate,
   type GateId,
   type LeaseState,
+  registrationSystemName,
   type StaffRole,
   startOfDubaiDay,
   addDays,
 } from "@leasing/core";
 import {
+  ejariSubmissions,
   applications,
   approvals,
   contracts,
@@ -94,6 +97,8 @@ export interface RecordRow {
   ref: string;
   title: string;
   unitCode: string;
+  /** Emirate of the unit. */
+  emirate: Emirate;
   stage: Stage;
   nextStep: string;
   owner: Owner;
@@ -104,6 +109,8 @@ export interface RecordRow {
   contractHeld: boolean;
   /** The contract is out with the signers. */
   contractSent: boolean;
+  /** Set when the lease is registered by hand: where its one-file registration pack downloads. */
+  registrationPackUrl?: string;
   /** The applicant accepted the offer and the reservation payment waits to be recorded (fils, from the accepted offer). */
   reservationDueFils: number | null;
   updatedAt: string;
@@ -152,6 +159,8 @@ export function nextStepFor(r: {
   contractHeld?: boolean;
   /** The contract is out with the signers. */
   contractSent?: boolean;
+  /** The unit's registration system (Ejari, Tawtheeq, …). */
+  system?: string;
 }): string {
   switch (r.stage) {
     case "Enquiry":
@@ -175,7 +184,7 @@ export function nextStepFor(r: {
           ? "Waiting for the signers."
           : "Approve the final contract, then collect signatures.";
     case "Ejari":
-      return "Approve the Ejari submission and wait for the registration.";
+      return `Approve the ${r.system ?? "Ejari"} submission and wait for the registration.`;
     case "Registered":
       return "Registered. Nothing to do before move-in.";
   }
@@ -289,8 +298,8 @@ const EVENT_TEXT: Record<string, EventText> = {
 const COVERED_ELSEWHERE = new Set(["APPROVAL_REQUESTED", "APPROVAL_DECIDED", "TASK_CREATED", "TASK_DONE"]);
 
 export type DescribeInput =
-  | { source: "event"; type: string; payload: Record<string, unknown>; subject: string }
-  | { source: "approval"; gate: GateId; status: string; subject: string; canDecide: boolean }
+  | { source: "event"; type: string; payload: Record<string, unknown>; subject: string; system?: string }
+  | { source: "approval"; gate: GateId; status: string; subject: string; canDecide: boolean; system?: string }
   | { source: "email"; purpose: string; status: string }
   | { source: "task"; title: string; status: string };
 
@@ -305,6 +314,14 @@ const EMAIL_PURPOSE: Record<string, string> = {
 
 /** One plain sentence for a log entry. Unknown event types fall back to a humanised name. */
 export function describeEntry(i: DescribeInput): string {
+  const text = describeEntryText(i);
+  // Registration texts name the unit's own system (internal ids keep the Ejari names).
+  const ejari =
+    (i.source === "event" && i.type.startsWith("EJARI_")) || (i.source === "approval" && i.gate.startsWith("ejari_"));
+  return ejari && i.system && i.system !== "Ejari" ? text.replace(/\bEjari\b/g, i.system) : text;
+}
+
+function describeEntryText(i: DescribeInput): string {
   switch (i.source) {
     case "event":
       return (EVENT_TEXT[i.type] ?? ((s) => `${humanise(i.type)} by ${s.toLowerCase() === "you" ? "you" : s}.`))(
@@ -398,6 +415,25 @@ interface Scope {
   ids: string[];
   /** entity id -> display name of the applicant or tenant */
   names: Map<string, string>;
+  /** entity id -> the unit's registration system name; absent means Ejari */
+  systems?: Map<string, string>;
+}
+
+/** The registration system of each application's or lease's unit, for log text. */
+async function systemsFor(db: Db, ids: string[]): Promise<Map<string, string>> {
+  const [a, l] = await Promise.all([
+    db
+      .select({ id: applications.id, emirate: units.emirate })
+      .from(applications)
+      .innerJoin(units, eq(units.id, applications.unitId))
+      .where(inArray(applications.id, ids)),
+    db
+      .select({ id: leases.id, emirate: units.emirate })
+      .from(leases)
+      .innerJoin(units, eq(units.id, leases.unitId))
+      .where(inArray(leases.id, ids)),
+  ]);
+  return new Map([...a, ...l].map((r) => [r.id, registrationSystemName(r.emirate)]));
 }
 
 /** Builds the merged, newest-first log over the given entity ids. */
@@ -442,6 +478,8 @@ async function buildLog(
   const inWindow = (d: Date) => (!opts.since || d >= opts.since) && (!opts.before || d < opts.before);
   const out: LogEntry[] = [];
   const person = (id: string) => scope.names.get(id) ?? "The applicant";
+  const systems = scope.systems ?? (await systemsFor(db, scope.ids));
+  const sys = (id: string) => (systems.get(id) ? { system: systems.get(id)! } : {});
 
   for (const e of events) {
     if (COVERED_ELSEWHERE.has(e.type)) continue;
@@ -450,7 +488,13 @@ async function buildLog(
       at: e.at.toISOString(),
       source: "event",
       actor: a.actor,
-      text: describeEntry({ source: "event", type: e.type, payload: e.payload, subject: a.subject }),
+      text: describeEntry({
+        source: "event",
+        type: e.type,
+        payload: e.payload,
+        subject: a.subject,
+        ...sys(e.entityId),
+      }),
       refId: e.id,
       pending: false,
       actions: [],
@@ -474,6 +518,7 @@ async function buildLog(
         status: ap.status,
         subject: a.subject,
         canDecide: mayDecide,
+        ...sys(ap.entityId),
       }),
       refId: ap.id,
       pending: mayDecide,
@@ -569,11 +614,12 @@ interface Loaded {
 
 /** Applications (not yet converted) and leases as one list, newest change first. */
 export async function loadRecords(db: Db, me: Me): Promise<Loaded> {
-  const [apps, lss, tenantRows, openApprovals, openTasks, sentContracts] = await Promise.all([
+  const [apps, lss, tenantRows, openApprovals, openTasks, sentContracts, manualSubs] = await Promise.all([
     db
       .select({
         a: applications,
         unitCode: units.code,
+        emirate: units.emirate,
         companyId: units.companyId,
         category: units.category,
         name: parties.fullNameEn,
@@ -586,6 +632,7 @@ export async function loadRecords(db: Db, me: Me): Promise<Loaded> {
       .select({
         l: leases,
         unitCode: units.code,
+        emirate: units.emirate,
         companyId: units.companyId,
         category: units.category,
         appRef: applications.ref,
@@ -601,8 +648,13 @@ export async function loadRecords(db: Db, me: Me): Promise<Loaded> {
     db.select().from(approvals).where(eq(approvals.status, "pending")),
     db.select().from(tasks).where(eq(tasks.status, "open")),
     db.selectDistinct({ leaseId: contracts.leaseId }).from(contracts).where(eq(contracts.status, "sent")),
+    db
+      .selectDistinct({ leaseId: ejariSubmissions.leaseId })
+      .from(ejariSubmissions)
+      .where(eq(ejariSubmissions.mode, "manual")),
   ]);
   const sentLeaseIds = new Set(sentContracts.map((c) => c.leaseId));
+  const manualLeaseIds = new Set(manualSubs.map((m) => m.leaseId));
   const tenant = new Map(tenantRows.map((r) => [r.leaseId, r.name]));
   const approvalsBy = new Map<string, typeof openApprovals>();
   for (const a of openApprovals) approvalsBy.set(a.entityId, [...(approvalsBy.get(a.entityId) ?? []), a]);
@@ -618,6 +670,7 @@ export async function loadRecords(db: Db, me: Me): Promise<Loaded> {
       appRef?: string;
       title: string;
       unitCode: string;
+      emirate: Emirate;
       updatedAt: Date;
       companyId: string;
       category: string;
@@ -634,11 +687,18 @@ export async function loadRecords(db: Db, me: Me): Promise<Loaded> {
     const offerHeld = tk.some((t) => t.kind === "send_offer");
     const contractHeld = tk.some((t) => t.kind === "prepare_contract");
     const contractSent = kind === "lease" && sentLeaseIds.has(id);
+    // Registered by hand (D53): the pending approval or an attempt says so; the record offers the pack.
+    const manualRegistration =
+      kind === "lease" &&
+      stage === "Ejari" &&
+      (manualLeaseIds.has(id) ||
+        ap.some((a) => a.gate === "ejari_submission" && (a.proposal as { mode?: string } | null)?.mode === "manual"));
     const reservationTask = stage === "Offer" ? tk.find((t) => t.kind === "record_reservation") : undefined;
     const dueFils = (reservationTask?.details as { reservationFils?: unknown } | null)?.reservationFils;
     const reservationDueFils = reservationTask ? (typeof dueFils === "number" ? dueFils : null) : null;
     const nextStep = nextStepFor({
       stage,
+      system: registrationSystemName(base.emirate),
       offerHeld,
       reservationDue: Boolean(reservationTask),
       contractHeld,
@@ -657,6 +717,7 @@ export async function loadRecords(db: Db, me: Me): Promise<Loaded> {
       ref: base.ref,
       title: base.title,
       unitCode: base.unitCode,
+      emirate: base.emirate,
       stage,
       nextStep,
       owner,
@@ -664,6 +725,7 @@ export async function loadRecords(db: Db, me: Me): Promise<Loaded> {
       waitingOnReply: stage === "Documents" || (stage === "Offer" && !offerHeld && !reservationTask) || contractSent,
       contractHeld,
       contractSent,
+      ...(manualRegistration ? { registrationPackUrl: `/api/leases/${id}/registration/pack` } : {}),
       reservationDueFils,
       updatedAt: base.updatedAt.toISOString(),
       _entityIds: ids,
@@ -685,6 +747,7 @@ export async function loadRecords(db: Db, me: Me): Promise<Loaded> {
         ref: r.a.ref ?? r.a.id.slice(0, 8),
         title: r.name,
         unitCode: r.unitCode,
+        emirate: r.emirate,
         updatedAt: r.a.updatedAt,
         companyId: r.companyId,
         category: r.category,
@@ -704,6 +767,7 @@ export async function loadRecords(db: Db, me: Me): Promise<Loaded> {
         ...(r.appRef ? { appRef: r.appRef } : {}),
         title: tenant.get(r.l.id) ?? "Tenant",
         unitCode: r.unitCode,
+        emirate: r.emirate,
         updatedAt: r.l.updatedAt,
         companyId: r.companyId,
         category: r.category,

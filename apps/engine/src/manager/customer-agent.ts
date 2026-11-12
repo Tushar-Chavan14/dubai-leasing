@@ -59,7 +59,14 @@ import {
   unitCards,
   webMenuButtons,
 } from "./enquiries.ts";
-import { listedCommunities, listedUnit, listedUnits, resolveCompany, takenViewings } from "./availability.ts";
+import {
+  bookableEmirates,
+  listedCommunities,
+  listedUnit,
+  listedUnits,
+  resolveCompany,
+  takenViewings,
+} from "./availability.ts";
 import { getCompanyPolicy } from "./events.ts";
 import { recordRun, runOnly } from "./helpers.ts";
 import { freeViewingSlots } from "./viewing-slots.ts";
@@ -366,7 +373,17 @@ export class WebAgentBackend implements AgentBackend {
       if (sel.category && sel.category !== "residential") delete sel.bedrooms;
       if (sel.category === "residential" || !sel.category) delete sel.sizeBand;
       if (sel.sizeBand && !sel.category) sel.category = "commercial";
-      sel.emirate = "dubai";
+      // The emirate the model was told by the visitor, else the chat's chosen one, else Dubai.
+      sel.emirate = a.emirate ?? this.flow.emirate ?? "dubai";
+      const open = await bookableEmirates(tx, today);
+      if (!open.includes(sel.emirate))
+        return {
+          result: {
+            total: 0,
+            units: [],
+            note: `There are no bookable listings in ${sel.emirate.replaceAll("_", " ")}. Say so; do not show units from another emirate. Emirates with listings: ${open.join(", ") || "none"}.`,
+          },
+        };
 
       // Every matching unit, so "how many" is answered with a real count; five are shown.
       const matching = (await listedUnits(tx, today, filtersOf(sel, true), 500)).filter(
@@ -686,6 +703,7 @@ export class WebAgentBackend implements AgentBackend {
         .from(sriAverages)
         .where(
           and(
+            eq(sriAverages.emirate, a.emirate ?? this.flow.emirate ?? "dubai"),
             eq(sriAverages.community, hit!),
             eq(sriAverages.category, category),
             bedrooms === null ? sql`${sriAverages.bedrooms} is null` : eq(sriAverages.bedrooms, bedrooms),

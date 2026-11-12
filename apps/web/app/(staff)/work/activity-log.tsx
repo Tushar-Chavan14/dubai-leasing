@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { stageLabel } from "../../../lib/stage-label";
 import { AskAi, AskAiMenu } from "../../../components/ask-ai";
 import { Pill } from "../../../components/ui/pill";
 import { RecordStepper } from "../../../components/ui/stepper";
@@ -53,8 +54,8 @@ export function RecordHead({
             {record.title}
           </h2>
           <p className="m-0 mt-1 text-sm text-muted">
-            <span className="font-mono text-[12.5px]">{record.ref}</span> · {record.unitCode} · {record.stage}.{" "}
-            {record.nextStep}
+            <span className="font-mono text-[12.5px]">{record.ref}</span> · {record.unitCode} ·{" "}
+            {stageLabel(record.stage, record.emirate)}. {record.nextStep}
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -68,7 +69,7 @@ export function RecordHead({
           />
         </div>
       </div>
-      <RecordStepper stages={STAGES} current={record.stage} />
+      <RecordStepper stages={STAGES} current={record.stage} labels={{ Ejari: stageLabel("Ejari", record.emirate) }} />
     </header>
   );
 }

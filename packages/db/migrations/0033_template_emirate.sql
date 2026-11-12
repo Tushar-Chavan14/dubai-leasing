@@ -1,0 +1,1 @@
+ALTER TABLE "company_contract_templates" ADD COLUMN "emirate" text;

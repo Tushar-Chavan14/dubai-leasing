@@ -99,9 +99,40 @@ describe.skipIf(noDb)("portfolio API (Postgres)", () => {
     expect((await send("admin", "/rent-rules", "POST", rule({ minRentFils: 500, maxRentFils: 100 }))).status).toBe(422);
     expect((await send("admin", "/rent-rules", "POST", rule({ subtype: "shop" }))).status).toBe(422);
     expect((await send("admin", "/rent-rules", "POST", rule({ minPctBp: -9000 }))).status).toBe(400);
-    expect((await send("admin", "/rent-rules", "POST", rule({ emirate: "abu_dhabi" }))).status).toBe(400);
+    expect((await send("admin", "/rent-rules", "POST", rule({ emirate: "mars" }))).status).toBe(400);
+    const ad = await send("admin", "/rent-rules", "POST", rule({ emirate: "abu_dhabi", community: "Yas Island" }));
+    expect(ad.status).toBe(201);
+    const adRule = (await ad.json()) as { id: string; emirate: string };
+    expect(adRule.emirate).toBe("abu_dhabi");
+    expect((await send("admin", `/rent-rules/${adRule.id}`, "DELETE")).status).toBe(200);
     expect((await send("admin", "/rent-rules", "POST", rule({ minRentFils: -1 }))).status).toBe(400);
     expect((await send("admin", "/rent-rules", "POST", rule({ maxRentFils: 2 ** 60 }))).status).toBe(400);
+    // D63: an offer discount per rule, whole percent 0–50.
+    for (const bad of [51, -1, 2.5])
+      expect((await send("admin", "/rent-rules", "POST", rule({ maxOfferDiscountPct: bad }))).status).toBe(400);
+    const disc = await send("admin", "/rent-rules", "POST", rule({ community: "JLT", maxOfferDiscountPct: 7 }));
+    expect(disc.status).toBe(201);
+    const discRule = (await disc.json()) as { id: string; maxOfferDiscountPct: number };
+    expect(discRule.maxOfferDiscountPct).toBe(7);
+    // Replacing without the field keeps the discount; null clears it. Both are in the audit.
+    const { maxOfferDiscountPct: _d, ...noDiscount } = rule({ community: "JLT", maxPctBp: 900 }) as Record<
+      string,
+      unknown
+    >;
+    const kept = (await (await send("admin", `/rent-rules/${discRule.id}`, "PUT", noDiscount)).json()) as {
+      id: string;
+      maxOfferDiscountPct: number | null;
+    };
+    expect(kept.maxOfferDiscountPct).toBe(7);
+    const cleared = (await (
+      await send("admin", `/rent-rules/${kept.id}`, "PUT", { ...noDiscount, maxOfferDiscountPct: null })
+    ).json()) as { id: string; maxOfferDiscountPct: number | null };
+    expect(cleared.maxOfferDiscountPct).toBeNull();
+    const evs = await database.db.select().from(leaseEvents).where(eq(leaseEvents.type, "RENT_RULE_REPLACED"));
+    expect(evs.map((e) => e.payload)).toContainEqual(
+      expect.objectContaining({ ruleId: cleared.id, maxOfferDiscountPct: { from: 7, to: null } }),
+    );
+    expect((await send("admin", `/rent-rules/${cleared.id}`, "DELETE")).status).toBe(200);
 
     const put = await send("admin", `/rent-rules/${first.id}`, "PUT", {
       ...rule({ maxPctBp: 800 }),

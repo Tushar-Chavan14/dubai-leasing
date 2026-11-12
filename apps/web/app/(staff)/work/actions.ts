@@ -4,11 +4,13 @@ import { parseAed } from "@leasing/core";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { engine, formError } from "../../../lib/engine";
+import { splitReasons } from "../../../lib/field-errors";
 
 export interface DecisionState {
   ok?: "approved" | "rejected" | "edited";
   error?: string;
   reasons?: string[];
+  fieldErrors?: Record<string, string>;
 }
 
 /** Approve, reject or edit a pending approval. Used by the detail pane's decision form and the log's inline buttons. */
@@ -20,7 +22,23 @@ export async function decide(_prev: DecisionState, formData: FormData): Promise<
   if (decision === "edit") {
     // The rent field exists only on gates that allow it (the renewal notice); every other editable
     // gate takes a note-only edit. The engine refuses anything else (checkDecision).
-    if (String(formData.get("editField")) === "note") {
+    const editField = String(formData.get("editField"));
+    if (editField === "offer") {
+      // D51: only rent, cheques and move-in; the engine recomputes the rest and checks every field.
+      const fieldErrors: Record<string, string> = {};
+      let annualRentFils: number | undefined;
+      try {
+        annualRentFils = parseAed(String(formData.get("annualRentFils") ?? ""));
+      } catch {
+        fieldErrors.annualRentFils = "Enter the rent as an AED amount, for example 85,000";
+      }
+      const cheques = Number(formData.get("cheques"));
+      if (!Number.isInteger(cheques) || cheques < 1 || cheques > 12) fieldErrors.cheques = "Enter 1 to 12";
+      const moveInOn = String(formData.get("moveInOn") ?? "");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(moveInOn)) fieldErrors.moveInOn = "Choose the move-in date";
+      if (Object.keys(fieldErrors).length) return { error: "Some fields need attention.", reasons: [], fieldErrors };
+      body = { decision: "edit", note, proposal: { annualRentFils, cheques, moveInOn, ...(note ? { note } : {}) } };
+    } else if (editField === "note") {
       if (!note) return { error: "Add the note you want to record with this approval." };
       body = { decision: "edit", note, proposal: { note } };
     } else {
@@ -41,7 +59,11 @@ export async function decide(_prev: DecisionState, formData: FormData): Promise<
   }
   const r = await engine(`/api/approvals/${id}/decide`, { method: "POST", body: JSON.stringify(body) });
   revalidatePath("/", "layout");
-  if (!r.ok) return formError(r);
+  if (!r.ok) {
+    // Engine reasons naming a field ("cheques: …") mark that input; the rest stay in the banner.
+    const { fieldErrors, reasons } = splitReasons(r.error?.reasons ?? []);
+    return { ...formError(r), reasons: reasons, fieldErrors };
+  }
   return { ok: decision === "approve" ? "approved" : decision === "reject" ? "rejected" : "edited" };
 }
 

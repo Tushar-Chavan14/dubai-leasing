@@ -159,3 +159,11 @@ D30 slices 1 and 2 (accounts, login, records, uploads) were built, then replaced
 - [x] Copilot calls the engine API that exists (D42): `list_tasks`, `list_enquiries`, `get_enquiry`, `get_unit`, `viewing_slots`, `draft_email` to applicants, four Confirm-click proposals; shared composer with quick-action pills in both chats; email reset and fresh status in the public chat; ten new eval cases (c88 c97)
 - [x] KYC settings per document field with severity and automatic re-upload emails (D49); drafts and publish, custom documents read by the AI, "issued within N days", copilot `get_kyc_config` and `edit_kyc_config` (D50); six new eval cases (c112–c117)
 - Open: native Arabic review of new copy; faster customer agent model; scanned PDF reading
+
+## Multi-emirate (D52)
+
+- [x] Phase 1: emirate-aware foundation. Emirate enum, rulebook and lease pinning per emirate (fail closed), registration fee schedules, `RegistrationAdapter` registry, rent index per emirate, copilot `get_emirate_setup`
+- [x] Phase 2 (D53): simulated Tawtheeq in `apps/ejari-mock`; registration settings per emirate; manual registration (pack, officer task, record issued or rejected); copilot `get_registration_status`, registration decision cards, `save_registration_settings`
+- [x] Phase 3 (D55): demo rulebooks, two units, rent index rows and rent rules per emirate, all seven emirates in chat and public site. Contract templates per emirate (D56) done; legal confirmation of values stays open
+- [x] Phase 3b (D56): contract templates per emirate, who-pays setting, "UAE Leasing" branding, finder communities by emirate
+- [ ] Phase 4: client rollout and legal confirmation of values (legal review via `docs/legal-review-emirates.md`)

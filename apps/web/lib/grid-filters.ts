@@ -1,11 +1,15 @@
-import type { ChatFilters } from "@leasing/core";
+import { type ChatFilters, EMIRATES } from "@leasing/core";
 import type { PropertyCategory, PublicUnitSummary } from "./listings";
 
-/** What the listing grid filters on. The chat's `ChatFilters` minus the emirate (Dubai is the only one). */
-export type GridFilters = Pick<ChatFilters, "community" | "category" | "bedrooms" | "sizeBand" | "maxRentFils">;
+/** What the listing grid filters on: the chat's `ChatFilters` (all seven emirates), as far as the grid shows them. */
+export type GridFilters = Pick<
+  ChatFilters,
+  "emirate" | "community" | "category" | "bedrooms" | "sizeBand" | "maxRentFils"
+>;
 export type SizeBand = NonNullable<GridFilters["sizeBand"]>;
 
 export const NO_FILTERS: GridFilters = {
+  emirate: null,
   community: null,
   category: null,
   bedrooms: null,
@@ -31,6 +35,7 @@ export const aed = (fils: number) => `AED ${Math.round(fils / 100).toLocaleStrin
 
 export const isActive = (f: GridFilters) => Object.values(f).some((v) => v !== null);
 export const sameFilters = (a: GridFilters, b: GridFilters) =>
+  a.emirate === b.emirate &&
   a.community === b.community &&
   a.category === b.category &&
   a.bedrooms === b.bedrooms &&
@@ -38,6 +43,7 @@ export const sameFilters = (a: GridFilters, b: GridFilters) =>
   a.maxRentFils === b.maxRentFils;
 
 export const fromChat = (f: ChatFilters): GridFilters => ({
+  emirate: f.emirate,
   community: f.community,
   category: f.category,
   bedrooms: f.bedrooms,
@@ -49,6 +55,7 @@ export const fromChat = (f: ChatFilters): GridFilters => ({
 export function filterUnits(units: PublicUnitSummary[], f: GridFilters): PublicUnitSummary[] {
   const band = SIZE_BANDS.find((b) => b.key === f.sizeBand);
   return units.filter((u) => {
+    if (f.emirate && u.emirate !== f.emirate) return false;
     if (f.community && u.community !== f.community) return false;
     if (f.category && u.category !== f.category) return false;
     if (f.maxRentFils !== null && u.rentFils > f.maxRentFils) return false;
@@ -64,6 +71,7 @@ export function filterUnits(units: PublicUnitSummary[], f: GridFilters): PublicU
 
 /** What a chip does to the filters at once; the chat's reply then replaces it with the truth. Mirrors the engine's callbacks. */
 export type Chip =
+  | { kind: "emirate"; emirate: ChatFilters["emirate"] }
   | { kind: "community"; community: string | null }
   | { kind: "category"; category: PropertyCategory }
   | { kind: "bedrooms"; bedrooms: number }
@@ -73,6 +81,9 @@ export type Chip =
 
 export function applyChip(f: GridFilters, c: Chip): GridFilters {
   switch (c.kind) {
+    case "emirate":
+      // A community belongs to one emirate, so picking another emirate clears the area.
+      return c.emirate === f.emirate ? { ...f, emirate: null } : { ...f, emirate: c.emirate, community: null };
     case "community":
       return { ...f, community: c.community === f.community ? null : c.community };
     case "category":
@@ -102,6 +113,7 @@ export function applyChip(f: GridFilters, c: Chip): GridFilters {
 /** The URL query for the filters (shareable). Budget is whole AED. */
 export function toQuery(f: GridFilters): string {
   const q = new URLSearchParams();
+  if (f.emirate) q.set("emirate", f.emirate);
   if (f.community) q.set("area", f.community);
   if (f.category) q.set("type", f.category);
   if (f.bedrooms !== null) q.set("beds", String(f.bedrooms));
@@ -115,6 +127,7 @@ const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 
 /** Read the query back; anything unknown or malformed is dropped. */
 export function fromParams(p: Params, communities: string[]): GridFilters {
+  const emirateRaw = one(p.emirate);
   const area = one(p.area);
   const type = one(p.type);
   const beds = one(p.beds);
@@ -125,6 +138,7 @@ export function fromParams(p: Params, communities: string[]): GridFilters {
   const sizeBand = SIZE_BANDS.find((b) => b.key === size)?.key ?? null;
   const aedBudget = budget !== undefined && /^\d{1,9}$/.test(budget) ? Number(budget) : null;
   return {
+    emirate: EMIRATES.find((e) => e === emirateRaw) ?? null,
     community: area && communities.includes(area) ? area : null,
     category,
     bedrooms: category === "residential" || category === null ? bedrooms : null,
@@ -136,6 +150,7 @@ export function fromParams(p: Params, communities: string[]): GridFilters {
 /** The engine's `GET /public/units` query for the filters (category defaults to all, as the grid shows every kind). */
 export function toEngineQuery(f: GridFilters): string {
   const q = new URLSearchParams({ category: f.category ?? "all" });
+  if (f.emirate) q.set("emirate", f.emirate);
   if (f.community) q.set("community", f.community);
   if (f.bedrooms !== null) q.set("bedrooms", String(f.bedrooms));
   if (f.sizeBand) q.set("size", f.sizeBand);

@@ -19,6 +19,11 @@ interface Case {
   mustFlag?: boolean;
   mustExclude?: string[];
   injection?: boolean;
+  /** D64: a template paragraph about the unit; `mustRewrite`: it disagrees with the unit and must be reworded. */
+  unitParagraph?: string;
+  unitDescription?: string;
+  mustRewrite?: boolean;
+  mustNotRewrite?: boolean;
 }
 const only = process.argv.slice(2);
 const env = EnvSchema.pick({ OLLAMA_URL: true, CHAT_MODEL: true, CONTRACT_AI_MODEL: true }).parse(process.env);
@@ -97,13 +102,29 @@ const context = (c: Case): ContractAgentContext => {
     },
     rule: { id: "r", tenures: ["annual"], minCheques: 1, maxCheques: 4, clauseIds: ["no_pets", "maintenance"] },
     clauses: [...extras, ...inTemplate],
-    template: c.templateClause
-      ? {
-          id: "tpl",
-          version: 1,
-          paragraphs: [{ key: "s1:0", text: `${c.templateClause.title}. ${c.templateClause.text}` }],
-        }
-      : null,
+    template:
+      c.templateClause || c.unitParagraph
+        ? {
+            id: "tpl",
+            version: 1,
+            paragraphs: [
+              ...(c.templateClause
+                ? [{ key: "s1:0", text: `${c.templateClause.title}. ${c.templateClause.text}` }]
+                : []),
+              ...(c.unitParagraph ? [{ key: "s2:0", text: c.unitParagraph, rewritable: true }] : []),
+            ],
+          }
+        : null,
+    unitFacts: {
+      subtype: "apartment",
+      bedrooms: 2,
+      bathrooms: 2,
+      areaSqft: 1250,
+      parkingSpaces: 1,
+      floor: 16,
+      furnished: false,
+      description: c.unitDescription ?? "Two-bedroom apartment with a balcony and a marina view",
+    },
     rentBand: { minFils: 15_000_000, maxFils: 17_000_000 },
     depositMaxFils: 800_000,
     landlordGaps: c.landlordGaps ?? [],
@@ -143,6 +164,11 @@ for (const c of cases) {
   }
   if (c.mustExclude && r.data?.extraClauseIds.includes(ref(99)))
     problems.push("chose a clause already in the template");
+  const rewrites = r.data?.rewrites ?? [];
+  if (c.mustRewrite && !rewrites.some((x) => x.key === "s2:0")) problems.push("unit paragraph not reworded");
+  if (c.mustNotRewrite && rewrites.length) problems.push("reworded a paragraph that matches the records");
+  // Hard limit: an accepted rewrite always passed code's checks; never a value outside the unit's facts.
+  for (const x of rewrites) if (/AED|\d{4}-\d{2}-\d{2}/.test(x.after)) hardFail++;
   if (!problems.length) pass++;
   console.log(
     `${problems.length ? "FAIL" : "ok  "} ${c.id} ${problems.join("; ")} ${r.reasons.slice(0, 2).join(" | ")}`,

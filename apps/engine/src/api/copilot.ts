@@ -28,6 +28,7 @@ import {
   threadProposals,
 } from "../manager/copilot-proposals.ts";
 import { explicitConfigChange, proposeConfigChange } from "../manager/config-changes.ts";
+import { acceptSuggestedClause } from "../manager/copilot-proposals.ts";
 import { readVoiceBody, transcribeVoice } from "../manager/voice.ts";
 import { ipLimiter } from "./secret-gate.ts";
 import { createDraft, draftView, threadDrafts } from "../manager/staff-messages.ts";
@@ -48,6 +49,7 @@ const PROPOSE_TOOLS = new Set([
   "save_rent_rule",
   "save_contract_rule",
   "save_sri_value",
+  "save_registration_settings",
   "edit_kyc_config",
 ]);
 const DRAFT_TOOLS = new Set(["draft_email", "draft_approval_note"]);
@@ -330,8 +332,14 @@ export function registerCopilotRoutes(api: Hono<AuthEnv>, ctx: EngineContext, ap
     if (!threadId.success)
       throw new DomainError("settings changes are made from a copilot conversation", 400, "no_thread");
     const body = z
-      .object({ mode: z.literal("explicit"), userQuote: z.string().max(2000), change: z.unknown() })
+      .discriminatedUnion("mode", [
+        z.object({ mode: z.literal("explicit"), userQuote: z.string().max(2000), change: z.unknown() }),
+        // D57: "add it" after a suggested clause; the engine finds the suggestion and checks the words.
+        z.object({ mode: z.literal("accept_suggestion"), userQuote: z.string().max(2000) }),
+      ])
       .parse(await c.req.json());
+    if (body.mode === "accept_suggestion")
+      return c.json(await acceptSuggestedClause(ctx, c.get("user"), threadId.data, body.userQuote));
     return c.json(await explicitConfigChange(ctx, c.get("user"), threadId.data, body.userQuote, body.change));
   });
   /** Saves a copilot draft in the caller's thread. Sends nothing. */

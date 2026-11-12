@@ -1,10 +1,13 @@
+import { registrationDocumentOptions } from "../manager/registration-settings.ts";
 import type { Hono } from "hono";
 import { withTx } from "@leasing/db";
+import { Emirate } from "@leasing/core";
 import { z } from "zod";
 import type { EngineContext } from "../context.ts";
 import {
   companySettings,
   contractStatus,
+  emirateSetup,
   listCompanies,
   unitWithPricing,
   viewingSlotsFor,
@@ -46,6 +49,16 @@ export function registerCopilotReadRoutes(api: Hono<AuthEnv>, ctx: EngineContext
   api.get("/copilot/unit", async (c) =>
     c.json(await unitWithPricing(ctx, z.string().trim().min(2).max(60).parse(c.req.query("ref")))),
   );
+  /** Registration system, rulebook, rent index and registration fee per emirate (T7); values come from code. */
+  api.get("/copilot/emirate-setup", async (c) => {
+    const q = z
+      .object({ emirate: Emirate.optional(), annualRentFils: z.coerce.number().int().positive().optional() })
+      .parse(c.req.query());
+    return c.json({
+      emirates: await emirateSetup(ctx, q.emirate, q.annualRentFils),
+      documentOptions: await withTx(ctx.database, (tx) => registrationDocumentOptions(ctx, tx)),
+    });
+  });
   /** Free viewing slots for a unit (id or code) or for an application's unit (D42). */
   api.get("/copilot/viewing-slots", async (c) => {
     const q = z

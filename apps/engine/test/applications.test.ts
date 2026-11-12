@@ -1,3 +1,5 @@
+import { requestApproval } from "../src/manager/approvals.ts";
+import { unitRulesVersion } from "../src/manager/events.ts";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,6 +17,7 @@ import {
   deadlines,
   documents,
   leaseEvents,
+  withTx,
   outboundMessages,
   leaseParties,
   helperRuns,
@@ -137,7 +140,13 @@ async function setup(front: () => unknown = () => priyaFront()) {
       const j = t.scheduler.jobs[done++]!;
       if (isTimedAgentJob(j)) continue; // a reminder pg-boss would hold until its startAfter
       if (j.name === APPLICATION_MAIL_JOB) {
-        await sendApplicationMail(t.ctx, String(j.data.applicationId), j.data.kind as never, Number(j.data.seq));
+        await sendApplicationMail(
+          t.ctx,
+          String(j.data.applicationId),
+          j.data.kind as never,
+          Number(j.data.seq),
+          j.data.variant ? String(j.data.variant) : undefined,
+        );
       }
       if (j.name === INBOUND_JOB)
         await processInbound(t.ctx, String(j.data.inboundEventId), Number(j.data.attempt ?? 1));
@@ -610,6 +619,78 @@ describe.skipIf(noDb)("applications: screening, KYC, offer, reservation (Postgre
     expect(p?.emiratesIdNo).toBe("784-1991-4820193-4");
   });
 
+  test("a unit in an emirate without a rulebook gets no offer: a task, the application stays in SCREENING", async () => {
+    const s = await setup(() => priyaFront());
+    await database.db.update(units).set({ emirate: "sharjah" }).where(eq(units.id, s.unitId));
+    const { id } = await toKyc(s);
+    expect((await appRow(id)).state).toBe("SCREENING");
+    const open = await database.db
+      .select()
+      .from(tasks)
+      .where(and(eq(tasks.entityId, id), eq(tasks.kind, "no_rulebook")));
+    expect(open).toHaveLength(1);
+    expect(open[0]!.title).toContain("No rulebook for Sharjah yet");
+    expect(await eventTypes(id)).not.toContain("KYC_VERIFIED");
+    expect((await appRow(id)).state).toBe("SCREENING");
+  });
+
+  test("events of an application record its unit's emirate version, never Dubai's (rule 4)", async () => {
+    const s = await setup(() => priyaFront());
+    await database.db.update(units).set({ emirate: "sharjah" }).where(eq(units.id, s.unitId));
+    const { id } = await toKyc(s);
+    const evs = await database.db.select().from(leaseEvents).where(eq(leaseEvents.entityId, id));
+    expect(evs.length).toBeGreaterThan(0);
+    // Sharjah has no rulebook in this install: no version, never dubai-2025-01.
+    expect(evs.filter((e) => e.rulesVersion?.startsWith("dubai"))).toEqual([]);
+    // The unit's own events and an approval on the application follow the same rule.
+    const unitV = await withTx(database, (tx) =>
+      unitRulesVersion(tx, s.ctx, { kind: "unit", id: s.unitId }, s.ctx.rulesVersion),
+    );
+    expect(unitV).toBeNull();
+    const ap = await withTx(database, (tx) =>
+      requestApproval(s.ctx, tx, {
+        gate: "offer_out_of_limits",
+        entity: { kind: "application", id },
+        dedupeKey: `${id}:rule4-test`,
+        title: "t",
+        proposal: {},
+        sources: [],
+        reasons: [],
+        rulesVersion: s.ctx.rulesVersion,
+        proposedBy: "system",
+      }),
+    );
+    const [apRow] = await database.db.select().from(approvals).where(eq(approvals.id, ap.id));
+    expect(apRow?.rulesVersion).toBeNull();
+    // The same application once its unit is in Dubai: Dubai's active version.
+    await database.db.update(units).set({ emirate: "dubai" }).where(eq(units.id, s.unitId));
+    const v = await withTx(database, (tx) =>
+      unitRulesVersion(tx, s.ctx, { kind: "application", id }, s.ctx.rulesVersion),
+    );
+    expect(v).toBe("dubai-2025-01");
+    // A lease pinned to a version wins over today's active one.
+    await database.db.insert(leases).values({
+      id: newId(),
+      ref: `RULE4-${id.slice(-6)}`,
+      unitId: s.unitId,
+      applicationId: id,
+      startOn: "2026-11-01" as never,
+      endOn: "2027-10-31" as never,
+      annualRentFils: 7_400_000,
+      cheques: 4,
+      depositFils: 370_000,
+      rulesVersion: "dubai-2024-pinned",
+    });
+    expect(
+      await withTx(database, (tx) => unitRulesVersion(tx, s.ctx, { kind: "application", id }, s.ctx.rulesVersion)),
+    ).toBe("dubai-2024-pinned");
+    expect(
+      await withTx(database, (tx) => unitRulesVersion(tx, s.ctx, { kind: "unit", id: s.unitId }, s.ctx.rulesVersion)),
+    ).toBe("dubai-2024-pinned");
+    // An explicit other version is kept.
+    expect(await withTx(database, (tx) => unitRulesVersion(tx, s.ctx, { kind: "application", id }, "x-1"))).toBe("x-1");
+  });
+
   const setAutopilot = async (patch: Partial<typeof defaultCompanyPolicy.autopilot>) => {
     await database.db.insert(companyPolicy).values({
       id: newId(),
@@ -712,6 +793,27 @@ describe.skipIf(noDb)("applications: screening, KYC, offer, reservation (Postgre
     );
     expect(pending).toHaveLength(1);
     expect((await database.db.select().from(tasks).where(eq(tasks.id, t!.id)))[0]!.status).toBe("open");
+  });
+
+  test("rejecting a held offer the applicant never saw: no email, a manager task (D51)", async () => {
+    await setAutopilot({ auto_send_offer: false });
+    const s = await setup();
+    const { id } = await toKyc(s);
+    await s.drain();
+    await database.db.update(units).set({ askingRentFils: 99_000_000 }).where(eq(units.id, s.unitId));
+    await s.staff(s.officer, `/api/applications/${id}/offer/send`, "POST");
+    const [ap] = (await database.db.select().from(approvals).where(eq(approvals.entityId, id))).filter(
+      (a) => a.gate === "offer_out_of_limits",
+    );
+    const before = s.mailer.sent.length;
+    await decideApproval(s.ctx, ap!.id, s.manager, { decision: "reject", note: "re-price first" });
+    await s.drain();
+    expect(s.mailer.sent.length).toBe(before);
+    expect((await appRow(id)).state).toBe("OFFER");
+    const t = (await database.db.select().from(tasks).where(eq(tasks.entityId, id))).find(
+      (x) => x.kind === "offer_rejected_unsent",
+    );
+    expect(t).toMatchObject({ assigneeRole: "leasing_manager", status: "open" });
   });
 
   test("a stale offer-expiry deadline is inert once a held counter has replaced the revision", async () => {
@@ -963,6 +1065,206 @@ describe.skipIf(noDb)("applications: screening, KYC, offer, reservation (Postgre
     expect((await appRow(id)).state).toBe("WITHDRAWN");
   });
 
+  describe("offer negotiation: manager counter-terms, declined counters, expiry (D51)", () => {
+    /** Applicant counters at AED 60,000 (asking 74,000, no discount allowed): a manager must decide. */
+    async function counterOutside(s: S) {
+      const { id } = await toKyc(s);
+      await s.drain();
+      const offer1 = s.tokens(s.lastMail().text).offer!;
+      await s.portal("/api/inbound", "POST", {
+        token: offer1,
+        type: "OFFER_RESPONDED",
+        payload: { revision: 1, choice: "counter", counter: { annualRentFils: 6_000_000 } },
+      });
+      await s.drain();
+      const [ap] = await database.db
+        .select()
+        .from(approvals)
+        .where(and(eq(approvals.entityId, id), eq(approvals.gate, "offer_out_of_limits")));
+      return { id, offer1, ap: ap! };
+    }
+    const offerDeadlines = (id: string) =>
+      database.db
+        .select()
+        .from(deadlines)
+        .where(and(eq(deadlines.entityId, id), like(deadlines.milestone, "offer_expiry@%")));
+
+    test("manager edits rent and cheques: code recomputes deposit, reservation, term and expiry; audited; sent", async () => {
+      const s = await setup();
+      const { id, ap } = await counterOutside(s);
+      s.clock.advanceDays(2);
+      const today = s.clock.today();
+      await decideApproval(s.ctx, ap.id, s.manager, {
+        decision: "edit",
+        note: "meet halfway",
+        proposal: { annualRentFils: 7_000_000, cheques: 2 },
+      });
+      await s.drain();
+      const a = await appRow(id);
+      expect(a.offer).toMatchObject({
+        revision: 2,
+        annualRentFils: 7_000_000,
+        cheques: 2,
+        depositFils: 350_000,
+        reservationFils: 350_000,
+        expiresOn: addDays(today, 7),
+      });
+      expect(a.offer!.startOn).toBe(a.offer!.moveInOn);
+      const [decided] = await database.db.select().from(approvals).where(eq(approvals.id, ap.id));
+      expect(decided!.status).toBe("edited");
+      expect(decided!.consumedByEventId).not.toBeNull();
+      const [ev] = await database.db
+        .select()
+        .from(leaseEvents)
+        .where(and(eq(leaseEvents.entityId, id), eq(leaseEvents.type, "APPROVAL_DECIDED")));
+      expect(ev!.actor).toBe(`user:${s.manager.id}`);
+      expect((ev!.payload as { changes: unknown }).changes).toMatchObject({
+        annualRentFils: { before: 6_000_000, after: 7_000_000 },
+      });
+      expect(s.lastMail().subject).toContain("Revised offer");
+      expect(s.lastMail().text).toContain("AED 70,000");
+      expect((await offerDeadlines(id)).find((d) => d.status === "pending")?.milestone).toBe("offer_expiry@2");
+    });
+
+    test("an edit that lands within limits is still sent and consumes the approval", async () => {
+      const s = await setup();
+      const { id, ap } = await counterOutside(s);
+      await decideApproval(s.ctx, ap.id, s.manager, { decision: "edit", proposal: { annualRentFils: 7_400_000 } });
+      await s.drain();
+      expect((await appRow(id)).offer).toMatchObject({ revision: 2, annualRentFils: 7_400_000 });
+      const [decided] = await database.db.select().from(approvals).where(eq(approvals.id, ap.id));
+      expect(decided!.consumedByEventId).not.toBeNull();
+    });
+
+    test("only rent, cheques and move-in can be edited, and each is checked", async () => {
+      const s = await setup();
+      const { ap } = await counterOutside(s);
+      const terms = (ap.proposal as { terms: Record<string, unknown> }).terms;
+      for (const proposal of [
+        { terms: { ...terms, depositFils: 1 } },
+        { depositFils: 1 },
+        { expiresOn: "2027-01-01" },
+      ]) {
+        await expect(decideApproval(s.ctx, ap.id, s.manager, { decision: "edit", proposal })).rejects.toMatchObject({
+          status: 422,
+        });
+      }
+      await expect(
+        decideApproval(s.ctx, ap.id, s.manager, { decision: "edit", proposal: { cheques: 13 } }),
+      ).rejects.toMatchObject({ status: 422, reasons: [expect.stringContaining("cheques")] });
+      await expect(
+        decideApproval(s.ctx, ap.id, s.manager, { decision: "edit", proposal: { moveInOn: s.clock.today() } }),
+      ).rejects.toMatchObject({ status: 422, reasons: [expect.stringContaining("moveInOn")] });
+      const [still] = await database.db.select().from(approvals).where(eq(approvals.id, ap.id));
+      expect(still!.status).toBe("pending");
+    });
+
+    test("reject before expiry: the offer stands and the applicant is told until when, with a link", async () => {
+      const s = await setup();
+      const { id, ap } = await counterOutside(s);
+      await decideApproval(s.ctx, ap.id, s.manager, { decision: "reject", note: "rent too low" });
+      await s.drain();
+      const a = await appRow(id);
+      expect(a.state).toBe("OFFER");
+      expect(a.offer!.revision).toBe(1);
+      const mail = s.lastMail();
+      expect(mail.subject).toContain("Your counter-offer");
+      expect(mail.text).toContain(`open until ${a.offer!.expiresOn}`);
+      expect(s.tokens(mail.text).offer).toBeDefined();
+      expect((await offerDeadlines(id)).some((d) => d.status === "pending")).toBe(true);
+    });
+
+    test("offer-expiry scheduling leaves other deadlines alone, and they don't block the expiry", async () => {
+      const s = await setup();
+      const { id, ap } = await counterOutside(s);
+      // The counter's expiry was skipped while pending; another (unrelated) deadline is pending.
+      s.clock.set(new Date("2026-11-08T20:00:00Z"));
+      await sweepDueDeadlines(s.ctx);
+      await database.db
+        .update(deadlines)
+        .set({ status: "cancelled" })
+        .where(and(eq(deadlines.entityId, id), like(deadlines.milestone, "offer_expiry@%")));
+      await database.db.insert(deadlines).values({
+        id: newId(),
+        entityKind: "application",
+        entityId: id,
+        milestone: "other_followup",
+        dueOn: "2027-01-01" as never,
+        status: "pending",
+        note: "unrelated",
+        rulesVersion: s.ctx.rulesVersion,
+      });
+      // Reject before the offer's own date passes again: move back so the offer still stands.
+      s.clock.set(new Date("2026-11-05T04:00:00Z"));
+      await decideApproval(s.ctx, ap.id, s.manager, { decision: "reject", note: "no" });
+      const rows = await database.db.select().from(deadlines).where(eq(deadlines.entityId, id));
+      expect(rows.find((d) => d.milestone === "other_followup")?.status).toBe("pending");
+      expect(rows.some((d) => d.milestone.startsWith("offer_expiry@1~") && d.status === "pending")).toBe(true);
+    });
+
+    test("expiry while a counter is pending is re-checked daily; a late approval sends fresh terms", async () => {
+      const s = await setup();
+      const { id, ap } = await counterOutside(s);
+      s.clock.set(new Date("2026-11-08T20:00:00Z")); // 9 Nov 00:00 Dubai: offer 1 would lapse
+      await sweepDueDeadlines(s.ctx);
+      expect((await appRow(id)).state).toBe("OFFER");
+      const dls = await offerDeadlines(id);
+      expect(dls.find((d) => d.milestone === "offer_expiry@1")?.status).toBe("skipped");
+      expect(dls.find((d) => d.status === "pending")?.milestone).toBe("offer_expiry@1~2026-11-10");
+      // Running the sweep again the same day changes nothing.
+      await sweepDueDeadlines(s.ctx);
+      expect((await offerDeadlines(id)).filter((d) => d.status === "pending")).toHaveLength(1);
+      await decideApproval(s.ctx, ap.id, s.manager, { decision: "approve" });
+      await s.drain();
+      const a = await appRow(id);
+      expect(a.offer).toMatchObject({ revision: 2, annualRentFils: 6_000_000, expiresOn: addDays(s.clock.today(), 7) });
+      expect((await offerDeadlines(id)).find((d) => d.status === "pending")?.milestone).toBe("offer_expiry@2");
+    });
+
+    test("reject after the offer lapsed closes the application and says so", async () => {
+      const s = await setup();
+      const { id, ap } = await counterOutside(s);
+      s.clock.set(new Date("2026-11-08T20:00:00Z"));
+      await sweepDueDeadlines(s.ctx);
+      await decideApproval(s.ctx, ap.id, s.manager, { decision: "reject", note: "no" });
+      await s.drain();
+      expect((await appRow(id)).state).toBe("WITHDRAWN");
+      expect(s.lastMail().text).toContain("has now lapsed, so this application is closed");
+      expect(s.tokens(s.lastMail().text).offer).toBeUndefined();
+      // The re-check that was still scheduled finds nothing to do.
+      s.clock.advanceDays(1);
+      const before = s.mailer.sent.length;
+      await sweepDueDeadlines(s.ctx);
+      await s.drain();
+      expect(s.mailer.sent.length).toBe(before);
+    });
+
+    test("an unanswered offer lapses once: closed with one email, a second run does nothing", async () => {
+      const s = await setup();
+      const { id } = await toKyc(s);
+      await s.drain();
+      s.clock.set(new Date("2026-11-08T20:00:00Z"));
+      await sweepDueDeadlines(s.ctx);
+      await s.drain();
+      expect((await appRow(id)).state).toBe("WITHDRAWN");
+      expect(s.lastMail().subject).toContain("Offer lapsed");
+      const before = s.mailer.sent.length;
+      const events = await database.db.select().from(leaseEvents).where(eq(leaseEvents.entityId, id));
+      const { handleApplicationMilestone } = await import("../src/manager/applications.ts");
+      const { withTx } = await import("@leasing/db");
+      const again = await withTx(database, (tx) => handleApplicationMilestone(s.ctx, tx, id, "offer_expiry@1"));
+      expect(again).toContain("no longer open");
+      await sweepDueDeadlines(s.ctx);
+      await s.drain();
+      expect(s.mailer.sent.length).toBe(before);
+      expect(
+        (await database.db.select().from(leaseEvents).where(eq(leaseEvents.entityId, id))).filter(
+          (e) => e.type === "OFFER_EXPIRED",
+        ),
+      ).toHaveLength(events.filter((e) => e.type === "OFFER_EXPIRED").length);
+    });
+  });
+
   test("a decline whose comment needs a person is held, not applied", async () => {
     const llm = new FakeLlm(
       () => ({
@@ -1125,7 +1427,7 @@ describe.skipIf(noDb)("applications: screening, KYC, offer, reservation (Postgre
     );
   });
 
-  test("an out-of-limits counter decided after its terms lapsed can't be approved", async () => {
+  test("an out-of-limits counter decided late is re-issued with fresh terms; a past move-in must be changed first (D51)", async () => {
     const s = await setup();
     const { id } = await toKyc(s);
     await s.drain();
@@ -1137,12 +1439,20 @@ describe.skipIf(noDb)("applications: screening, KYC, offer, reservation (Postgre
     await s.drain();
     const [ap] = await database.db.select().from(approvals).where(eq(approvals.entityId, id));
     // The current offer doesn't lapse while the manager decides…
-    s.clock.set(new Date("2026-11-20T04:00:00Z"));
+    s.clock.set(new Date("2026-12-02T04:00:00Z")); // past the move-in date (1 Dec)
     await sweepDueDeadlines(s.ctx);
     expect((await appRow(id)).state).toBe("OFFER");
-    // …but terms that lapsed can't be sent.
+    // …but a move-in date that has passed can't be sent: the manager sets a new one.
     await expect(decideApproval(s.ctx, ap!.id, s.manager, { decision: "approve" })).rejects.toMatchObject({
       status: 422,
+    });
+    await decideApproval(s.ctx, ap!.id, s.manager, { decision: "edit", proposal: { moveInOn: "2026-12-15" } });
+    expect((await appRow(id)).offer).toMatchObject({
+      revision: 2,
+      moveInOn: "2026-12-15",
+      startOn: "2026-12-15",
+      endOn: "2027-12-14",
+      expiresOn: addDays(s.clock.today(), 7),
     });
   });
 

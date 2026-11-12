@@ -1167,3 +1167,324 @@ The leasing assistant automates the work up to the contract. Staff should approv
   sets; the edits are recorded with the draft (`KYC_DRAFT_SAVED.ops`), and the config is locked before it is read. After
   untrusted text in the turn, it can only suggest. Audited as `copilot:<userId>` (`COPILOT_CONFIG_CHANGED`,
   `KYC_DRAFT_SAVED`, `KYC_CONFIG_SAVED`).
+
+## D51 — Offer negotiation: manager counter-terms, declined counters, expiry recheck
+
+- **Problem.** A counter outside limits that was still with a manager when the offer lapsed left the application in
+  OFFER forever: the expiry was skipped for good, lapsed terms could only be rejected, and a reject did nothing. The
+  manager couldn't meet the applicant halfway, and the applicant heard nothing after a rejection or an expiry.
+- **Manager counter-terms.** `offer_out_of_limits` is editable for rent, cheques and move-in only. Approving (as
+  proposed or edited) re-issues the terms on the decision day: code recomputes deposit, reservation, the 12-month term
+  and a fresh expiry (`applyCounter`), re-checks limits and hard bounds, and sends the next revision with a new link.
+  The manager's approval covers terms still outside limits, as before. The edit is audited (actor, before/after).
+- **Rejection.** A declined counter: the current offer stands until its own expiry and the applicant is emailed so,
+  with a link to answer it. If it has lapsed, the application closes (`OFFER_EXPIRED`) and the email says so. An offer
+  the applicant never saw (first or held) gets a manager task instead of an email.
+- **Expiry.** While a counter is with a manager the expiry is re-checked daily (a new deadline per day, idempotent),
+  never dropped; a lapsed offer emails the applicant. Nothing here touches another gate; no model supplies a value.
+
+
+## D52 — Multi-emirate foundation: emirate-aware rulebook, registration, fees and rent index
+
+- **Context.** Scope ended at Ejari in Dubai. Clients may lease in any of the seven emirates. Phase 1 makes the core
+  choose the rulebook, registration system, registration fee and rent index by the unit's emirate. Dubai behaves
+  exactly as before.
+- **Emirates.** `packages/core/src/emirates.ts` holds the seven-value `Emirate` enum, English labels,
+  `registrationSystemName(emirate)` and `rentIndexName(emirate)` ("Smart Rental Index" in Dubai, "Rent index"
+  elsewhere). Units, rent rules, the unit CSV import and the web unit and rent-rule forms accept any emirate.
+  Migration `0031_emirates` adds `sri_averages.emirate` and puts it in the unique key.
+- **Rulebook.** `Rulebook.emirate` is any emirate. Version ids allow underscores (`abu_dhabi-2026-01`).
+  `hasRulebookFor(startOn, emirate)` says whether a version exists. A lease is pinned to the rulebook of its unit's
+  emirate.
+- **Fees stay outside the rulebook.** Registration fees are government tariffs that apply on the registration date.
+  Adding a field to a published rulebook would break D23 (the engine refuses to start if a published version
+  changes). `packages/rulebook/src/fees.ts` holds code-versioned schedules per emirate: `flat`, `percent` (basis
+  points, optional minimum and plus amount) or `tiered`. `registrationFeeFils` returns integer fils, round half up.
+  Values are marked "From the general data available". No model computes a fee (rule 1).
+- **Who pays.** Company policy `registrationFeePaidBy` (`tenant` by default). No settings UI yet. The fee shows on the
+  `ejari_submission` approval, the offer email and the portal offer page. It is computed at render, never stored in
+  offer terms.
+- **Fail closed.** No rulebook for the unit's emirate: the offer or lease is refused (409 `no_rulebook`); on the
+  automatic KYC path an officer task `no_rulebook` is created; an import row is an error. No registration adapter for
+  the emirate: an officer task `registration_unsupported`, no submission. Never a fallback to Dubai.
+- **Registration adapter.** `RegistrationAdapter` (`EjariAdapter` stays as an alias). `ctx.registries` maps each
+  emirate to an adapter; today only Dubai (the Ejari mock). `EjariSubmissionProposal` carries `emirate`, `systemName`,
+  `feeFils` and `feePaidBy`.
+- **Identifiers kept.** `EJARI_ISSUED`, the `ejari_submission` gate, `ejari_submissions` and `leases.ejari_no` keep
+  their names: renaming stored audit data is risky. Screens, tasks and emails use the system name instead.
+- **Rent index.** `sri_averages` rows are per emirate. The UI says "Rent index". Dubai legal text still says "Smart
+  Rental Index" (from `rentIndexName(rulebook.emirate)`).
+- **Copilot.** New read tool `get_emirate_setup` (system, rulebook, rent index name, fee rule and fee for a rent, who
+  pays). `find_available_units`, `get_unit` and `list_records` filter and show the emirate; `contract_status` shows the
+  registration system; `save_rent_rule` and `save_sri_value` take an emirate. The prompt says fees and system names
+  come only from `get_emirate_setup`.
+- **Deferred.** Phase 2: Tawtheeq mock routes in `apps/ejari-mock` and manual registration (pack and officer task,
+  copilot decision card). Phase 3: seed data per emirate (two units, rules, rulebooks, templates, researched values).
+  Phase 4: client rollout and legal confirmation of values. Also not yet: chat and Telegram stay "coming soon" for
+  other emirates, per-emirate contract templates, and a policy UI select for who pays.
+
+## D53 — Multi-emirate Phase 2: Tawtheeq mock, registration settings and manual registration
+
+- **Context.** After D52 a lease in a non-Dubai emirate stopped at a `registration_unsupported` task. Phase 2 gives
+  Abu Dhabi a simulated registry and gives every other emirate a manual registration mode.
+- **Tawtheeq mock.** Same app as the Ejari mock (`apps/ejari-mock`), not a new service. Registrations and
+  submissions have a `system` column (`ejari` | `tawtheeq`, default `ejari`). Routes are `/tawtheeq/api/v1/...`,
+  numbers are `SIM-TWQ-YYYY-NNNNNNN`, each system has its own sequence, overlap check and reject-next switch. The
+  certificate says "SIMULATED - NOT ISSUED BY ANY ABU DHABI AUTHORITY", with no government logos or colours. The
+  property registry check is skipped for Tawtheeq until Phase 3 seeds Abu Dhabi properties. The engine registers
+  `abu_dhabi` with `HttpEjariClient({ pathPrefix: "/tawtheeq" })` on the same `EJARI_MOCK_URL`. The demo console has a
+  Tawtheeq reject-next button.
+- **Registration settings per emirate.** `packages/core/src/registration-settings.ts`:
+  `DEFAULT_REGISTRATION_SETTINGS` (mode, portal name and URL, instructions, required-document checklist, reference
+  example and pattern). Values are marked "From the general data available"; portal URLs still need checking. An admin
+  can override them in `registration_settings` (one row per emirate, audited as `REGISTRATION_SETTINGS_UPDATED` on an
+  entity of kind `settings`). `online` mode only works when an adapter exists in `ctx.registries`; otherwise the
+  mode is forced to `manual`. Page: `/settings/registration`. This replaces the `registration_unsupported` dead end.
+- **Manual mode.** The `ejari_submission` gate stays mandatory: the approver approves the pack ("go and register").
+  On approval the submission is `awaiting_manual` and a `register_by_hand` officer task opens (one per submission).
+  The officer registers on the portal, then records the reference (checked against the pattern), issued date, fee
+  paid and an optional certificate PDF. This ends in the same `EJARI_ISSUED` event, actor = the user, `manual: true`.
+  A fee that differs from the schedule is recorded with a flag, not blocked. A rejection is recorded as text, opens a
+  "fix and resubmit" task; the second rejected attempt on the lease goes to `ejari_rejected_twice`. No model autofix in
+  manual mode: a person reads the portal's reason.
+- **Registration pack.** A cover sheet PDF built on demand (`GET /leases/:id/registration/pack.pdf`, leasing roles,
+  download only, never emailed). No ID images, masked IDs, and a line saying it is not a government document. Each
+  download writes a `DOCUMENT_VIEWED` audit event.
+- **Data.** Migration `0032`: `registration_settings`; `ejari_submissions.mode`, `fee_paid_fils`, `recorded_by`;
+  status `awaiting_manual`.
+- **Copilot.** New read tool `get_registration_status`. `show_decision` gets the actions `registration` and
+  `registration_rejected` (cards; the click is the act, the card's button runs the record route as the user; the fee
+  prefill comes from the engine and is cleared when untrusted text was seen in the turn). `get_emirate_setup` shows
+  mode, portal and documents. `save_registration_settings` (admin) follows the D45 pattern. The copilot never records
+  a registration on its own.
+- **Deferred.** Phase 3: seed rulebooks for the other emirates and Abu Dhabi properties in the Tawtheeq mock. Legal
+  confirmation of portals, fees and checklists. Web tests for the new cards.
+
+## D54 — Chat agents stay on topic (cost)
+
+- **Problem.** The public web chat sent every free-text message to the tool-using chat model, so "write a hello world
+  program" or "what is Meta?" got answered at full model cost. Hosted, that is open-ended spend on visitors' unrelated
+  questions.
+- **Web chat.** A scope gate runs before the customer agent: one decision-model (tev1) question, `rental` /
+  `off_topic` / `greeting` / `none`, with the bot's previous reply as context. `off_topic` at probability ≥ 0.8 gets a
+  fixed EN/AR line and the menu buttons from code; the chat model doesn't run. The gate is skipped while the chat
+  waits for a name, email or code, and fails open (error, missing answer or doubt → the agent, as before). Stored on
+  the outbound message as `kind: off_topic`.
+- **Telegram.** The leasing assistant gets an `off_topic` intent; it already never called the chat model for it, and
+  now answers with the same fixed line instead of the greeting.
+- **Backstop.** The customer agent's prompt (rule 9) declines anything outside renting from us in one sentence.
+- The staff copilot is unchanged: it serves logged-in staff only.
+
+## D55 — Multi-emirate Phase 3: demo rulebooks, units and chat for all seven emirates
+
+- **Demo rulebooks.** `apps/engine/src/demo/emirate-rulebooks.ts` holds rulebooks for six emirates. The demo seed
+  inserts them as published rows (`created_by` demo-seed). Every source reads "From the general data available: ...".
+  The rent cap is one flat band. Values: Abu Dhabi notices 60/70 days, 0% freeze from 2 Jun 2026; Sharjah (Law 5/2024)
+  90/100 days, lock 3/5, late rent 15, 0%; Ajman 0%; RAK 5%; Fujairah 5%; UAQ 10%. `baseFor` falls back to the
+  earliest published version of the emirate.
+- **Code stays Dubai-only.** No other emirate has a rulebook in code, so a real install stays fail-closed (409
+  `no_rulebook`) until an admin publishes a reviewed version. Demo values are not legal advice.
+- **Fee.** RAK: AED 25 + 5% of annual rent (RAK Municipality / Sanad).
+- **Demo data.** 12 units, two per non-Dubai emirate (an apartment and an office or shop). Property ids
+  `DEMO-AUH-`, `SHJ-`, `AJM-`, `RAK-`, `FUJ-`, `UAQ-`. Demo address codes sit in `makaniNo`. Each emirate gets rent
+  index rows and rent rules; the seed adds any missing rent rule per (company, emirate, category, community). The
+  Ejari mock seeds Abu Dhabi properties, so Tawtheeq now runs the property check.
+- **Chat and public site.** Web chat, Telegram and the customer agent offer all seven emirates. The emirate step
+  shows emirates with bookable listings as active and the rest as "coming soon" (`noListingsIn` copy, EN and AR).
+  `EMIRATE_NAMES` holds the names. The public API returns an `emirate` field and accepts `?emirate=`; the web grid
+  has emirate chips. Wording is "UAE Leasing" where touched.
+- **Deferred.** Legal confirmation of every non-Dubai value (Phase 4). Contract templates per emirate. The remaining
+  "Dubai Leasing" strings (chat welcome, root metadata, portal, login, staff rail). The finder's community dropdown
+  is not filtered by emirate.
+- **Web tests.** The registration decision cards' pure parts live in `decision-card-helpers.ts` with tests
+  (the D53 deferral).
+
+## D56 — Contract templates per emirate, who pays, branding, legal checklist
+
+- **Templates per emirate.** `company_contract_templates.emirate` is nullable (null = any emirate). Approval and
+  retirement work per (company, emirate), so each emirate has its own current approved template. `templateForUnit`
+  picks: the contract rule's template (if it is for the unit's emirate or any emirate) -> the company's approved
+  template for the unit's emirate -> its approved any-emirate template -> the emirate-aware standard form
+  (`requiredTerms(emirate)`). A template of another emirate is never used. A rule pointing at a missing, other-company
+  or unapproved template still fails (`template_unavailable`). Dubai output is byte-identical to before.
+- **Legacy templates.** Migration 0034 backfills templates with no emirate to `dubai` (before D56 every unit was Dubai); new uploads choose an emirate or "any".
+- **Who pays the registration fee.** Admin setting `PUT /policy/registration` (`registrationFeePaidBy`), saved as a
+  new company policy version through `savePolicyVersion`, event `POLICY_CHANGED` with the change. UI: Settings ->
+  Registration.
+- **Branding.** "UAE Leasing" (Arabic "تأجير الإمارات") replaces "Dubai Leasing" in the chat welcome, root metadata,
+  portal, login and staff rail. Dubai legal text and the Asia/Dubai time labels are unchanged.
+- **Finder.** The community dropdown is scoped by the chosen emirate.
+- **Copilot.** The direct registration-settings change accepts a portal address typed without `https://` or `www.`
+  (`bareUrl` in the quote check); the stored value is still a full https URL.
+- **Legal checklist.** `docs/legal-review-emirates.md` lists every non-Dubai value, where it lives, its source and
+  the lawyer's sign-off. Phase 4 legal confirmation works from it.
+
+## D57 — Suggested contract clauses, and "add it"
+
+- **Ask.** An admin asks the copilot to suggest a clause for a company ("suggest a pets clause for Silverline"); when
+  they reply "add it", the clause should be added without hunting for the Confirm button.
+- **Suggest.** The copilot reads the company's clauses (`get_company_settings`), writes one short clause with no
+  amounts, dates or periods the user didn't give, and stores it with `add_contract_clause` mode `suggest` (a Confirm
+  card, as before).
+- **"add it" (amends AGENTS.md rule 11, like D45).** `add_suggested_clause` sends only the user's words. The engine
+  adds the clause exactly as suggested (title, wording, rules unchanged) only when all hold:
+  - the user's latest message is a short acceptance made only of acceptance words (it must say "add", "include" or
+    "go ahead"; a bare "yes" is not enough), with no question mark, and contains the quote; "add it but…",
+    "add it to Beta", "should I add it?" and "don't add it" are refused;
+  - exactly one pending `add_clause` suggestion of that user and thread came from the copilot's previous answer (an
+    older one only when the message names its title), and that answer showed the clause's wording;
+  - the suggestion wasn't made in a turn that read tenant or outsider text (`afterUntrusted`, set by the copilot's
+    tool code), and the tool also refuses after untrusted text in the current turn;
+  - the clause has no amount, date or period (`hasValues`): those always need the card's Confirm (D35), so this
+    path is stricter than the click;
+  - the user may add clauses (admin), with the same validation as the settings form.
+  Audited as `copilot:<userId>` (`COPILOT_PROPOSAL_CONFIRMED` via `typed_acceptance`, and `COPILOT_CONFIG_CHANGED`
+  with the quote and the checked message); the proposal is marked confirmed. Anything else still needs the user's
+  own wording or the Confirm click.
+
+## D58 — Contract rules per emirate
+
+- **Why.** A company may allow different cheque ranges in different emirates. Before this, a contract rule had no
+  emirate; the emirate dropdown in a rule row only chose which emirate a sample upload's template is for (D56).
+- **Column.** `contract_rules.emirate` is nullable (null = any emirate), migration 0035. Existing rules stay "any
+  emirate", so offers keep their limits.
+- **Matching.** `matchContractRule` never uses a rule of another emirate. Most specific wins: the unit's emirate,
+  then a subtype match, then the newest.
+- **Template.** A rule for one emirate can't point at a company template for another (422 `template_emirate`); an
+  any-emirate template fits every rule.
+- **Replace.** Omitting `emirate` on a replace keeps the rule's emirate (like `templateId`); null clears it.
+- **Copilot.** `save_contract_rule` takes `emirate`. For an explicit replace, the quote check (D45) asks for the
+  user's words only for values that differ from the replaced rule, so "make Silverline's rule Sharjah only" can be
+  saved without repeating the cheques; any changed value (cheques, tenures, type, emirate) must still be said, and
+  "any emirate" must be said (not negated) to clear one. The message must still name the replaced rule (its type, or
+  for an all-types rule its category or "all types"), so the model can't pick another rule to copy its values. A rule
+  of another company or an inactive rule gets the full check. `CONTRACT_RULE_REPLACED` records the emirate, cheques
+  and tenures before and after.
+- **UI.** Settings -> Contracts: an Emirate field in the rule form and an Emirate column; the sample upload's
+  dropdown reads "Template for any emirate" and starts at the rule's emirate.
+
+## D59 — Rulebook drafts per emirate
+
+- **Why.** "New draft from active" always copied Dubai's active version, and an emirate with no rulebook (any
+  non-Dubai emirate in a real install; D55 rules are demo-seed only) had no way to get one.
+- **New draft.** Settings -> Rulebook -> New draft asks for the emirate and the published version to copy values from
+  (its own active version first). `POST /api/rulebooks {basedOn, emirate?}`; the draft is named and stored for the
+  chosen emirate. The emirate is fixed once the draft exists (shown read-only in the editor).
+- **First rulebook of an emirate.** With no code base and no demo seed there is nothing reviewed to compare with, so
+  publishing always needs a confirmed legal review (`legal_review_required`, a "first rulebook for <Emirate>" line).
+  Until it is published the emirate stays fail closed. A draft copied from another emirate's version also always
+  needs one ("Values copied from <Emirate>"), even when no value is looser than the target's base. A user-published
+  version never becomes a base, so later versions of such an emirate keep needing the confirmation.
+- **List.** `GET /api/rulebooks` returns `activeByEmirate`; each row's Active badge is per emirate (`active` stays
+  Dubai's for older clients). The page shows an Emirate column.
+
+## D60 — Offer discount setting, offer limits for the copilot, emirate rules version on applications
+
+- **Two limits, kept apart.** A rent rule limits where staff may set a unit's **asking rent** (vs the SRI). An offer
+  or a tenant's counter is limited by `CompanyPolicy.maxRentDiscountPercent` below the approved asking rent, plus the
+  cheque range (contract rule, else company default). Below that floor → `offer_out_of_limits` (manager).
+- **Setting.** `PUT /api/policy/offers {maxRentDiscountPercent}` (admin, whole 0–50, strict), versioned like the other
+  policy routes, `POLICY_CHANGED` with the change. UI: "Offer discount without a manager" at the top of Settings →
+  Rent rules (company-wide). The copilot does not edit it (policy stays outside D45).
+- **Copilot.** `get_unit` returns `offerLimits` (discount %, lowest rent without a manager, cheques and where they
+  come from) from the engine's `offerRentFloorFils` and the same policy the offer check uses. The tool text and the
+  prompt say the rent rule range is never a negotiation limit. Evals c147, c148 (injection).
+- **Rule 4 for units and applications.** Before a lease pins a version, events and approvals of a unit or an
+  application recorded the engine default (Dubai's). `appendEvent` and `requestApproval` now replace that default
+  (`unitRulesVersion`) with the version pinned on the entity's lease (an application's lease, or the unit's lease
+  that is not closed), else the version active today in the unit's emirate, else null when that emirate has no
+  rulebook. An explicitly passed other version is kept. Existing rows are not rewritten.
+
+## D61 — Registration named per emirate on screen; the manual pack is one PDF
+
+- **Names.** The stage key stays `Ejari` (stored data, filters), but what staff and visitors read names the unit's
+  own system: `registrationStageName` gives Ejari, Tawtheeq, Tasdeeq, Ejaar, or "Attestation" for the Sharjah, RAK
+  and UAQ municipalities; sentences use `registrationSystemName`. This covers the record's next step and stage
+  tracker, its activity log (registration events and gates), the approval card's gate line, the copilot record card
+  and the public status tracker. Lists that mix emirates say "Registration" (Workspace group, Home "registrations
+  pending").
+- **Online vs manual (unchanged, D53).** Dubai registers through the simulated Ejari service and Abu Dhabi through
+  the simulated Tawtheeq routes; the other five emirates are registered by hand.
+- **One pack.** For a manual emirate, `pack.pdf` is one file for the office: a cover (where and how to register,
+  lease facts with a masked ID, fee, checklist marked attached / on file / bring), then the signed contract's pages
+  and every side of the tenant's verified ID, visa or trade licence (PDF pages copied, images one per page). Files
+  that can't be read are listed on a last page to bring separately. Leasing roles only, never emailed, `no-store`;
+  each download is a `DOCUMENT_VIEWED` event listing the attached document ids (rule 8: local, audited).
+- **Where the pack is offered.** On the `ejari_submission` approval card itself (manual mode: a "Download registration
+  pack" button above the decision; the payload section reads "What to enter on <portal>", not "sent … (simulated)"),
+  in the lease's registration panel, and on the copilot's record card (`registrationPackUrl` on the Workspace record,
+  a link action for leasing roles). A manual lease never shows "Open the simulated registry". Only verified ID files
+  are attached, the newest per side.
+
+## D62 — Registration checklist from the KYC form; the pack opens with how to register
+
+- **Why.** "Tenant Emirates ID or passport" was one fixed box. Companies ask different things in their KYC form
+  (D46, D50), and offices ask for different things.
+- **Checklist items.** `requiredDocuments` holds fixed documents (`signed_contract`, `landlord_trade_licence`,
+  `title_deed`, `previous_registration_cancelled`, `other`), the standard KYC documents (`kyc:emirates_id`,
+  `kyc:passport`, `kyc:visa`, `kyc:trade_licence`), a company's own KYC document field (`kyc:other:<field key>`,
+  custom or other) and a company's own KYC question (`answer:<field key>`). Old keys are read as their KYC
+  documents (`tenant_identity` → Emirates ID + passport, …); no migration.
+- **Options.** `GET /api/registration-settings/document-options` lists every item from every company's current KYC
+  form (same field key, same item). Settings → Registration groups them: KYC documents, the applicant's answers,
+  other documents. The copilot's `get_emirate_setup` returns the options and the current keys;
+  `save_registration_settings` takes keys (the D45 check accepts the label, the short name or the field name).
+- **Pack.** Page 1, "How to register": open the portal, the office's steps, enter the lease details (page 2), hand
+  over the documents in order with the page each starts on, pay the fee, record the reference in the app. Page 2:
+  lease facts, the applicant's answers (printed as typed, not checked) and the checklist. Then the signed contract
+  and every ticked KYC document on file (verified only, newest per side). WebP uploads are converted to PNG locally
+  with `sharp` (new engine dependency, pinned 0.35.5). An item this lease's company doesn't ask shows "not asked by
+  this company".
+- **Privacy.** Unchanged from D61: leasing roles only, local, never emailed, each download audited with the attached
+  document ids. Answers never reach the copilot (`get_registration_status` returns key, label and status only).
+- **Quote check (D45).** An item counts as said only by whole words: its label, its short name, its exact field key,
+  or the key in words when specific enough (several words or 6+ letters; "name" or "tax" alone never counts; the
+  `other` item needs "other document"). Company field labels reach the copilot wrapped as untrusted (eval c151).
+- **Known gap.** The PDF font is WinAnsi: Arabic answers print as "?". A font covering Arabic is a later change.
+
+
+## D63 — Offer discount per rent rule
+
+- **Why.** One company-wide discount (D60) couldn't say "5% in Dubai Marina, none in Ras Al Khaimah" or differ by
+  company.
+- **Column.** `rent_rules.max_offer_discount_pct` (whole percent 0–50, null = the company default), migration 0036.
+  Settings → Rent rules: a field in the rule form, Emirate and Offer discount columns in the table; the company-wide
+  value stays as the default for rules that leave it empty.
+- **Which rule.** The rent rule that prices the unit (`findRentRule`: company, category, emirate, most specific
+  type and area) also sets its offer discount (`offerPolicyAndRuleFor` → `discountFrom`).
+- **Band floor.** A counter never goes out without a manager below that rule's lowest allowed asking rent: the floor
+  is max(asking less discount, band minimum). When the asking rent itself is below the band (a manager approved
+  it), the discount applies from the asking rent. All in code (`offerRentFloorFils`), integer fils.
+- **Copilot.** `save_rent_rule` takes `maxOfferDiscountPct` (the D45 check needs the number in the user's words);
+  `get_company_settings` shows each rule's discount and emirate; `get_unit` `offerLimits.discountFrom`. Evals c152,
+  c153 (injection).
+- **Replace keeps it.** Replacing a rule without the field keeps its discount; null clears it (like `templateId` on
+  contract rules). `RENT_RULE_CREATED` and `RENT_RULE_REPLACED` record the discount (from → to).
+- **Audit of offers.** `OFFER_MADE`, a counter's `OFFER_REVISED` and the `offer_out_of_limits` approval record the
+  limits used: discount and where it came from, the rent rule id, the band minimum and the lowest rent without a
+  manager. Limits are re-judged against today's asking rent, rule and Smart Rental Index whenever an offer is checked.
+
+## D64 — Template wording about the unit comes from the records
+
+- **Why.** A template read from a filled sample kept "Description: Four-bedroom villa with a private garden and pool"
+  as fixed wording, because "Description" was not a known label. The contract agent could only flag the conflict
+  (D45: "never rewrites template wording"), so a 2-bedroom lease was prepared, approved and signed with the sample's
+  4-bedroom description. The user decided: wording about the unit comes from the lease's records, and the agent
+  rewords it. No person task; the approver reviews it at `final_contract`.
+- **Reading the sample (code).** Labelled unit lines become blanks: Description → `unitDescription` (new data-sheet
+  key, `units.description`), Furnishing → `furnishing`, Bathrooms, Area, Parking, Floor, Property type, Usage. A
+  description runs to the end of its line, so the words inside it are not read as labels. Only samples read from now
+  on get these blanks; approved templates stay immutable (D43).
+- **Preparing (agent + code).** The agent reads `unit_facts` and may reword a body paragraph that describes the unit
+  and disagrees with it. Code (`checkRewrite`) accepts a rewording only when the blanks are unchanged and the wording has no amount, date, ID, phone or email. Each number must
+  count something (bedrooms, bathrooms, parking, area, floor, ordinals included) and equal the record's value for it.
+  It may name a feature (pool, garden, view) only if the unit's description does, and it adds no legal, money,
+  permission or negation word. The original paragraph must describe the unit and contain none of those words, so a
+  rule such as "No pets…" is never reworded. Headings, the title and paragraphs that print a company clause are never
+  reworded. A refused rewording is sent back once, then dropped: the template wording
+  prints and the conflict flag leads the gate's reasons. The contract is never held for it.
+- **Review.** `contracts.template_rewrites` (migration 0037) and the proposal's `rewrites` hold the old and new wording.
+  The approval and the contract panel show them side by side.
+- **Rules.** Amends D45 (no rewording) and D47 (the template's fixed wording) for wording about the unit only. Rule 1
+  holds: no legal or money value is written by a model; the facts are the unit record's, checked by code. Rule 3 is
+  unchanged: a person approves every contract. Rule 8 is unchanged: local model only.

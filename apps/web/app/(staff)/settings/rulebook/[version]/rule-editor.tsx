@@ -1,5 +1,6 @@
 "use client";
 
+import { EMIRATE_LABELS } from "@leasing/core";
 import { useState, useTransition } from "react";
 import {
   CheckIcon as IconCheck,
@@ -101,8 +102,17 @@ function Editor({ detail }: { detail: RulebookDetail }) {
               <Banner tone="warn">
                 <IconWarning size={16} className="mt-0.5 shrink-0" />
                 <span>
-                  These changes weaken tenant protection compared with the base version {detail.baseVersion}:{" "}
-                  {detail.loosened.map((l) => `${fieldLabel(l.field)} ${show(l.base)} → ${show(l.value)}`).join("; ")}.
+                  {detail.baseVersion
+                    ? `These changes weaken tenant protection compared with the base version ${detail.baseVersion}: `
+                    : "This emirate has no reviewed rules yet, so publishing needs a confirmed legal review: "}
+                  {detail.loosened
+                    .map((l) =>
+                      l.base === null && l.value === null
+                        ? l.field
+                        : `${fieldLabel(l.field)} ${show(l.base)} → ${show(l.value)}`,
+                    )
+                    .join("; ")}
+                  .
                 </span>
               </Banner>
             )}
@@ -365,7 +375,15 @@ function Editor({ detail }: { detail: RulebookDetail }) {
         </Panel>
 
         <Panel className="grid gap-4 p-5">
-          <Block id="ed-eff-h" title="Effective from">
+          <Block id="ed-eff-h" title="Emirate and effective date">
+            <SField label="Emirate" help="Set when the draft was created. Start a new draft for another emirate.">
+              <input
+                value={EMIRATE_LABELS[detail.emirate]}
+                readOnly
+                disabled
+                className={`${SET_INPUT} max-w-[260px]`}
+              />
+            </SField>
             <SField
               label="Date (Dubai)"
               help="Today or later. New leases get this version from that date."

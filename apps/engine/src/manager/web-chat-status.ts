@@ -8,6 +8,8 @@ import {
   type EnquiryLanguage,
   formatAed,
   newId,
+  registrationStageName,
+  registrationSystemName,
   STATUS_STAGES,
   type StatusItem,
 } from "@leasing/core";
@@ -163,13 +165,13 @@ export async function statusFor(
   const items: StatusItem[] = [];
 
   const apps = await tx.db
-    .select({ a: applications, unitCode: units.code })
+    .select({ a: applications, unitCode: units.code, emirate: units.emirate })
     .from(applications)
     .innerJoin(parties, eq(parties.id, applications.partyId))
     .innerJoin(units, eq(units.id, applications.unitId))
     .where(and(emailIs(parties.email, email), inArray(applications.state, [...OPEN_APPLICATION_STATES])))
     .orderBy(desc(applications.createdAt));
-  for (const { a, unitCode } of apps) {
+  for (const { a, unitCode, emirate } of apps) {
     const held = (await openTaskKinds(tx, [a.id])).has("send_offer");
     const offerOut = !!a.offer && !held && (a.state === "OFFER" || a.state === "RESERVED");
     const actions: ChannelButton[] = [];
@@ -205,6 +207,7 @@ export async function statusFor(
       stage: STATUS_STAGES[current]!,
       stages: tracker(current),
       nextStep: next,
+      registration: registrationStageName(emirate),
       ...(offerOut
         ? {
             offer: {
@@ -219,14 +222,15 @@ export async function statusFor(
   }
 
   const lss = await tx.db
-    .select({ l: leases, unitCode: units.code })
+    .select({ l: leases, unitCode: units.code, emirate: units.emirate })
     .from(leases)
     .innerJoin(leaseParties, and(eq(leaseParties.leaseId, leases.id), eq(leaseParties.role, "tenant")))
     .innerJoin(parties, eq(parties.id, leaseParties.partyId))
     .innerJoin(units, eq(units.id, leases.unitId))
     .where(and(emailIs(parties.email, email), inArray(leases.state, [...LEASE_STATES])))
     .orderBy(desc(leases.createdAt));
-  for (const { l, unitCode } of lss) {
+  for (const { l, unitCode, emirate } of lss) {
+    const system = registrationSystemName(emirate);
     const actions: ChannelButton[] = [];
     let current: number;
     let next: string;
@@ -237,11 +241,11 @@ export async function statusFor(
       if (sent) actions.push({ label: t.actSign, data: `status:sg:${l.id}` });
     } else if (l.state === "REGISTRATION") {
       current = 4;
-      next = t.nextStep("ejari");
+      next = t.nextStep("ejari", system);
     } else {
       current = STATUS_STAGES.length; // registered: every stage done
-      next = t.nextStep("registered");
-      if (l.ejariNo) actions.push({ label: t.actEjari, data: `status:ej:${l.id}` });
+      next = t.nextStep("registered", system);
+      if (l.ejariNo) actions.push({ label: t.actEjari(system), data: `status:ej:${l.id}` });
     }
     items.push({
       kind: "lease",
@@ -250,6 +254,7 @@ export async function statusFor(
       stage: STATUS_STAGES[Math.min(current, STATUS_STAGES.length - 1)]!,
       stages: tracker(current),
       nextStep: next,
+      registration: registrationStageName(emirate),
       offer: { annualRentFils: l.annualRentFils, annualRent: formatAed(l.annualRentFils), cheques: l.cheques },
       actions,
     });

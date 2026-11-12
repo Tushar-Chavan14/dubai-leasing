@@ -1,4 +1,12 @@
-import { type Actor, newId, type PropertyCategory, type PropertySubtype, SUBTYPES_BY_CATEGORY } from "@leasing/core";
+import {
+  type Actor,
+  type Emirate,
+  EMIRATE_LABELS,
+  newId,
+  type PropertyCategory,
+  type PropertySubtype,
+  SUBTYPES_BY_CATEGORY,
+} from "@leasing/core";
 import { companies, contractRules, parties, rentRules, type Tx } from "@leasing/db";
 import { eq } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
@@ -107,12 +115,14 @@ export interface RentRuleValues {
   companyId: string;
   category: PropertyCategory;
   subtype?: PropertySubtype | null | undefined;
-  emirate: string;
+  emirate: Emirate;
   community?: string | null | undefined;
   minPctBp: number;
   maxPctBp: number;
   minRentFils?: number | null | undefined;
   maxRentFils?: number | null | undefined;
+  /** D63: offer discount below the asking rent without a manager, whole percent 0–50; null = company default. */
+  maxOfferDiscountPct?: number | null | undefined;
 }
 
 function checkSubtype(category: PropertyCategory, subtype: PropertySubtype | null | undefined) {
@@ -144,7 +154,7 @@ export async function createRentRule(
     entity: { kind: "company", id: v.companyId },
     type: "RENT_RULE_CREATED",
     actor,
-    payload: { ruleId: row.id },
+    payload: { ruleId: row.id, emirate: row.emirate, maxOfferDiscountPct: row.maxOfferDiscountPct },
     rulesVersion: ctx.rulesVersion,
   });
   return row;
@@ -166,6 +176,7 @@ async function insertRentRule(tx: Tx, v: RentRuleValues, actor: Actor, supersede
       maxPctBp: v.maxPctBp,
       minRentFils: v.minRentFils ?? null,
       maxRentFils: v.maxRentFils ?? null,
+      maxOfferDiscountPct: v.maxOfferDiscountPct ?? null,
       supersedesId,
       createdBy: actor,
     })
@@ -184,13 +195,19 @@ export async function replaceRentRule(
   const [old] = await tx.db.select().from(rentRules).where(eq(rentRules.id, id)).for("update");
   if (!old) throw notFound("rent rule");
   if (!old.active) throw conflict("rent rule is no longer active", "rule_inactive");
-  const row = await insertRentRule(tx, { ...v, companyId: old.companyId }, actor, old.id);
+  // Omitted (undefined) keeps the rule's offer discount; null clears it to the company default (D63).
+  const maxOfferDiscountPct = v.maxOfferDiscountPct === undefined ? old.maxOfferDiscountPct : v.maxOfferDiscountPct;
+  const row = await insertRentRule(tx, { ...v, maxOfferDiscountPct, companyId: old.companyId }, actor, old.id);
   await tx.db.update(rentRules).set({ active: false }).where(eq(rentRules.id, old.id));
   await appendEvent(tx, ctx, {
     entity: { kind: "company", id: old.companyId },
     type: "RENT_RULE_REPLACED",
     actor,
-    payload: { ruleId: row.id, supersedesId: old.id },
+    payload: {
+      ruleId: row.id,
+      supersedesId: old.id,
+      maxOfferDiscountPct: { from: old.maxOfferDiscountPct, to: row.maxOfferDiscountPct },
+    },
     rulesVersion: ctx.rulesVersion,
   });
   return row;
@@ -213,6 +230,8 @@ export interface ContractRuleValues {
   companyId: string;
   category: PropertyCategory;
   subtype?: PropertySubtype | null | undefined;
+  /** The emirate the rule is for; null = any emirate (D58). On replace: omitted keeps it, null clears it. */
+  emirate?: Emirate | null | undefined;
   tenures: ("annual" | "short_term")[];
   minCheques: number;
   maxCheques: number;
@@ -251,7 +270,14 @@ async function insertContractRule(tx: Tx, v: ContractRuleValues, actor: Actor, s
   // Company clauses must be approved clauses of this company (422 otherwise).
   await resolveCompanyClauses(tx, v.companyId, v.clauseIds);
   // The template must be approved and the company's own (422 otherwise).
-  await requireApprovedTemplate(tx, v.companyId, v.templateId);
+  const template = await requireApprovedTemplate(tx, v.companyId, v.templateId);
+  // A template for another emirate would never be used for this rule's units (D58).
+  if (template?.emirate && v.emirate && template.emirate !== v.emirate)
+    throw unprocessable(
+      `That company template is for ${EMIRATE_LABELS[template.emirate]}; this rule is for ${EMIRATE_LABELS[v.emirate]}.`,
+      [],
+      "template_emirate",
+    );
   const [row] = await tx.db
     .insert(contractRules)
     .values({
@@ -259,6 +285,7 @@ async function insertContractRule(tx: Tx, v: ContractRuleValues, actor: Actor, s
       companyId: v.companyId,
       category: v.category,
       subtype: v.subtype ?? null,
+      emirate: v.emirate ?? null,
       tenures: v.tenures,
       minCheques: v.minCheques,
       maxCheques: v.maxCheques,
@@ -287,13 +314,21 @@ export async function replaceContractRule(
   }
   // Not sent: keep the rule's template. Sent as null: clear it.
   const templateId = v.templateId === undefined ? old.templateId : v.templateId;
-  const row = await insertContractRule(tx, { ...v, templateId, companyId: old.companyId }, actor, old.id);
+  // The same for the emirate (D58), so callers that copy a rule's fields keep it.
+  const emirate = v.emirate === undefined ? old.emirate : v.emirate;
+  const row = await insertContractRule(tx, { ...v, templateId, emirate, companyId: old.companyId }, actor, old.id);
   await tx.db.update(contractRules).set({ active: false }).where(eq(contractRules.id, old.id));
   await appendEvent(tx, ctx, {
     entity: { kind: "company", id: old.companyId },
     type: "CONTRACT_RULE_REPLACED",
     actor,
-    payload: { ruleId: row.id, supersedesId: old.id },
+    payload: {
+      ruleId: row.id,
+      supersedesId: old.id,
+      // What changed, so the audit reads without joining the two rows (D58).
+      before: { emirate: old.emirate, minCheques: old.minCheques, maxCheques: old.maxCheques, tenures: old.tenures },
+      after: { emirate: row.emirate, minCheques: row.minCheques, maxCheques: row.maxCheques, tenures: row.tenures },
+    },
     rulesVersion: ctx.rulesVersion,
   });
   return row;

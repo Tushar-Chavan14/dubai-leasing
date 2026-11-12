@@ -29,6 +29,8 @@ export {
   applicantMessageEmail,
   viewingReminderEmail,
   noShowFollowupEmail,
+  counterDeclinedEmail,
+  offerExpiredEmail,
   documentsChaseEmail,
 } from "./mail/templates.ts";
 export type * from "./mail/types.ts";

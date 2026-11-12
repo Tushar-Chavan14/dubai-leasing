@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { EMIRATE_LABELS, EMIRATES } from "@leasing/core";
 import { FakeLlm, type SystemOneResponse } from "@leasing/llm";
 import {
   checkAnswer,
+  EMIRATE_NAMES,
+  enquiryCopy,
   factSheet,
   enquiryQuestions,
   enquiryState,
@@ -347,6 +350,21 @@ describe("leasing assistant on the web channel", () => {
     const r = await leasingAssistant(llm).run(input(ctx({ channel: "web", text: "an office of 2000 sq ft" })));
     expect(r.data!.handoff).toBe(false);
     expect(r.data!.search).toMatchObject({ emirate: "dubai", category: "commercial", sizeBand: "medium" });
+  });
+
+  test("every emirate is an option and is read; the copy names all seven in both languages", async () => {
+    const web = enquiryQuestions(ctx({ channel: "web" }));
+    expect(Object.keys((web.emirate as { criteria: Record<string, string> }).criteria)).toEqual([...EMIRATES, "none"]);
+    const llm = new FakeLlm(() => webDecision({ emirate: choice("ras_al_khaimah") }));
+    const r = await leasingAssistant(llm).run(input(ctx({ channel: "web", text: "villa in RAK" })));
+    expect(r.data!.search.emirate).toBe("ras_al_khaimah");
+    for (const e of EMIRATES) {
+      expect(EMIRATE_NAMES[e].en).toBe(EMIRATE_LABELS[e]);
+      expect(EMIRATE_NAMES[e].ar.length).toBeGreaterThan(0);
+    }
+    expect(EMIRATE_NAMES.ajman.ar).toBe("عجمان");
+    expect(enquiryCopy.en.noListingsIn("Ajman")).toBe("We don't have homes listed in Ajman yet.");
+    expect(enquiryCopy.ar.noListingsIn("عجمان")).toContain("عجمان");
   });
 
   test("a value outside the options is dropped, not passed on", async () => {

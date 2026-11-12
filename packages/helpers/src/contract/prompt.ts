@@ -1,4 +1,4 @@
-import { formatAed } from "@leasing/core";
+import { formatAed, rentIndexName } from "@leasing/core";
 import type { Rulebook } from "@leasing/rulebook";
 import type { ContractFields } from "@leasing/core";
 
@@ -35,7 +35,7 @@ export function addendumReviewMessages(text: string, f: ContractFields, r: Ruleb
     "",
     `Legal facts (${r.version}):`,
     "- Rent cannot change during the term; it can only change at renewal.",
-    `- A rent increase at renewal needs written notice at least ${r.renewalNoticeDays} days before the lease ends, and is capped by the Smart Rental Index.`,
+    `- A rent increase at renewal needs written notice at least ${r.renewalNoticeDays} days before the lease ends, and is capped by the ${rentIndexName(r.emirate)}.`,
     `- The landlord can only ask a tenant to leave at the end of the term for sale, own use, major works or demolition, with ${r.repossessionNoticeMonths} months' notice by notary or registered mail.`,
     `- Eviction for unpaid rent can start only ${r.lateRentDaysAfterFormalReminder} days after a formal written reminder.`,
   ].join("\n");

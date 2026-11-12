@@ -8,7 +8,7 @@ import { type KeyboardEvent, type SyntheticEvent, type ReactNode, useEffect, use
 import { ArrowUpIcon, CheckIcon as IconCheck, StopIcon, WarningIcon as IconWarning } from "@phosphor-icons/react";
 import { Button, buttonClass } from "../ui/button";
 import { CardRow } from "../chat-ui/cards";
-import { Thinking } from "../chat-ui/thinking";
+import { Rethinking, Thinking } from "../chat-ui/thinking";
 import { ChoiceCardView } from "../chat-ui/choice-card";
 import { CardError, CardNote, CardShell, Facts } from "../chat-ui/card-shell";
 import { SEND_BTN, StaffComposer, TOOL_BTN, VoiceMenu } from "../chat-ui/composer";
@@ -186,15 +186,18 @@ const CHANGE_TITLE: Record<string, string> = {
   rent_rule: "Rent rule",
   contract_rule: "Contract rule",
   sri_value: "Smart Rental Index value",
+  registration_settings: "Registration settings",
   kyc_config: "Documents & KYC settings (draft)",
 };
 
 /** Settings tools: after one runs (or its card is confirmed) the page behind the panel is refreshed. */
 const SETTINGS_TOOLS = new Set([
   "add_contract_clause",
+  "add_suggested_clause",
   "save_rent_rule",
   "save_contract_rule",
   "save_sri_value",
+  "save_registration_settings",
   "edit_kyc_config",
 ]);
 
@@ -467,7 +470,9 @@ function ProposalCard({ p, onChange }: { p: ProposalView; onChange: (v: Proposal
                   ? "/settings/rent-rules"
                   : p.summary.change === "kyc_config"
                     ? "/settings/kyc"
-                    : "/settings/contracts"
+                    : p.summary.change === "registration_settings"
+                      ? "/settings/registration"
+                      : "/settings/contracts"
             }
           >
             Open settings
@@ -570,14 +575,16 @@ function AssistantMessage({
   retryText?: string;
 }) {
   const [startedAt] = useState(() => performance.now());
+  const content = m.content;
   return (
     <div className="grid gap-2.5 text-sm leading-relaxed" data-status={m.status} aria-busy={m.status === "streaming"}>
       <Thinking
         tools={m.tools}
         streaming={m.status === "streaming"}
         startedAt={startedAt}
-        answerStarted={m.content.length > 0}
+        answerStarted={content.length > 0}
       />
+      {m.status === "streaming" && m.rethinking && !content ? <Rethinking /> : null}
       {m.status === "error" ? (
         <p className="m-0 flex flex-wrap items-center gap-2 text-sm text-danger">
           <IconWarning size={15} aria-hidden /> {m.content}
@@ -587,9 +594,9 @@ function AssistantMessage({
             </Button>
           ) : null}
         </p>
-      ) : m.content ? (
+      ) : content ? (
         <div className="[&>:last-child]:mb-0 [&_li+li]:mt-1 [&_p]:m-0 [&_p]:mb-2 [&_ul]:m-0 [&_ul]:mb-2 [&_ul]:pl-5">
-          <Answer text={m.content} unverified={m.unverified} />
+          <Answer text={content} unverified={m.unverified} />
         </div>
       ) : null}
       {m.cards?.length ? <CardRow cards={m.cards} disabled={!live} onSend={onSend} /> : null}
@@ -682,9 +689,22 @@ export function CopilotChat({
     lastMsg.tools.some((t) => SETTINGS_TOOLS.has(t.name) && t.status === "ok")
       ? lastMsg.id
       : null;
+  // "add it" (D57) confirmed an earlier clause card in the engine: refetch the thread's cards so it shows Done.
+  const acceptedKey =
+    changedKey && lastMsg?.tools.some((t) => t.name === "add_suggested_clause" && t.status === "ok")
+      ? changedKey
+      : null;
+  const { threadId: liveThreadId, updateProposal } = chat;
   useEffect(() => {
     if (changedKey) router.refresh();
   }, [changedKey, router]);
+  useEffect(() => {
+    if (!acceptedKey || !liveThreadId) return;
+    void fetch(`/api/copilot/threads/${liveThreadId}`, { cache: "no-store" })
+      .then((r) => (r.ok ? (r.json() as Promise<{ proposals?: ProposalView[] }>) : null))
+      .then((b) => b?.proposals?.forEach(updateProposal))
+      .catch(() => undefined);
+  }, [acceptedKey, liveThreadId, updateProposal]);
 
   useEffect(() => {
     if (autoFocus) input.current?.focus();

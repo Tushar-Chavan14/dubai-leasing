@@ -1,3 +1,4 @@
+import type { Emirate } from "@leasing/core";
 /** What the engine's portal API returns for an application link (no staff data, nothing masked away needed). */
 export interface ApplicationPortalView {
   kind: "application";
@@ -22,6 +23,8 @@ export interface ApplicationPortalView {
     endOn: string;
     expiresOn: string;
     acceptedAt: string | null;
+    /** Present only when the tenant pays the registration fee. */
+    registrationFee?: { systemName: string; feeFils: number } | null;
   } | null;
   canRespond: boolean;
   reservationRecorded: boolean;
@@ -31,6 +34,7 @@ export interface ApplicationPortalView {
   property: {
     building: string;
     community: string;
+    emirate: Emirate;
     unitNo: string | null;
     bedrooms: number | null;
     bathrooms: number | null;

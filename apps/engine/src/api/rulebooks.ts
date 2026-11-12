@@ -1,18 +1,19 @@
-import type { StaffUser } from "@leasing/core";
+import { Emirate, EMIRATES, type StaffUser } from "@leasing/core";
 import { rulebooks, staffUsers } from "@leasing/db";
-import { activeRulesVersion, getRulebook, loosenedVsBase, ReferenceRules, RulebookValues } from "@leasing/rulebook";
+import { activeRulesVersion, getRulebook, ReferenceRules, RulebookValues } from "@leasing/rulebook";
 import { asc, eq } from "drizzle-orm";
 import type { Hono } from "hono";
 import { z } from "zod";
 import type { EngineContext } from "../context.ts";
 import { notFound } from "../errors.ts";
 import {
-  baseFor,
+  baseOrNull,
   contentsOf,
   createDraft,
   deleteDraft,
   diffContents,
   DraftPatch,
+  loosenedFor,
   publishRulebook,
   updateDraft,
 } from "../manager/rulebooks.ts";
@@ -40,11 +41,14 @@ export function registerRulebookRoutes(api: Hono<AuthEnv>, ctx: EngineContext) {
   api.get("/rulebooks", async (c) => {
     const isAdmin = c.get("user").role === "admin";
     const rows = await db.select().from(rulebooks).orderBy(asc(rulebooks.effectiveFrom), asc(rulebooks.createdAt));
-    const active = activeRulesVersion(ctx.clock.today());
+    const today = ctx.clock.today();
+    // The version new leases get, per emirate (null: no rulebook yet, so no offers or leases there).
+    const activeByEmirate = Object.fromEntries(EMIRATES.map((e) => [e, activeRulesVersion(today, e)]));
     const n = await names();
     return c.json({
-      today: ctx.clock.today(),
-      active,
+      today,
+      active: activeByEmirate.dubai ?? null,
+      activeByEmirate,
       versions: rows
         .filter((r) => isAdmin || r.status === "published")
         .map((r) => ({
@@ -53,7 +57,7 @@ export function registerRulebookRoutes(api: Hono<AuthEnv>, ctx: EngineContext) {
           status: r.status,
           basedOn: r.basedOn,
           effectiveFrom: r.effectiveFrom,
-          isActive: r.version === active,
+          isActive: r.version === activeByEmirate[r.emirate],
           createdBy: nameOf(n, r.createdBy),
           createdAt: r.createdAt,
           publishedBy: nameOf(n, r.publishedBy),
@@ -83,7 +87,7 @@ export function registerRulebookRoutes(api: Hono<AuthEnv>, ctx: EngineContext) {
       isActive: row.version === active,
       active,
       today: ctx.clock.today(),
-      baseVersion: baseFor(row.emirate).version,
+      baseVersion: baseOrNull(row.emirate)?.version ?? null,
       createdBy: nameOf(n, row.createdBy),
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
@@ -91,7 +95,7 @@ export function registerRulebookRoutes(api: Hono<AuthEnv>, ctx: EngineContext) {
       publishedAt: row.publishedAt,
       values,
       referenceRules,
-      loosened: loosenedVsBase(values, baseFor(row.emirate)),
+      loosened: loosenedFor(values, row.emirate, row.basedOn),
       changesVsActive:
         active && active !== row.version
           ? diffContents(contentsOf(getRulebook(active)), {
@@ -107,8 +111,10 @@ export function registerRulebookRoutes(api: Hono<AuthEnv>, ctx: EngineContext) {
   api.post("/rulebooks", async (c) => {
     const user = c.get("user");
     requireRole(user, ["admin"]);
-    const { basedOn } = z.object({ basedOn: z.string().min(1).max(40) }).parse(await c.req.json());
-    const row = await createDraft(ctx, basedOn, actorOf(user));
+    const { basedOn, emirate } = z
+      .object({ basedOn: z.string().min(1).max(40), emirate: Emirate.optional() })
+      .parse(await c.req.json());
+    const row = await createDraft(ctx, basedOn, actorOf(user), emirate);
     return c.json({ version: row.version, status: row.status }, 201);
   });
 

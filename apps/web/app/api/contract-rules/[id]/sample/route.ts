@@ -15,7 +15,10 @@ export async function POST(req: Request, ctx: RouteContext<"/api/contract-rules/
   };
   const length = req.headers.get("content-length");
   if (length) headers["content-length"] = length;
-  const res = await fetch(`${ENGINE_URL}/api/contract-rules/${encodeURIComponent(id)}/sample`, {
+  // The optional template emirate travels as a query parameter; the engine validates it.
+  const emirate = new URL(req.url).searchParams.get("emirate");
+  const query = emirate ? `?emirate=${encodeURIComponent(emirate)}` : "";
+  const res = await fetch(`${ENGINE_URL}/api/contract-rules/${encodeURIComponent(id)}/sample${query}`, {
     method: "POST",
     headers,
     body: req.body,

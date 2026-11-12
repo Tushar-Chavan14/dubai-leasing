@@ -42,7 +42,7 @@ export async function runConfigChange(
   }
   const p = await engine.propose<{ id: string; status: string; summary?: { facts?: [string, string][] } }>(
     "/api/copilot/proposals",
-    { kind: "config_change", change },
+    { kind: "config_change", change, ...(ctx.untrustedSeen ? { afterUntrusted: true } : {}) },
   );
   const facts = (p.summary?.facts ?? []).map(([k, v]) => `${k}: ${v}`).join("; ");
   return {

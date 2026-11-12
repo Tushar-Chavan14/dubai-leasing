@@ -38,6 +38,7 @@ export function registrationRejections(
       message: "The security deposit is higher than the annual rent.",
     });
   }
+  // Ejari and Tawtheeq both check the property: the demo seed registers the Dubai and the Abu Dhabi demo properties.
   if (!r.property) {
     out.push({
       code: "PROPERTY_NOT_FOUND",
@@ -54,7 +55,11 @@ export function registrationRejections(
     });
   }
   if (r.property.usage !== p.propertyUsage) {
-    out.push({ code: "PROPERTY_DATA_MISMATCH", field: "usage", message: "The property's permitted use is different." });
+    out.push({
+      code: "PROPERTY_DATA_MISMATCH",
+      field: "usage",
+      message: "The property's permitted use is different.",
+    });
   }
   if (r.property.ownerName !== p.landlordNameEn) {
     out.push({

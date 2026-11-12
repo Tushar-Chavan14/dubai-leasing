@@ -1,5 +1,5 @@
 import type { EjariPayload, EjariRejection } from "@leasing/core";
-import { bigint, bigserial, date, jsonb, pgSchema, text, timestamp } from "drizzle-orm/pg-core";
+import { bigint, bigserial, date, jsonb, pgSchema, text, timestamp, unique } from "drizzle-orm/pg-core";
 
 /**
  * The simulated registry's own Postgres schema, `ejari_mock`, in the same local database as the
@@ -9,6 +9,10 @@ import { bigint, bigserial, date, jsonb, pgSchema, text, timestamp } from "drizz
 export const ejariMock = pgSchema("ejari_mock");
 
 export const ejariSeq = ejariMock.sequence("ejari_seq");
+export const tawtheeqSeq = ejariMock.sequence("tawtheeq_seq");
+
+/** The two simulated registries this service plays: Dubai Ejari and Abu Dhabi Tawtheeq. */
+export type RegistrySystem = "ejari" | "tawtheeq";
 
 export const properties = ejariMock.table("properties", {
   dldPropertyNo: text("dld_property_no").primaryKey(),
@@ -36,6 +40,8 @@ export const registrations = ejariMock.table("registrations", {
   startOn: date("start_on").notNull(),
   endOn: date("end_on").notNull(),
   annualRentFils: bigint("annual_rent_fils", { mode: "number" }).notNull(),
+  /** Which simulated registry holds it. The number stays the key: the two systems' numbers differ by prefix. */
+  system: text("system").$type<RegistrySystem>().notNull().default("ejari"),
   state: text("state").notNull().default("active"),
   /** The submitted contract; `{ prior: true }` for the seeded registrations of imported demo leases. */
   payload: jsonb("payload").$type<EjariPayload | { prior: true }>().notNull(),
@@ -45,13 +51,18 @@ export const registrations = ejariMock.table("registrations", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-export const submissions = ejariMock.table("submissions", {
-  id: bigserial("id", { mode: "number" }).primaryKey(),
-  requestId: text("request_id").unique(),
-  kind: text("kind").notNull(),
-  outcome: text("outcome").notNull(),
-  ejariNo: text("ejari_no"),
-  reasons: jsonb("reasons").$type<EjariRejection[]>().notNull().default([]),
-  payload: jsonb("payload").$type<EjariPayload>().notNull(),
-  receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const submissions = ejariMock.table(
+  "submissions",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    requestId: text("request_id"),
+    system: text("system").$type<RegistrySystem>().notNull().default("ejari"),
+    kind: text("kind").notNull(),
+    outcome: text("outcome").notNull(),
+    ejariNo: text("ejari_no"),
+    reasons: jsonb("reasons").$type<EjariRejection[]>().notNull().default([]),
+    payload: jsonb("payload").$type<EjariPayload>().notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique("submissions_system_request_id_unique").on(t.system, t.requestId)],
+);

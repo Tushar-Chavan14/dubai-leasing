@@ -15,6 +15,8 @@ export interface RecordCardData {
   name: string;
   unit: string;
   stage: string;
+  /** Label of the registration stage for the unit's emirate. */
+  registration?: string;
   nextStep: string;
   /** The Workspace page of the record. */
   href: string;
@@ -44,13 +46,13 @@ export function RecordCardView({
       <div className="flex items-start justify-between gap-2">
         <b className="text-[15px] leading-snug font-semibold tracking-tight">{card.name}</b>
         <Pill tone="waiting" className="flex-none">
-          {card.stage}
+          {card.stage === "Ejari" && card.registration ? card.registration : card.stage}
         </Pill>
       </div>
       <span className="text-muted">
         <span className="font-mono text-xs">{card.ref}</span> · {card.unit}
       </span>
-      <StageStepper stages={stagesForStaffStage(card.stage)} />
+      <StageStepper stages={stagesForStaffStage(card.stage)} registration={card.registration} />
       <p className="m-0">{card.nextStep}</p>
       <div className="mt-0.5 flex flex-wrap gap-2">
         {actions.map((a) =>

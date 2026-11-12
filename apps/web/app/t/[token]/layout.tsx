@@ -67,7 +67,7 @@ export default async function PortalLayout({
             <div className="relative flex items-center justify-between gap-3 md:mx-auto md:h-16 md:max-w-[1040px] md:px-8">
               <span className="flex items-center gap-2 text-[17px] font-semibold tracking-tight">
                 <BrandMark size={22} />
-                Dubai Leasing
+                UAE Leasing
               </span>
               {/* The page's privacy note, one tap away instead of a footer that would push the pinned action up. */}
               <details className="group">

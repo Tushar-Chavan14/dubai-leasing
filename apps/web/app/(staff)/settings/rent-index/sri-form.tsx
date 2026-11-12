@@ -1,5 +1,6 @@
 "use client";
 
+import { EMIRATE_LABELS, EMIRATES } from "@leasing/core";
 import { ActionForm } from "../../../../components/ui/action-form";
 import { useActionState } from "react";
 import { CheckIcon as IconCheck, WarningIcon as IconWarning } from "@phosphor-icons/react";
@@ -12,6 +13,15 @@ export function SriForm() {
   const [s, action, pending] = useActionState<SriState, FormData>(saveSri, {});
   return (
     <ActionForm state={s} action={action} className="grid gap-3.5">
+      <SField label="Emirate">
+        <select name="emirate" defaultValue="dubai" className={SET_SELECT}>
+          {EMIRATES.map((e) => (
+            <option key={e} value={e}>
+              {EMIRATE_LABELS[e]}
+            </option>
+          ))}
+        </select>
+      </SField>
       <SField label="Community">
         <input name="community" required placeholder="Dubai Marina" className={SET_INPUT} />
       </SField>

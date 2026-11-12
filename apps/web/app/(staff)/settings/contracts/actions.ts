@@ -27,6 +27,8 @@ export async function saveContractRule(_prev: RuleResult, formData: FormData): P
     templateId: String(formData.get("templateId") ?? "") || null,
     category: String(formData.get("category")),
     subtype: subtype || null,
+    // Empty: any emirate (D58).
+    emirate: String(formData.get("emirate") ?? "") || null,
     tenures,
     minCheques,
     maxCheques,

@@ -1,6 +1,6 @@
-import { type Addendum, calendarDate, type ContractFields } from "@leasing/core";
+import { type Addendum, calendarDate, type ContractFields, type Emirate } from "@leasing/core";
 import { z } from "zod";
-import { addendumBlocks, REQUIRED_TERMS } from "../contract/template.ts";
+import { addendumBlocks, requiredTerms } from "../contract/template.ts";
 import { hasValues } from "../contract-template/values.ts";
 import { compatible, inferBlankType } from "./blanks.ts";
 import { sheetKeyInfo } from "./datasheet.ts";
@@ -400,6 +400,8 @@ export interface TemplateRenderOptions {
   extras?: Record<string, string | number | null>;
   /** A preview with sample values: marked as such in the text (the PDF also gets a watermark). */
   preview?: boolean;
+  /** The unit's emirate: decides the wording of the required terms. Default "dubai". */
+  emirate?: Emirate;
 }
 
 const TOKEN = /(\{\{b\d+\}\})/;
@@ -541,6 +543,7 @@ export function templateContractBlocks(
   const norm = (x: string) => x.toLowerCase().replace(/\s+/g, " ").trim();
   const haystack = norm(seen.join(" "));
   const missing = (term: string) => !haystack.includes(norm(term));
+  const REQUIRED_TERMS = requiredTerms(o.emirate ?? "dubai");
   const needRent = missing(REQUIRED_TERMS.rentChange);
   const needEjari = missing(REQUIRED_TERMS.ejari);
   const needSigning = missing(REQUIRED_TERMS.signatures);

@@ -3,6 +3,8 @@ import {
   type Actor,
   type Addendum,
   companyClauseIdOf,
+  Emirate,
+  EMIRATE_LABELS,
   isCompanyClauseRef,
   type ContractFields,
   newId,
@@ -48,14 +50,14 @@ import {
   templateContractBlocks,
 } from "@leasing/helpers";
 import { sha256Hex } from "@leasing/core/tokens";
-import { and, desc, eq, gte, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, gte, inArray, isNull, or, sql } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
 import { conflict, notFound, unprocessable } from "../errors.ts";
 import { appendEvent } from "./events.ts";
 import { recordRun, runOnly } from "./helpers.ts";
 import { replaceContractRule, repointContractRule } from "./portfolio.ts";
 // Used only inside functions (the two modules import each other).
-import { clauseView } from "./contract-templates.ts";
+import { clauseView, contractJobBudgetSeconds } from "./contract-templates.ts";
 
 /**
  * Company contract templates (slice 4). When a sample contract is uploaded, the `contract-structure`
@@ -87,6 +89,8 @@ export async function extractCompanyTemplate(
   if (existing && !input.force) return { skipped: true as const, templateId: existing.id };
 
   const entity = { kind: "company" as const, id: companyId };
+  // The emirate chosen at upload (null = any emirate) travels on the sample document.
+  const emirate = parseEmirate((doc.extracted as { emirate?: unknown } | null)?.emirate);
   const helperRunId = newId();
   const helper = contractStructureHelper(ctx.contractAiLlm ?? ctx.llm, {
     readFile: async (id) => {
@@ -174,6 +178,7 @@ export async function extractCompanyTemplate(
       style: data.style,
       review: auto.review,
       logoDocumentId,
+      emirate,
       version,
       helperRunId,
       createdBy: HELPER_ACTOR,
@@ -187,6 +192,7 @@ export async function extractCompanyTemplate(
         templateId,
         version,
         sampleDocumentId,
+        emirate,
         helperRunId,
         sections: data.sections.items.length,
         blanks: data.blanks.length,
@@ -406,8 +412,26 @@ export function templateKey(row: TemplateRow) {
 }
 export type TemplateKey = ReturnType<typeof templateKey>;
 
-/** The template a contract rule points at: it must exist, be the company's own and be approved. */
-export async function approvedTemplateFor(tx: Pick<Tx, "db">, companyId: string, templateId: string) {
+/** Parses a stored or posted emirate: a known emirate, else null ("any emirate"). */
+export function parseEmirate(v: unknown): Emirate | null {
+  const r = Emirate.safeParse(v);
+  return r.success ? r.data : null;
+}
+
+/** SQL for "this template group": the same emirate, or no emirate (null = any). */
+const inGroup = (emirate: Emirate | null) =>
+  emirate === null ? isNull(companyContractTemplates.emirate) : eq(companyContractTemplates.emirate, emirate);
+
+/**
+ * The template a contract rule points at: it must exist, be the company's own, be approved and, when `emirate` is
+ * given, be for that emirate or for any emirate (a template of another emirate is never used).
+ */
+export async function approvedTemplateFor(
+  tx: Pick<Tx, "db">,
+  companyId: string,
+  templateId: string,
+  emirate?: Emirate,
+) {
   const [row] = await tx.db.select().from(companyContractTemplates).where(eq(companyContractTemplates.id, templateId));
   if (!row || row.companyId !== companyId) {
     throw unprocessable(
@@ -423,7 +447,43 @@ export async function approvedTemplateFor(tx: Pick<Tx, "db">, companyId: string,
       "template_unavailable",
     );
   }
+  if (emirate && row.emirate !== null && row.emirate !== emirate) {
+    throw unprocessable(
+      `The contract rule's company template (v${row.version}) is for ${EMIRATE_LABELS[row.emirate]}, not ${EMIRATE_LABELS[emirate]}.`,
+      [],
+      "template_unavailable",
+    );
+  }
   return row;
+}
+
+/**
+ * The template a unit's contract is rendered in (D56): the rule's own template when it is approved and for the unit's
+ * emirate (or any emirate); else the company's approved template for the unit's emirate; else its approved "any
+ * emirate" template; else null, and the emirate-aware standard form is used. A template of another emirate is never
+ * returned. A rule pointing at a missing, other-company or not approved template still throws (`template_unavailable`).
+ */
+export async function templateForUnit(
+  tx: Pick<Tx, "db">,
+  input: { companyId: string; ruleTemplateId: string | null | undefined; emirate: Emirate },
+): Promise<TemplateRow | null> {
+  const { companyId, ruleTemplateId, emirate } = input;
+  if (ruleTemplateId) {
+    const [row] = await tx.db
+      .select()
+      .from(companyContractTemplates)
+      .where(eq(companyContractTemplates.id, ruleTemplateId));
+    // Same checks as before for a rule's template; only a different emirate falls through to the lookup below.
+    if (!row || row.companyId !== companyId || row.status !== "approved")
+      return approvedTemplateFor(tx, companyId, ruleTemplateId);
+    if (row.emirate === null || row.emirate === emirate) return row;
+  }
+  const approved = await tx.db
+    .select()
+    .from(companyContractTemplates)
+    .where(and(eq(companyContractTemplates.companyId, companyId), eq(companyContractTemplates.status, "approved")))
+    .orderBy(desc(companyContractTemplates.version));
+  return approved.find((r) => r.emirate === emirate) ?? approved.find((r) => r.emirate === null) ?? null;
 }
 
 /** Rule check: `templateId` must be an approved template of the same company. */
@@ -510,6 +570,13 @@ export async function renderCompanyContract(
     blanks?: TemplateBlank[];
     /** D47: the contract rule's clause ids (linked paragraphs print only for clauses in it); absent for a preview. */
     ruleClauseIds?: readonly string[] | null;
+    /** The unit's emirate (wording of the required terms); default: the template's, else Dubai. */
+    emirate?: Emirate;
+    /**
+     * D64: paragraphs the contract agent reworded from the unit's records (code-checked). Used only where the
+     * paragraph still reads as it did (`before`) and no clause prints there.
+     */
+    rewrites?: readonly { key: string; before: string; after: string }[];
   },
 ): Promise<{ pdf: Uint8Array; title: string; leftEmpty: string[]; filled: { label: string; key: string }[] }> {
   const t = parseTemplate(row);
@@ -520,6 +587,11 @@ export async function renderCompanyContract(
     input.ruleClauseIds,
     input.preview === true && row.status === "proposed",
   );
+  const raw = new Map(templateParagraphs(t.sections).map((p) => [p.key, p.text]));
+  const paragraphs: Record<string, string | null> = { ...linked.paragraphs };
+  for (const r of input.rewrites ?? []) {
+    if (!Object.hasOwn(paragraphs, r.key) && raw.get(r.key) === r.before) paragraphs[r.key] = r.after;
+  }
   // A clause linked to a paragraph prints there, never again under the additional terms.
   const extra = input.addendum.companyClauses?.filter((c) => !linked.clauseIds.has(c.id));
   const { companyClauses: _all, ...rest } = input.addendum;
@@ -533,7 +605,7 @@ export async function renderCompanyContract(
         blanks: input.blanks ?? t.blanks,
         templateVersion: row.version,
         dropped: t.review.droppedParagraphs,
-        paragraphs: linked.paragraphs,
+        paragraphs,
       },
       // The date of the contract is the day it is prepared (Clock), never read from the lease.
       { ...input.fields, contractOn: input.fields.contractOn ?? ctx.clock.today() },
@@ -543,6 +615,7 @@ export async function renderCompanyContract(
         reference: input.reference,
         demo: ctx.demoMode,
         preview: input.preview === true,
+        emirate: input.emirate ?? row.emirate ?? "dubai",
         ...(input.extras ? { extras: input.extras } : {}),
       },
     );
@@ -610,6 +683,8 @@ export function templateView(row: TemplateRow) {
     id: row.id,
     version: row.version,
     status: row.status,
+    /** The emirate the template is for; null = any emirate. */
+    emirate: row.emirate,
     sampleDocumentId: row.sampleDocumentId,
     sections: t.sections,
     // Read-only: which data-sheet key fills each blank and how it was chosen (matched, model or left empty).
@@ -653,8 +728,13 @@ export function templateView(row: TemplateRow) {
   };
 }
 
-/** Max age of an extraction with no result before the panel offers "Try again" (Clock). */
-const EXTRACTION_STUCK_MS = 15 * 60 * 1000;
+/**
+ * Max age of an extraction with no result before the panel offers "Try again" (Clock): the job's own deadline plus a
+ * margin, so the panel never calls a reading "stopped" while it is still allowed to run. The job stores its own
+ * failure reason when it passes the deadline; this is only for a worker that died.
+ */
+const extractionStuckMs = (ctx: EngineContext) =>
+  (contractJobBudgetSeconds(ctx.backgroundModelTimeoutSeconds ?? 300) + 180) * 1000;
 
 /** The company's templates (newest first) and the state of reading its latest sample (any staff). */
 export async function companyTemplatePanel(ctx: EngineContext, companyId: string) {
@@ -678,6 +758,8 @@ export async function companyTemplatePanel(ctx: EngineContext, companyId: string
     reasons: string[];
     /** Whole minutes (Clock) since the current reading was asked for, for the progress line. */
     minutes?: number;
+    /** Whole minutes after which the reading stops itself and says why. */
+    limitMinutes?: number;
   } | null = null;
   if (sample) {
     const fromSample = rows.filter((r) => r.sampleDocumentId === sample.id);
@@ -696,7 +778,7 @@ export async function companyTemplatePanel(ctx: EngineContext, companyId: string
       const [retried] = reAskedAt
         ? []
         : await db
-            .select({ at: leaseEvents.at })
+            .select({ at: leaseEvents.at, id: leaseEvents.id })
             .from(leaseEvents)
             .where(
               and(
@@ -716,11 +798,14 @@ export async function companyTemplatePanel(ctx: EngineContext, companyId: string
             eq(helperRuns.helper, "contract_structure"),
             eq(helperRuns.entityId, companyId),
             gte(helperRuns.at, since),
+            // After "Try again", only runs started after it count (ids are time-ordered UUIDv7; the Clock may stand
+            // still in demos, and a run that hung before the retry must not mark the new reading as failed).
+            ...(retried ? [gt(helperRuns.id, retried.id)] : []),
           ),
         )
         .orderBy(desc(helperRuns.at))
         .limit(1);
-      const stuck = ctx.clock.now().getTime() - since.getTime() > EXTRACTION_STUCK_MS;
+      const stuck = ctx.clock.now().getTime() - since.getTime() > extractionStuckMs(ctx);
       if (run && run.status !== "ok") {
         const out = run.output as { reasons?: string[]; error?: string } | null;
         const reasons = out?.error?.includes("JSON")
@@ -741,6 +826,7 @@ export async function companyTemplatePanel(ctx: EngineContext, companyId: string
           status: "reading",
           reasons: [],
           minutes: Math.max(0, Math.floor((ctx.clock.now().getTime() - since.getTime()) / 60_000)),
+          limitMinutes: Math.ceil(contractJobBudgetSeconds(ctx.backgroundModelTimeoutSeconds ?? 300) / 60),
         };
     }
   }
@@ -762,9 +848,14 @@ export async function companyTemplatePanel(ctx: EngineContext, companyId: string
           ),
         )
     : [];
-  // What approving a proposed version would move: active rules on the approved or any retired version.
-  const approvedId = rows.find((r) => r.status === "approved")?.id;
-  const movable = [...retiredIds, ...(approvedId ? [approvedId] : [])];
+  // What approving a proposed version would move: active rules on the approved or any retired version of its own
+  // (company, emirate) group; rules with no template only for an "any emirate" template.
+  const target = sample ? rows.find((r) => r.sampleDocumentId === sample.id && r.status === "proposed") : undefined;
+  const groupRows = target ? rows.filter((r) => r.emirate === target.emirate) : rows;
+  const groupRetired = groupRows.filter((r) => r.status === "retired").map((r) => r.id);
+  const approvedId = groupRows.find((r) => r.status === "approved")?.id;
+  const movable = [...groupRetired, ...(approvedId ? [approvedId] : [])];
+  const noTemplate = !target || target.emirate === null ? isNull(contractRules.templateId) : undefined;
   const toMove = await db
     .select({ id: contractRules.id })
     .from(contractRules)
@@ -772,9 +863,7 @@ export async function companyTemplatePanel(ctx: EngineContext, companyId: string
       and(
         eq(contractRules.companyId, companyId),
         eq(contractRules.active, true),
-        movable.length
-          ? or(isNull(contractRules.templateId), inArray(contractRules.templateId, movable))
-          : isNull(contractRules.templateId),
+        movable.length ? or(noTemplate, inArray(contractRules.templateId, movable)) : (noTemplate ?? sql`false`),
       ),
     );
   // D47: the latest sample's clauses waiting for approval (shown on the review with "Approve all").
@@ -819,7 +908,41 @@ export async function companyTemplatePanel(ctx: EngineContext, companyId: string
   };
 }
 
-/** "Try again" on a template reading that failed: queues the structure job for the stored sample. */
+/**
+ * Stores why a structure reading failed (deadline or error) as a failed `contract_structure` run, so the panel shows
+ * the reason and "Try again". Nothing is stored when a version from this sample was proposed meanwhile.
+ */
+export async function failStructure(ctx: EngineContext, documentId: string, reason: string) {
+  const [doc] = await ctx.database.db.select().from(documents).where(eq(documents.id, documentId));
+  const companyId = (doc?.extracted as { companyId?: string } | null)?.companyId;
+  if (!doc || !companyId) return false;
+  return withTx(ctx.database, async (tx) => {
+    await tx.db.execute(sql`select pg_advisory_xact_lock(hashtext(${`template:${companyId}`}))`);
+    const [open] = await tx.db
+      .select({ id: companyContractTemplates.id })
+      .from(companyContractTemplates)
+      .where(
+        and(eq(companyContractTemplates.sampleDocumentId, documentId), eq(companyContractTemplates.status, "proposed")),
+      );
+    if (open) return false;
+    await recordRun(
+      ctx,
+      tx,
+      "contract_structure",
+      { kind: "company", id: companyId },
+      ctx.rulesVersion,
+      {
+        result: { status: "failed", reasons: [reason], sourceDocIds: [documentId] },
+        attempts: 1,
+        latencyMs: 0,
+        inputHash: sha256Hex(documentId),
+      },
+      newId(),
+    );
+    return true;
+  });
+}
+
 /** When a "read again" was asked after the newest retired version from this sample, if it was. */
 async function reReadAskedAt(ctx: EngineContext, companyId: string, fromSample: { helperRunId: string | null }[]) {
   // When the newest of these versions was read (its helper run's Clock time).
@@ -1094,7 +1217,13 @@ export async function approveSample(
       const previous = await tx.db
         .select()
         .from(companyContractTemplates)
-        .where(and(eq(companyContractTemplates.companyId, companyId), eq(companyContractTemplates.status, "approved")))
+        .where(
+          and(
+            eq(companyContractTemplates.companyId, companyId),
+            eq(companyContractTemplates.status, "approved"),
+            inGroup(locked.emirate),
+          ),
+        )
         .for("update");
       for (const p of previous) {
         await tx.db
@@ -1127,8 +1256,17 @@ export async function approveSample(
         await tx.db
           .select({ id: companyContractTemplates.id })
           .from(companyContractTemplates)
-          .where(and(eq(companyContractTemplates.companyId, companyId), eq(companyContractTemplates.status, "retired")))
+          .where(
+            and(
+              eq(companyContractTemplates.companyId, companyId),
+              eq(companyContractTemplates.status, "retired"),
+              inGroup(locked.emirate),
+            ),
+          )
       ).map((r) => r.id);
+      // Rules with no template join only an "any emirate" template; a template for one emirate is found by the unit's
+      // emirate anyway, so it takes over only the rules that were on an older version of the same (company, emirate).
+      const noTemplate = locked.emirate === null ? isNull(contractRules.templateId) : undefined;
       const toMove = await tx.db
         .select({ id: contractRules.id })
         .from(contractRules)
@@ -1137,8 +1275,8 @@ export async function approveSample(
             eq(contractRules.companyId, companyId),
             eq(contractRules.active, true),
             retiredIds.length
-              ? or(isNull(contractRules.templateId), inArray(contractRules.templateId, retiredIds))
-              : isNull(contractRules.templateId),
+              ? or(noTemplate, inArray(contractRules.templateId, retiredIds))
+              : (noTemplate ?? sql`false`),
           ),
         )
         .for("update");

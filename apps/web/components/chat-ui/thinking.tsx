@@ -6,6 +6,18 @@ import { useEffect, useState } from "react";
 import { stepLabel } from "../../lib/copilot/step-labels";
 import type { ToolStep } from "../copilot/use-chat";
 
+/** A dot that pulses while the agent thinks (a soft ring grows and fades behind it). Still with reduced motion. */
+function PulseDot({ reduce }: { reduce: boolean | null }) {
+  return (
+    <span aria-hidden="true" className="relative inline-grid size-4 place-items-center">
+      {!reduce && (
+        <span className="absolute size-2.5 animate-[think-ring_1.4s_ease-out_infinite] rounded-full bg-ink/40" />
+      )}
+      <span className={`size-2 rounded-full bg-ink ${reduce ? "" : "animate-[think-dot_1.4s_ease-in-out_infinite]"}`} />
+    </span>
+  );
+}
+
 /**
  * The agent's steps for one answer: one row per tool call. Open and counting while it works; once
  * the answer starts it folds to "Worked for Ns, K steps" and can be reopened.
@@ -151,6 +163,20 @@ export function Thinking({
           </AnimatePresence>
         </ol>
       )}
+    </div>
+  );
+}
+
+/**
+ * Shown when the agent takes back what it started writing (it decided to look something up first, or the
+ * engine sent the draft back) and is writing the answer again: a pulsing dot with "Thinking…".
+ */
+export function Rethinking({ label = "Thinking…" }: { label?: string }) {
+  const reduce = useReducedMotion();
+  return (
+    <div className="flex items-center gap-2 py-1 font-sans text-[13px] text-muted" role="status">
+      <PulseDot reduce={reduce} />
+      <span>{label}</span>
     </div>
   );
 }

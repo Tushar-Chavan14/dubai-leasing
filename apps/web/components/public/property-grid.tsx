@@ -1,3 +1,4 @@
+import { EMIRATE_LABELS, EMIRATES } from "@leasing/core";
 import { ArrowUpRightIcon, CheckIcon, ChatCircleTextIcon } from "@phosphor-icons/react/dist/ssr";
 import Link from "next/link";
 import { type Chip, type GridFilters, SIZE_BANDS, aed, applyChip, isActive, toQuery } from "../../lib/grid-filters";
@@ -39,7 +40,11 @@ export function PropertyGrid({
   loadFailed: boolean;
   filters: GridFilters;
 }) {
-  const communities = [...new Set(options.map((u) => u.community))].toSorted();
+  // Only emirates that have an open listing; a single one needs no filter row.
+  const emirates = EMIRATES.filter((e) => options.some((u) => u.emirate === e));
+  const communities = [
+    ...new Set(options.filter((u) => !f.emirate || u.emirate === f.emirate).map((u) => u.community)),
+  ].toSorted();
   const categories = CATEGORIES.filter((c) => options.some((u) => u.category === c));
   const beds = [
     ...new Set(options.filter((u) => u.category === "residential").map((u) => Math.min(u.bedrooms ?? 0, 4))),
@@ -111,6 +116,8 @@ export function PropertyGrid({
         {!loadFailed && options.length > 0 && (
           <nav className="mb-6 flex flex-wrap items-center justify-between gap-x-6 gap-y-3" aria-label="Filters">
             <div className="flex flex-wrap items-center gap-2">
+              {emirates.length > 1 &&
+                emirates.map((e) => chip(EMIRATE_LABELS[e], f.emirate === e, { kind: "emirate", emirate: e }))}
               {categories.length > 1 &&
                 categories.map((c) => chip(t.category[c], f.category === c, { kind: "category", category: c }))}
               {showSize &&
@@ -196,7 +203,7 @@ function Card({ unit: u }: { unit: PublicUnitSummary }) {
           <span className="grid gap-0.5">
             <b className="text-base leading-snug font-semibold tracking-tight">{u.building}</b>
             <span className="text-sm text-muted">
-              {u.community}
+              {u.community}, {EMIRATE_LABELS[u.emirate]}
               {type ? ` · ${type}` : ""}
             </span>
             <span className="text-sm text-muted">{factsList(u).join(" · ")}</span>

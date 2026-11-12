@@ -12,6 +12,7 @@ import {
   OfferData,
   offerHelper,
   offerProblems,
+  offerRentFloorFils,
   OfferReplyContext,
   OfferReplyData,
   offerReplyClassifier,
@@ -425,5 +426,13 @@ describe("term end convention", () => {
     expect(String(termEnd("2026-12-01" as CalendarDate))).toBe("2027-11-30");
     expect(String(termEnd("2028-02-29" as CalendarDate))).toBe("2029-02-28");
     expect(String(termEnd("2027-03-01" as CalendarDate))).toBe("2028-02-29");
+  });
+});
+
+describe("offer rent floor (D60)", () => {
+  test("asking rent less the policy discount, in whole fils", () => {
+    expect(offerRentFloorFils(7_500_000, { maxRentDiscountPercent: 0 })).toBe(7_500_000);
+    expect(offerRentFloorFils(7_500_000, { maxRentDiscountPercent: 10 })).toBe(6_750_000);
+    expect(offerRentFloorFils(7_500_000, { maxRentDiscountPercent: 50 })).toBe(3_750_000);
   });
 });

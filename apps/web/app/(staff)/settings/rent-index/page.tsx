@@ -1,3 +1,4 @@
+import { EMIRATE_LABELS, type Emirate } from "@leasing/core";
 import type { Metadata } from "next";
 import { AskAi, AskAiMenu } from "../../../../components/ask-ai";
 import { EmptyState } from "../../../../components/ui/empty-state";
@@ -9,10 +10,11 @@ import { aedShort, bedroomsLabel, longDate } from "../../../../lib/format";
 import type { Me } from "../../../../lib/types";
 import { SriForm } from "./sri-form";
 
-export const metadata: Metadata = { title: "Smart Rental Index" };
+export const metadata: Metadata = { title: "Rent index" };
 
 interface SriRow {
   id: string;
+  emirate: Emirate;
   community: string;
   bedrooms: number;
   avgAnnualRentFils: number;
@@ -26,9 +28,9 @@ export default async function SriPage() {
   const list = rows ?? [];
   return (
     <SetPage
-      title="Smart Rental Index"
-      lede="The official DLD averages by community and size. Rent rules set each company's band around these values, and the renewal helper uses them for the legal rent cap. A value recorded on a lease overrides the table for that lease."
-      actions={<AskAiMenu label="Ask AI" prompts={askPrompts.settingsPage("Smart Rental Index")} />}
+      title="Rent index"
+      lede="The average rents by emirate, community and size. In Dubai, use the DLD Smart Rental Index averages. Rent rules set each company's band around these values, and the renewal helper uses them for the legal rent cap. A value recorded on a lease overrides the table for that lease."
+      actions={<AskAiMenu label="Ask AI" prompts={askPrompts.settingsPage("Rent index")} />}
     >
       <FormGrid
         preview={
@@ -44,7 +46,7 @@ export default async function SriPage() {
               <>
                 <SriForm />
                 <div>
-                  <AskAi label="Ask AI to add an SRI value" prompt="Add a Smart Rental Index value of AED " />
+                  <AskAi label="Ask AI to add a rent index value" prompt="Add a rent index value of AED " />
                 </div>
               </>
             ) : (
@@ -59,12 +61,13 @@ export default async function SriPage() {
         }
       >
         {list.length === 0 ? (
-          <EmptyState title="No SRI values yet" body="Without one, renewals are offered at the current rent." />
+          <EmptyState title="No rent index values yet" body="Without one, renewals are offered at the current rent." />
         ) : (
           <Panel className="overflow-x-auto">
             <table className={TABLE}>
               <thead>
                 <tr>
+                  <th className={TH}>Emirate</th>
                   <th className={TH}>Community</th>
                   <th className={TH}>Size</th>
                   <th className={`${TH} text-right`}>Average annual rent</th>
@@ -75,6 +78,7 @@ export default async function SriPage() {
               <tbody>
                 {list.map((r) => (
                   <tr key={r.id} className="group">
+                    <td className={TD}>{EMIRATE_LABELS[r.emirate] ?? r.emirate}</td>
                     <td className={`${TD} font-semibold`}>{r.community}</td>
                     <td className={TD}>{bedroomsLabel(r.bedrooms)}</td>
                     <td className={`${TD} text-right font-mono tabular-nums`}>{aedShort(r.avgAnnualRentFils)}</td>

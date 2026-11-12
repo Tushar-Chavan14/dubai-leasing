@@ -1,7 +1,13 @@
 import { type Addendum, isCompanyClauseRef, percentOfFloor } from "@leasing/core";
 import { applications, type Tx } from "@leasing/db";
 import { eq } from "drizzle-orm";
-import { type BlankFill, type ContractAgentContext, templateParagraphs, type TemplateBlank } from "@leasing/helpers";
+import {
+  type BlankFill,
+  type ContractAgentContext,
+  describesUnit,
+  templateParagraphs,
+  type TemplateBlank,
+} from "@leasing/helpers";
 import type { EngineContext } from "../context.ts";
 import { approvedClauses } from "./clause-refs.ts";
 import { fillTemplateBlanks, linkedParagraphs, parseTemplate, type TemplateRow } from "./company-templates.ts";
@@ -65,6 +71,17 @@ export async function contractAgentContext(
         ? Math.max(i.lease.depositFils, percentOfFloor(i.lease.annualRentFils, pct))
         : percentOfFloor(i.lease.annualRentFils, pct),
     landlordGaps: landlordGaps(i.company, i.landlord, today),
+    // D64: the only source a reworded template paragraph may use.
+    unitFacts: {
+      subtype: i.unit.subtype ?? null,
+      bedrooms: i.unit.bedrooms ?? null,
+      bathrooms: i.unit.bathrooms ?? null,
+      areaSqft: i.unit.areaSqft ?? null,
+      parkingSpaces: i.unit.parkingSpaces ?? null,
+      floor: i.unit.floor ?? null,
+      furnished: i.unit.furnished ?? null,
+      description: i.unit.description?.trim() || null,
+    },
   };
 }
 
@@ -96,7 +113,8 @@ async function printedTemplate(tx: Tx, row: TemplateRow, clauseIds: readonly str
     .flatMap((p) => {
       const over = Object.hasOwn(linked.paragraphs, p.key) ? linked.paragraphs[p.key] : undefined;
       if (over === null) return [];
-      return [{ key: p.key, text: over ?? p.text }];
+      // D64: only a paragraph about the unit (no legal or money terms, no company clause) may be reworded from its records.
+      return [{ key: p.key, text: over ?? p.text, rewritable: over === undefined && describesUnit(p.text) }];
     });
   return { id: row.id, version: row.version, paragraphs };
 }

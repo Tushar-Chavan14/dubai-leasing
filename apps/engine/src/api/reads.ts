@@ -1,5 +1,14 @@
 import { formatDubaiDateTime } from "@leasing/adapters";
-import { type CalendarDate, formatAed, maskPii, PropertyCategory, SIZE_BAND_LIMITS, SizeBand } from "@leasing/core";
+import {
+  type CalendarDate,
+  Emirate,
+  formatAed,
+  maskPii,
+  PropertyCategory,
+  rentIndexName,
+  SIZE_BAND_LIMITS,
+  SizeBand,
+} from "@leasing/core";
 import { companies, helperRuns, leaseParties, leases, parties, units, withTx } from "@leasing/db";
 import { RenewalContext, renewalHelper } from "@leasing/helpers";
 import {
@@ -47,6 +56,7 @@ export function registerReadRoutes(api: Hono<AuthEnv>, ctx: EngineContext) {
         /** Default is residential; `all` shows every category. */
         category: z.union([PropertyCategory, z.literal("all")]).optional(),
         sizeBand: SizeBand.optional(),
+        emirate: Emirate.optional(),
       })
       .parse(c.req.query());
     const now = ctx.clock.now();
@@ -78,6 +88,7 @@ export function registerReadRoutes(api: Hono<AuthEnv>, ctx: EngineContext) {
           code: q.code,
           companyId,
           category,
+          emirate: q.emirate,
           minAreaSqft: band?.min,
           maxAreaSqft: band?.max,
         },
@@ -101,6 +112,7 @@ export function registerReadRoutes(api: Hono<AuthEnv>, ctx: EngineContext) {
         community: u.community,
         company: names.get(u.companyId) ?? null,
         category: u.category,
+        emirate: u.emirate,
         bedrooms: u.bedrooms,
         bathrooms: u.bathrooms,
         areaSqft: u.areaSqft,
@@ -255,7 +267,7 @@ export function registerReadRoutes(api: Hono<AuthEnv>, ctx: EngineContext) {
       sources: r.sources,
       rules: {
         rent_cap: {
-          text: "At renewal, rent may rise only by the band for how far current rent is below the Smart Rental Index average for similar homes.",
+          text: `At renewal, rent may rise only by the band for how far current rent is below the ${rentIndexName(r.emirate)} average for similar homes.`,
           bands,
         },
         renewal_notice: {

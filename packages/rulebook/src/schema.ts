@@ -1,4 +1,4 @@
-import { type CalendarDate, isCalendarDate } from "@leasing/core";
+import { type CalendarDate, type Emirate, isCalendarDate } from "@leasing/core";
 import { z } from "zod";
 import { maxIncreasePercent } from "./rules.ts";
 import type { Rulebook } from "./types.ts";
@@ -145,7 +145,7 @@ export function loosenedVsBase(values: RulebookValues, base: Rulebook): Loosened
 
 export interface RulebookRow {
   version: string;
-  emirate: "dubai";
+  emirate: Emirate;
   effectiveFrom: string;
   values: unknown;
   referenceRules: unknown;
@@ -153,7 +153,8 @@ export interface RulebookRow {
 
 /** A validated, deep-frozen Rulebook from a stored row. Throws on invalid content. */
 export function rulebookFromRow(row: RulebookRow): Rulebook {
-  if (!/^[a-z]+-\d{4}-\d{2}(?:-\d{2})?$/.test(row.version)) throw new Error(`invalid rulebook version: ${row.version}`);
+  if (!/^[a-z]+(?:_[a-z]+)*-\d{4}-\d{2}(?:-\d{2})?$/.test(row.version))
+    throw new Error(`invalid rulebook version: ${row.version}`);
   if (!isCalendarDate(row.effectiveFrom)) throw new Error(`invalid effectiveFrom: ${row.effectiveFrom}`);
   const values = RulebookValues.parse(row.values);
   const referenceRules: ReferenceRule[] = ReferenceRules.parse(row.referenceRules);

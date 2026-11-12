@@ -198,6 +198,8 @@ export interface OfferMail {
   reservation: string;
   moveInOn: string;
   term: string;
+  /** "Registration fee (Ejari): AED x, paid by you" when the tenant pays and a schedule exists. */
+  registrationFeeLine?: string;
   expiresOn: string;
   offerUrl: string;
   statusUrl: string;
@@ -213,6 +215,7 @@ export function offerEmail(d: OfferMail): Rendered {
       ? `We have revised our offer for ${d.unitLabel} (reference ${d.reference}). Please review the terms below.`
       : `Your documents are checked. Here is our offer for ${d.unitLabel} (reference ${d.reference}).`,
     `Annual rent ${d.rent}, paid in ${d.cheques} cheques. Security deposit ${d.deposit}. Tenancy ${d.term}, move-in ${d.moveInOn}.`,
+    ...(d.registrationFeeLine ? [d.registrationFeeLine] : []),
     `To secure the unit, accept the offer and pay a reservation of ${d.reservation}. The offer is open until ${d.expiresOn}.`,
   ];
   const foot = footer(d.demo);
@@ -316,17 +319,20 @@ export interface EjariIssuedMail {
   ejariNo: string;
   /** The tenant's portal (report an issue, payments). */
   tenancyUrl?: string;
+  /** The registration system's name ("Ejari" in Dubai). Default "Ejari". */
+  systemName?: string;
   demo: boolean;
 }
 
 /** The lease is registered: the certificate is attached (labelled simulated in the demo). */
 export function ejariIssuedEmail(d: EjariIssuedMail): Rendered {
-  const subject = `Ejari registration ${d.demo ? "(simulated) " : ""}complete: ${d.unitLabel}`;
+  const sys = d.systemName ?? "Ejari";
+  const subject = `${sys} registration ${d.demo ? "(simulated) " : ""}complete: ${d.unitLabel}`;
   const paras = [
     `Dear ${d.name},`,
-    `Your tenancy of ${d.unitLabel} is registered in Ejari under number ${d.ejariNo}. The certificate is attached.`,
+    `Your tenancy of ${d.unitLabel} is registered in ${sys} under number ${d.ejariNo}. The certificate is attached.`,
     d.demo
-      ? "This is a demo: the registration was made in a simulated Ejari service, not with the Dubai Land Department."
+      ? "This is a demo: the registration was made in a simulated ${sys} service, not with the Dubai Land Department."
       : "You need the Ejari number to connect electricity and water with DEWA.",
     "The leasing team will contact you about the move-in date and keys.",
   ];
@@ -655,5 +661,61 @@ export function documentsChaseEmail(d: DocumentsChaseMail): Rendered {
   ];
   const foot = footer(d.demo);
   const text = [...paras, "", ...actions.map((a) => `${a.label}: ${a.url}`), "", foot].join("\n");
+  return { subject, text, html: layout(subject, paras, actions, foot) };
+}
+
+export interface CounterDeclinedMail {
+  applicantName: string;
+  unitLabel: string;
+  reference: string;
+  /** `open`: the current offer stands until `expiresOn`; `closed`: it had lapsed, the application is closed. */
+  outcome: "open" | "closed";
+  expiresOn: string;
+  /** Link to answer the standing offer (`open` only). */
+  offerUrl: string | null;
+  statusUrl: string;
+  demo: boolean;
+}
+
+/** Step 4 (D51): a leasing manager declined the applicant's counter-offer. */
+export function counterDeclinedEmail(d: CounterDeclinedMail): Rendered {
+  const subject = `Your counter-offer: ${d.unitLabel}`;
+  const paras = [
+    `Dear ${d.applicantName},`,
+    `Thank you for your counter-offer for ${d.unitLabel} (reference ${d.reference}). We are not able to accept it.`,
+    d.outcome === "open"
+      ? `Our current offer still stands and is open until ${d.expiresOn}. You can accept it, decline it or send another counter-offer through the link below.`
+      : `Our offer was open until ${d.expiresOn} and has now lapsed, so this application is closed. If you are still interested in the unit, contact the leasing team and we will help you apply again.`,
+    "If you have questions, please contact the leasing team.",
+  ];
+  const actions = [
+    ...(d.outcome === "open" && d.offerUrl ? [{ label: "Answer the offer", url: d.offerUrl }] : []),
+    { label: "View my application", url: d.statusUrl },
+  ];
+  const foot = footer(d.demo);
+  const text = [...paras, "", ...actions.map((a) => `${a.label}: ${a.url}`), "", foot].join("\n");
+  return { subject, text, html: layout(subject, paras, actions, foot) };
+}
+
+export interface OfferExpiredMail {
+  applicantName: string;
+  unitLabel: string;
+  reference: string;
+  expiresOn: string;
+  statusUrl: string;
+  demo: boolean;
+}
+
+/** Step 4 (D51): the offer lapsed without an answer; the application is closed. */
+export function offerExpiredEmail(d: OfferExpiredMail): Rendered {
+  const subject = `Offer lapsed: ${d.unitLabel}`;
+  const paras = [
+    `Dear ${d.applicantName},`,
+    `Our offer for ${d.unitLabel} (reference ${d.reference}) was open until ${d.expiresOn} and has lapsed, so this application is closed.`,
+    "If you are still interested in the unit, please contact the leasing team and we will help you apply again.",
+  ];
+  const actions = [{ label: "View my application", url: d.statusUrl }];
+  const foot = footer(d.demo);
+  const text = [...paras, "", `${actions[0]!.label}: ${actions[0]!.url}`, "", foot].join("\n");
   return { subject, text, html: layout(subject, paras, actions, foot) };
 }

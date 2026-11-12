@@ -1,4 +1,4 @@
-import { formatAed } from "@leasing/core";
+import { EMIRATE_LABELS, formatAed } from "@leasing/core";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Cta, GHOST, PAGE, PortalTitle, PRIMARY, Rows, Section } from "../../../../components/ui/portal";
@@ -38,7 +38,7 @@ export default async function PropertyPage({ params }: { params: Promise<{ token
             {p.building}
           </>
         }
-        sub={`${p.community}, Dubai`}
+        sub={`${p.community}, ${EMIRATE_LABELS[p.emirate]}`}
       />
 
       {closed ? (
