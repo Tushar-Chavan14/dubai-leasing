@@ -190,9 +190,21 @@ const WORDING_KEYS: [string, string][] = [
 ];
 for (const [key, label] of WORDING_KEYS) EXTRAS[key] = { type: "text", label, read: (r) => r.wording?.[key] };
 const RULEBOOK_KEYS: [string, string, string][] = [
-  ["renewalNoticeDays", "renewalNoticeDays", "Days of written notice before the term ends for a rent change on renewal (rulebook)"],
-  ["repossessionNoticeMonths", "repossessionNoticeMonths", "Months of notice for the landlord to end the tenancy at the end of the term (rulebook)"],
-  ["lateRentDays", "lateRentDaysAfterFormalReminder", "Days after the formal reminder before eviction can be sought (rulebook)"],
+  [
+    "renewalNoticeDays",
+    "renewalNoticeDays",
+    "Days of written notice before the term ends for a rent change on renewal (rulebook)",
+  ],
+  [
+    "repossessionNoticeMonths",
+    "repossessionNoticeMonths",
+    "Months of notice for the landlord to end the tenancy at the end of the term (rulebook)",
+  ],
+  [
+    "lateRentDays",
+    "lateRentDaysAfterFormalReminder",
+    "Days after the formal reminder before eviction can be sought (rulebook)",
+  ],
 ];
 for (const [key, col, label] of RULEBOOK_KEYS) EXTRAS[key] = { type: "int", label, read: (r) => r.rulebook?.[col] };
 EXTRAS.emirateName = {

@@ -1711,3 +1711,36 @@ The leasing assistant automates the work up to the contract. Staff should approv
   version of a template moves its rules (D69); then only gaps are filled.
 - **Any emirate.** A template for any emirate creates nothing.
 - **Result.** The approve response and the `COMPANY_TEMPLATE_APPROVED` event carry `rulesCreated`; the approval UI lists them.
+
+## D74 — Named placeholders and emirate variables: one generic template for every emirate
+
+- **Why.** The user wants one contract template for all seven emirates (`docs/templates/UAE_Generic_Tenancy_Contract.pdf`,
+  52 `{placeholders}`, no emirate named). The reader only knew empty blanks, and the data sheet had no emirate names or
+  rulebook periods.
+- **Placeholders.** `detectBlanks` also finds `{name}`, `[name]` and `<name>` (2 to 40 characters: letters, digits, space
+  and `_ - / .`, a letter first). Never `{{b1}}` tokens, `<< >>`, `[[ ]]` or page markers (`{n}`, `{N}`, `{page}`,
+  `{pages}`). A placeholder cut by a line or page break is joined. Kind `placeholder`; the label is the name in words.
+- **Mapping by name, code only.** An alias table (the generic template's names and synonyms), then a data key's own name
+  in any case (`community`, `tenant_name`, `tenantNameEn`), then the label rules. The words around a placeholder never
+  decide its type. An unknown name is `leave_empty` with the note "Unknown placeholder {x}" in the review and prints an
+  empty line, never its name. A template that uses placeholders is not read as a filled sample, and its other blanks
+  (signatures, dates, checklist lines) stay for hand-writing; only placeholders are filled from data (prepare re-mapping
+  as well).
+- **New data-sheet keys.** From the lease's rulebook (pinned if it is the unit's emirate's, else the one in force for the
+  emirate): `renewalNoticeDays`, `repossessionNoticeMonths`, `lateRentDays`. From the unit's emirate settings:
+  `registrationSystem`, `registeringAuthority`, `governingLaw`, `disputeBody`, `utilityProvider`; `emirateName`;
+  `additionalTerms`. All are core fields (never an empty line) and part of the contract input hash, so a settings change
+  makes a pending approval stale. Prepare stops (422) only when the template prints a rulebook value and the lease has no
+  rulebook of the unit's emirate: "No rulebook for <emirate>: publish one in Settings -> Rulebooks", or, when the lease is
+  pinned to another emirate's version, "Lease <ref> is pinned to <version>, not a <Emirate> rulebook; fix the lease's rules
+  version." There is no fallback to another version. The event carries `periodsRulesVersion`. Contract wording that was never
+  saved is the built-in default: the approval reasons say so, and Settings shows "Default — not yet confirmed".
+- **`{additional terms}`.** The addendum (company clauses and free text) prints at that paragraph, under the template's own
+  heading, instead of at the end. Header and footer placeholders are filled like the body.
+- **Contract wording (settings).** `RegistrationSettings.contractWording` (optional; five one-line plain texts of 1 to 200 characters, no period or amount),
+  per emirate on Settings -> Registration ("Printed in generic templates. Confirm with legal."), admin only, audited
+  with the other registration settings. A row saved without it uses the emirate's default (`DEFAULT_CONTRACT_WORDING`,
+  general public data: confirm with legal).
+- **Rules.** Rule 1: periods come from the pinned rulebook and names from settings, by code; no model fills any of them.
+  Rule 4: saving the wording is an event. Template approval (D70) is unchanged: a generic template names no emirate and
+  states no period, so its checks pass.

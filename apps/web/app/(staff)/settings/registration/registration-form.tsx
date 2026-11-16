@@ -27,6 +27,16 @@ export interface RegistrationRow {
   referenceExample: string;
   referencePattern: string;
   sources: string[];
+  /** D74: names generic contract templates print (saved, else the emirate's default). */
+  contractWording: {
+    registrationSystem: string;
+    registeringAuthority: string;
+    governingLaw: string;
+    disputeBody: string;
+    utilityProvider: string;
+  };
+  /** D74: an admin saved the wording; until then the built-in default shows. */
+  contractWordingSaved: boolean;
   source: "default" | "saved";
   forcedManual: boolean;
 }
@@ -38,6 +48,14 @@ export interface DocumentOption {
   group: "kyc_document" | "kyc_answer" | "other";
   companies?: string[];
 }
+
+const WORDING_FIELDS: { key: keyof RegistrationRow["contractWording"]; label: string; help: string }[] = [
+  { key: "registrationSystem", label: "Registration system", help: "For example Ejari" },
+  { key: "registeringAuthority", label: "Registering authority", help: "Who registers the contract" },
+  { key: "governingLaw", label: "Governing law", help: 'Printed after "governed by"' },
+  { key: "disputeBody", label: "Dispute body", help: 'Printed after "referred to"' },
+  { key: "utilityProvider", label: "Utility provider", help: "Electricity and water, for example DEWA" },
+];
 
 const GROUPS: { group: DocumentOption["group"]; title: string; help: string }[] = [
   {
@@ -205,6 +223,35 @@ export function RegistrationForm({
               {...inv("referencePattern")}
             />
           </SField>
+          <div className={`${SPAN[6]} grid gap-1`}>
+            <h3 className="m-0 flex items-center gap-2 font-sans text-[13px] font-semibold text-ink">
+              Contract wording
+              {!row.contractWordingSaved && (
+                <span className="rounded-full border border-line px-2.5 py-0.5 text-xs font-normal text-muted">
+                  Default — not yet confirmed
+                </span>
+              )}
+            </h3>
+            <p className="m-0 text-[12.5px] text-muted">Printed in generic templates. Confirm with legal.</p>
+          </div>
+          {WORDING_FIELDS.map((f) => (
+            <SField
+              key={f.key}
+              label={f.label}
+              help={f.help}
+              error={fe[`contractWording.${f.key}`]}
+              className={SPAN[3]}
+            >
+              <input
+                name={`contractWording.${f.key}`}
+                defaultValue={row.contractWording[f.key]}
+                maxLength={200}
+                disabled={ro}
+                className={SET_INPUT}
+                {...inv(`contractWording.${f.key}`)}
+              />
+            </SField>
+          ))}
           <SField label="Sources" error={fe.sources} help="One per line" className={SPAN[6]}>
             <textarea name="sources" defaultValue={row.sources.join("\n")} disabled={ro} className={SET_TEXTAREA} />
           </SField>

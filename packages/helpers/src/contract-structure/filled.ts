@@ -185,7 +185,16 @@ const LEAD_ONLY = /^[\s\W]*(?:(?:landlord|owner|lessor|tenant|lessee|and|party)\
  * a value runs from after its label to the next label or the end of the line. A label alone on its line takes the
  * next line as its value (table cells printed one per line).
  */
-export function detectFilledValues(lines: string[], startIndex: number): { lines: string[]; blanks: FilledBlank[] } {
+export function detectFilledValues(
+  lines: string[],
+  startIndex: number,
+  /**
+   * D74: ids of the named-placeholder blanks. A line holding one is a template row ("Community / area: {community}"),
+   * not a filled one, so its labels are not read; other lines (a sample's "Tenant Name Ahmed Example") still are.
+   * Values found by pattern (IDs, emails, dates ...) are blanked everywhere.
+   */
+  placeholderIds: ReadonlySet<string> = new Set(),
+): { lines: string[]; blanks: FilledBlank[] } {
   const blanks: FilledBlank[] = [];
   let party: Party | null = null;
   const next = () => `b${startIndex + blanks.length + 1}`;
@@ -225,9 +234,11 @@ export function detectFilledValues(lines: string[], startIndex: number): { lines
     }
     return tokens.join(" / ");
   };
+  const hasPlaceholder = (l: string) => [...l.matchAll(/\{\{(b\d+)\}\}/g)].some((m) => placeholderIds.has(m[1]!));
   let carry: { def: LabelDef; role: Party | null } | null = null;
   const out = lines.map((rawLine, lineNo) => {
     let line = rawLine;
+    if (hasPlaceholder(line)) return line;
     // D70: on a label row ("Layout 4 Bedrooms | 4 Bathrooms", "Payment Schedule 4 cheques of ...") a count in front of
     // its word is a blank. Never in prose: a row must start with a known label (or none but role words before it).
     const head = ALT.exec(line);
@@ -301,6 +312,7 @@ export function detectFilledValues(lines: string[], startIndex: number): { lines
   // second the tenant's; a single one takes the party named above it. Anything else is left as it is.
   const labelOnly = new RegExp(ALT.source, "i");
   const signed = out.map((line, lineNo) => {
+    if (hasPlaceholder(line)) return line;
     if (!/\b(?:signature|signatory)\s*:\s*\{\{b\d+\}\}/i.test(line)) return line;
     const parts = line.split(/(\{\{b\d+\}\})/);
     const names: { at: number; name: string; start: number }[] = [];

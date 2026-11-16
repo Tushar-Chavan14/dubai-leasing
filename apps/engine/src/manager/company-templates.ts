@@ -36,6 +36,7 @@ import {
   contractStructureHelper,
   EMPTY_REVIEW,
   effectiveStyle,
+  fillPlaceholderText,
   resuggestBlanks,
   SHEET_KEY_NAMES,
   SHEET_KEYS,
@@ -675,6 +676,8 @@ export async function renderCompanyContract(
     preview?: boolean;
     /** Values of the data-sheet keys beyond the contract fields (`sheetExtras`), copied from the records. */
     extras?: Record<string, string | number | null>;
+    /** D74: keys with no value and why (no published rulebook for the unit's emirate): a blank mapped to one fails with it. */
+    unavailable?: Readonly<Record<string, string>>;
     /** Blank mappings to use for this contract instead of the stored ones (a per-lease refresh; the row is untouched). */
     blanks?: TemplateBlank[];
     /** D47: the contract rule's clause ids (linked paragraphs print only for clauses in it); absent for a preview. */
@@ -740,6 +743,7 @@ export async function renderCompanyContract(
         preview: input.preview === true,
         emirate: input.emirate ?? (row.emirates.length === 1 ? row.emirates[0]! : "dubai"),
         ...(input.extras ? { extras: input.extras } : {}),
+        ...(input.unavailable ? { unavailable: input.unavailable } : {}),
       },
     );
   } catch (e) {
@@ -753,6 +757,11 @@ export async function renderCompanyContract(
     throw e;
   }
   const logo = await readLogo(ctx, tx, look.logoDocumentId);
+  const headerValues = {
+    ...input.extras,
+    ...input.fields,
+    contractOn: input.fields.contractOn ?? ctx.clock.today(),
+  };
   const pdf = await renderStyledPdf(
     { title: built.title, subject: input.subject },
     built.blocks,
@@ -763,8 +772,9 @@ export async function renderCompanyContract(
       sizes: look.style.sizes,
       headingBold: look.style.headingBold,
       accentColour: look.style.accentColour,
-      header: look.style.header,
-      footer: look.style.footer,
+      // D74: placeholders in a sample's header or footer ("{company name} | Tenancy Contract {contract no}") are filled too.
+      header: look.style.header ? fillPlaceholderText(look.style.header, headerValues, input.preview === true) : null,
+      footer: look.style.footer ? fillPlaceholderText(look.style.footer, headerValues, input.preview === true) : null,
     },
     { logo, watermark: input.preview ? "Preview" : (input.watermark ?? null) },
   ).catch((e: unknown) => {

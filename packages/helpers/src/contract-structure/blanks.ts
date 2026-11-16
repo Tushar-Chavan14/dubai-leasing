@@ -34,11 +34,18 @@ export function placeholderName(marker: string): string | null {
   const name = (m?.[1] ?? m?.[2] ?? m?.[3])?.trim();
   return name && /^[A-Za-z][A-Za-z0-9 _\-/.]{1,39}$/.test(name) && !PAGE_MARKER.test(name) ? name : null;
 }
+/** Replaces each placeholder of a plain text (a header or footer, not a template with tokens) with `fn(name, marker)`. Page markers stay. */
+export function replacePlaceholders(text: string, fn: (name: string, marker: string) => string): string {
+  return text.replace(PLACEHOLDER, (m, a?: string, b?: string, c?: string) => {
+    const name = (a ?? b ?? c ?? "").trim();
+    return PAGE_MARKER.test(name) ? m : fn(name, m);
+  });
+}
 /** A readable label for a placeholder's name ("property_community" gives "Property community"). */
 export function placeholderLabel(name: string): string {
   const words = name
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .replace(/[_\-]+/g, " ")
+    .replace(/[_-]+/g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
@@ -178,8 +185,7 @@ const CLOSERS: Record<string, string> = { "{": "}", "[": "]", "<": ">" };
 
 /**
  * D74: a placeholder that a line break (or a page break with its repeated header and footer already removed) cut in two
- * ("{registering" ... "authority}") is put back on the first line. Line numbers stay: the rest of the second line stays
- * where it was.
+ * ("{registering" ... "authority}") is put back on the first line. Line numbers stay: the second line is left empty.
  */
 function joinSplitPlaceholders(src: string[]): string[] {
   const out = [...src];
@@ -192,8 +198,10 @@ function joinSplitPlaceholders(src: string[]): string[] {
     if (next === undefined) continue;
     const m = /^\s*([A-Za-z0-9 _\-/.]{1,38}?)([}\]>])/.exec(next);
     if (!m || m[2] !== CLOSERS[open[1]!]) continue;
-    out[i] = `${out[i]!.trimEnd()} ${m[1]!.trim()}${m[2]}`;
-    out[j] = next.slice(m[0].length);
+    // The whole second line moves up (no paragraph break in the middle of the sentence); its own line stays, empty.
+    const rest = next.slice(m[0].length).trimStart();
+    out[i] = `${out[i]!.trimEnd()} ${m[1]!.trim()}${m[2]}${rest && !/^[).,;:]/.test(rest) ? " " : ""}${rest}`.trimEnd();
+    out[j] = "";
   }
   return out;
 }
@@ -299,7 +307,7 @@ export function validateMapping(proposed: string | undefined, label: string, b: 
   const info = sheetKeyInfo(p);
   if (!info) return { field: "unmapped", fieldType: null, note: "Proposed field is not a data field." };
   const type = info.type;
-  const inferred = inferBlankType(label, b.before, b.after);
+  const inferred = b.kind === "placeholder" ? null : inferBlankType(label, b.before, b.after);
   if (!compatible(inferred, type)) {
     return { field: "unmapped", fieldType: null, note: `Proposed field is ${type}; the blank asks for ${inferred}.` };
   }

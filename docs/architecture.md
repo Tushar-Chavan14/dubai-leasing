@@ -1585,6 +1585,12 @@ Key columns:
   moves its active rules (when the new version may serve them); a first version replaces nothing. Rules with no
   template move only to a company's first any-emirate template. `PATCH /api/companies/:id/contract-templates/:familyId`
   renames a template (admin, unique per company, `COMPANY_TEMPLATE_RENAMED`). The panel lists `families`.
+- D74: a template may use named placeholders (`{name}`, `[name]`, `<name>`; blank kind `placeholder`), mapped by name by
+  code (alias table, key names, label rules); unknown names stay empty with a review note. New data-sheet keys come from
+  the lease's rulebook (`renewalNoticeDays`, `repossessionNoticeMonths`, `lateRentDays`; none published: prepare 422) and
+  the emirate's `RegistrationSettings.contractWording` (`registrationSystem`, `registeringAuthority`, `governingLaw`,
+  `disputeBody`, `utilityProvider`), plus `emirateName`; all are in `sheetExtras` and the input hash. `{additional terms}`
+  places the addendum in the template. One generic template can serve every emirate.
 - D73: approving a template that names emirates also creates, in the same transaction and through `createContractRule`
   (actor = the approving admin), a generic rule (all types) for each of its emirates and each category the company
   offers, but only where no active rule overlaps that scope. Values come from the company's any-emirate rule of the

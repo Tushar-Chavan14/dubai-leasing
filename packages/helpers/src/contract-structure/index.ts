@@ -130,7 +130,13 @@ export function contractStructureHelper(
       const det0 = detectBlanks(kept.join("\n"), MAX_BLANKS + 1);
       // A filled sample: its people, numbers and dates become blanks here, by code, before any model sees the text.
       const maxId = det0.blanks.reduce((m, b) => Math.max(m, Number(b.id.slice(1))), 0);
-      const filled = detectFilledValues(det0.lines, maxId);
+      // D74: named placeholders say what each blank is, so a template that uses them is not read as a filled sample.
+      const placeholders = det0.blanks.some((b) => b.kind === "placeholder");
+      const filled = detectFilledValues(
+        det0.lines,
+        maxId,
+        new Set(det0.blanks.filter((b) => b.kind === "placeholder").map((b) => b.id)),
+      );
       const det = { lines: filled.lines, blanks: [...det0.blanks, ...filled.blanks] };
       const fixed = new Map(filled.blanks.map((b) => [b.id, b]));
       if (!det.blanks.length) {
@@ -196,7 +202,18 @@ export function contractStructureHelper(
           placeholder: phName ?? undefined,
         });
       }
-      const { proposals, model: modelName } = await proposeMappings(llm, items);
+      // D74: in a template with named placeholders every other blank (a signature, a date, a checklist line) is for
+      // writing by hand: the placeholders are the only blanks filled from data.
+      const { proposals, model: modelName } = await proposeMappings(
+        llm,
+        placeholders ? items.filter((it) => it.placeholder !== undefined || it.known) : items,
+      );
+      if (placeholders) {
+        for (const it of items) {
+          if (it.placeholder === undefined && !it.known)
+            proposals.set(it.id, { field: "leave_empty", source: "empty" });
+        }
+      }
       const unmapped = 0;
       const mapped: TemplateBlank[] = det.blanks.map((b) => {
         const signature = signatureIds.has(b.id);

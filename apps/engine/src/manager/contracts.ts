@@ -8,6 +8,8 @@ import {
   compareNames,
   CONTRACT_CLAUSES,
   ContractSignature,
+  type Emirate,
+  EMIRATE_LABELS,
   newId,
   propertyUsageFor,
   type ParagraphText,
@@ -52,12 +54,14 @@ import {
   sheetExtras,
   type TermCheck,
 } from "@leasing/helpers";
+import { activeRulesVersion, getRulebook, rulebookVersions } from "@leasing/rulebook";
 import { and, desc, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
 import { conflict, DomainError, notFound, unprocessable } from "../errors.ts";
 import { advance } from "./advance.ts";
 import { applyLeaseTerms, termInputs, termOverride, planFor } from "./lease-terms.ts";
 import { approvedClauses, resolveCompanyClauses } from "./clause-refs.ts";
+import { emirateContractWording } from "./registration-settings.ts";
 import {
   templateForUnit,
   parseTemplate,
@@ -84,6 +88,13 @@ import { matchContractRule, type PricingUnit } from "./pricing.ts";
  * personal single-use link; when everyone has signed, the signed PDF gets a signature record page
  * and the Manager fires CONTRACT_SIGNED with the approval. Nothing here sends to Ejari.
  */
+const WORDING_KEYS: ReadonlySet<string> = new Set([
+  "registrationSystem",
+  "registeringAuthority",
+  "governingLaw",
+  "disputeBody",
+  "utilityProvider",
+]);
 export const CONTRACT_PREPARE_JOB = "contract.prepare";
 export const CONTRACT_FINISH_JOB = "contract.finish";
 
@@ -149,6 +160,42 @@ export async function contractConfigHash(tx: Pick<Tx, "db">, unit: PricingUnit):
       clauses,
     }),
   );
+}
+
+/**
+ * D74: the rulebook whose periods a generic template prints: the one pinned on the lease, which must be the unit's
+ * emirate's (no fallback to another version: a mismatch is a data error to fix). `issue` says why there is none.
+ */
+export function contractRulebook(
+  lease: { ref: string; rulesVersion: string; startOn: CalendarDate },
+  emirate: Emirate,
+): { rb: ReturnType<typeof getRulebook> | null; issue: string | null } {
+  const label = EMIRATE_LABELS[emirate];
+  const get = (v: string | null) => {
+    try {
+      return v ? getRulebook(v) : null;
+    } catch {
+      return null;
+    }
+  };
+  const pinned = get(lease.rulesVersion);
+  if (pinned?.emirate === emirate) return { rb: pinned, issue: null };
+  const ofEmirate = rulebookVersions()
+    .map((v) => getRulebook(v))
+    .filter((r) => r.emirate === emirate);
+  const noRulebook = `No rulebook for ${label}: publish one in Settings → Rulebooks`;
+  if (!ofEmirate.length) return { rb: null, issue: noRulebook };
+  if (pinned) {
+    return {
+      rb: null,
+      issue: `Lease ${lease.ref} is pinned to ${pinned.version}, not a ${label} rulebook; fix the lease's rules version.`,
+    };
+  }
+  // The pinned version is unknown: the version in force when the term starts (`rulesVersionForTerm` semantics).
+  const inForce = get(activeRulesVersion(lease.startOn, emirate));
+  return inForce
+    ? { rb: inForce, issue: null }
+    : { rb: null, issue: `No ${label} rulebook is in force on ${lease.startOn}; publish one in Settings → Rulebooks.` };
 }
 
 /** The records a contract is copied from, as the helper receives them, and their hash. */
@@ -246,7 +293,32 @@ export async function contractInputs(tx: Tx, leaseId: string, planned?: OfferTer
     templateIssue = e;
   }
   // Data-sheet values beyond the contract fields (unit, company, party and offer columns): copied verbatim.
-  const extras = sheetExtras({ lease, unit, company, landlord, tenant, application: app });
+  // D74: the emirate's wording (settings) and the rulebook's periods, for generic templates; both by code.
+  const { wording, saved: wordingSaved } = await emirateContractWording(tx, unit.emirate);
+  const { rb, issue: rulebookIssue } = contractRulebook(lease, unit.emirate);
+  const extras = sheetExtras({
+    lease,
+    unit,
+    company,
+    landlord,
+    tenant,
+    application: app,
+    wording,
+    rulebook: rb
+      ? {
+          renewalNoticeDays: rb.renewalNoticeDays,
+          repossessionNoticeMonths: rb.repossessionNoticeMonths,
+          lateRentDaysAfterFormalReminder: rb.lateRentDaysAfterFormalReminder,
+        }
+      : null,
+  });
+  const unavailable = rb
+    ? undefined
+    : {
+        renewalNoticeDays: rulebookIssue!,
+        repossessionNoticeMonths: rulebookIssue!,
+        lateRentDays: rulebookIssue!,
+      };
   const hashed = template
     ? { ...context, template: templateKey(template), extras }
     : templateIssue && rule
@@ -265,6 +337,10 @@ export async function contractInputs(tx: Tx, leaseId: string, planned?: OfferTer
     template,
     templateIssue,
     extras,
+    unavailable,
+    /** D74: the rulebook the printed periods come from, and whether the emirate's contract wording was ever saved. */
+    periodsRulesVersion: rb?.version ?? null,
+    wordingSaved,
     inputHash: sha256Hex(JSON.stringify(hashed)),
   };
 }
@@ -718,6 +794,7 @@ export async function prepareContract(
         reference,
         subject,
         extras: i.extras,
+        ...(i.unavailable ? { unavailable: i.unavailable } : {}),
         emirate: i.unit.emirate,
         rewrites: pre.rewrites,
         ...(remap ? { blanks: remap.blanks } : {}),
@@ -814,6 +891,11 @@ export async function prepareContract(
         ...(filled.length
           ? [`Filled from the records (blank <- source): ${filled.map((f) => `${f.label} <- ${f.key}`).join("; ")}`]
           : []),
+        ...(i.template && !i.wordingSaved && filled.some((f) => WORDING_KEYS.has(f.key))
+          ? [
+              `Contract wording for ${EMIRATE_LABELS[i.unit.emirate]} is the built-in default; confirm it with legal in Settings → Registration.`,
+            ]
+          : []),
         ...(leftEmpty.length ? [`Left empty for hand-filling: ${leftEmpty.join(", ")}`] : []),
         ...(d.flags.length
           ? d.flags
@@ -847,6 +929,7 @@ export async function prepareContract(
         approvalId: approval.id,
         addendumFlags: d.flags.length,
         templateRewrites: i.template ? pre.rewrites.length : 0,
+        periodsRulesVersion: i.periodsRulesVersion,
         ...(d.addendum.removedClauses?.length ? { removedClauses: d.addendum.removedClauses } : {}),
         ...(i.template && pre.rewrites.length
           ? {
@@ -983,6 +1066,7 @@ async function renderPreviewIn(
         reference,
         subject,
         extras: i.extras,
+        ...(i.unavailable ? { unavailable: i.unavailable } : {}),
         emirate: i.unit.emirate,
         rewrites,
         watermark: "Preview",

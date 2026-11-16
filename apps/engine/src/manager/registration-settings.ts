@@ -1,5 +1,7 @@
 import {
   type Actor,
+  type ContractWording,
+  contractWordingFor,
   DEFAULT_REGISTRATION_SETTINGS,
   type Emirate,
   EMIRATE_LABELS,
@@ -17,7 +19,11 @@ import { appendEvent } from "./events.ts";
 import { companyKycConfig } from "./kyc-config.ts";
 import { registryFor } from "./registries.ts";
 
-export type EffectiveRegistrationSettings = RegistrationSettings & {
+export type EffectiveRegistrationSettings = Omit<RegistrationSettings, "contractWording"> & {
+  /** D74: the saved wording, else the emirate's default (a row saved before D74 has none). */
+  contractWording: ContractWording;
+  /** D74: an admin has saved the wording (else the built-in default is shown, not yet confirmed with legal). */
+  contractWordingSaved: boolean;
   source: "default" | "saved";
   /** The stored or default mode is online but no registry adapter exists, so staff register by hand. */
   forcedManual: boolean;
@@ -33,7 +39,24 @@ export async function settingsFor(
   // Rows are validated on write; an invalid stored row is a data error and throws.
   const values = row ? RegistrationSettings.parse(row.values) : DEFAULT_REGISTRATION_SETTINGS[emirate];
   const forcedManual = values.mode === "online" && !registryFor(ctx, emirate);
-  return { ...values, mode: forcedManual ? "manual" : values.mode, source: row ? "saved" : "default", forcedManual };
+  return {
+    ...values,
+    contractWording: contractWordingFor(values, emirate),
+    contractWordingSaved: values.contractWording !== undefined,
+    mode: forcedManual ? "manual" : values.mode,
+    source: row ? "saved" : "default",
+    forcedManual,
+  };
+}
+
+/** D74: the names a generic contract template prints for the emirate (saved, else default). Read by code at prepare. */
+export async function emirateContractWording(
+  tx: Pick<Tx, "db">,
+  emirate: Emirate,
+): Promise<{ wording: ContractWording; saved: boolean }> {
+  const [row] = await tx.db.select().from(registrationSettings).where(eq(registrationSettings.emirate, emirate));
+  const values = row ? RegistrationSettings.parse(row.values) : null;
+  return { wording: contractWordingFor(values, emirate), saved: values?.contractWording !== undefined };
 }
 
 export async function allSettings(ctx: EngineContext, tx: Tx) {
@@ -71,7 +94,12 @@ export async function saveRegistrationSettings(
     actor,
     payload: {
       emirate,
-      from: { mode: before.mode, portalName: before.portalName, source: before.source },
+      from: {
+        mode: before.mode,
+        portalName: before.portalName,
+        source: before.source,
+        contractWording: before.contractWording,
+      },
       to: values,
     },
     rulesVersion: ctx.rulesVersion,

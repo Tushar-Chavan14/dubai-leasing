@@ -3,12 +3,13 @@ import { z } from "zod";
 import { feesBlocks, scheduleBlocks } from "../contract/schedule.ts";
 import { addendumBlocks, addendumParagraphs, requiredTerms } from "../contract/template.ts";
 import { hasValues } from "../contract-template/values.ts";
-import { compatible, inferBlankType } from "./blanks.ts";
-import { sheetKeyInfo } from "./datasheet.ts";
+import { compatible, inferBlankType, replacePlaceholders } from "./blanks.ts";
+import { ADDITIONAL_TERMS_KEY, sheetKeyInfo } from "./datasheet.ts";
 import type { FieldType } from "./fields.ts";
 import { fixedValueKinds, isSampleOnlyText } from "./filled.ts";
 import { formatCalendarDate, formatMoneyFils } from "./format.ts";
 import { hasAuthorityMarks } from "./look.ts";
+import { matchPlaceholder } from "./mapping.ts";
 import type { NumberingStyle, TemplateBlank, TemplateSections, TemplateStyle } from "./schema.ts";
 
 /**
@@ -79,6 +80,15 @@ export const CORE_FIELDS: ReadonlySet<string> = new Set<string>([
   "tenancyPeriod",
   // Always set from the lease or offer (the move-in date falls back to the start date), so a null is a bug.
   "moveInOn",
+  // D74: the periods come from the rulebook and the names from the emirate's settings: never an empty line in a contract.
+  "renewalNoticeDays",
+  "repossessionNoticeMonths",
+  "lateRentDays",
+  "registrationSystem",
+  "registeringAuthority",
+  "governingLaw",
+  "disputeBody",
+  "utilityProvider",
 ]);
 
 /**
@@ -88,7 +98,9 @@ export const CORE_FIELDS: ReadonlySet<string> = new Set<string>([
 export const NEUTRAL_WHEN_ABSENT: Readonly<Record<string, string>> = { rentFreeDays: "0", reservationFils: "None" };
 
 /** What an empty blank prints: its own marker when it has one, else a plain line. */
-const emptyLine = (b: Pick<TemplateBlank, "marker">): string => (b.marker.trim() ? b.marker.trim() : "________");
+const emptyLine = (b: Pick<TemplateBlank, "marker" | "kind">): string =>
+  // A placeholder's marker is its name ("{tenant name}"): never printed.
+  b.marker.trim() && b.kind !== "placeholder" ? b.marker.trim() : "________";
 
 const blankName = (b: Pick<TemplateBlank, "id" | "label">) => `"${b.label}" (${b.id})`;
 
@@ -101,6 +113,8 @@ export function mappingProblem(b: TemplateBlank): string | null {
   if (b.field === "leave_empty" || b.field === "unmapped") return null;
   const info = sheetKeyInfo(b.field);
   if (!info) return `Blank ${blankName(b)} is mapped to "${b.field}", which is not a data field.`;
+  // D74: a placeholder's name says what it is; the words around it don't.
+  if (b.kind === "placeholder") return null;
   const inferred = inferBlankType(b.label, b.before, b.after);
   if (!compatible(inferred, info.type)) {
     return `Blank ${blankName(b)} is mapped to ${info.label} (${info.type}) but asks for ${inferred}.`;
@@ -413,6 +427,11 @@ export interface TemplateRenderOptions {
   demo: boolean;
   /** Values of the generated data-sheet keys beyond the contract fields (`sheetExtras`). */
   extras?: Record<string, string | number | null>;
+  /**
+   * D74: keys whose value can't be had, with the reason (a unit in an emirate with no published rulebook): a blank mapped
+   * to one fails the render with that reason instead of the generic "No value".
+   */
+  unavailable?: Readonly<Record<string, string>>;
   /** A preview with sample values: marked as such in the text (the PDF also gets a watermark). */
   preview?: boolean;
   /** The unit's emirate: decides the wording of the required terms. Default "dubai". */
@@ -460,6 +479,8 @@ export function templateContractBlocks(
     // Nothing chosen, or a choice that can't be used (unknown key, wrong type): an empty line, never a guess.
     if (b.field === "leave_empty" || b.field === "unmapped" || mappingProblem(b)) return empty(b);
     const info = sheetKeyInfo(b.field)!;
+    // D74: the addendum prints where the template says {additional terms}; the blank itself prints nothing.
+    if (b.field === ADDITIONAL_TERMS_KEY) return "";
     // A preview shows where each field lands: a marked placeholder, never a realistic value.
     if (o.preview) return `\u00ab${info.label}${info.type === "money_fils" ? " (AED)" : ""}\u00bb`;
     const v = formatField(b.field, values);
@@ -483,7 +504,7 @@ export function templateContractBlocks(
         return neutral;
       }
       if (CORE_FIELDS.has(b.field)) {
-        report(`No value for ${info.label} (blank ${blankName(b)}).`);
+        report(o.unavailable?.[b.field] ?? `No value for ${info.label} (blank ${blankName(b)}).`);
         return "";
       }
       return empty(b);
@@ -538,6 +559,21 @@ export function templateContractBlocks(
 
   const blocks: TemplateBlock[] = [];
   const texts: ParagraphText[] = [];
+  /** D74: the addendum was printed at a paragraph with an {additional terms} blank. */
+  let addendumPlaced = false;
+  const holdsAdditionalTerms = (text: string): boolean =>
+    [...text.matchAll(/\{\{(b\d+)\}\}/g)].some((m) => {
+      const b = byId.get(m[1]!);
+      return b?.role === "field" && b.field === ADDITIONAL_TERMS_KEY && !mappingProblem(b);
+    });
+  const printAddendum = () => {
+    texts.push(...addendumParagraphs(addendum));
+    for (const b of addendumBlocks(addendum)) {
+      // The template's own section heading stands for the "Addendum" one.
+      if (addendumPlaced && b.kind === "heading" && b.text === "Addendum") continue;
+      if (b.kind === "heading" || b.kind === "para" || b.kind === "list" || b.kind === "small") blocks.push(b);
+    }
+  };
   // Label of a paragraph: its own leading number and name ("4.5 Maintenance") or else its section's number and heading.
   const labelOf = (raw: string, sectionLabel: string): string => {
     const m = /^(\d+(?:\.\d+)+\.?)\s+([^:.\n]{1,40})/.exec(raw.replace(/\{\{b\d+\}\}/g, "").trim());
@@ -579,6 +615,10 @@ export function templateContractBlocks(
         blocks.push(b);
         if (b.kind === "para") seen.push(b.text);
       }
+      if (!addendumPlaced && linked === undefined && holdsAdditionalTerms(p)) {
+        addendumPlaced = true;
+        printAddendum();
+      }
       // Signature lines are not text for marking; a paragraph that is only signature lines gives no entry.
       const body = made.flatMap((b) => (b.kind === "para" ? [b.text] : [])).join(" ");
       if (body) {
@@ -596,11 +636,8 @@ export function templateContractBlocks(
     }
   }
 
-  // Company clauses and parties' free text, as in the standard contract.
-  texts.push(...addendumParagraphs(addendum));
-  for (const b of addendumBlocks(addendum)) {
-    if (b.kind === "heading" || b.kind === "para" || b.kind === "list" || b.kind === "small") blocks.push(b);
-  }
+  // Company clauses and parties' free text, as in the standard contract (at the end unless the template placed them).
+  if (!addendumPlaced) printAddendum();
 
   // The payment schedule (cheque dates and amounts from `paymentSchedule`), always: it is the record of what is due.
   if (o.preview) {
@@ -668,6 +705,20 @@ export function templateContractBlocks(
     filled,
     paragraphs: texts,
   };
+}
+
+/**
+ * D74: a header or footer with named placeholders (`{company name} | Tenancy Contract {contract no}`) filled from the same
+ * values as the body (a name the sheet doesn't know prints as an empty line). Page markers stay for the PDF renderer.
+ */
+export function fillPlaceholderText(text: string, values: Record<string, unknown>, preview = false): string {
+  return replacePlaceholders(text, (name) => {
+    const key = matchPlaceholder(name);
+    const info = key && key !== "leave_empty" ? sheetKeyInfo(key) : null;
+    if (!key || !info) return "________";
+    if (preview) return `\u00ab${info.label}\u00bb`;
+    return formatField(key, values) ?? "________";
+  });
 }
 
 /** Demo values for the "Preview contract" button (fictional; never stored on a contract). */

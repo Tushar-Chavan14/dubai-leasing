@@ -4,6 +4,7 @@ import { MAX_SECTIONS } from "./schema.ts";
 
 const NUMBER_PREFIX =
   /^((?:Article|ARTICLE|Clause|CLAUSE|Section|SECTION)\s+[IVXLC\d]+[.:)]?|\d+(?:\.\d+)*[.)]?|[IVXLC]+[.)]|[A-Z][.)])\s+(\S.*)$/;
+const FORM_ROW = /^[^:{}]{1,60}:\s*\{\{b\d+\}\}/;
 const PARA_START = /^(?:\d+(?:\.\d+)+[.)]?\s|\d+[.)]\s|\([a-z0-9ivx]+\)\s|[a-z][.)]\s|[-•*]\s)/;
 
 /** Splits "1.2 Rent" into `["1.2", "Rent"]`; a line with no number prefix gives `[null, line]`. */
@@ -39,7 +40,8 @@ export function toParagraphs(lines: string[]): string[] {
       cur = "";
       continue;
     }
-    if (cur && (PARA_START.test(line) || /[.:;!?]$/.test(cur))) {
+    // D74: a form row ("Landlord: {{b3}}") is its own paragraph, though the row before it has no full stop.
+    if (cur && (PARA_START.test(line) || /[.:;!?]$/.test(cur) || FORM_ROW.test(line))) {
       out.push(cur);
       cur = line;
     } else cur = cur ? `${cur} ${line}` : line;

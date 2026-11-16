@@ -21,6 +21,13 @@ export async function saveRegistration(_prev: RuleResult, formData: FormData): P
     referenceExample: String(formData.get("referenceExample") ?? ""),
     referencePattern: String(formData.get("referencePattern") ?? ""),
     sources,
+    // D74: the names a generic contract template prints for this emirate.
+    contractWording: Object.fromEntries(
+      ["registrationSystem", "registeringAuthority", "governingLaw", "disputeBody", "utilityProvider"].map((k) => [
+        k,
+        String(formData.get(`contractWording.${k}`) ?? ""),
+      ]),
+    ),
   };
   const r = await engine(`/api/registration-settings/${encodeURIComponent(emirate)}`, {
     method: "PUT",

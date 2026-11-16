@@ -1,4 +1,5 @@
 import type { Llm } from "@leasing/llm";
+import { placeholderName } from "./blanks.ts";
 import { sheetKeyInfo } from "./datasheet.ts";
 import { contextParty, partyIn, proposeMappings, templateLines } from "./mapping.ts";
 import { formatField, NEUTRAL_WHEN_ABSENT } from "./render.ts";
@@ -29,9 +30,12 @@ export async function remapForData(
     !!sheetKeyInfo(key) && (formatField(key, values) !== null || NEUTRAL_WHEN_ABSENT[key] !== undefined);
   const lines = templateLines(sections);
   const lineOf = (id: string) => lines.findIndex((l) => l.includes(`{{${id}}}`));
+  // D74: in a template with named placeholders only the placeholders are filled from data; the other blanks are for hand-writing.
+  const usesPlaceholders = blanks.some((b) => b.kind === "placeholder");
   const todo = blanks.filter(
     (b) =>
       b.role === "field" &&
+      (!usesPlaceholders || b.kind === "placeholder") &&
       b.source !== "admin" &&
       (b.field === "leave_empty" || b.field === "unmapped" || !hasValue(b.field)),
   );
@@ -44,6 +48,8 @@ export async function remapForData(
       before: b.before,
       after: b.after,
       party: partyIn(b.label) ?? contextParty(lines, Math.max(0, lineOf(b.id))),
+      // D74: a named placeholder is read by its name (code only), so an unknown one never reaches the model.
+      placeholder: b.kind === "placeholder" ? (placeholderName(b.marker) ?? b.label) : undefined,
     })),
   );
   const changes: Remapped["changes"] = [];

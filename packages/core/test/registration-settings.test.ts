@@ -91,15 +91,50 @@ describe("checklist items (D62)", () => {
   });
   test("D74: contract wording is checked: no empty or long text, no extra keys", () => {
     const w = DEFAULT_CONTRACT_WORDING.dubai;
-    expect(RegistrationSettings.safeParse({ ...base, contractWording: { ...w, utilityProvider: "FEWA" } }).success).toBe(
-      true,
-    );
-    expect(RegistrationSettings.safeParse({ ...base, contractWording: { ...w, governingLaw: "  " } }).success).toBe(false);
-    expect(RegistrationSettings.safeParse({ ...base, contractWording: { ...w, disputeBody: "x".repeat(201) } }).success).toBe(
+    expect(
+      RegistrationSettings.safeParse({ ...base, contractWording: { ...w, utilityProvider: "FEWA" } }).success,
+    ).toBe(true);
+    expect(RegistrationSettings.safeParse({ ...base, contractWording: { ...w, governingLaw: "  " } }).success).toBe(
       false,
     );
+    expect(
+      RegistrationSettings.safeParse({ ...base, contractWording: { ...w, disputeBody: "x".repeat(201) } }).success,
+    ).toBe(false);
     expect(RegistrationSettings.safeParse({ ...base, contractWording: { ...w, extra: "x" } }).success).toBe(false);
-    expect(RegistrationSettings.safeParse({ ...base, contractWording: { registrationSystem: "Ejari" } }).success).toBe(false);
-    expect(contractWordingFor({ contractWording: { ...w, utilityProvider: "FEWA" } }, "sharjah").utilityProvider).toBe("FEWA");
+    expect(RegistrationSettings.safeParse({ ...base, contractWording: { registrationSystem: "Ejari" } }).success).toBe(
+      false,
+    );
+    expect(contractWordingFor({ contractWording: { ...w, utilityProvider: "FEWA" } }, "sharjah").utilityProvider).toBe(
+      "FEWA",
+    );
+  });
+  test("D74: wording is one line of plain text", () => {
+    const w = DEFAULT_CONTRACT_WORDING.dubai;
+    for (const bad of ["two\nlines", "tab\there", "zero\u200bwidth", "bell\u0007"])
+      expect(RegistrationSettings.safeParse({ ...base, contractWording: { ...w, governingLaw: bad } }).success).toBe(
+        false,
+      );
+  });
+  test("D74: wording carries no period or amount; a law citation is fine", () => {
+    const w = DEFAULT_CONTRACT_WORDING.dubai;
+    for (const bad of [
+      "notice of 60 days",
+      "within 12 months",
+      "2 years",
+      "30 calendar days",
+      "AED 500",
+      "500 dirhams",
+    ]) {
+      const r = RegistrationSettings.safeParse({ ...base, contractWording: { ...w, governingLaw: bad } });
+      expect(r.success).toBe(false);
+      expect(JSON.stringify(r.error?.issues)).toContain("Periods and amounts come from the rulebook and the lease");
+    }
+    const ok = RegistrationSettings.safeParse({
+      ...base,
+      contractWording: { ...w, governingLaw: "Law No. 26 of 2007 as amended by Law No. 33 of 2008" },
+    });
+    expect(ok.success).toBe(true);
+    for (const e of EMIRATES)
+      expect(RegistrationSettings.safeParse(DEFAULT_REGISTRATION_SETTINGS[e]).success).toBe(true);
   });
 });

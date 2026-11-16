@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LocalDiskStore } from "@leasing/adapters";
-import { type CalendarDate, type Emirate, newId, type OfferTerms } from "@leasing/core";
+import { type CalendarDate, DEFAULT_REGISTRATION_SETTINGS, type Emirate, newId, type OfferTerms } from "@leasing/core";
 import {
   applications,
   actionLinks,
@@ -26,6 +26,7 @@ import {
 } from "@leasing/db";
 import {
   buildEjariPayload,
+  contractStructureHelper,
   DEFAULT_STYLE,
   EMPTY_REVIEW,
   encodePng,
@@ -37,12 +38,13 @@ import {
   type TemplateStyle,
   templateParagraphs,
 } from "@leasing/helpers";
-import { FakeLlm } from "@leasing/llm";
+import { FakeLlm, type ChatMessage } from "@leasing/llm";
+import { dubai2025_01, registerRulebook, resetRulebookRegistry } from "@leasing/rulebook";
 import { and, eq } from "drizzle-orm";
 import { createApi } from "../src/api/app.ts";
 import { backfillTemplateClauseLinks, templateForUnit } from "../src/manager/company-templates.ts";
 import { contractAgentContext } from "../src/manager/contract-agent-backend.ts";
-import { contractInputs } from "../src/manager/contracts.ts";
+import { contractInputs, contractRulebook } from "../src/manager/contracts.ts";
 import { issueToken } from "../src/api/auth.ts";
 import { decideApproval } from "../src/manager/approvals.ts";
 import { DEFAULT_ADDENDUM, prepareContract } from "../src/manager/contracts.ts";
@@ -2125,5 +2127,268 @@ describe.skipIf(noDb)("D73: approving a template creates its emirates' generic r
     const id = await s.propose({ emirates: ["sharjah"] });
     expect((await s.approveSample(id, { checked: true }, s.officer)).status).toBe(403);
     expect(await activeRules(s.companyId)).toHaveLength(0);
+  });
+});
+
+describe.skipIf(noDb)("D74: one generic template for every emirate", () => {
+  beforeEach(async () => {
+    database = await freshDatabase();
+  });
+
+  /** The generic UAE template, read the way an upload is: placeholders found and mapped by code, model answers scripted. */
+  const readGeneric = async () => {
+    const bytes = new Uint8Array(
+      readFileSync(new URL("../../../docs/templates/UAE_Generic_Tenancy_Contract.pdf", import.meta.url)),
+    );
+    const llm = new FakeLlm(
+      () => new Error("no decide"),
+      undefined,
+      (messages: ChatMessage[]) =>
+        messages[0]!.content.includes("You match blanks")
+          ? { blanks: [] }
+          : {
+              sections: [
+                "PARTIES",
+                "PROPERTY",
+                "TERM, RENT AND PAYMENT",
+                "TERMS AND CONDITIONS",
+                "ADDITIONAL TERMS",
+                "DECLARATIONS",
+                "ANNEXURE A - HANDOVER AND CONDITION CHECKLIST",
+              ].map((heading) => ({ heading })),
+              blanks: [],
+            },
+    );
+    const r = await contractStructureHelper(llm, { readFile: async () => bytes }).run({
+      runId: "r",
+      entity: { kind: "company", id: "c" },
+      step: "s",
+      context: { docId: "d" },
+      rulesVersion: "dubai-2025-01",
+      now: "2026-10-28T00:00:00Z",
+    });
+    expect(r.status).toBe("ok");
+    return (r as { data: { sections: TemplateSections; blanks: TemplateBlank[]; style: TemplateStyle } }).data;
+  };
+  const approveGeneric = async (s: S) => {
+    const t = await readGeneric();
+    const id = await s.propose({ emirates: [], sections: t.sections, blanks: t.blanks, style: t.style });
+    const r = await s.approveSample(id);
+    expect(r.status).toBe(200);
+    return { id, ...t };
+  };
+  const prepare = async (s: S) => {
+    const p = await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system" });
+    expect(p.status).toBe("prepared");
+    const rows = await contractRows(s.leaseId);
+    return pdfText(s, rows[rows.length - 1]!.documentId!);
+  };
+
+  test("every placeholder of the generic PDF is mapped, and the template is approved for any emirate with no blockers", async () => {
+    const s = await setup();
+    const t = await readGeneric();
+    const ph = t.blanks.filter((b) => b.kind === "placeholder");
+    expect(new Set(ph.map((b) => b.marker)).size).toBe(52);
+    // Only the placeholders the template names: nothing unknown, nothing left empty.
+    expect(ph.filter((b) => b.field === "leave_empty" || b.note).map((b) => b.marker)).toEqual([]);
+    const byName = Object.fromEntries(ph.map((b) => [b.marker, b.field]));
+    expect(byName).toMatchObject({
+      "{emirate}": "emirateName",
+      "{contract no}": "leaseRef",
+      "{renewal notice days}": "renewalNoticeDays",
+      "{late rent days}": "lateRentDays",
+      "{repossession notice months}": "repossessionNoticeMonths",
+      "{registration system}": "registrationSystem",
+      "{registering authority}": "registeringAuthority",
+      "{governing law}": "governingLaw",
+      "{dispute body}": "disputeBody",
+      "{utility provider}": "utilityProvider",
+      "{additional terms}": "additionalTerms",
+      "{no of cheques}": "cheques",
+    });
+    // The signatory is a name to print, not a signature line.
+    expect(t.blanks.find((b) => b.marker === "{signatory name}")?.role).toBe("field");
+    const { id } = await approveGeneric(s);
+    expect((await templateRow(id)).status).toBe("approved");
+    expect((await templateRow(id)).emirates).toEqual([]);
+  });
+
+  test("a Dubai lease prints Ejari, 90 days and DEWA, with the addendum under Additional terms", async () => {
+    const s = await setup();
+    await approveGeneric(s);
+    const text = await prepare(s);
+    expect(text).toContain("Emirate: Dubai");
+    // Each form row is its own line; "Community / area" is one label, and the checklist is left to write by hand.
+    expect(text).toContain("Community / area: Dubai Marina");
+    expect(text).toContain("Bedrooms: ________");
+    expect(text).toContain("Ejari");
+    expect(text).toContain("90 days");
+    expect(text).toContain("DEWA");
+    expect(text).toContain("Dubai Land Department");
+    expect(text).toContain("Test Company | Tenancy Contract MRN-1608/2026-12");
+    expect(text).not.toMatch(/\{[a-z ]+\}/);
+    expect(text.indexOf("ADDITIONAL TERMS")).toBeLessThan(text.indexOf("Minor maintenance"));
+    expect(text.indexOf("Minor maintenance")).toBeLessThan(text.indexOf("DECLARATIONS"));
+  });
+
+  test("a Sharjah lease prints Sharjah Municipality, 15 days and SEWA", async () => {
+    const s = await setup();
+    await approveGeneric(s);
+    registerRulebook({
+      ...dubai2025_01,
+      version: "sharjah-2025-01",
+      emirate: "sharjah",
+      lateRentDaysAfterFormalReminder: 15,
+    });
+    try {
+      await database.db.update(units).set({ emirate: "sharjah" }).where(eq(units.id, s.unitId));
+      await database.db.update(leases).set({ rulesVersion: "sharjah-2025-01" }).where(eq(leases.id, s.leaseId));
+      const text = await prepare(s);
+      expect(text).toContain("Emirate: Sharjah");
+      expect(text).toContain("Sharjah Municipality");
+      expect(text).toContain("15 days");
+      expect(text).toContain("SEWA");
+      expect(text).not.toContain("DEWA");
+      expect(text).not.toContain("Ejari");
+    } finally {
+      resetRulebookRegistry();
+    }
+  });
+
+  test("a changed emirate wording makes a pending contract stale and prints the new words", async () => {
+    const s = await setup();
+    await approveGeneric(s);
+    const before = await withTx(database, (tx) => contractInputs(tx, s.leaseId));
+    const r = await s.api("/registration-settings/dubai", "PUT", {
+      ...DEFAULT_REGISTRATION_SETTINGS.dubai,
+      contractWording: { ...DEFAULT_REGISTRATION_SETTINGS.dubai.contractWording!, utilityProvider: "FEWA Test" },
+    });
+    expect(r.status).toBe(200);
+    const after = await withTx(database, (tx) => contractInputs(tx, s.leaseId));
+    expect(after.inputHash).not.toBe(before.inputHash);
+    expect(await prepare(s)).toContain("FEWA Test");
+  });
+
+  test("an emirate with no published rulebook can't be prepared: 422 saying so", async () => {
+    const s = await setup();
+    await approveGeneric(s);
+    await database.db.update(units).set({ emirate: "ajman" }).where(eq(units.id, s.unitId));
+    const err = await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system" }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toMatchObject({ status: 422, code: "template_blank_unfilled" });
+    expect((err as Error).message).toContain("No rulebook for Ajman: publish one in Settings → Rulebooks");
+    expect(await contractRows(s.leaseId)).toHaveLength(0);
+  });
+
+  test("a lease pinned to another emirate's rulebook is refused, not silently re-pinned", async () => {
+    const s = await setup();
+    await approveGeneric(s);
+    registerRulebook({ ...dubai2025_01, version: "sharjah-2025-01", emirate: "sharjah" });
+    try {
+      await database.db.update(units).set({ emirate: "sharjah" }).where(eq(units.id, s.unitId));
+      const err = await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system" }).catch(
+        (e: unknown) => e,
+      );
+      expect(err).toMatchObject({ status: 422 });
+      expect((err as Error).message).toContain(
+        "Lease MRN-1608/2026-12 is pinned to dubai-2025-01, not a Sharjah rulebook; fix the lease's rules version.",
+      );
+    } finally {
+      resetRulebookRegistry();
+    }
+  });
+
+  test("a term starting before every version of the emirate says which date has no rulebook", () => {
+    registerRulebook({
+      ...dubai2025_01,
+      version: "sharjah-2030-01",
+      emirate: "sharjah",
+      effectiveFrom: "2030-01-01" as CalendarDate,
+    });
+    try {
+      const lease = { ref: "L-1", rulesVersion: "unknown-version", startOn: "2026-12-01" as CalendarDate };
+      expect(contractRulebook(lease, "sharjah")).toEqual({
+        rb: null,
+        issue: "No Sharjah rulebook is in force on 2026-12-01; publish one in Settings → Rulebooks.",
+      });
+      expect(contractRulebook(lease, "ajman").issue).toBe("No rulebook for Ajman: publish one in Settings → Rulebooks");
+      expect(contractRulebook({ ...lease, rulesVersion: "dubai-2025-01" }, "dubai").rb?.version).toBe("dubai-2025-01");
+    } finally {
+      resetRulebookRegistry();
+    }
+  });
+
+  test("the event records the rulebook the periods came from; default wording is flagged until an admin saves it", async () => {
+    const s = await setup();
+    await approveGeneric(s);
+    await prepare(s);
+    const reasons = async () =>
+      (
+        await database.db
+          .select()
+          .from(approvals)
+          .where(and(eq(approvals.entityId, s.leaseId), eq(approvals.gate, "final_contract")))
+      ).flatMap((a) => a.reasons as string[]);
+    const [ev] = await database.db
+      .select()
+      .from(leaseEvents)
+      .where(and(eq(leaseEvents.entityId, s.leaseId), eq(leaseEvents.type, "CONTRACT_PREPARED")));
+    expect((ev!.payload as { periodsRulesVersion: string }).periodsRulesVersion).toBe("dubai-2025-01");
+    const flag =
+      "Contract wording for Dubai is the built-in default; confirm it with legal in Settings → Registration.";
+    expect(await reasons()).toContain(flag);
+    // Saved by an admin: no flag on the next version.
+    const r = await s.api("/registration-settings/dubai", "PUT", DEFAULT_REGISTRATION_SETTINGS.dubai);
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as { contractWordingSaved: boolean }).contractWordingSaved).toBe(true);
+    await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system", reprepare: true });
+    const [, second] = await database.db
+      .select()
+      .from(approvals)
+      .where(and(eq(approvals.entityId, s.leaseId), eq(approvals.gate, "final_contract")))
+      .orderBy(approvals.createdAt);
+    expect(second!.reasons as string[]).not.toContain(flag);
+  });
+
+  describe("approval still checks the raw wording of a template with placeholders", () => {
+    const sections = (para: string): TemplateSections => ({
+      numbering: "decimal",
+      title: "TENANCY CONTRACT",
+      items: [{ id: "s1", number: "1.", heading: "TERMS", paragraphs: [para, "Tenant: {{b1}}"] }],
+    });
+    const blanks = [
+      {
+        id: "b1",
+        kind: "placeholder" as const,
+        marker: "{tenant name}",
+        label: "Tenant name",
+        field: "tenantNameEn",
+        fieldType: "text" as const,
+        role: "field" as const,
+        sectionIndex: 0,
+        before: "Tenant: ",
+        after: "",
+      },
+    ];
+    const refused = async (para: string) => {
+      const s = await setup();
+      const id = await s.propose({ emirates: [], sections: sections(para), blanks });
+      const r = await s.approveSample(id);
+      expect(r.status).toBe(422);
+      const body = (await r.json()) as { code: string; reasons: string[] };
+      expect(body.code).toBe("template_legal_wording");
+      return body.reasons.join(" ");
+    };
+    test("a hard-coded notice period that differs from the rulebook", async () => {
+      expect(
+        await refused("Any rent increase on renewal needs written notice at least 60 days before the term ends."),
+      ).toContain("60");
+    });
+    test("another emirate's law or system named in an any-emirate template", async () => {
+      expect(await refused("This contract is governed by the laws of Dubai and registered in Ejari.")).toMatch(
+        /Dubai|Ejari/,
+      );
+    });
   });
 });

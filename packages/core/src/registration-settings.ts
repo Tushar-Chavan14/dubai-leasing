@@ -68,7 +68,19 @@ export function documentKeyLabel(key: string, fieldLabels?: ReadonlyMap<string, 
 /** Labels of the fixed and standard KYC items (company fields need their form; see documentKeyLabel). */
 export const DOCUMENT_KEY_LABELS: Record<FixedDocumentKey | `kyc:${KycDocumentKind}`, string> = FIXED_LABELS;
 
-const WORDING = z.string().trim().min(1).max(200);
+/** Plain one-line text (no control or format characters), and no period or amount: those come from the rulebook and the lease. */
+const WORDING = z
+  .string()
+  .trim()
+  .min(1)
+  .max(200)
+  .regex(/^[^\p{Cc}\p{Cf}]+$/u, "plain text on one line")
+  .refine(
+    (v) =>
+      !/\b\d+\s*(?:calendar\s+|working\s+)?(?:days?|months?|years?)\b/i.test(v) &&
+      !/\bAED\b|\bdirhams?\b|\bdhs?\b/i.test(v),
+    "Periods and amounts come from the rulebook and the lease, not this wording.",
+  );
 
 /**
  * D74: the emirate's names a generic contract template prints ("registered with {registration system} ({registering
@@ -158,61 +170,67 @@ const MANUAL_DOCS: DocumentKey[] = [
   "previous_registration_cancelled",
 ];
 
-/** D74 defaults, from general public data (confirm with legal): the names a generic template prints per emirate. */
+/**
+ * D74 defaults (docs/templates/emirate-values.md, from public law-firm and press summaries, 2026-11-16; confirm with
+ * legal): the names a generic template prints per emirate. Admins change them in Settings → Registration.
+ */
 export const DEFAULT_CONTRACT_WORDING: Record<Emirate, ContractWording> = {
   dubai: {
     registrationSystem: "Ejari",
-    registeringAuthority: "Dubai Land Department",
-    governingLaw: "the laws of the Emirate of Dubai",
-    disputeBody: "the Rental Disputes Settlement Centre in Dubai",
+    registeringAuthority: "Dubai Land Department (RERA)",
+    governingLaw: "Dubai Law No. 26 of 2007 as amended by Law No. 33 of 2008",
+    disputeBody: "the Rental Disputes Centre in Dubai",
     utilityProvider: "DEWA",
   },
   abu_dhabi: {
     registrationSystem: "Tawtheeq",
     registeringAuthority: "Abu Dhabi Real Estate Centre (ADREC)",
-    governingLaw: "the laws of the Emirate of Abu Dhabi",
-    disputeBody: "the Rental Dispute Settlement Committee in Abu Dhabi",
-    utilityProvider: "ADDC / AADC",
+    governingLaw: "Abu Dhabi Law No. 20 of 2006 as amended",
+    disputeBody: "the Rental Disputes Settlement Committee of the Abu Dhabi Judicial Department",
+    utilityProvider: "ADDC (AADC in Al Ain)",
   },
   sharjah: {
-    registrationSystem: "Sharjah Municipality attestation",
+    registrationSystem: "Sharjah Municipality tenancy contract attestation",
     registeringAuthority: "Sharjah Municipality",
-    governingLaw: "the laws of the Emirate of Sharjah",
-    disputeBody: "the Rental Disputes Resolution Committee in Sharjah",
+    governingLaw: "Sharjah Law No. 5 of 2024 on property leasing",
+    disputeBody: "the Rental Disputes Centre in Sharjah",
     utilityProvider: "SEWA",
   },
   ajman: {
     registrationSystem: "Tasdeeq",
     registeringAuthority: "Ajman Municipality and Planning Department",
-    governingLaw: "the laws of the Emirate of Ajman",
-    disputeBody: "the competent rental disputes committee in Ajman",
-    utilityProvider: "AEWA",
+    governingLaw: "the Ajman leasing law as amended by Emiri Decree No. 8 of 2014",
+    disputeBody: "the Rent Disputes Committee of Ajman Municipality",
+    utilityProvider: "Etihad Water and Electricity",
   },
   ras_al_khaimah: {
-    registrationSystem: "RAK Municipality tenancy registration",
+    registrationSystem: "Ras Al Khaimah Municipality tenancy contract attestation",
     registeringAuthority: "Ras Al Khaimah Municipality",
-    governingLaw: "the laws of the Emirate of Ras Al Khaimah",
-    disputeBody: "the competent rental disputes committee in Ras Al Khaimah",
-    utilityProvider: "Etihad WE",
+    governingLaw: "the UAE Civil Transactions Law and the leasing regulations of Ras Al Khaimah",
+    disputeBody: "the competent tenancy disputes committee or courts in Ras Al Khaimah",
+    utilityProvider: "Etihad Water and Electricity",
   },
   fujairah: {
     registrationSystem: "Ejaar",
     registeringAuthority: "Fujairah Municipality",
-    governingLaw: "the laws of the Emirate of Fujairah",
-    disputeBody: "the competent rental disputes committee in Fujairah",
-    utilityProvider: "Etihad WE",
+    governingLaw: "Fujairah Law No. 1 of 2011 on leases",
+    disputeBody: "the Rent Disputes Committee of Fujairah Municipality",
+    utilityProvider: "Etihad Water and Electricity",
   },
   umm_al_quwain: {
-    registrationSystem: "UAQ Municipality tenancy registration",
+    registrationSystem: "Umm Al Quwain Municipality tenancy contract attestation",
     registeringAuthority: "Umm Al Quwain Municipality",
-    governingLaw: "the laws of the Emirate of Umm Al Quwain",
-    disputeBody: "the competent rental disputes committee in Umm Al Quwain",
-    utilityProvider: "Etihad WE",
+    governingLaw: "Umm Al Quwain Law No. 3 of 2008 as amended",
+    disputeBody: "the Tenancy Disputes Committee of Umm Al Quwain Municipality",
+    utilityProvider: "Etihad Water and Electricity",
   },
 };
 
 /** The wording in force for an emirate: the saved settings' own, else the default. */
-export function contractWordingFor(settings: { contractWording?: ContractWording | undefined } | null, emirate: Emirate) {
+export function contractWordingFor(
+  settings: { contractWording?: ContractWording | undefined } | null,
+  emirate: Emirate,
+) {
   return settings?.contractWording ?? DEFAULT_CONTRACT_WORDING[emirate];
 }
 
@@ -307,5 +325,8 @@ const BASE_DEFAULTS: Record<Emirate, Omit<RegistrationSettings, "contractWording
 
 /** The default settings of each emirate, with its D74 contract wording. */
 export const DEFAULT_REGISTRATION_SETTINGS = Object.fromEntries(
-  (Object.keys(BASE_DEFAULTS) as Emirate[]).map((e) => [e, { ...BASE_DEFAULTS[e], contractWording: DEFAULT_CONTRACT_WORDING[e] }]),
+  (Object.keys(BASE_DEFAULTS) as Emirate[]).map((e) => [
+    e,
+    { ...BASE_DEFAULTS[e], contractWording: DEFAULT_CONTRACT_WORDING[e] },
+  ]),
 ) as Record<Emirate, RegistrationSettings & { contractWording: ContractWording }>;

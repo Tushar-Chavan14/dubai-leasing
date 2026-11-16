@@ -445,7 +445,10 @@ export async function proposeMappings(
   for (const it of items) {
     if (it.placeholder !== undefined) {
       const hit = matchPlaceholder(it.placeholder);
-      proposals.set(it.id, hit && hit !== "leave_empty" ? { field: hit, source: "matched" } : { field: "leave_empty", source: "empty" });
+      proposals.set(
+        it.id,
+        hit && hit !== "leave_empty" ? { field: hit, source: "matched" } : { field: "leave_empty", source: "empty" },
+      );
       continue;
     }
     const known = it.known && it.known !== "unmapped" ? it.known : null;
