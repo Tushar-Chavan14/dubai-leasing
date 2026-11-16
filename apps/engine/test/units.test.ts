@@ -90,7 +90,7 @@ describe.skipIf(noDb)("units API (Postgres)", () => {
         id: newId(),
         companyId,
         category: "residential",
-        subtype: "villa",
+        subtypes: ["villa"],
         emirate: "dubai",
         minPctBp: -9000,
         maxPctBp: -8000,
@@ -367,7 +367,7 @@ describe.skipIf(noDb)("units API (Postgres)", () => {
     const { id: approvalId } = (await req.json()) as { id: string };
     const [ap] = await database.db.select().from(approvals).where(eq(approvals.id, approvalId));
     const rule = (await database.db.select().from(rentRules).where(eq(rentRules.companyId, companyId))).find(
-      (x) => x.subtype === null,
+      (x) => x.subtypes.length === 0,
     )!;
     const [sri] = await database.db.select().from(sriAverages).where(eq(sriAverages.community, "Dubai Marina"));
     expect(ap!.proposal).toMatchObject({

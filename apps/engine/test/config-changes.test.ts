@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { LocalDiskStore } from "@leasing/adapters";
 import { newId } from "@leasing/core";
 import {
+  companies,
   companyClauses,
   contractRules,
   copilotMessages,
@@ -64,7 +65,14 @@ async function setup() {
     });
   const explicit = (user: { id: string }, threadId: string, userQuote: string, change: unknown) =>
     call(user, "/api/copilot/config-changes", threadId, { mode: "explicit", userQuote, change });
-  const band = { kind: "rent_rule", company: "Silverline", category: "residential", minPctBp: -300, maxPctBp: 800 };
+  const band = {
+    kind: "rent_rule",
+    company: "Silverline",
+    category: "residential",
+    emirate: "dubai",
+    minPctBp: -300,
+    maxPctBp: 800,
+  };
   return { t, companyId, admin, officer, manager, thread, call, explicit, band };
 }
 
@@ -236,7 +244,7 @@ describe.skipIf(noDb)("copilot settings changes (D45)", () => {
       company: "Silverline Properties",
       facts: [
         ["Category", "residential"],
-        ["Type", "All types"],
+        ["Types", "All types"],
         ["Area", "All areas"],
         ["Band", "SRI -3% to +8%"],
       ],
@@ -244,6 +252,118 @@ describe.skipIf(noDb)("copilot settings changes (D45)", () => {
     const confirm = await s.call(s.admin, `/api/copilot/proposals/${p.id}/confirm`, th, {});
     expect(confirm.status).toBe(200);
     expect(await database.db.select().from(rentRules)).toHaveLength(1);
+  });
+
+  test("a suggested rent rule for an emirate the company doesn't operate in is refused at propose time", async () => {
+    const s = await setup();
+    const th = await s.thread(s.admin, "anything to tighten?");
+    await database.db
+      .update(companies)
+      .set({ emirates: ["dubai"] })
+      .where(eq(companies.id, s.companyId));
+    const r = await s.call(s.admin, "/api/copilot/proposals", th, {
+      kind: "config_change",
+      change: { ...s.band, emirate: "sharjah" },
+    });
+    expect(r.status).toBe(422);
+    expect(((await r.json()) as { code: string }).code).toBe("emirate_not_operated");
+  });
+
+  test("D68: a suggested rule that would compete with another for the same types is refused at propose time", async () => {
+    const s = await setup();
+    const th = await s.thread(s.admin, "anything to tighten?");
+    const villas = { ...s.band, emirate: "dubai", subtypes: ["villa", "apartment"] };
+    const first = await s.call(s.admin, "/api/copilot/proposals", th, { kind: "config_change", change: villas });
+    expect(first.status).toBe(201);
+    const p = (await first.json()) as { id: string };
+    expect((await s.call(s.admin, `/api/copilot/proposals/${p.id}/confirm`, th, {})).status).toBe(200);
+    const clash = await s.call(s.admin, "/api/copilot/proposals", th, {
+      kind: "config_change",
+      change: { ...s.band, emirate: "dubai", subtypes: ["villa"] },
+    });
+    expect(clash.status).toBe(422);
+    expect(((await clash.json()) as { code: string }).code).toBe("rule_overlap");
+    // Replacing the rule itself is not a clash, and omitted types keep the rule's own.
+    const [rule] = await database.db.select().from(rentRules).where(eq(rentRules.active, true));
+    const again = await s.call(s.admin, "/api/copilot/proposals", th, {
+      kind: "config_change",
+      change: { ...s.band, maxPctBp: 500, replaceRuleId: rule!.id },
+    });
+    expect(again.status).toBe(201);
+    const q = (await again.json()) as { id: string };
+    expect((await s.call(s.admin, `/api/copilot/proposals/${q.id}/confirm`, th, {})).status).toBe(200);
+    const [next] = await database.db.select().from(rentRules).where(eq(rentRules.active, true));
+    expect(next).toMatchObject({ subtypes: ["apartment", "villa"], maxPctBp: 500, supersedesId: rule!.id });
+  });
+
+  test("D68: a suggested contract rule without an emirate is checked as an all-emirates rule", async () => {
+    const s = await setup();
+    const th = await s.thread(s.admin, "anything to tighten?");
+    await database.db
+      .update(companies)
+      .set({ emirates: ["dubai", "sharjah"] })
+      .where(eq(companies.id, s.companyId));
+    const rule = { kind: "contract_rule", company: "Silverline", category: "residential", tenures: ["annual"] };
+    const any = await s.call(s.admin, "/api/copilot/proposals", th, {
+      kind: "config_change",
+      change: { ...rule, minCheques: 1, maxCheques: 4 },
+    });
+    expect(any.status).toBe(201);
+    const p = (await any.json()) as { id: string };
+    expect((await s.call(s.admin, `/api/copilot/proposals/${p.id}/confirm`, th, {})).status).toBe(200);
+    const [made] = await database.db.select().from(contractRules).where(eq(contractRules.active, true));
+    expect(made?.emirate).toBeNull();
+    // A replace of the all-emirates rule without an emirate keeps it (no clash with itself, no emirate_required).
+    const again = await s.call(s.admin, "/api/copilot/proposals", th, {
+      kind: "config_change",
+      change: { ...rule, minCheques: 1, maxCheques: 2, replaceRuleId: made!.id },
+    });
+    expect(again.status).toBe(201);
+    // A second all-emirates, all-types rule clashes with it.
+    const clash = await s.call(s.admin, "/api/copilot/proposals", th, {
+      kind: "config_change",
+      change: { ...rule, minCheques: 2, maxCheques: 4 },
+    });
+    expect(((await clash.json()) as { code: string }).code).toBe("rule_overlap");
+  });
+
+  test("a suggested rent rule for a property type the company doesn't offer is refused at propose time", async () => {
+    const s = await setup();
+    const th = await s.thread(s.admin, "anything to tighten?");
+    await database.db
+      .update(companies)
+      .set({ categories: ["residential"] })
+      .where(eq(companies.id, s.companyId));
+    const r = await s.call(s.admin, "/api/copilot/proposals", th, {
+      kind: "config_change",
+      change: { ...s.band, category: "retail" },
+    });
+    expect(r.status).toBe(422);
+    expect(((await r.json()) as { code: string }).code).toBe("category_not_offered");
+  });
+
+  test("a suggested rent rule without an emirate: the only emirate shows on the card, several are refused", async () => {
+    const s = await setup();
+    const th = await s.thread(s.admin, "anything to tighten?");
+    const { emirate: _e, ...open } = s.band;
+    await database.db
+      .update(companies)
+      .set({ emirates: ["dubai"] })
+      .where(eq(companies.id, s.companyId));
+    const one = await s.call(s.admin, "/api/copilot/proposals", th, { kind: "config_change", change: open });
+    expect(one.status).toBe(201);
+    const id = ((await one.json()) as { id: string }).id;
+    const [row] = await database.db.select().from(copilotProposals).where(eq(copilotProposals.id, id));
+    expect(JSON.stringify(row!.payload)).toContain('"emirate":"dubai"');
+    await database.db
+      .update(companies)
+      .set({ emirates: ["dubai", "sharjah"] })
+      .where(eq(companies.id, s.companyId));
+    const many = await s.call(s.admin, "/api/copilot/proposals", th, { kind: "config_change", change: open });
+    expect(many.status).toBe(422);
+    const body = (await many.json()) as { code: string; error: string };
+    expect(body.code).toBe("emirate_required");
+    expect(body.error).toContain("Say which emirate");
   });
 
   test("a band outside the form's limits is refused like the form", async () => {

@@ -275,16 +275,29 @@ export interface ContractSignMail {
   demo: boolean;
   /** A reminder to someone who has not signed yet (a fresh link replaces the old one). */
   reminder?: boolean;
+  /** D67: signing opened again after a change request was answered. */
+  resumed?: boolean;
+  /** D67: the leasing team's answer to this signer's declined change request (staff-written). */
+  declineNote?: string | null;
 }
 
-/** The approved contract, attached as PDF, with a personal signing link. */
+/** The approved contract, read on the signing page (not attached), with a personal signing link. */
 export function contractSignEmail(d: ContractSignMail): Rendered {
-  const subject = `${d.reminder ? "Reminder: tenancy" : "Tenancy"} contract to sign: ${d.unitLabel}`;
+  const subject = d.resumed
+    ? `Signing open again: ${d.unitLabel}`
+    : `${d.reminder ? "Reminder: tenancy" : "Tenancy"} contract to sign: ${d.unitLabel}`;
   const paras = [
     `Dear ${d.signerName},`,
     ...(d.reminder ? ["This is a friendly reminder: we are still waiting for your signature."] : []),
-    `The tenancy contract for ${d.unitLabel} (lease ${d.leaseRef}, version ${d.version}) is ready for your signature. A copy is attached.`,
-    `Please read it, then sign through the personal link below by typing your full name. The link works once and stays valid for ${d.validDays} days.`,
+    ...(d.resumed
+      ? [
+          d.declineNote
+            ? `We reviewed the change you asked for and are keeping the contract as it is. Our answer: ${d.declineNote}`
+            : "The requested change to the contract has been answered, so signing is open again. The contract has not changed.",
+        ]
+      : []),
+    `The tenancy contract for ${d.unitLabel} (lease ${d.leaseRef}, version ${d.version}) is ready for your signature.`,
+    `Read the full contract on the signing page, using the personal link below, then sign there by typing your full name. The link works once and stays valid for ${d.validDays} days.`,
     d.role === "tenant"
       ? "Once you and the landlord have both signed, we register the contract in Ejari and send you a copy."
       : "Once you and the tenant have both signed, we register the contract in Ejari.",
@@ -292,6 +305,40 @@ export function contractSignEmail(d: ContractSignMail): Rendered {
   const foot = `${footer(d.demo)}${d.demo ? " Signatures in the demo are simulated." : ""}`;
   const text = [...paras, "", `Sign the contract: ${d.signUrl}`, "", foot].join("\n");
   return { subject, text, html: layout(subject, paras, [{ label: "Review and sign", url: d.signUrl }], foot) };
+}
+
+export interface ContractSignPausedMail {
+  signerName: string;
+  unitLabel: string;
+  leaseRef: string;
+  version: number;
+  /** Who asked for the change (never what they asked). */
+  byRole: "tenant" | "landlord" | null;
+  demo: boolean;
+  /** The signer had already signed this version; it is being replaced, so their signature no longer applies. */
+  replaced?: boolean;
+}
+
+/** D67: someone asked for a change, so signing is paused for everyone. No link: the next email brings one. */
+export function contractSignPausedEmail(d: ContractSignPausedMail): Rendered {
+  if (d.replaced) {
+    const subject = `Contract being revised: ${d.unitLabel}`;
+    const paras = [
+      `Dear ${d.signerName},`,
+      `${d.byRole ? `The ${d.byRole}` : "A party"} asked for a change to the tenancy contract for ${d.unitLabel} (lease ${d.leaseRef}), and the leasing team is preparing a revised version. The version ${d.version} you signed will not be used, so your signature on it no longer applies.`,
+      "You don't need to do anything now. Once the revised contract is approved we will email you a link to read and sign it.",
+    ];
+    const foot = footer(d.demo);
+    return { subject, text: [...paras, "", foot].join("\n"), html: layout(subject, paras, [], foot) };
+  }
+  const subject = `Contract signing paused: ${d.unitLabel}`;
+  const paras = [
+    `Dear ${d.signerName},`,
+    `${d.byRole ? `The ${d.byRole}` : "A party"} has asked for a change to the tenancy contract for ${d.unitLabel} (lease ${d.leaseRef}, version ${d.version}). Signing is paused while the leasing team reviews it.`,
+    "You don't need to do anything now. We will email you a new signing link, either for this version or for a revised one.",
+  ];
+  const foot = footer(d.demo);
+  return { subject, text: [...paras, "", foot].join("\n"), html: layout(subject, paras, [], foot) };
 }
 
 export interface ContractSignedMail {

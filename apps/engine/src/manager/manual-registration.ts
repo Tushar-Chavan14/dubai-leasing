@@ -28,7 +28,7 @@ import {
   units,
   withTx,
 } from "@leasing/db";
-import { isPdf } from "@leasing/helpers";
+import { isPdf, readCertificate } from "@leasing/helpers";
 import { registrationFeeFils, registrationFeeFor } from "@leasing/rulebook";
 import { and, asc, eq, isNotNull } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
@@ -78,6 +78,115 @@ export type ManualIssuedInput = {
   feePaidFils: number | null;
   certificate: Uint8Array | null;
 };
+
+export type CertificateCheck = {
+  field: string;
+  label: string;
+  onCertificate: string | null;
+  onRecord: string | null;
+  result: "match" | "differs" | "not_found";
+};
+
+const squash = (v: string) => v.toLowerCase().replace(/\s+/g, "");
+
+/**
+ * Reads the certificate the officer picked to prefill the record form (D53): local model only, nothing is
+ * stored and nothing changes. Compares what it found with the signed contract and the emirate's reference format.
+ * The text and the values are never logged.
+ */
+export async function readCertificateFor(ctx: EngineContext, leaseId: string, bytes: Uint8Array) {
+  const facts = await withTx(ctx.database, async (tx) => {
+    const [lease] = await tx.db.select().from(leases).where(eq(leases.id, leaseId));
+    if (!lease) throw notFound("lease");
+    assertRegistration(lease);
+    const [sub] = await tx.db
+      .select({ id: ejariSubmissions.id })
+      .from(ejariSubmissions)
+      .where(
+        and(
+          eq(ejariSubmissions.leaseId, leaseId),
+          eq(ejariSubmissions.mode, "manual"),
+          eq(ejariSubmissions.status, "awaiting_manual"),
+        ),
+      )
+      .limit(1);
+    if (!sub) throw conflict("No registration by hand is awaiting a reference for this lease.", "stale");
+    const settings = await settingsFor(ctx, tx, await leaseEmirate(tx, lease));
+    return { fields: (await signedContract(tx, leaseId))?.fields ?? null, settings };
+  });
+  const r = await readCertificate(bytes, { llm: ctx.llm, timeoutMs: 60_000 });
+  if (r.status === "unreadable")
+    return {
+      status: "unreadable" as const,
+      reason: r.reason,
+      modelFailed: false,
+      reference: null,
+      issuedOn: null,
+      feePaidFils: null,
+      checks: [],
+    };
+  const read = r.read;
+  const f = facts.fields;
+  const checks: CertificateCheck[] = [];
+  const compare = (
+    field: string,
+    label: string,
+    onCertificate: string | undefined,
+    onRecord: string | null | undefined,
+    same: (a: string, b: string) => boolean = (a, b) => squash(a) === squash(b),
+  ) => {
+    const cert = onCertificate ?? null;
+    const rec = onRecord ?? null;
+    checks.push({
+      field,
+      label,
+      onCertificate: cert,
+      onRecord: rec,
+      result: cert === null ? "not_found" : rec === null ? "not_found" : same(cert, rec) ? "match" : "differs",
+    });
+  };
+  let pattern: RegExp | null = null;
+  try {
+    pattern = new RegExp(facts.settings.referencePattern);
+  } catch {
+    pattern = null;
+  }
+  checks.push({
+    field: "reference",
+    label: `Reference format (${facts.settings.portalName})`,
+    onCertificate: read.reference ?? null,
+    onRecord: `like ${facts.settings.referenceExample}`,
+    result: !read.reference || !pattern ? "not_found" : pattern.test(read.reference) ? "match" : "differs",
+  });
+  compare("propertyNo", "Property number", read.propertyNo, f?.dldPropertyNo);
+  compare("unitNo", "Unit number", read.unitNo, f?.unitNo);
+  compare("makaniNo", "Makani number", read.makaniNo, f?.makaniNo);
+  compare("tenant", "Tenant", read.tenant, f?.tenantNameEn);
+  compare("startOn", "Start date", read.startOn, f?.startOn);
+  compare("endOn", "End date", read.endOn, f?.endOn);
+  checks.push({
+    field: "annualRent",
+    label: "Annual rent",
+    onCertificate: read.annualRentFils === undefined ? null : formatAed(read.annualRentFils),
+    onRecord: f ? formatAed(f.annualRentFils) : null,
+    result:
+      read.annualRentFils === undefined || !f
+        ? "not_found"
+        : read.annualRentFils === f.annualRentFils
+          ? "match"
+          : "differs",
+  });
+  return {
+    status: "ok" as const,
+    reason: null,
+    modelFailed: r.modelFailed === true,
+    reference: read.reference ?? null,
+    /** The fee printed on the certificate (fils), to prefill "Fee paid". */
+    feePaidFils: read.feePaidFils ?? null,
+    issuedOn: read.issuedOn ?? null,
+    checks,
+  };
+}
 
 /** The officer registered the lease by hand and records the portal's reference. Ends in the normal EJARI_ISSUED. */
 export async function recordManualIssued(ctx: EngineContext, leaseId: string, input: ManualIssuedInput, actor: Actor) {

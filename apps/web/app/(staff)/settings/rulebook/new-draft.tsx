@@ -1,6 +1,6 @@
 "use client";
 
-import { type Emirate, EMIRATE_LABELS, EMIRATES } from "@leasing/core";
+import { type Emirate, EMIRATE_LABELS } from "@leasing/core";
 import { PlusIcon as IconPlus } from "@phosphor-icons/react";
 import { useState } from "react";
 import { Banner } from "../../../../components/ui/form";
@@ -13,16 +13,21 @@ import { createDraftAction } from "./actions";
 export function NewDraft({
   activeByEmirate,
   published,
+  emirates,
 }: {
   activeByEmirate: Record<Emirate, string | null>;
   published: { version: string; emirate: Emirate }[];
+  /** Emirates any active company operates in. */
+  emirates: Emirate[];
 }) {
   const [open, setOpen] = useState(false);
-  const [emirate, setEmirate] = useState<Emirate>("dubai");
+  const [emirate, setEmirate] = useState<Emirate>(emirates[0] ?? "dubai");
   // Its own active version first; an emirate with no rules yet starts from another emirate's version.
   const own = published.filter((p) => p.emirate === emirate);
   const sources = [...own, ...published.filter((p) => p.emirate !== emirate)];
-  const [basedOn, setBasedOn] = useState(activeByEmirate.dubai ?? published[0]?.version ?? "");
+  const [basedOn, setBasedOn] = useState(
+    activeByEmirate[emirates[0] ?? "dubai"] ?? activeByEmirate.dubai ?? published[0]?.version ?? "",
+  );
   const pick = (e: Emirate) => {
     setEmirate(e);
     setBasedOn(activeByEmirate[e] ?? activeByEmirate.dubai ?? published[0]?.version ?? "");
@@ -43,7 +48,7 @@ export function NewDraft({
               onChange={(e) => pick(e.target.value as Emirate)}
               className={SET_SELECT}
             >
-              {EMIRATES.map((e) => (
+              {emirates.map((e) => (
                 <option key={e} value={e}>
                   {EMIRATE_LABELS[e]}
                   {activeByEmirate[e] ? "" : " (no rules yet)"}

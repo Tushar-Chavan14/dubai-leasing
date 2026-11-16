@@ -22,6 +22,7 @@ import { conflict, notFound, unprocessable } from "../errors.ts";
 import { unitHasActiveEjari, unitHasContractedLease } from "./advance.ts";
 import { requestApproval } from "./approvals.ts";
 import { appendEvent, getCompanyPolicyVersion } from "./events.ts";
+import { assertOffers, assertOperates } from "./portfolio.ts";
 import { effectiveProposal, PriceProposal } from "./gate-rules.ts";
 import { priceRangeFor } from "./pricing.ts";
 
@@ -142,6 +143,8 @@ export async function createUnitInTx(
   if (clash) throw conflict(`unit code ${input.code} is already used`, "duplicate_code");
   const badCompany = await companyProblem(tx, input.companyId);
   if (badCompany) throw unprocessable("unit can't be saved this way", [badCompany], "invalid_change");
+  await assertOperates(tx, input.companyId, input.emirate);
+  await assertOffers(tx, input.companyId, input.category);
   const id = newId();
   const [row] = await tx.db
     .insert(units)
@@ -189,6 +192,10 @@ export async function updateUnit(ctx: EngineContext, id: string, patch: z.infer<
       const badCompany = await companyProblem(tx, patch.companyId);
       if (badCompany) throw unprocessable("unit can't be saved this way", [badCompany], "invalid_change");
     }
+    if (patch.companyId !== undefined || patch.emirate !== undefined)
+      await assertOperates(tx, patch.companyId ?? unit.companyId, (patch.emirate ?? unit.emirate) as Emirate);
+    if (patch.companyId !== undefined || patch.category !== undefined)
+      await assertOffers(tx, patch.companyId ?? unit.companyId, (patch.category ?? unit.category) as PropertyCategory);
     if (unit.state !== "PREP") {
       const nextCategory = patch.category ?? unit.category;
       for (const k of CHECKLIST_FIELDS) {

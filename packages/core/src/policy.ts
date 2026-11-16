@@ -97,6 +97,25 @@ export type AutopilotPatch = z.infer<typeof AutopilotPatch>;
 
 /** Settings → Registration: who pays the government registration fee. */
 export const RegistrationPolicyPatch = z.strictObject({ registrationFeePaidBy: z.enum(["tenant", "landlord"]) });
+
+/**
+ * D67: who may ask for a change from the signing page, how many open requests one signer may have, and how long a
+ * request may be. While a request is open, signing of that contract version is paused for both parties.
+ */
+export const ContractChangePolicy = z.object({
+  enabled: z.boolean(),
+  roles: z.array(z.enum(["tenant", "landlord"])).max(2),
+  maxOpenPerSigner: z.number().int().min(1).max(5),
+  maxChars: z.number().int().min(100).max(2000),
+});
+export type ContractChangePolicy = z.infer<typeof ContractChangePolicy>;
+export const DEFAULT_CONTRACT_CHANGE_POLICY: ContractChangePolicy = {
+  enabled: true,
+  roles: ["tenant", "landlord"],
+  maxOpenPerSigner: 2,
+  maxChars: 1000,
+};
+export const ContractChangePolicyPatch = ContractChangePolicy.strict();
 export type RegistrationPolicyPatch = z.infer<typeof RegistrationPolicyPatch>;
 
 /** Negotiation limit: how far below the approved asking rent an offer or counter may go without a manager. */
@@ -374,6 +393,8 @@ export const CompanyPolicy = z.object({
   depositResponseDays: z.number().int().min(1).max(60).default(14),
   /** Below this vision-model confidence a photo comparison makes no suggestion. Set from evals. */
   exitVisionMinConfidence: z.number().min(0).max(1).default(0.6),
+  /** D67: change requests from the signing page. Stored policies without it parse with the defaults. */
+  contractChanges: ContractChangePolicy.default(DEFAULT_CONTRACT_CHANGE_POLICY),
   /** Agent permissions: which steps the agents may take without a person. */
   autopilot: z
     .object({
@@ -463,6 +484,7 @@ export const defaultCompanyPolicy: CompanyPolicy = {
   inspectionBookingWindowDays: 7,
   depositResponseDays: 14,
   exitVisionMinConfidence: 0.6,
+  contractChanges: DEFAULT_CONTRACT_CHANGE_POLICY,
   autopilot: { ...DEFAULT_AUTOPILOT, ...DEFAULT_AUTOPILOT_NUMBERS },
 };
 

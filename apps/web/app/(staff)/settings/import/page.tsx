@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { TabLinks } from "../../../../components/ui/page";
 import { FormGrid, Preview, SetPage } from "../../../../components/ui/settings";
 import { get } from "../../../../lib/engine";
+import { unionCategories } from "../../../../lib/portfolio";
 import type { CompanyRow } from "../../../../lib/types";
 import { type ImportKind, ImportForm } from "./import-form";
 
@@ -36,7 +37,11 @@ const COMPANY_COLUMNS: [string, string][] = [
     "name, slug, kind",
     "name required; slug optional (made from the name); kind developer, realty or owner, required for a new company",
   ],
-  ["categories", "residential, commercial, retail; checked, not stored"],
+  [
+    "categories",
+    "property types it leases: residential, commercial, retail (separate with ; or ,); new company: all three if empty",
+  ],
+  ["emirates", "emirates it operates in, e.g. Dubai; Abu Dhabi (key or name); new company: Dubai if empty"],
   [
     "legal_name_en, legal_name_ar, trade_licence_no, licence_authority, trade_licence_expires_on, rera_orn",
     "legal details; expiry must be in the future",
@@ -89,8 +94,23 @@ const PAGES: Record<ImportKind, { title: string; lede: string; columns: [string,
 export default async function ImportPage({ searchParams }: { searchParams: Promise<{ kind?: string }> }) {
   const { kind: raw } = await searchParams;
   const kind: ImportKind = raw === "units" || raw === "companies" ? raw : "leases";
-  const page = PAGES[kind];
   const companies = (await get<CompanyRow[]>("/api/companies")) ?? [];
+  const base = PAGES[kind];
+  // A unit's category must be one its company offers (D66): list the types offered across active companies.
+  const page =
+    kind === "units"
+      ? {
+          ...base,
+          columns: base.columns.map(([cols, note]): [string, string] =>
+            cols.startsWith("unit_no, category")
+              ? [
+                  cols,
+                  `category is ${unionCategories(companies).join(", ")} (default residential); it must be one the unit's company offers; subtype must fit it`,
+                ]
+              : [cols, note],
+          ),
+        }
+      : base;
   return (
     <SetPage
       title={page.title}

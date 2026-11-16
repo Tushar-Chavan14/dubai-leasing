@@ -17,6 +17,7 @@ import {
   OfferReplyData,
   offerReplyClassifier,
   parseDocDate,
+  planTermChange,
   proposeOffer,
   runHelper,
 } from "../src/index.ts";
@@ -434,5 +435,57 @@ describe("offer rent floor (D60)", () => {
     expect(offerRentFloorFils(7_500_000, { maxRentDiscountPercent: 0 })).toBe(7_500_000);
     expect(offerRentFloorFils(7_500_000, { maxRentDiscountPercent: 10 })).toBe(6_750_000);
     expect(offerRentFloorFils(7_500_000, { maxRentDiscountPercent: 50 })).toBe(3_750_000);
+  });
+
+  describe("planTermChange (D72)", () => {
+    const p = { ...defaultCompanyPolicy, maxRentDiscountPercent: 10 };
+    const unit = { askingRentFils: 7_400_000, furnished: false };
+    const today = "2026-11-01" as CalendarDate;
+    const base = proposeOffer({ today, unit, policy: p, revision: 1, requestedMoveInOn: "2026-12-01" as CalendarDate });
+    test("rent inside the limits: deposit follows the policy, end date by code, no problems", () => {
+      const r = planTermChange(base, { annualRentFils: 7_300_000 }, unit, p, today);
+      expect(r.terms).toMatchObject({ annualRentFils: 7_300_000, depositFils: 365_000, endOn: "2027-11-30" });
+      expect(r.problems).toEqual([]);
+      expect(r.from).toEqual({ annualRentFils: 7_400_000, depositFils: 370_000 });
+      expect(r.to).toEqual({ annualRentFils: 7_300_000, depositFils: 365_000 });
+      expect(r.notes.join(" ")).toContain("reservation");
+    });
+
+    test("rent below the limit: problems name it (needs a manager)", () => {
+      const r = planTermChange(base, { annualRentFils: 6_000_000 }, unit, p, today);
+      expect(r.problems.join(" ")).toContain("below the approved asking rent");
+    });
+
+    test("an officer's deposit is kept; below policy is a problem", () => {
+      expect(planTermChange(base, { depositFils: 500_000 }, unit, p, today).problems).toEqual([]);
+      expect(planTermChange(base, { depositFils: 100_000 }, unit, p, today).problems.join(" ")).toContain("Deposit");
+    });
+
+    test("a move-in alone moves the start and the end; a start alone moves the move-in", () => {
+      const a = planTermChange(base, { moveInOn: "2026-12-15" }, unit, p, today);
+      expect(a.terms).toMatchObject({ moveInOn: "2026-12-15", startOn: "2026-12-15", endOn: "2027-12-14" });
+      expect(a.problems).toEqual([]);
+      const b = planTermChange(base, { startOn: "2026-12-20" }, unit, p, today);
+      expect(b.terms).toMatchObject({ moveInOn: "2026-12-20", startOn: "2026-12-20" });
+    });
+
+    test("a new move-in outside the window is a problem; an unchanged past one is not", () => {
+      expect(planTermChange(base, { moveInOn: "2027-06-01" }, unit, p, today).problems.join(" ")).toContain("Move-in");
+      const late = { ...base, moveInOn: "2026-10-01", startOn: "2026-10-01", endOn: "2027-09-30" } as OfferTerms;
+      expect(planTermChange(late, { cheques: 6 }, unit, p, today).problems).toEqual([]);
+    });
+
+    test("the term ends the day before the same date a year later, including leap days", () => {
+      expect(String(planTermChange(base, { moveInOn: "2027-03-01" }, unit, p, today).terms.endOn)).toBe("2028-02-29");
+      expect(String(planTermChange(base, { moveInOn: "2028-02-29" }, unit, p, today).terms.endOn)).toBe("2029-02-28");
+      expect(String(planTermChange(base, { moveInOn: "2027-12-31" }, unit, p, today).terms.endOn)).toBe("2028-12-30");
+    });
+
+    test("cheques outside the policy range is a problem", () => {
+      expect(planTermChange(base, { cheques: 12 }, unit, p, today).problems).toEqual([]);
+      expect(planTermChange(base, { cheques: 1 }, unit, { ...p, minCheques: 2 }, today).problems.join(" ")).toContain(
+        "cheques",
+      );
+    });
   });
 });

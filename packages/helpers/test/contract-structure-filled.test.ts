@@ -5,6 +5,7 @@ import {
   detectBlanks,
   detectFilledValues,
   EMPTY_REVIEW,
+  fixedValueKinds,
   validateMapping,
   type TemplateSections,
 } from "../src/index.ts";
@@ -173,5 +174,101 @@ describe("D64: lines that describe the unit become blanks from the unit record",
       "parkingSpaces",
       "propertySubtype",
     ]);
+  });
+});
+
+describe("D70: a filled villa sample leaves no sample value in the wording", () => {
+  const lines = (l: string[]) => detectFilledValues(l, 0);
+  const field = (f: ReturnType<typeof lines>, label: string) =>
+    f.blanks.filter((b) => b.fixedLabel === label).map((b) => b.proposedField);
+
+  test("a heading 'Label value' keeps its label and the value becomes a blank", () => {
+    const f = lines(["DLD Property No. DEMO-DLD-000017", "DEWA Premise No. DEMO-DEWA-17"]);
+    expect(f.lines).toEqual(["DLD Property No. {{b1}}", "DEWA Premise No. {{b2}}"]);
+    expect(f.blanks.map((b) => b.proposedField)).toEqual(["dldPropertyNo", "dewaPremiseNo"]);
+  });
+
+  test("Category / Type, Unit Code and Built-up Area (with sq ft and commas)", () => {
+    const f = lines(["Unit Code ARR-0017 Category / Type Residential / Villa Built-up Area 5,400 sq ft"]);
+    expect(f.lines[0]).toBe("Unit Code {{b1}} Category / Type {{b2}} Built-up Area {{b3}}");
+    expect(f.blanks.map((b) => b.proposedField)).toEqual(["unitCode", "propertySubtype", "areaSqft"]);
+    const area = f.blanks[2]!;
+    expect(validateMapping(area.proposedField, area.fixedLabel!, area).field).toBe("areaSqft");
+  });
+
+  test("counts before their label on a label row become blanks; prose is left alone", () => {
+    const f = lines([
+      "Layout 4 Bedrooms | 4 Bathrooms | 1 Parking space Built-up Area 5,400 sq ft",
+      "Payment Schedule 4 cheques of AED 30,000 each",
+      "4.8 Community Rules. The Tenant keeps 2 Bedrooms tidy and pays 4 cheques.",
+    ]);
+    expect(f.lines[0]).toMatch(
+      /^Layout \{\{b1\}\} Bedrooms \| \{\{b2\}\} Bathrooms \| \{\{b3\}\} Parking space Built-up Area/,
+    );
+    expect(f.blanks.slice(0, 3).map((b) => b.proposedField)).toEqual(["bedrooms", "bathrooms", "parkingSpaces"]);
+    expect(f.lines[1]).toMatch(/^Payment Schedule \{\{b\d+\}\} cheques of /);
+    expect(f.blanks.some((b) => b.proposedField === "cheques")).toBe(true);
+    expect(f.lines[2]).toBe("4.8 Community Rules. The Tenant keeps 2 Bedrooms tidy and pays 4 cheques.");
+  });
+
+  test("a sample value is blanked everywhere else it appears as whole words", () => {
+    const f = lines([
+      "Landlord Name Al Noor Family Holdings",
+      "Community Arabian Ranches",
+      "4.8 Community Rules. The Tenant shall comply with the Arabian Ranches community rules of Al Noor Family Holdings.",
+      "Arabian Ranchesville is not the same word.",
+    ]);
+    expect(f.lines[2]).not.toMatch(/Arabian|Al Noor/i);
+    expect(f.lines[2]).toMatch(/comply with the \{\{b\d+\}\} community rules of \{\{b\d+\}\}\./);
+    expect(f.lines[3]).toContain("Arabian Ranchesville");
+    expect(field(f, "Landlord name")).toEqual(["landlordNameEn", "landlordNameEn"]);
+    expect(field(f, "Community")).toEqual(["community", "community"]);
+  });
+
+  test("names beside signature blanks with no label become name blanks by position", () => {
+    const f = detectFilledValues(
+      ["Al Noor Family Holdings Authorised Signatory: {{b1}} Priya Example Rao Signature: {{b2}}"],
+      2,
+    );
+    expect(f.lines[0]).toBe("{{b3}} Authorised Signatory: {{b1}} {{b4}} Signature: {{b2}}");
+    expect(f.blanks.map((b) => b.proposedField)).toEqual(["landlordNameEn", "tenantNameEn"]);
+  });
+
+  test("a label line that wraps from a sentence takes the party of that sentence", () => {
+    const f = lines([
+      "4.12 Ejari Registration. The Landlord and the Tenant agree that the Tenant shall supply a valid",
+      "Emirates ID 784-1992-7654321-3 passport Z1234567",
+    ]);
+    expect(field(f, "Tenant Emirates ID")).toEqual(["tenantEmiratesIdNo"]);
+    expect(field(f, "Tenant Passport number")).toEqual(["tenantPassportNo"]);
+  });
+
+  test("reference codes are specific values; ordinary words and contract numbers still work", () => {
+    expect(fixedValueKinds("Unit ARR-0017 and DEMO-TL-100201")).toEqual(["a reference code"]);
+    expect(fixedValueKinds("Contract TC-2026-004871.")).toContain("a contract number");
+    expect(fixedValueKinds("The Tenant shall pay on time, e-mail or well-known terms.")).toEqual([]);
+  });
+});
+
+describe("D70: the signature row of a filled sample", () => {
+  const read = (lines: string[]) => {
+    const d = detectBlanks(lines.join("\n"));
+    const f = detectFilledValues(
+      d.lines,
+      d.blanks.length ? Math.max(...d.blanks.map((b) => Number(b.id.slice(1)))) : 0,
+    );
+    return { text: f.lines.join("\n"), filled: f.blanks };
+  };
+  test("the company before 'Authorised Signatory' is the landlord, the name in the second column the tenant", () => {
+    const { text, filled } = read([
+      "LANDLORD TENANT",
+      "Al Noor Family Holdings Authorised Signatory: ________________ Priya Example Rao",
+      "Signature: ______________________ Signature: ______________________",
+    ]);
+    expect(text).not.toContain("Al Noor");
+    expect(text).not.toContain("Priya");
+    const fields = filled.map((b) => b.proposedField);
+    expect(fields).toContain("landlordNameEn");
+    expect(fields).toEqual(["landlordNameEn", "tenantNameEn"]);
   });
 });

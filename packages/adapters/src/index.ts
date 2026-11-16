@@ -9,6 +9,7 @@ export { FakeMailer, type MailConfig, NodemailerMailer } from "./mail/nodemailer
 export {
   contractSignedEmail,
   contractSignEmail,
+  contractSignPausedEmail,
   documentsRequestEmail,
   ejariIssuedEmail,
   formatDubaiDateTime,

@@ -1,3 +1,4 @@
+import { ContractChangeRequestInput } from "./contract-change.ts";
 import { FormAnswers } from "./kyc-config.ts";
 import { z } from "zod";
 import { ContractSignature } from "./contract.ts";
@@ -136,6 +137,7 @@ export const InboundType = z.enum([
   "VACATE_NOTICE",
   "INSPECTION_BOOKED",
   "DEPOSIT_RESPONSE",
+  "CONTRACT_CHANGE_REQUESTED",
 ]);
 export type InboundType = z.infer<typeof InboundType>;
 
@@ -152,4 +154,6 @@ export const inboundPayloads = {
   VACATE_NOTICE: VacateNotice,
   INSPECTION_BOOKED: InspectionBooked,
   DEPOSIT_RESPONSE: DepositResponse,
+  /** D67: a signer asked for a change from the signing page (recorded at once; see manager/contract-changes.ts). */
+  CONTRACT_CHANGE_REQUESTED: ContractChangeRequestInput,
 } as const;

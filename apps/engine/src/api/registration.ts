@@ -1,5 +1,6 @@
 import { calendarDate, parseAed, type StaffRole } from "@leasing/core";
 import { ejariSubmissions, leases, withTx } from "@leasing/db";
+import { isPdf } from "@leasing/helpers";
 import { desc, eq } from "drizzle-orm";
 import type { Hono } from "hono";
 import { z } from "zod";
@@ -9,6 +10,7 @@ import { appendEvent } from "../manager/events.ts";
 import {
   MAX_CERTIFICATE_BYTES,
   openRegisterTask,
+  readCertificateFor,
   recordManualIssued,
   recordManualRejected,
   registrationPack,
@@ -20,6 +22,21 @@ import { readLimited } from "./upload.ts";
 const LEASING: StaffRole[] = ["leasing_officer", "leasing_manager"];
 const actorOf = (c: { get(k: "user"): { id: string } }) => `user:${c.get("user").id}` as const;
 const uuid = (v: string | undefined) => z.uuid().catch("00000000-0000-0000-0000-000000000000").parse(v);
+
+/** Per-user limit on certificate reads (each can call the model); wall-clock, not domain time. */
+const READ_WINDOW_MS = 60_000;
+const READ_MAX_PER_WINDOW = 10;
+const reads = new Map<string, { n: number; until: number }>();
+function readRateLimited(userId: string): boolean {
+  const now = Date.now();
+  if (reads.size > 1000) for (const [k, v] of reads) if (v.until < now) reads.delete(k);
+  const h = reads.get(userId);
+  if (!h || h.until < now) {
+    reads.set(userId, { n: 1, until: now + READ_WINDOW_MS });
+    return false;
+  }
+  return ++h.n > READ_MAX_PER_WINDOW;
+}
 
 const RecordFields = z.object({
   submissionId: z.uuid(),
@@ -141,6 +158,26 @@ export function registerRegistrationRoutes(api: Hono<AuthEnv>, ctx: EngineContex
       actorOf(c),
     );
     return c.json(r, r.idempotent ? 200 : 201);
+  });
+
+  /** Multipart: certificate (PDF, 10 MB). Reads it to prefill the record form; stores nothing. */
+  api.post("/leases/:id/registration/read-certificate", async (c) => {
+    requireRole(c.get("user"), LEASING);
+    if (readRateLimited(c.get("user").id))
+      return c.json({ error: "Too many certificate reads; try again in a minute." }, 429);
+    const leaseId = uuid(c.req.param("id"));
+    const type = c.req.header("content-type") ?? "";
+    if (!type.startsWith("multipart/form-data"))
+      throw unprocessable("send the form as multipart", [], "invalid_request");
+    const raw = await readLimited(c.req.raw, MAX_CERTIFICATE_BYTES + 64 * 1024);
+    const form = await new Response(raw, { headers: { "content-type": type } }).formData().catch(() => null);
+    const file = form?.get("certificate");
+    if (!(file instanceof File) || file.size === 0)
+      throw unprocessable("choose the certificate PDF", [], "invalid_request");
+    if (file.size > MAX_CERTIFICATE_BYTES) throw unprocessable("The file is larger than 10 MB.", [], "too_big");
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    if (!isPdf(bytes)) throw unprocessable("The certificate must be a PDF file.", [], "not_pdf");
+    return c.json(await readCertificateFor(ctx, leaseId, bytes));
   });
 
   api.post("/leases/:id/registration/rejected", async (c) => {

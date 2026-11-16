@@ -18,9 +18,12 @@ import {
   DEMO_MRN_1502_MAKANI,
   demoDldNo,
   demoPropertyNo,
+  type Emirate,
+  EMIRATES,
   loadEnv,
   luhnCheckDigit,
   newId,
+  PropertyCategory,
   type StaffUser,
 } from "@leasing/core";
 import {
@@ -251,7 +254,7 @@ const DEMO_COMPANY = "silverline";
 export async function seedDemo(database: Database): Promise<void> {
   // Store the base version and load published ones, so seeded leases get the version in force.
   await syncRulebooks(database);
-  // Demo rulebooks for the other six emirates, then register them.
+  // Demo rulebooks for the four other demo emirates, then register them.
   await seedEmirateRulebooks(database);
   await syncRulebooks(database);
   const clock = await createEngineClock(database, true);
@@ -301,6 +304,24 @@ export async function seedDemo(database: Database): Promise<void> {
     .onConflictDoNothing({ target: companies.slug });
   const companyIds = await demoCompanyIds(database);
   const companyOf = (slug: string) => companyIds.get(slug)!;
+  // Each company operates in the emirates its demo units and rent rules use (Dubai always).
+  const operates = new Map<string, Set<Emirate>>(DEMO_COMPANIES.map((c) => [c.slug, new Set<Emirate>(["dubai"])]));
+  for (const u of [...DEMO_LISTED_UNITS, ...DEMO_EMIRATE_UNITS]) operates.get(u.company)?.add(u.emirate ?? "dubai");
+  for (const r of DEMO_RENT_RULES) operates.get(r.company)?.add(r.emirate ?? "dubai");
+  // ... and the property types its demo units and rules use (D66).
+  const offers = new Map<string, Set<PropertyCategory>>(
+    DEMO_COMPANIES.map((c) => [c.slug, new Set<PropertyCategory>(["residential"])]),
+  );
+  for (const u of [...DEMO_LISTED_UNITS, ...DEMO_EMIRATE_UNITS]) offers.get(u.company)?.add(u.category);
+  for (const r of DEMO_RENT_RULES) offers.get(r.company)?.add(r.category);
+  for (const [slug, set] of operates)
+    await database.db
+      .update(companies)
+      .set({
+        emirates: EMIRATES.filter((e) => set.has(e)),
+        categories: PropertyCategory.options.filter((c) => offers.get(slug)!.has(c)),
+      })
+      .where(eq(companies.id, companyOf(slug)));
   // Each company is the landlord of its units (D44): full fictional legal and signatory details.
   await withTx(database, async (tx) => {
     for (const c of DEMO_COMPANIES) {
@@ -475,7 +496,7 @@ export async function seedDemo(database: Database): Promise<void> {
     console.log(`  unit ${u.code}: LISTED`);
   }
 
-  // Two listed units in each of the six other emirates (D55), walked the same way.
+  // Two listed units in each of the four other demo emirates (D55, D66), walked the same way.
   for (const u of DEMO_EMIRATE_UNITS) {
     const emirate = u.emirate ?? "dubai";
     const id = newId();

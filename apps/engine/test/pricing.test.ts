@@ -67,7 +67,7 @@ describe.skipIf(noDb)("pricing: rent rule, SRI and range lookups", () => {
 
   test("picks the community rule over the subtype rule over the category rule", async () => {
     const category = await rule();
-    const subtype = await rule({ subtype: "apartment" });
+    const subtype = await rule({ subtypes: ["apartment"] });
     const community = await rule({ community: "Dubai Marina" });
     expect((await run((tx) => findRentRule(tx, unit())))?.id).toBe(community);
     expect((await run((tx) => findRentRule(tx, unit({ community: "JVC" }))))?.id).toBe(subtype);
@@ -210,7 +210,7 @@ describe.skipIf(noDb)("pricing: rent rule, SRI and range lookups", () => {
     const sharjah = await run((tx) => offerPolicyFor(tx, unit({ emirate: "sharjah" }), TODAY));
     expect(sharjah.maxCheques).not.toBe(6);
     // An any-emirate apartment rule is newer and more specific by type, but the Dubai rule names the unit's emirate.
-    await cr({ subtype: "apartment", maxCheques: 3 });
+    await cr({ subtypes: ["apartment"], maxCheques: 3 });
     expect((await run((tx) => offerPolicyFor(tx, unit(), TODAY))).maxCheques).toBe(6);
     expect((await run((tx) => offerPolicyFor(tx, unit({ emirate: "sharjah" }), TODAY))).maxCheques).toBe(3);
   });

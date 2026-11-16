@@ -7,7 +7,6 @@ import {
   DEMO_PROPERTIES,
   DEMO_RENT_RULES,
   DEMO_SRI,
-  EMIRATES,
   type Emirate,
   demoPropertyNo,
 } from "@leasing/core";
@@ -34,8 +33,11 @@ import { seedDemo } from "../src/demo/seed.ts";
 import { priceRangeFor } from "../src/manager/pricing.ts";
 import { freshDatabase, noDb } from "./harness.ts";
 
+/** The demo company is seeded in five emirates only (D66); Ajman and Fujairah have no demo data. */
+const DEMO_EMIRATES: Emirate[] = ["dubai", "abu_dhabi", "sharjah", "ras_al_khaimah", "umm_al_quwain"];
+
 describe("demo emirate units (data)", () => {
-  const other = EMIRATES.filter((e) => e !== "dubai");
+  const other = DEMO_EMIRATES.filter((e) => e !== "dubai");
 
   test("two units per other emirate: a residential apartment and a commercial or retail unit", () => {
     for (const e of other) {
@@ -44,7 +46,8 @@ describe("demo emirate units (data)", () => {
       expect(us[0]!.furnished).toBe(false);
       expect(us[1]!.areaSqft).toBeGreaterThan(0);
     }
-    expect(DEMO_EMIRATE_UNITS).toHaveLength(12);
+    expect(DEMO_EMIRATE_UNITS).toHaveLength(8);
+    expect(DEMO_EMIRATE_UNITS.some((u) => u.emirate === "ajman" || u.emirate === "fujairah")).toBe(false);
   });
 
   test("codes, property numbers, unit numbers and address codes are unique", () => {
@@ -99,7 +102,7 @@ describe("demo emirate units (data)", () => {
       expect(u.askingRentFils).toBeGreaterThanOrEqual(range!.min);
       expect(u.askingRentFils).toBeLessThanOrEqual(range!.max);
     }
-    expect(other).toHaveLength(6);
+    expect(other).toHaveLength(4);
   });
 });
 
@@ -142,12 +145,16 @@ describe.skipIf(noDb)("demo seed", () => {
   });
 
   test("two LISTED units per other emirate, a rulebook for every emirate, and re-seeding changes nothing", async () => {
-    for (const e of EMIRATES.filter((x) => x !== "dubai")) {
+    for (const e of DEMO_EMIRATES.filter((x) => x !== "dubai")) {
       const listed = rows.filter((u) => u.emirate === e && u.state === "LISTED");
       expect(listed, e).toHaveLength(2);
     }
     const date = (await (await import("../src/clock.ts")).createEngineClock(database, true)).today();
-    for (const e of EMIRATES) expect(hasRulebookFor(date, e), e).toBe(true);
+    for (const e of DEMO_EMIRATES) expect(hasRulebookFor(date, e), e).toBe(true);
+    for (const e of ["ajman", "fujairah"] as const) expect(hasRulebookFor(date, e), e).toBe(false);
+    const [silverline] = await database.db.select().from(companies).where(eq(companies.slug, "silverline"));
+    expect(silverline!.emirates).toEqual(DEMO_EMIRATES);
+    expect(silverline!.categories).toEqual(["residential", "commercial", "retail"]);
     const before = rows.length;
     const sriBefore = (await database.db.select().from(sriAverages)).length;
     const rulesBefore = (await database.db.select().from(rentRules)).length;

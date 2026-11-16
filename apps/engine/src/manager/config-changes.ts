@@ -34,7 +34,16 @@ import type { EngineContext } from "../context.ts";
 import { forbidden, notFound, unprocessable } from "../errors.ts";
 import { addCompanyClause } from "./contract-templates.ts";
 import { appendEvent } from "./events.ts";
-import { createContractRule, createRentRule, replaceContractRule, replaceRentRule } from "./portfolio.ts";
+import {
+  assertNoOverlap,
+  assertOffers,
+  assertOperates,
+  defaultEmirate,
+  createContractRule,
+  createRentRule,
+  replaceContractRule,
+  replaceRentRule,
+} from "./portfolio.ts";
 import { saveSriValue } from "./sri-values.ts";
 import {
   registrationDocumentOptions,
@@ -68,6 +77,9 @@ export const ConfigChange = z.discriminatedUnion("kind", [
     kind: z.literal("rent_rule"),
     company: z.string().trim().min(2).max(120),
     category: PropertyCategory,
+    /** D68: the unit types the rule covers; [] = all types. Omitted on a replace: the rule's own. */
+    subtypes: z.array(PropertySubtype).max(10).optional(),
+    /** Before D68 (stored proposals): one type. */
     subtype: PropertySubtype.nullable().optional(),
     emirate: Emirate.optional(),
     community: z.string().trim().min(1).max(120).nullable().optional(),
@@ -82,6 +94,9 @@ export const ConfigChange = z.discriminatedUnion("kind", [
     kind: z.literal("contract_rule"),
     company: z.string().trim().min(2).max(120),
     category: PropertyCategory,
+    /** D68: the unit types the rule covers; [] = all types. Omitted on a replace: the rule's own. */
+    subtypes: z.array(PropertySubtype).max(10).optional(),
+    /** Before D68 (stored proposals): one type. */
     subtype: PropertySubtype.nullable().optional(),
     /** The emirate the rule is for; null = any emirate (D58). On a replace, omitted keeps the current one. */
     emirate: Emirate.nullable().optional(),
@@ -151,6 +166,23 @@ async function companyId(tx: Tx, ref: string): Promise<string> {
 const pct = (bp: number) => `${bp > 0 ? "+" : ""}${bp / 100}%`;
 const aed = (fils: number | null | undefined) => (fils === null || fils === undefined ? null : formatAed(fils));
 
+type RuleChange = Extract<ConfigChange, { kind: "rent_rule" | "contract_rule" }>;
+
+/** The types a rule change names (D68): `subtypes`, or a stored pre-D68 `subtype`; undefined = not given. */
+export function changeSubtypes(c: Pick<RuleChange, "subtypes" | "subtype">): PropertySubtype[] | undefined {
+  if (c.subtypes !== undefined) return [...new Set(c.subtypes)].sort();
+  if (c.subtype !== undefined) return c.subtype ? [c.subtype] : [];
+  return undefined;
+}
+
+const typeWords = (list: readonly string[]) => list.map((t) => t.replaceAll("_", " "));
+
+function typesFact(c: RuleChange): string | null {
+  const list = changeSubtypes(c);
+  if (list === undefined) return c.replaceRuleId ? "Unchanged" : "All types";
+  return list.length ? typeWords(list).join(", ") : "All types";
+}
+
 /** Shown only when the emirate is not Dubai (the default). */
 const emirateFact = (e: Emirate | undefined) => (e && e !== "dubai" ? EMIRATE_LABELS[e] : null);
 
@@ -182,7 +214,7 @@ export function changeFacts(change: ConfigChange): [string, string][] {
         ? [
             ["Emirate", emirateFact(change.emirate)],
             ["Category", change.category],
-            ["Type", change.subtype ?? "All types"],
+            ["Types", typesFact(change)],
             ["Area", change.community ?? "All areas"],
             ["Band", `SRI ${pct(change.minPctBp)} to ${pct(change.maxPctBp)}`],
             ["Lowest rent", aed(change.minRentFils)],
@@ -196,7 +228,7 @@ export function changeFacts(change: ConfigChange): [string, string][] {
         : change.kind === "contract_rule"
           ? [
               ["Category", change.category],
-              ["Type", change.subtype ?? "All types"],
+              ["Types", typesFact(change)],
               [
                 "Emirate",
                 change.emirate ? EMIRATE_LABELS[change.emirate] : change.emirate === null ? "Any emirate" : null,
@@ -303,31 +335,41 @@ export async function applyConfigChange(
       return { id: row.id, entity: { kind: "company" as const, id: cid }, summary: `Clause "${row.title}" added` };
     }
     case "rent_rule": {
-      const { kind: _k, company, replaceRuleId, ...v } = change;
+      const { kind: _k, company, replaceRuleId, subtype: _s, subtypes: _l, ...rest } = change;
       const cid = await companyId(tx, company);
-      const values = { ...v, emirate: v.emirate ?? "dubai" };
+      // No emirate: the company's only one (422 when several); a replace without one keeps the rule's own.
+      // No types: all types for a new rule; a replace keeps the rule's own (D68).
+      let subtypes = changeSubtypes(change);
       if (replaceRuleId) {
         const [old] = await tx.db.select().from(rentRules).where(eq(rentRules.id, replaceRuleId));
         if (old?.companyId !== cid) throw unprocessable("That rent rule is not this company's.", [], "bad_rule");
+        subtypes ??= old.subtypes;
       }
+      const v = { ...rest, subtypes: subtypes ?? [] };
       const row = replaceRuleId
-        ? await replaceRentRule(ctx, tx, replaceRuleId, values, actor)
-        : await createRentRule(ctx, tx, { ...values, companyId: cid }, actor);
+        ? await replaceRentRule(ctx, tx, replaceRuleId, v, actor)
+        : await createRentRule(
+            ctx,
+            tx,
+            { ...v, emirate: v.emirate ?? (await defaultEmirate(tx, cid)), companyId: cid },
+            actor,
+          );
       return { id: row.id, entity: { kind: "company" as const, id: cid }, summary: "Rent rule saved" };
     }
     case "contract_rule": {
-      const { kind: _k, company, replaceRuleId, ...v } = change;
+      const { kind: _k, company, replaceRuleId, subtype: _s, subtypes: _l, ...rest } = change;
       const cid = await companyId(tx, company);
       let clauseIds: string[] = [];
-      let sampleDocumentId: string | null = null;
+      let subtypes = changeSubtypes(change);
       if (replaceRuleId) {
         const [old] = await tx.db.select().from(contractRules).where(eq(contractRules.id, replaceRuleId));
         if (old?.companyId !== cid) throw unprocessable("That contract rule is not this company's.", [], "bad_rule");
         clauseIds = old.clauseIds;
-        sampleDocumentId = old.sampleDocumentId;
+        subtypes ??= old.subtypes;
       }
+      const v = { ...rest, subtypes: subtypes ?? [] };
       const row = replaceRuleId
-        ? await replaceContractRule(ctx, tx, replaceRuleId, { ...v, clauseIds, sampleDocumentId }, actor)
+        ? await replaceContractRule(ctx, tx, replaceRuleId, { ...v, clauseIds }, actor)
         : await createContractRule(ctx, tx, { ...v, clauseIds, companyId: cid }, actor);
       return { id: row.id, entity: { kind: "company" as const, id: cid }, summary: "Contract rule saved" };
     }
@@ -448,6 +490,10 @@ export function numbersIn(text: string): Set<number> {
   return out;
 }
 
+/** "not for all types": not a request to cover every type. */
+const ALL_TYPES_NEGATED =
+  /\b(not|no|never|without|except|don'?t|doesn'?t|isn'?t)\b[^.]{0,30}\b(all|any|every) (unit )?types?\b/i;
+
 /** "not in any emirate", "don't apply to all emirates": not a request to clear the emirate. */
 const ANY_EMIRATE_NEGATED =
   /\b(not|no|never|without|except|don'?t|doesn'?t|isn'?t)\b[^.]{0,30}\b(any|all|every) emirates?\b/i;
@@ -455,7 +501,7 @@ const ANY_EMIRATE_NEGATED =
 /** The fields of the contract rule an explicit replace starts from (D58). */
 export interface PreviousContractRule {
   category: string;
-  subtype: string | null;
+  subtypes: string[];
   emirate: Emirate | null;
   tenures: string[];
   minCheques: number;
@@ -483,11 +529,13 @@ export function valuesNotSaid(
   const who = "company" in change ? named("company", change.company) : [];
   const need = (label: string, n: number | null | undefined) =>
     n === null || n === undefined || said.has(n) ? [] : [label];
-  // Which units a rule covers is the user's choice too: the category, a type, and a contract rule's tenures.
-  const scope = (c: { category: string; subtype?: string | null | undefined }) => [
+  // Which units a rule covers is the user's choice too: the category, each type, and a contract rule's tenures.
+  const scope = (c: RuleChange) => [
     ...named("category", c.category),
-    ...named("type", c.subtype?.replaceAll("_", " ")),
+    ...typeWords(changeSubtypes(c) ?? []).flatMap((t) => named("type", t)),
   ];
+  // "all types" said and not negated ("not all types").
+  const allTypesSaid = /\b(all|any|every) (unit )?types?\b/i.test(message) && !ALL_TYPES_NEGATED.test(message);
   switch (change.kind) {
     case "add_clause":
       return [...who, ...(norm(message).includes(norm(change.text)) ? [] : ["clause wording"])];
@@ -509,17 +557,34 @@ export function valuesNotSaid(
       // The user must still say which rule: its type, or for an all-types rule its category or "all types".
       const which = !p
         ? []
-        : p.subtype
-          ? named("type", p.subtype.replaceAll("_", " "))
+        : p.subtypes.length
+          ? typeWords(p.subtypes).some((t) => norm(message).includes(norm(t)))
+            ? []
+            : ["which rule"]
           : norm(message).includes(norm(p.category)) || /\ball[- ]types?\b/i.test(message)
             ? []
             : ["which rule"];
+      // D68: on a replace, each type added or taken off must be named; going to "all types" must be said.
+      const next = changeSubtypes(change);
+      const typeChange = !p
+        ? scope(change)
+        : [
+            ...(same(change.category, p.category) ? [] : named("category", change.category)),
+            ...(next === undefined
+              ? []
+              : next.length === 0
+                ? p.subtypes.length === 0 || allTypesSaid
+                  ? []
+                  : ["all types"]
+                : typeWords([
+                    ...next.filter((t) => !p.subtypes.includes(t)),
+                    ...p.subtypes.filter((t) => !next.includes(t as PropertySubtype)),
+                  ]).flatMap((t) => named("type", t))),
+          ];
       return [
         ...who,
         ...which,
-        ...(same(change.category, p?.category) && same(change.subtype ?? null, p?.subtype ?? null)
-          ? []
-          : scope(change)),
+        ...typeChange,
         ...(p && change.tenures.toSorted().join() === p.tenures.toSorted().join()
           ? []
           : change.tenures.flatMap((t) => named("tenure", t === "annual" ? "annual" : "short"))),
@@ -685,6 +750,34 @@ function kycValuesNotSaid(
 }
 
 /**
+ * D68: a rule change that would compete with another active rule for the same units is refused before it is stored
+ * or applied, with the other rule's id so the copilot can replace that rule instead. The scope is the one the rule
+ * will have when applied: an omitted emirate or type list keeps a replaced rule's own; a new contract rule without an
+ * emirate is for all emirates.
+ */
+async function assertRuleScopeFree(tx: Tx, cid: string, change: RuleChange) {
+  const old = change.replaceRuleId
+    ? change.kind === "rent_rule"
+      ? (await tx.db.select().from(rentRules).where(eq(rentRules.id, change.replaceRuleId)))[0]
+      : (await tx.db.select().from(contractRules).where(eq(contractRules.id, change.replaceRuleId)))[0]
+    : undefined;
+  const emirate = change.emirate !== undefined ? change.emirate : old ? old.emirate : null;
+  await assertNoOverlap(
+    tx,
+    change.kind === "rent_rule" ? "rent" : "contract",
+    {
+      companyId: cid,
+      category: change.category,
+      emirate: emirate ?? null,
+      community: change.kind === "rent_rule" ? (change.community ?? null) : null,
+      subtypes: changeSubtypes(change) ?? old?.subtypes ?? [],
+    },
+    old?.id ?? null,
+    true,
+  );
+}
+
+/**
  * An explicit change: the user asked for it in their own words. `userQuote` must be at least 8 characters of the
  * user's latest message in this conversation (their own words, never tool output or tenant text), else 422.
  */
@@ -740,6 +833,8 @@ export async function explicitConfigChange(
         "not_your_words",
       );
     }
+    if (change.kind === "rent_rule" || change.kind === "contract_rule")
+      await assertRuleScopeFree(tx, await companyId(tx, change.company), change);
     const actor = `copilot:${user.id}` as const;
     // The clause wording, amounts included, is the user's own (checked above).
     const valuesConfirmed = true;
@@ -757,7 +852,7 @@ export async function explicitConfigChange(
 
 /** A suggested change: stored as a proposal; only the user's Confirm click applies it. */
 export async function proposeConfigChange(ctx: EngineContext, user: StaffUser, threadId: string, raw: unknown) {
-  const change = ConfigChange.parse((raw as { change?: unknown }).change);
+  let change = ConfigChange.parse((raw as { change?: unknown }).change);
   requireConfigRole(user, change.kind);
   return withTx(ctx.database, async (tx) => {
     const [thread] = await tx.db
@@ -776,6 +871,17 @@ export async function proposeConfigChange(ctx: EngineContext, user: StaffUser, t
         if (e instanceof KycOpError) throw unprocessable(e.message, [], "bad_kyc_change");
         throw e;
       }
+    }
+    // A rule for an emirate the company doesn't operate in comes back to the copilot now, not on Confirm.
+    if (change.kind === "rent_rule" || change.kind === "contract_rule") {
+      const cid = await companyId(tx, change.company);
+      await assertOffers(tx, cid, change.category);
+      if (change.emirate) await assertOperates(tx, cid, change.emirate);
+      // A new rent rule without an emirate takes the company's only emirate, or comes back for the user to say which.
+      // A replacement without one keeps the rule's own emirate. The Confirm card then shows the emirate.
+      else if (change.kind === "rent_rule" && !change.replaceRuleId)
+        change = { ...change, emirate: await defaultEmirate(tx, cid) };
+      await assertRuleScopeFree(tx, cid, change);
     }
     let company: string | null = null;
     if (change.kind !== "sri_value" && change.kind !== "registration_settings") {

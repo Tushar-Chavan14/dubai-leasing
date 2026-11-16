@@ -6,6 +6,7 @@ import { useActionState, useState } from "react";
 import { buttonClass } from "../../../components/ui/button";
 import { INPUT } from "../../../components/ui/form";
 import { deleteView, saveView, type ViewState } from "./actions";
+import { stageLabel } from "../../../lib/stage-label";
 
 export interface SavedViewItem {
   id: string;
@@ -69,7 +70,7 @@ export function SavedViews({
       )}
       {stage && (
         <p className="m-0 text-xs text-muted">
-          Stage: {stage}{" "}
+          Stage: {stageLabel(stage)}{" "}
           <Link href={clearStageHref} className="font-semibold text-ink! underline">
             Clear
           </Link>

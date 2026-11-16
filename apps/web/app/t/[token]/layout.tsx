@@ -85,7 +85,7 @@ export default async function PortalLayout({
           {(unit || current) && (
             <div className="grid gap-3 md:mx-auto md:w-full md:max-w-[760px] md:gap-4 md:px-8 md:pt-10">
               {unit && <p className="m-0 text-sm text-muted md:text-[15px]">{unit}</p>}
-              {current && <RecordStepper stages={STATUS_STAGES} current={current} />}
+              {current && <RecordStepper stages={STATUS_STAGES} current={current} labels={{ Viewing: "Site visit" }} />}
             </div>
           )}
         </header>

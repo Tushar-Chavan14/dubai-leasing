@@ -1,4 +1,5 @@
 import { Block, GRID6, SET_INPUT, SET_SELECT, SField, SPAN } from "../../../../components/ui/settings";
+import { FeesField } from "./fees-field";
 import type { CompanyLegalView } from "../../../../lib/types";
 
 type Legal = CompanyLegalView["legal"];
@@ -102,6 +103,12 @@ export function LegalFields({
             span={6}
           />
         </div>
+      </Block>
+      <Block
+        title="Contract fees"
+        lede="Registration (Ejari, Tawtheeq) and other fees printed in contracts. Amounts are as you set them: nothing is calculated."
+      >
+        <FeesField fees={legal.contractFees} error={errors?.contractFees} />
       </Block>
       <Block title="Authorised signatory" lede="Signs contracts for the company. The signing link goes to this email.">
         <div className={GRID6}>

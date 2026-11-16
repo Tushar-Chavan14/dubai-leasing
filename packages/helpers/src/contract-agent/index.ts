@@ -188,11 +188,21 @@ export function contractAgent(
       const toolsNode = async (s: typeof State.State) => {
         const last = s.messages.at(-1) as AIMessage;
         const calls = last.tool_calls ?? [];
+        // Tools take no arguments, so a second call returns the same data: it gets a short pointer instead, or the
+        // repeated results fill the model's context and its answer is cut off (D70).
+        const earlier = new Set(
+          s.messages.filter((m): m is ToolMessage => m instanceof ToolMessage).map((m) => m.name ?? ""),
+        );
         const out = calls.map((call, i) => {
           const name = call.name as (typeof TOOL_NAMES)[number];
-          const content = TOOL_NAMES.includes(name)
-            ? JSON.stringify(tool(name))
-            : JSON.stringify({ error: `there is no tool named ${call.name}` });
+          const content = !TOOL_NAMES.includes(name)
+            ? JSON.stringify({ error: `there is no tool named ${call.name}` })
+            : earlier.has(name)
+              ? JSON.stringify({
+                  note: `${name} was already returned above and has not changed. Answer with the JSON now.`,
+                })
+              : JSON.stringify(tool(name));
+          earlier.add(name);
           return new ToolMessage({ content, tool_call_id: call.id ?? `call_${s.calls + i}`, name: call.name });
         });
         return { messages: out, calls: calls.length };

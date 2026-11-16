@@ -18,11 +18,12 @@ import { baseFor, createDraft, publishRulebook, syncRulebooks, updateDraft } fro
 import { freshDatabase, noDb, testContext } from "./harness.ts";
 
 const START = "2026-10-19T04:00:00Z";
-const ALL: Emirate[] = ["dubai", "abu_dhabi", "sharjah", "ajman", "ras_al_khaimah", "fujairah", "umm_al_quwain"];
+/** Emirates with a demo rulebook (D66: Ajman and Fujairah are not seeded). */
+const ALL: Emirate[] = ["dubai", "abu_dhabi", "sharjah", "ras_al_khaimah", "umm_al_quwain"];
 
 describe("demo emirate rulebooks", () => {
   test("every entry parses and cites general data", () => {
-    expect(DEMO_EMIRATE_RULEBOOKS).toHaveLength(6);
+    expect(DEMO_EMIRATE_RULEBOOKS).toHaveLength(4);
     for (const r of DEMO_EMIRATE_RULEBOOKS) {
       const rb = rulebookFromRow({
         ...r,
@@ -46,9 +47,10 @@ describe.skipIf(noDb)("demo emirate rulebooks (Postgres)", () => {
     await syncRulebooks(await freshDatabase());
   });
 
-  test("registered and active for all seven emirates", () => {
+  test("registered and active for the five demo emirates, none for Ajman or Fujairah", () => {
     for (const e of ALL) expect(hasRulebookFor(d("2026-10-19"), e)).toBe(true);
     expect(activeRulesVersion(d("2026-10-19"), "sharjah")).toBe("sharjah-2025-01");
+    for (const e of ["ajman", "fujairah"] as const) expect(hasRulebookFor(d("2026-10-19"), e)).toBe(false);
   });
 
   test("baseFor falls back to the earliest published version", () => {
@@ -58,13 +60,13 @@ describe.skipIf(noDb)("demo emirate rulebooks (Postgres)", () => {
 
   test("a non-demo published version without a code base never becomes a base", async () => {
     expect(isDemoEmirateVersion("abu_dhabi-2026-06")).toBe(true);
-    const demo = getRulebook("fujairah-2025-01");
+    const demo = getRulebook("umm_al_quwain-2025-01");
     resetRulebookRegistry();
     for (const b of baseRulebooks) registerRulebook(b);
-    registerRulebook({ ...demo, version: "fujairah-2030-01" });
-    expect(() => baseFor("fujairah")).toThrow("no base rulebook for fujairah");
+    registerRulebook({ ...demo, version: "umm_al_quwain-2030-01" });
+    expect(() => baseFor("umm_al_quwain")).toThrow("no base rulebook for umm_al_quwain");
     registerRulebook(demo);
-    expect(baseFor("fujairah").version).toBe("fujairah-2025-01");
+    expect(baseFor("umm_al_quwain").version).toBe("umm_al_quwain-2025-01");
     await syncRulebooks(database);
   });
 
@@ -87,8 +89,8 @@ describe.skipIf(noDb)("demo emirate rulebooks (Postgres)", () => {
 
   test("a copy from another emirate needs a confirmed legal review even when no value is looser", async () => {
     const { ctx } = testContext(database, START);
-    const draft = await createDraft(ctx, "dubai-2025-01", "user:admin-test", "ajman");
-    expect(draft.emirate).toBe("ajman");
+    const draft = await createDraft(ctx, "dubai-2025-01", "user:admin-test", "ras_al_khaimah");
+    expect(draft.emirate).toBe("ras_al_khaimah");
     await expect(publishRulebook(ctx, draft.version, {}, "user:admin-test")).rejects.toMatchObject({
       code: "legal_review_required",
     });

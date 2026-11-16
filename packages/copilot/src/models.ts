@@ -11,7 +11,7 @@ const textOf = (content: AIMessageChunk["content"]) =>
  * Local chat model through Ollama (decision D5): temperature 0, thinking off (latency), kept
  * loaded between turns. `COPILOT_MODEL` must support tool calling.
  */
-export function ollamaCopilotModel(cfg: { url: string; model: string }): CopilotModel {
+export function ollamaCopilotModel(cfg: { url: string; model: string; numPredict?: number }): CopilotModel {
   const chat = new ChatOllama({
     baseUrl: cfg.url,
     model: cfg.model,
@@ -21,8 +21,9 @@ export function ollamaCopilotModel(cfg: { url: string; model: string }): Copilot
     // The system prompt and tool schemas alone are ~4.2k tokens; Ollama's 4096 default silently
     // truncates the question. Leave room for history and tool results.
     numCtx: 16384,
-    // Answers are short by design; a hard stop keeps a runaway answer from holding the model.
-    numPredict: 400,
+    // Answers are short by design; a hard stop keeps a runaway answer from holding the model. Callers with longer
+    // structured answers (the contract agent's JSON) pass their own.
+    numPredict: cfg.numPredict ?? 400,
   });
   return {
     name: cfg.model,

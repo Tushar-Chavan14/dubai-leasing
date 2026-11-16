@@ -15,9 +15,7 @@ import {
   SET_SELECT,
   SField,
   SPAN,
-  TABLE,
-  TD,
-  TH,
+  CHECK_ROW,
 } from "../../../../components/ui/settings";
 import {
   aedInput,
@@ -27,12 +25,13 @@ import {
   pctInput,
   pctLabel,
   type RuleResult,
-  subtypeLabel,
   subtypesFor,
+  subtypesLabel,
 } from "../../../../lib/portfolio";
+import { CopyToEmirate } from "../../../../components/copy-to-emirate";
 import { useActionForm } from "../../../../lib/use-action-form";
 import type { CompanyRow, RentRuleRow } from "../../../../lib/types";
-import { removeRentRule, saveRentRule } from "./actions";
+import { copyRentRule, removeRentRule, saveRentRule } from "./actions";
 import { RentTry } from "./rent-try";
 
 function RuleEditor({
@@ -61,19 +60,28 @@ function RuleEditor({
       <input type="hidden" name="category" value={category} />
       <input type="hidden" name="companyId" value={rule?.companyId ?? company.id} />
       <div className={GRID6}>
-        <SField label="Type" error={fe.subtype} className={SPAN[3]}>
-          <select name="subtype" defaultValue={rule?.subtype ?? ""} className={SET_SELECT}>
-            <option value="">All types</option>
+        <fieldset className={`${SPAN[3]} m-0 grid min-w-0 gap-1.5 border-0 p-0`}>
+          <legend className="p-0 text-[13px] font-semibold text-ink">
+            Types <em className="font-normal text-muted">(none ticked = all types)</em>
+          </legend>
+          <div className={CHECK_ROW}>
             {subtypesFor(category).map((s) => (
-              <option key={s.value} value={s.value}>
+              <label key={s.value}>
+                <input
+                  type="checkbox"
+                  name="subtypes"
+                  value={s.value}
+                  defaultChecked={rule?.subtypes.includes(s.value) ?? false}
+                />
                 {s.label}
-              </option>
+              </label>
             ))}
-          </select>
-        </SField>
+          </div>
+          {fe.subtypes && <span className="text-xs text-danger">{fe.subtypes}</span>}
+        </fieldset>
         <SField label="Emirate" error={fe.emirate} className={SPAN[3]}>
-          <select name="emirate" defaultValue={rule?.emirate ?? "dubai"} className={SET_SELECT}>
-            {EMIRATES.map((e) => (
+          <select name="emirate" defaultValue={rule?.emirate ?? company.emirates[0] ?? "dubai"} className={SET_SELECT}>
+            {EMIRATES.filter((e) => company.emirates.includes(e) || e === rule?.emirate).map((e) => (
               <option key={e} value={e}>
                 {EMIRATE_LABELS[e]}
               </option>
@@ -219,73 +227,79 @@ export function RentRules({
           one is added.
         </p>
       ) : (
-        <Panel className="overflow-x-auto">
-          <table className={TABLE}>
-            <thead>
-              <tr>
-                <th className={TH}>Type</th>
-                <th className={TH}>Emirate</th>
-                <th className={TH}>Area</th>
-                <th className={TH}>Band</th>
-                <th className={TH}>AED limits</th>
-                <th className={TH}>Offer discount</th>
-                {canEdit && <th className={TH} />}
-              </tr>
-            </thead>
-            <tbody>
-              {rules.map((r) =>
-                editing === r.id ? (
-                  <tr key={r.id} className="group">
-                    <td className={TD} colSpan={canEdit ? 7 : 6}>
-                      <RuleEditor rule={r} company={company} category={category} onDone={closeEdit} />
-                    </td>
-                  </tr>
-                ) : (
-                  <tr key={r.id} className="group">
-                    <td className={`${TD} whitespace-nowrap font-semibold`}>{subtypeLabel(r.subtype)}</td>
-                    <td className={`${TD} whitespace-nowrap`}>{EMIRATE_LABELS[r.emirate]}</td>
-                    <td className={TD}>{r.community ?? "All areas"}</td>
-                    <td className={`${TD} whitespace-nowrap font-mono tabular-nums`}>
-                      SRI {pctLabel(r.minPctBp)} to {pctLabel(r.maxPctBp)}
-                    </td>
-                    <td className={`${TD} whitespace-nowrap font-mono tabular-nums`}>
-                      {aedLimitsLabel(r.minRentFils, r.maxRentFils)}
-                    </td>
-                    <td className={`${TD} whitespace-nowrap font-mono tabular-nums`}>
-                      {r.maxOfferDiscountPct === null || r.maxOfferDiscountPct === undefined ? (
-                        <span className="font-sans text-muted">Default</span>
-                      ) : (
-                        `${r.maxOfferDiscountPct}%`
+        // A stacked list, not a wide table: it fits beside the "Try a unit" card and the agent panel without
+        // scrolling sideways. Editing opens the form in place of the row, at full width.
+        <Panel>
+          <ul className="m-0 list-none divide-y divide-line p-0">
+            {rules.map((r) =>
+              editing === r.id ? (
+                <li key={r.id} className="p-5">
+                  <RuleEditor rule={r} company={company} category={category} onDone={closeEdit} />
+                </li>
+              ) : (
+                <li key={r.id} className="flex flex-wrap items-start justify-between gap-3 px-5 py-4">
+                  <div className="grid min-w-0 gap-1.5">
+                    <p className="m-0 text-sm font-semibold text-ink">
+                      {subtypesLabel(r.subtypes)}
+                      <span className="font-normal text-muted">
+                        {" "}
+                        · {EMIRATE_LABELS[r.emirate]} · {r.community ?? "All areas"}
+                      </span>
+                    </p>
+                    <dl className="m-0 flex flex-wrap gap-x-5 gap-y-1 text-[13px]">
+                      <div className="flex gap-1.5">
+                        <dt className="text-muted">Band</dt>
+                        <dd className="m-0 font-mono tabular-nums">
+                          SRI {pctLabel(r.minPctBp)} to {pctLabel(r.maxPctBp)}
+                        </dd>
+                      </div>
+                      <div className="flex gap-1.5">
+                        <dt className="text-muted">AED limits</dt>
+                        <dd className="m-0 font-mono tabular-nums">{aedLimitsLabel(r.minRentFils, r.maxRentFils)}</dd>
+                      </div>
+                      <div className="flex gap-1.5">
+                        <dt className="text-muted">Offer discount</dt>
+                        <dd className="m-0 font-mono tabular-nums">
+                          {r.maxOfferDiscountPct === null || r.maxOfferDiscountPct === undefined
+                            ? "Company default"
+                            : `${r.maxOfferDiscountPct}%`}
+                        </dd>
+                      </div>
+                    </dl>
+                  </div>
+                  {canEdit && (
+                    <div className="flex items-start gap-2">
+                      <button
+                        type="button"
+                        className={iconButtonClass()}
+                        aria-label={`Edit ${subtypesLabel(r.subtypes)} rule`}
+                        title="Edit"
+                        onClick={() => setEditing(r.id)}
+                      >
+                        <IconPencil size={16} />
+                      </button>
+                      {!r.community && (
+                        <CopyToEmirate
+                          action={copyRentRule}
+                          id={r.id}
+                          label={`Copy ${subtypesLabel(r.subtypes)} rule to another emirate`}
+                          options={company.emirates.filter((e) => e !== r.emirate)}
+                        />
                       )}
-                    </td>
-                    {canEdit && (
-                      <td className={`${TD} whitespace-nowrap`}>
-                        <div className="flex items-start gap-2">
-                          <button
-                            type="button"
-                            className={iconButtonClass()}
-                            aria-label={`Edit ${subtypeLabel(r.subtype)} rule`}
-                            title="Edit"
-                            onClick={() => setEditing(r.id)}
-                          >
-                            <IconPencil size={16} />
-                          </button>
-                          <RowAction
-                            action={removeRentRule}
-                            fields={{ id: r.id }}
-                            label={`Remove ${subtypeLabel(r.subtype)} rule`}
-                            icon={<IconTrash size={16} />}
-                            danger
-                            confirmText="Remove this rule? It stops applying to units straight away."
-                          />
-                        </div>
-                      </td>
-                    )}
-                  </tr>
-                ),
-              )}
-            </tbody>
-          </table>
+                      <RowAction
+                        action={removeRentRule}
+                        fields={{ id: r.id }}
+                        label={`Remove ${subtypesLabel(r.subtypes)} rule`}
+                        icon={<IconTrash size={16} />}
+                        danger
+                        confirmText="Remove this rule? It stops applying to units straight away."
+                      />
+                    </div>
+                  )}
+                </li>
+              ),
+            )}
+          </ul>
         </Panel>
       )}
     </FormGrid>

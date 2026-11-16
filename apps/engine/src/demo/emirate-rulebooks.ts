@@ -1,5 +1,5 @@
 /**
- * Demo rulebooks for the six emirates other than Dubai (D55). They are demo seed data, not code
+ * Demo rulebooks for Abu Dhabi, Sharjah, Ras Al Khaimah and Umm Al Quwain (D55; Ajman and Fujairah dropped in D66). They are demo seed data, not code
  * base versions: a real install stays fail-closed for these emirates until an admin publishes a
  * reviewed version. Values come from general public sources (confidence low to medium); every
  * source line says so. CONFIRM WITH LEGAL before real use.
@@ -85,19 +85,6 @@ export const DEMO_EMIRATE_RULEBOOKS: readonly DemoEmirateRulebook[] = [
       "Repossession notice: sources say 3 or 12 months; 12 months used; confirm with legal",
     ],
   }),
-  entry("ajman", {
-    notice: 90,
-    send: 100,
-    repossession: 12,
-    lock: { residential: 2, commercial: 2 },
-    lateRent: 30,
-    cap: 0,
-    sources: [
-      "Law No. 3 of 2009 on landlord and tenant relations",
-      "Old rule: no rent rise before 3 years (0% cap used)",
-      "Notice period, repossession notice, own-use lock and late-rent period assumed; confirm with legal",
-    ],
-  }),
   entry("ras_al_khaimah", {
     notice: 90,
     send: 100,
@@ -109,18 +96,6 @@ export const DEMO_EMIRATE_RULEBOOKS: readonly DemoEmirateRulebook[] = [
       "Amiri Decree No. 1 of 2008 on landlord and tenant relations (cited; low confidence; confirm with legal)",
       "5% residential rent-increase cap; 1-year repossession notice (low confidence; confirm with legal)",
       "Notice period, own-use lock and late-rent period assumed; confirm with legal",
-    ],
-  }),
-  entry("fujairah", {
-    notice: 90,
-    send: 100,
-    repossession: 12,
-    lock: { residential: 2, commercial: 2 },
-    lateRent: 30,
-    cap: 5,
-    sources: [
-      "Rent increase of 5% a year (low confidence; no primary text found)",
-      "Notice period, repossession notice, own-use lock and late-rent period assumed; confirm with legal",
     ],
   }),
   entry("umm_al_quwain", {

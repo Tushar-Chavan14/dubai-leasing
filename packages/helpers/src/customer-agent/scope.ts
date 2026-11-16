@@ -9,7 +9,7 @@ import type { Llm } from "@leasing/llm";
  */
 export const SCOPE_CRITERIA = {
   rental:
-    "About renting a home, office, shop or other space from a UAE rental agency: searching, prices, areas, viewings, applying, documents, their application or offer, their tenancy, or a short reply that continues that conversation (yes, no, the first one, a name, a time)",
+    "About renting a home, office, shop or other space from a UAE rental agency: searching, prices, areas, site visits or viewings, applying, documents, their application or offer, their tenancy, or a short reply that continues that conversation (yes, no, the first one, a name, a time)",
   off_topic:
     "Unrelated to renting from us: writing code, essays or emails, general knowledge or trivia, news, maths, homework, advice on other subjects, or questions about other companies, apps or AI",
   greeting: "Only a greeting, thanks or small talk",

@@ -1,5 +1,14 @@
+import {
+  type CalendarDate,
+  type ContractFee,
+  feesFor,
+  type Instalment,
+  parseContractFees,
+  paymentSchedule,
+  registrationFeeFor,
+} from "@leasing/core";
 import { FIELD_CATALOGUE, type FieldInfo, type FieldType } from "./fields.ts";
-import { formatCalendarDate } from "./format.ts";
+import { formatCalendarDate, formatMoneyFils } from "./format.ts";
 
 /**
  * The data sheet: every value the system holds for a contract, as `key -> description + type`. The keys are
@@ -90,6 +99,80 @@ EXTRAS.tenancyPeriod = {
     const e = r.lease && typeof r.lease.endOn === "string" ? formatCalendarDate(r.lease.endOn) : null;
     return s && e ? `${s} to ${e}` : null;
   },
+};
+/**
+ * The lease's rent instalments from the same `paymentSchedule` that schedules rent collection (null when the lease
+ * record lacks the term, rent or cheque count). Display only: the dates and amounts are computed by code.
+ */
+function leaseInstalments(r: SheetRecords): Instalment[] | null {
+  const l = r.lease;
+  if (!l || typeof l.startOn !== "string" || typeof l.endOn !== "string") return null;
+  if (!Number.isInteger(l.annualRentFils) || !Number.isInteger(l.cheques)) return null;
+  try {
+    return paymentSchedule({
+      startOn: l.startOn as CalendarDate,
+      endOn: l.endOn as CalendarDate,
+      annualRentFils: l.annualRentFils as number,
+      cheques: l.cheques as number,
+    });
+  } catch {
+    return null;
+  }
+}
+EXTRAS.chequeAmountFils = {
+  type: "money_fils",
+  label: "Amount of each cheque (only when all cheques are equal)",
+  read: (r) => {
+    const s = leaseInstalments(r);
+    return s && s.every((i) => i.amountFils === s[0]!.amountFils) ? s[0]!.amountFils : null;
+  },
+};
+for (let n = 1; n <= 12; n++) {
+  EXTRAS[`chequeDate${n}`] = {
+    type: "date",
+    label: `Date of cheque ${n}`,
+    read: (r) => leaseInstalments(r)?.[n - 1]?.dueOn,
+  };
+}
+EXTRAS.chequeDates = {
+  type: "text",
+  label: "All cheque dates, in order, separated by |",
+  read: (r) =>
+    leaseInstalments(r)
+      ?.map((i) => formatCalendarDate(i.dueOn))
+      .join(" | "),
+};
+/** The company's contract fees that apply in the unit's emirate (D70); a unit with no emirate gets the any-emirate ones. */
+const appliedFees = (r: SheetRecords): ContractFee[] =>
+  feesFor(parseContractFees(r.company?.contractFees), typeof r.unit?.emirate === "string" ? r.unit.emirate : null);
+const feeText = (f: ContractFee): string => `${f.name} ${formatMoneyFils(f.amountFils)} (${f.payer})`;
+EXTRAS.registrationFeeFils = {
+  type: "money_fils",
+  label: "Registration fee (Ejari, Tawtheeq or the emirate's own) for the unit's emirate",
+  read: (r) =>
+    registrationFeeFor(appliedFees(r), typeof r.unit?.emirate === "string" ? r.unit.emirate : null)?.amountFils,
+};
+EXTRAS.registrationFeePayer = {
+  type: "text",
+  label: "Who pays the registration fee (Tenant or Landlord)",
+  read: (r) => {
+    const p = registrationFeeFor(appliedFees(r), typeof r.unit?.emirate === "string" ? r.unit.emirate : null)?.payer;
+    return p === "tenant" ? "Tenant" : p === "landlord" ? "Landlord" : null;
+  },
+};
+EXTRAS.feesSummary = {
+  type: "text",
+  label: "Other fees (agency fee, municipality fee ...) with amount and payer, separated by ;",
+  read: (r) =>
+    appliedFees(r)
+      .filter((f) => f.kind === "other")
+      .map(feeText)
+      .join("; "),
+};
+EXTRAS.allFeesList = {
+  type: "text",
+  label: "Every fee that applies, one per line (printed in the payment schedule section)",
+  read: (r) => appliedFees(r).map(feeText).join("\n"),
 };
 EXTRAS.applicationRef = { type: "text", label: "Application reference", read: (r) => r.application?.ref };
 EXTRAS.reservationFils = {

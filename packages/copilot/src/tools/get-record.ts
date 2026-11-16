@@ -55,7 +55,7 @@ const ACTION_WORDS: Record<string, string> = {
   edit: "edit and approve",
   send_offer: "send the offer",
   prepare_contract: "prepare the contract",
-  record_viewing_outcome: "record the viewing outcome",
+  record_viewing_outcome: "record the site visit outcome",
   record_reservation: "record the reservation payment",
   done: "mark it done",
 };

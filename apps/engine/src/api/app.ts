@@ -7,6 +7,7 @@ import {
   AutopilotPatch,
   OfferPolicyPatch,
   RegistrationPolicyPatch,
+  ContractChangePolicyPatch,
   maskPiiText,
   newId,
   QUIET_HOURS_SAME,
@@ -274,6 +275,19 @@ export function createApi(ctx: EngineContext, opts: ApiOptions) {
       return { values: { ...cur.values, registrationFeePaidBy: body.registrationFeePaidBy }, changes };
     });
     return c.json({ version: out.version, registrationFeePaidBy: out.values.registrationFeePaidBy });
+  });
+  /** D67: change requests from the signing page (admin, versioned like every policy change). */
+  api.put("/policy/contract-changes", async (c) => {
+    requireRole(c.get("user"), ["admin"]);
+    const body = ContractChangePolicyPatch.parse(await c.req.json());
+    const out = await savePolicyVersion(ctx, c.get("user").id, "POLICY_CHANGED", (cur) => {
+      const from = cur.values.contractChanges as Record<string, unknown>;
+      const changes = Object.entries(body)
+        .filter(([k, v]) => JSON.stringify(from[k]) !== JSON.stringify(v))
+        .map(([k, v]) => ({ field: `contractChanges.${k}`, from: from[k], to: v }));
+      return { values: { ...cur.values, contractChanges: body }, changes };
+    });
+    return c.json({ version: out.version, contractChanges: out.values.contractChanges });
   });
   api.put("/policy/offers", async (c) => {
     requireRole(c.get("user"), ["admin"]);

@@ -267,6 +267,23 @@ const EVENT_LABELS: Record<string, string> = {
 };
 export const eventLabel = (t: string) => EVENT_LABELS[t] ?? humanise(t.toLowerCase());
 
+/** What each helper does, in plain words: the actor shows as "Leasing agent (…)", never a model name. */
+const HELPER_LABELS: Record<string, string> = {
+  kyc: "document check",
+  offer: "offer",
+  contract: "contract",
+  contract_agent: "contract",
+  contract_template: "contract clauses",
+  contract_structure: "contract template",
+  registration: "registration",
+  renewal: "renewal",
+  collections: "rent collection",
+  complaint_triage: "complaint triage",
+  exit_deposit: "move-out and deposit",
+  pricing: "pricing",
+  leasing_assistant: "enquiries",
+};
+
 export function actorLabel(actor: string): string {
   if (actor === "system") return "Engine";
   if (actor.startsWith("system:")) return `Engine (${actor.slice(7).replace(/-/g, " ")})`;
@@ -276,7 +293,10 @@ export function actorLabel(actor: string): string {
   if (actor.startsWith("tenant:")) return "Tenant";
   if (actor.startsWith("landlord:")) return "Landlord";
   if (actor.startsWith("copilot:")) return "Copilot";
-  if (actor.startsWith("helper:")) return `Helper ${actor.slice(7)}`;
+  if (actor.startsWith("helper:")) {
+    const name = actor.slice(7);
+    return `Leasing agent (${HELPER_LABELS[name] ?? humanise(name)})`;
+  }
   return actor;
 }
 

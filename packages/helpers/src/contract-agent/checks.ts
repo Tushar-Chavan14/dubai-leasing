@@ -1,5 +1,12 @@
 import { addYears, type CalendarDate, type ContractFields, diffDays } from "@leasing/core";
 import { fixedValueKinds } from "../contract-structure/filled.ts";
+import {
+  emirateWordingProblems,
+  legalPeriodProblems,
+  type KeyedProblem,
+  sampleValueProblems,
+} from "../contract-structure/legal-wording.ts";
+import { formatCalendarDate, formatMoneyFils } from "../contract-structure/format.ts";
 import { unprintable } from "../contract-structure/render.ts";
 import type { BlankFill, ContractAgentContext, TermCheck, ContractUnitFacts } from "./schema.ts";
 
@@ -96,7 +103,51 @@ export function checkContractTerms(
               : "Blanks: every template blank filled from the records",
           },
   );
+  checks.push(...legalWordingChecks(c, fields));
   return checks;
+}
+
+const SHORT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** A record value in every way the contract prints it: dates as ISO, "12 November 2026", "12 Nov 2026"; money as "AED 50,000". */
+function printedForms(v: string): string[] {
+  const d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+  if (d) {
+    const long = formatCalendarDate(v);
+    const mon = SHORT_MONTHS[Number(d[2]) - 1];
+    return [v, ...(long ? [long] : []), ...(mon ? [`${Number(d[3])} ${mon} ${d[1]}`, `${d[3]}/${d[2]}/${d[1]}`] : [])];
+  }
+  const m = /^\d{3,}$/.test(v) ? Number(v) : NaN;
+  return Number.isSafeInteger(m) ? [v, formatMoneyFils(m * 100), `AED ${m.toLocaleString("en-US")}`] : [v];
+}
+
+const listed = (ps: KeyedProblem[]) =>
+  [...new Set(ps.map((p) => p.problem))].slice(0, 3).join(" ") + (ps.length > 3 ? ` (and ${ps.length - 3} more)` : "");
+
+/**
+ * D70: the template's printed fixed wording against this lease's own records, rulebook version and emirate. Without a
+ * template (standard contract) there is no fixed wording to check.
+ */
+function legalWordingChecks(c: ContractAgentContext, fields: ContractFields): TermCheck[] {
+  const ids = ["sample_values", "legal_periods", "emirate_wording"] as const;
+  if (!c.template || !c.legal)
+    return ids.map((id) => ({ id, ok: true, reason: "Fixed wording: standard contract, no template wording" }));
+  const texts = [
+    ...c.legal.headings.map((text, i) => ({ key: `heading ${i + 1}`, text })),
+    ...c.template.paragraphs.map((p) => ({ key: p.key, text: p.text })),
+  ];
+  const own = [
+    ...c.legal.ownValues,
+    ...Object.values(fields).flatMap((v) => (typeof v === "string" && v.length > 0 ? printedForms(v) : [])),
+  ];
+  const run = (id: (typeof ids)[number], label: string, ps: KeyedProblem[]): TermCheck =>
+    ps.length
+      ? { id, ok: false, reason: `${label}: ${listed(ps)}` }
+      : { id, ok: true, reason: `${label}: nothing wrong found in the template's fixed wording` };
+  return [
+    run("sample_values", "Sample values", sampleValueProblems(texts, own)),
+    run("legal_periods", "Legal periods", legalPeriodProblems(texts, c.legal.rules)),
+    run("emirate_wording", "Emirate wording", emirateWordingProblems(texts, c.legal.emirate)),
+  ];
 }
 
 const UNITS = [
@@ -166,7 +217,7 @@ const NUMBER_WORDS = new RegExp(
   `\\b(?:(${TENS.filter(Boolean).join("|")})[-\\s](${UNITS.slice(1, 10).join("|")})|(${[...WORD_VALUE.keys()].join("|")}))\\b`,
   "gi",
 );
-const TOKENS = /\{\{b\d+\}\}/g;
+export const TOKENS = /\{\{b\d+\}\}/g;
 
 /** Every number a text states, with where it is: digits ("1,250", "2nd"), words ("four", "twenty-five", "third"). */
 function numbersIn(text: string): { value: number; end: number }[] {
@@ -207,7 +258,7 @@ export function factNumbers(f: ContractUnitFacts): Set<number> {
 const FEATURES =
   /\b(pool|garden|balcon(?:y|ies)|terrace|maid'?s?|garage|view|gym|study|laundry|storage|roof|jacuzzi|bbq|barbecue|playroom|driver'?s?|courtyard|yard|lawn|annex|sauna|elevator|lift|concierge|beach|sea|marina|park|lake|golf|canal)\b/gi;
 /** Words of legal or money terms: a paragraph with any of them is never reworded, and a rewording never adds one. */
-const LEGAL_WORDS =
+export const LEGAL_WORDS =
   /\b(?:rent|deposit|cheques?|payments?|pay|fees?|commission|aed|dirhams?|terminat\w*|notice|evict\w*|vacat\w*|renew\w*|law|legal|ejari|rera|penalt\w*|fines?|liab\w*|indemn\w*|breach|dispute|court|insur\w*|sub-?let\w*|assign\w*|shall|must|oblig\w*|responsib\w*|period|term|months?|years?|days?|no|not|never|without|except|unless|only|may|allowed|permitted|prohibit\w*|forbid\w*|pets?|tenant|landlord|lessee|lessor|use|used|maintain\w*|maintenance|repair\w*|damage\w*|smok\w*|visitors?|guests?|occup\w*|residential|commercial)\b|n't\b/i;
 /** Words of a paragraph that describes the unit (its type, rooms, size and features). */
 const UNIT_WORDS =
@@ -219,7 +270,7 @@ export const describesUnit = (text: string): boolean => {
   return UNIT_WORDS.test(t) && !LEGAL_WORDS.test(t);
 };
 
-const tokensOf = (s: string) => [...s.matchAll(TOKENS)].map((m) => m[0]).sort();
+export const tokensOf = (s: string) => [...s.matchAll(TOKENS)].map((m) => m[0]).sort();
 
 /**
  * D64: a reworded template paragraph is used only when code finds nothing wrong with it. The original must be a body

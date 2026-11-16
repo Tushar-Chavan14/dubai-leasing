@@ -69,7 +69,11 @@ export function RecordHead({
           />
         </div>
       </div>
-      <RecordStepper stages={STAGES} current={record.stage} labels={{ Ejari: stageLabel("Ejari", record.emirate) }} />
+      <RecordStepper
+        stages={STAGES}
+        current={record.stage}
+        labels={{ Viewing: stageLabel("Viewing"), Ejari: stageLabel("Ejari", record.emirate) }}
+      />
     </header>
   );
 }

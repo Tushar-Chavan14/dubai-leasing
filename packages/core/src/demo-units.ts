@@ -1,3 +1,4 @@
+import type { ContractFee } from "./contract-fees.ts";
 import type { Emirate } from "./emirates.ts";
 import { type PropertyCategory, type PropertySubtype, propertyUsageFor } from "./portfolio.ts";
 
@@ -35,6 +36,8 @@ export interface DemoCompanyLegal {
   email: string;
   phone: string;
   chequePayeeName: string;
+  /** Demo contract fees (fictional amounts, labelled demo). */
+  contractFees: ContractFee[];
   signatoryName: string;
   signatoryTitle: string;
   signatoryEmail: string;
@@ -42,6 +45,37 @@ export interface DemoCompanyLegal {
   signatoryEidSerial: string;
   signatoryIdExpiresOn: string;
 }
+
+/**
+ * Demo contract fees (fictional amounts, labelled demo): a registration fee per emirate that has one, and an agency fee
+ * that applies everywhere. The Dubai Ejari fee is AED 220 paid by the tenant.
+ */
+export const DEMO_CONTRACT_FEES: ContractFee[] = [
+  {
+    id: "demo-ejari",
+    name: "Ejari registration fee (demo)",
+    kind: "registration",
+    amountFils: 22_000,
+    payer: "tenant",
+    emirates: ["dubai"],
+  },
+  {
+    id: "demo-tawtheeq",
+    name: "Tawtheeq registration fee (demo)",
+    kind: "registration",
+    amountFils: 15_000,
+    payer: "tenant",
+    emirates: ["abu_dhabi"],
+  },
+  {
+    id: "demo-agency",
+    name: "Agency fee (demo)",
+    kind: "other",
+    amountFils: 100_000,
+    payer: "tenant",
+    emirates: [],
+  },
+];
 
 export const DEMO_COMPANY_LEGAL: Record<string, DemoCompanyLegal> = {
   silverline: {
@@ -55,6 +89,7 @@ export const DEMO_COMPANY_LEGAL: Record<string, DemoCompanyLegal> = {
     email: "leasing@silverline.demo.example",
     phone: "+971 4 000 0201",
     chequePayeeName: "Silverline Properties L.L.C. (demo)",
+    contractFees: DEMO_CONTRACT_FEES,
     signatoryName: "Idris Example Malik",
     signatoryTitle: "Chief Executive Officer",
     signatoryEmail: "signatory@silverline.demo.example",
@@ -72,6 +107,7 @@ export const DEMO_COMPANY_LEGAL: Record<string, DemoCompanyLegal> = {
     email: "leasing@qamar.demo.example",
     phone: "+971 4 000 0202",
     chequePayeeName: "Qamar Realty L.L.C. (demo)",
+    contractFees: DEMO_CONTRACT_FEES,
     signatoryName: "Zainab Sample Qureshi",
     signatoryTitle: "Managing Director",
     signatoryEmail: "signatory@qamar.demo.example",
@@ -89,6 +125,7 @@ export const DEMO_COMPANY_LEGAL: Record<string, DemoCompanyLegal> = {
     email: "office@alnoor.demo.example",
     phone: "+971 4 000 0203",
     chequePayeeName: "Al Noor Family Holdings L.L.C. (demo)",
+    contractFees: DEMO_CONTRACT_FEES,
     signatoryName: "Faisal Demo Al Noor",
     signatoryTitle: "Chairman",
     signatoryEmail: "signatory@alnoor.demo.example",
@@ -106,6 +143,7 @@ export const DEMO_COMPANY_LEGAL: Record<string, DemoCompanyLegal> = {
     email: "leasing@sobha.demo.example",
     phone: "+971 4 000 0204",
     chequePayeeName: "Sobha Realty L.L.C. (demo)",
+    contractFees: DEMO_CONTRACT_FEES,
     signatoryName: "Karthik Specimen Nair",
     signatoryTitle: "Head of Leasing",
     signatoryEmail: "signatory@sobha.demo.example",
@@ -123,6 +161,7 @@ export const DEMO_COMPANY_LEGAL: Record<string, DemoCompanyLegal> = {
     email: "leasing@modon.demo.example",
     phone: "+971 4 000 0205",
     chequePayeeName: "Modon Properties L.L.C. (demo)",
+    contractFees: DEMO_CONTRACT_FEES,
     signatoryName: "Mariam Test Haddad",
     signatoryTitle: "Director of Operations",
     signatoryEmail: "signatory@modon.demo.example",
@@ -309,7 +348,7 @@ function emirateUnits(emirate: Emirate, rows: EmirateUnitInput[]): DemoListedUni
 }
 
 /**
- * Two fictional listed units in each of the six other emirates (D55): a residential apartment and a commercial
+ * Two fictional listed units in each of the four other demo emirates (D55, D66): a residential apartment and a commercial
  * office or retail shop. Asking rents come from the demo rent index of their community (general public data, low to
  * medium confidence), so they are inside the rent rule's range and bookable without approval.
  */
@@ -362,30 +401,6 @@ export const DEMO_EMIRATE_UNITS: DemoListedUnit[] = [
       description: "Ground-floor shop on a busy street near the waterfront, with a small storeroom.",
     },
   ]),
-  ...emirateUnits("ajman", [
-    {
-      code: "AJM-0101",
-      category: "residential",
-      building: "Demo Nuaimiya Court",
-      community: "Al Nuaimiya",
-      unitNo: "2301",
-      bedrooms: 1,
-      areaSqft: 700,
-      askingRentFils: aed(24_000),
-      description: "One-bedroom apartment with a balcony, central air conditioning and a parking space.",
-    },
-    {
-      code: "AJM-OF-0201",
-      category: "commercial",
-      building: "Demo Downtown Offices",
-      community: "Ajman Downtown",
-      unitNo: "2302",
-      bedrooms: null,
-      areaSqft: 800,
-      askingRentFils: aed(40_000),
-      description: "Open office with two private rooms and a pantry, close to the main road.",
-    },
-  ]),
   ...emirateUnits("ras_al_khaimah", [
     {
       code: "RAK-0101",
@@ -408,30 +423,6 @@ export const DEMO_EMIRATE_UNITS: DemoListedUnit[] = [
       areaSqft: 600,
       askingRentFils: aed(78_000),
       description: "Boardwalk shop with a glass front and outdoor seating space.",
-    },
-  ]),
-  ...emirateUnits("fujairah", [
-    {
-      code: "FUJ-0101",
-      category: "residential",
-      building: "Demo Sakamkam Gardens",
-      community: "Sakamkam",
-      unitNo: "2501",
-      bedrooms: 2,
-      areaSqft: 1000,
-      askingRentFils: aed(40_000),
-      description: "Two-bedroom apartment with mountain views, a balcony and covered parking.",
-    },
-    {
-      code: "FUJ-OF-0201",
-      category: "commercial",
-      building: "Demo City Centre Offices",
-      community: "Fujairah City Centre",
-      unitNo: "2502",
-      bedrooms: null,
-      areaSqft: 700,
-      askingRentFils: aed(49_000),
-      description: "Office in the city centre with a reception area and a meeting room.",
     },
   ]),
   ...emirateUnits("umm_al_quwain", [
@@ -511,15 +502,6 @@ export const DEMO_SRI: DemoSriRow[] = [
   { emirate: "sharjah", community: "Al Nahda", category: "residential", bedrooms: 1, avgAnnualRentAed: 32_000 },
   { emirate: "sharjah", community: "Al Nahda", category: "residential", bedrooms: 2, avgAnnualRentAed: 45_000 },
   { emirate: "sharjah", community: "Al Majaz", category: "retail", bedrooms: null, avgAnnualRentPerSqftAed: 150 },
-  { emirate: "ajman", community: "Al Nuaimiya", category: "residential", bedrooms: 1, avgAnnualRentAed: 24_000 },
-  { emirate: "ajman", community: "Al Nuaimiya", category: "residential", bedrooms: 2, avgAnnualRentAed: 33_000 },
-  {
-    emirate: "ajman",
-    community: "Ajman Downtown",
-    category: "commercial",
-    bedrooms: null,
-    avgAnnualRentPerSqftAed: 50,
-  },
   { emirate: "ras_al_khaimah", community: "Al Hamra", category: "residential", bedrooms: 1, avgAnnualRentAed: 55_000 },
   { emirate: "ras_al_khaimah", community: "Al Hamra", category: "residential", bedrooms: 2, avgAnnualRentAed: 75_000 },
   {
@@ -528,15 +510,6 @@ export const DEMO_SRI: DemoSriRow[] = [
     category: "retail",
     bedrooms: null,
     avgAnnualRentPerSqftAed: 130,
-  },
-  { emirate: "fujairah", community: "Sakamkam", category: "residential", bedrooms: 1, avgAnnualRentAed: 28_000 },
-  { emirate: "fujairah", community: "Sakamkam", category: "residential", bedrooms: 2, avgAnnualRentAed: 40_000 },
-  {
-    emirate: "fujairah",
-    community: "Fujairah City Centre",
-    category: "commercial",
-    bedrooms: null,
-    avgAnnualRentPerSqftAed: 70,
   },
   { emirate: "umm_al_quwain", community: "Al Salamah", category: "residential", bedrooms: 1, avgAnnualRentAed: 21_000 },
   { emirate: "umm_al_quwain", community: "Al Salamah", category: "residential", bedrooms: 2, avgAnnualRentAed: 30_000 },
@@ -568,29 +541,27 @@ export const DEMO_RENT_RULES: DemoRentRule[] = [
   { company: "silverline", category: "commercial", minPctBp: -500, maxPctBp: 1000 },
   { company: "silverline", category: "retail", minPctBp: -500, maxPctBp: 1000 },
   // Other emirates: residential -10%..+10% around the rent index, commercial and retail with AED bounds.
-  ...(["abu_dhabi", "sharjah", "ajman", "ras_al_khaimah", "fujairah", "umm_al_quwain"] as const).flatMap(
-    (emirate): DemoRentRule[] => [
-      { emirate, company: "silverline", category: "residential", minPctBp: -1000, maxPctBp: 1000 },
-      {
-        emirate,
-        company: "silverline",
-        category: "commercial",
-        minPctBp: -1000,
-        maxPctBp: 1000,
-        minRentAed: 30_000,
-        maxRentAed: 200_000,
-      },
-      {
-        emirate,
-        company: "silverline",
-        category: "retail",
-        minPctBp: -1000,
-        maxPctBp: 1000,
-        minRentAed: 30_000,
-        maxRentAed: 200_000,
-      },
-    ],
-  ),
+  ...(["abu_dhabi", "sharjah", "ras_al_khaimah", "umm_al_quwain"] as const).flatMap((emirate): DemoRentRule[] => [
+    { emirate, company: "silverline", category: "residential", minPctBp: -1000, maxPctBp: 1000 },
+    {
+      emirate,
+      company: "silverline",
+      category: "commercial",
+      minPctBp: -1000,
+      maxPctBp: 1000,
+      minRentAed: 30_000,
+      maxRentAed: 200_000,
+    },
+    {
+      emirate,
+      company: "silverline",
+      category: "retail",
+      minPctBp: -1000,
+      maxPctBp: 1000,
+      minRentAed: 30_000,
+      maxRentAed: 200_000,
+    },
+  ]),
 ];
 
 export interface DemoContractRule {

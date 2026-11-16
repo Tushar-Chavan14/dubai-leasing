@@ -3,7 +3,7 @@
 import { ActionForm } from "../../../../components/ui/action-form";
 import { useActionState, useRef, useState } from "react";
 import { PlusIcon as IconPlus, WarningIcon as IconWarning } from "@phosphor-icons/react";
-import { subtypeLabel } from "../../../../lib/portfolio";
+import { subtypesLabel } from "../../../../lib/portfolio";
 import type { CompanyClauseView, CompanyRow, ContractRuleRow } from "../../../../lib/types";
 import { addClause, editClause, removeClause, setClauseRulesAction } from "./actions";
 import { FIELD, HINT, LABEL } from "../../../../components/ui/form";
@@ -84,7 +84,7 @@ function AddClauseForm({
               {rules.map((r) => (
                 <label key={r.id}>
                   <input type="checkbox" name="ruleIds" value={r.id} />
-                  {subtypeLabel(r.subtype)} · {r.category}
+                  {subtypesLabel(r.subtypes)} · {r.category}
                 </label>
               ))}
             </div>
@@ -126,7 +126,7 @@ export function ClauseText({ text }: { text: string }) {
   );
 }
 
-const ruleName = (r: ContractRuleRow) => `${subtypeLabel(r.subtype)} · ${r.category}`;
+const ruleName = (r: ContractRuleRow) => `${subtypesLabel(r.subtypes)} · ${r.category}`;
 
 /** Which active rules include an approved clause; each tick saves at once (a new rule version). */
 function RuleTicks({ c, rules }: { c: CompanyClauseView; rules: ContractRuleRow[] }) {
@@ -320,28 +320,48 @@ export function ClauseList({
   clauses,
   rules,
   canEdit,
+  scope = "additional",
 }: {
   company: CompanyRow;
   clauses: CompanyClauseView[];
   rules: ContractRuleRow[];
   canEdit: boolean;
+  /**
+   * D69: `additional` (Settings → Contracts): clauses printed under Additional terms, with Add clause. `template`
+   * (a template's tab): the clauses read from that template, printed in its own place; no Add.
+   */
+  scope?: "additional" | "template";
 }) {
   const [adding, setAdding] = useState(false);
+  const forTemplate = scope === "template";
   return (
     <section className="grid gap-3.5 rounded-card border border-line bg-page p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h3 className="m-0 font-sans text-[15px] font-semibold tracking-tight text-ink">Clauses</h3>
-        {canEdit && !adding && (
+        <h3 className="m-0 font-sans text-[15px] font-semibold tracking-tight text-ink">
+          {forTemplate ? "Clauses from this template" : "Additional terms clauses"}
+        </h3>
+        {canEdit && !adding && !forTemplate && (
           <button type="button" className={BTN.ghost} onClick={() => setAdding(true)}>
             <IconPlus size={14} />
             Add clause
           </button>
         )}
       </div>
-      <p className="m-0 text-[12.5px] text-muted">
-        Clauses tagged From template print in the template&rsquo;s own place; the others go under Additional terms. A
-        clause prints only in the rules it is ticked in.
-      </p>
+      {forTemplate ? (
+        <p className="m-0 text-[12.5px] text-muted">
+          Read from this template&rsquo;s sample. Each prints in the template&rsquo;s own place, with the wording as it
+          is now, in the rules it is ticked in.
+        </p>
+      ) : (
+        <p className="m-0 text-[12.5px] text-muted">
+          These print under Additional terms in any template, in the rules each is ticked in. Clauses read from a
+          template are on{" "}
+          <a className="text-ink! underline" href={`/settings/contract-templates?company=${company.id}`}>
+            Contract templates
+          </a>
+          .
+        </p>
+      )}
       {clauses.some((c) => c.fromTemplate) && (
         <p className="m-0 text-[12.5px] text-muted">
           Words in [brackets] are filled from the records (shown highlighted, like <ClauseText text="[Community]" />
@@ -350,7 +370,9 @@ export function ClauseList({
       )}
       {adding && <AddClauseForm company={company} rules={rules} onDone={() => setAdding(false)} />}
       {clauses.length === 0 ? (
-        <p className="m-0 text-muted">No clauses yet. Upload a sample contract on a rule, or add one.</p>
+        <p className="m-0 text-muted">
+          {forTemplate ? "No clauses were read from this template." : "No additional clauses yet. Add one."}
+        </p>
       ) : (
         <ul className="m-0 list-none p-0">
           {clauses.map((c) => (

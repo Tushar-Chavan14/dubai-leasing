@@ -248,6 +248,16 @@ const EVENT_TEXT: Record<string, EventText> = {
   CONTRACT_SENT: (s) => `${s} sent the contract for signing.`,
   CONTRACT_SIGNED_BY: (s) => `${s} signed the contract.`,
   CONTRACT_SUPERSEDED: (s) => `${s} replaced the contract with a newer version.`,
+  CONTRACT_REPREPARED: (s) => `${s} prepared the contract again.`,
+  CONTRACT_CHANGE_REQUESTED: (s) => `${s} asked for a change to the contract. Signing is paused.`,
+  CONTRACT_CHANGE_ANALYSED: (s, p) =>
+    p.drafted ? `${s} drafted the requested change for review.` : `${s} reviewed the requested change (no draft).`,
+  CONTRACT_CHANGE_DECLINED: (s) => `${s} declined the requested change. Signing is open again.`,
+  CONTRACT_CHANGE_WITHDRAWN: (s) => `${s} withdrew their change request.`,
+  CONTRACT_CHANGE_REISSUED: (s, p) => `${s} re-issued the contract as version ${Number(p.version)} with the change.`,
+  CONTRACT_CHANGE_WORDING: (s) => `${s} wrote their own wording for a marked change.`,
+  CONTRACT_CHANGE_MARKS_APPROVED: (s, p) =>
+    `${s} approved the marked changes: version ${Number(p.version)} was prepared and approved.`,
   SIGN_LINK_RESENT: (s) => `${s} sent the signing link again.`,
   CONTRACT_SIGNED: (s) => `${s} confirmed the contract is signed.`,
   EJARI_SUBMISSION_QUEUED: (s) => `${s} queued the Ejari submission.`,
@@ -271,7 +281,7 @@ const EVENT_TEXT: Record<string, EventText> = {
   INBOUND_RECEIVED: (s) => `${s} received a message.`,
   // Document check steps (helper:kyc). Plain words; no ID numbers, no document content.
   KYC_CHECK_STARTED: (_s, p) =>
-    `Checking ${Number(p.documents ?? 0)} document${Number(p.documents) === 1 ? "" : "s"} with ${String(p.model ?? "the local model")}.`,
+    `Checking ${Number(p.documents ?? 0)} document${Number(p.documents) === 1 ? "" : "s"} with the leasing agent.`,
   KYC_DOC_READ: (_s, p) =>
     p.ok
       ? `Read the ${String(p.doc)} (${Number(p.index)} of ${Number(p.total)}) in ${Number(p.seconds)} s.`

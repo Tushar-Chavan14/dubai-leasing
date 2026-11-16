@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { buttonClass } from "../ui/button";
+import { stageLabel } from "../../lib/stage-label";
 import { Pill } from "../ui/pill";
 import { StageStepper } from "./stage-stepper";
 import { stagesForStaffStage } from "./stages.ts";
@@ -46,7 +47,7 @@ export function RecordCardView({
       <div className="flex items-start justify-between gap-2">
         <b className="text-[15px] leading-snug font-semibold tracking-tight">{card.name}</b>
         <Pill tone="waiting" className="flex-none">
-          {card.stage === "Ejari" && card.registration ? card.registration : card.stage}
+          {card.stage === "Ejari" && card.registration ? card.registration : stageLabel(card.stage)}
         </Pill>
       </div>
       <span className="text-muted">

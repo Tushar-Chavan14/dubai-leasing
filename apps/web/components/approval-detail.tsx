@@ -417,7 +417,11 @@ export async function ApprovalDetail({
             canEditRent={a.gate === "renewal_notice"}
             canEditNote={NOTE_EDIT_GATES.has(a.gate)}
             currentRentAed={rent}
-            editOffer={a.gate === "offer_out_of_limits" ? offerEdit(a.proposal, today) : undefined}
+            editOffer={
+              a.gate === "offer_out_of_limits" && a.proposal.kind !== "lease_terms"
+                ? offerEdit(a.proposal, today)
+                : undefined
+            }
           />
         ) : waiting ? (
           <p className="m-0 text-sm text-muted">

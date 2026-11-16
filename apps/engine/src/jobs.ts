@@ -1,4 +1,4 @@
-import { withTx } from "@leasing/db";
+import { Addendum } from "@leasing/core";
 import { PgBoss } from "pg-boss";
 import type { EngineContext, Scheduler } from "./context.ts";
 import {
@@ -11,11 +11,10 @@ import {
 import {
   CONTRACT_FINISH_JOB,
   CONTRACT_PREPARE_JOB,
-  defaultAddendumFor,
   finishContract,
-  prepareContract,
-  reportTemplateFailure,
+  runContractPrepareJob,
 } from "./manager/contracts.ts";
+import { analyseContractChange, CONTRACT_CHANGE_JOB } from "./manager/contract-changes.ts";
 import {
   CONTRACT_STRUCTURE_JOB,
   CONTRACT_TEMPLATE_JOB,
@@ -105,6 +104,13 @@ export async function startWorkers(
     expireInSeconds: contractJobExpireSeconds(modelTimeout),
   });
   await boss.updateQueue(CONTRACT_STRUCTURE_JOB, { expireInSeconds: contractJobExpireSeconds(modelTimeout) });
+  // D67: the change request draft (chat model); the request stays open for a person if both tries fail.
+  await boss.createQueue(CONTRACT_CHANGE_JOB, {
+    policy: "exclusive",
+    retryLimit: 1,
+    retryDelay: 60,
+    expireInSeconds: contractJobExpireSeconds(modelTimeout),
+  });
   await boss.createQueue(CONTRACT_FINISH_JOB, {
     policy: "exclusive",
     retryLimit: 4,
@@ -140,22 +146,28 @@ export async function startWorkers(
   await boss.work<LeaseMailJob>(LEASE_MAIL_JOB, async (jobs) => {
     for (const job of jobs) await sendLeaseMail(ctx, job.data);
   });
-  await boss.work<{ leaseId: string }>(CONTRACT_PREPARE_JOB, async (jobs) => {
-    for (const job of jobs) {
-      const addendum = await withTx(ctx.database, (tx) => defaultAddendumFor(tx, job.data.leaseId));
-      try {
-        await prepareContract(ctx, job.data.leaseId, { addendum, actor: "system", onlyIfNone: true });
-      } catch (e) {
-        if (!(await reportTemplateFailure(ctx, job.data.leaseId, e))) throw e;
+  await boss.work<{ leaseId: string; addendum?: unknown; actor?: string; reprepare?: boolean }>(
+    CONTRACT_PREPARE_JOB,
+    async (jobs) => {
+      for (const job of jobs) {
+        const { leaseId, addendum, actor, reprepare } = job.data;
+        await runContractPrepareJob(ctx, leaseId, {
+          ...(addendum === undefined ? {} : { addendum: Addendum.parse(addendum) }),
+          ...(actor === undefined ? {} : { actor }),
+          ...(reprepare ? { reprepare: true } : {}),
+        });
       }
-    }
-  });
+    },
+  );
   await boss.work<{ documentId: string }>(CONTRACT_TEMPLATE_JOB, async (jobs) => {
     for (const job of jobs) await runContractTemplateJob(ctx, job.data.documentId, modelTimeout);
   });
   await boss.work<{ documentId: string; force?: boolean }>(CONTRACT_STRUCTURE_JOB, async (jobs) => {
     for (const job of jobs)
       await runContractStructureJob(ctx, job.data.documentId, job.data.force === true, modelTimeout);
+  });
+  await boss.work<{ requestId: string }>(CONTRACT_CHANGE_JOB, async (jobs) => {
+    for (const job of jobs) await analyseContractChange(ctx, job.data.requestId);
   });
   await boss.work<{ contractId: string }>(CONTRACT_FINISH_JOB, async (jobs) => {
     for (const job of jobs) await finishContract(ctx, job.data.contractId);

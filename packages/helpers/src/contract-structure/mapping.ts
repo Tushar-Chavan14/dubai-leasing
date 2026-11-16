@@ -49,11 +49,54 @@ const norm = (s: string): string =>
 
 type Hit = string | null;
 
+const ORDINALS = [
+  "first",
+  "second",
+  "third",
+  "fourth",
+  "fifth",
+  "sixth",
+  "seventh",
+  "eighth",
+  "ninth",
+  "tenth",
+  "eleventh",
+  "twelfth",
+];
+const CHEQUE = "(?:cheques?|checks?)";
+
+/**
+ * Cheque blanks: a dated one ("First cheque date", "Cheque date 3") maps to that instalment's date key, a bare
+ * "cheque dates" to the whole list, an amount to the equal-instalment amount. Null when the label is neither.
+ */
+function chequeField(text: string): Hit {
+  const dated = new RegExp(`\\b${CHEQUE}\\s*(?:no\\s*|num\\s*|number\\s*)?(?:dates?|due)\\b`).test(text);
+  if (dated) {
+    const ord = ORDINALS.findIndex((w) => new RegExp(`\\b${w}\\b`).test(text));
+    const num = /\b(\d{1,2})(?:st|nd|rd|th)?\b/.exec(text)?.[1];
+    const n = ord >= 0 ? ord + 1 : num ? Number(num) : 0;
+    if (n > 12) return "leave_empty";
+    return n ? `chequeDate${n}` : "chequeDates";
+  }
+  const nth = new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s*${CHEQUE}\\s*(?:no\\s*)?date\\b`).exec(text)?.[1];
+  if (nth) return Number(nth) > 12 ? "leave_empty" : `chequeDate${Number(nth)}`;
+  if (
+    new RegExp(
+      `\\b${CHEQUE}\\s*amounts?\\b|\\bamounts?\\s*(?:per|of each|of every)\\s*${CHEQUE}\\b|\\b(?:each|per)\\s*${CHEQUE}\\b|\\b(?:\\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\\s*${CHEQUE}\\s*of\\b`,
+    ).test(text)
+  )
+    return "chequeAmountFils";
+  return null;
+}
+
 /** One property or contract-level rule: the field (no party needed), or "leave_empty" for things we don't store. */
 const GENERAL: [RegExp, Hit][] = [
   // Things the system does not store: leave empty, don't guess.
   [/\b(representative|representing|attorney|power of attorney|poa|signatory|authori[sz]ed person)\b/, "leave_empty"],
   [/\b(fax|po box|p o box|post box|po\.? ?box|zip|postal|pobox)\b/, "leave_empty"],
+  [/\b(ejari|tawtheeq|registration)\b.*\b(paid by|payable by|borne by|payer)\b/, "registrationFeePayer"],
+  [/\b(ejari|tawtheeq)\b.*\bfees?\b|\bfees?\b.*\b(ejari|tawtheeq)\b|\bregistration fees?\b/, "registrationFeeFils"],
+  [/\b(other|additional|extra) fees?\b|\bfees? (summary|list)\b/, "feesSummary"],
   [/\bejari\b/, "leave_empty"],
   [/\bdewa\b|\bpremises?\s*(no|num|number|id)\b/, "dewaPremiseNo"],
   [/\b(occupants?|residents?)\b|\b(number|no|nr) of (persons|people)\b/, "leave_empty"],
@@ -99,12 +142,15 @@ const GENERAL: [RegExp, Hit][] = [
   [/\bmakani\b/, "makaniNo"],
   [/\bplot\b/, "plotNo"],
   [/\b(property|dld|registry|title deed|land)\s*(no|num|number|id)\b/, "dldPropertyNo"],
+  // D70: before "unit": "Unit description" and "Unit code" are not the unit number.
+  [/\bdescription\b/, "unitDescription"],
+  [/\b(unit|property) code\b/, "unitCode"],
+  [/\bcategory\b/, "propertySubtype"],
   [/\b(unit|flat|apartment|villa|office|shop)\s*(no|num|number)?\b/, "unitNo"],
   [/\bbuilding\b|\btower\b|\bproject\b/, "building"],
   [/\b(community|area|location|district|locality|zone)\b/, "community"],
   [/\b(bedrooms?|beds|br)\b/, "bedrooms"],
   [/\b(property )?(usage|use|purpose)\b/, "propertyUsage"],
-  [/\b(unit|property) code\b/, "unitCode"],
 ];
 
 /** Rules for a party's own details; the party comes from the label or the context. */
@@ -145,6 +191,8 @@ export function matchLabel(label: string, party: Party | null): Hit {
     const hit = partyField(text, own);
     if (hit) return hit;
   }
+  const cheque = chequeField(text);
+  if (cheque) return cheque;
   for (const [re, hit] of GENERAL) if (re.test(text)) return hit;
   // Context party only for bare detail labels ("Nationality:", "Phone").
   if (!own && p) return partyField(text, p);
@@ -332,8 +380,43 @@ export async function resuggestBlanks(
       source: p.source,
     };
     delete next.note;
-    if (next.field !== b.field) changed++;
     return next;
   });
-  return { blanks: out, changed, model };
+  // D70: a row of cheque-date blanks is numbered by position, as when the sample is first read.
+  const numbered = numberChequeDateRuns(lines, out).map((b) =>
+    b.source === "admin" ? blanks.find((x) => x.id === b.id)! : b,
+  );
+  for (const [i, b] of numbered.entries()) if (b.field !== blanks[i]!.field) changed++;
+  return { blanks: numbered, changed, model };
+}
+
+const CHEQUE_DATE_KEY = /^chequeDate(?:s|\d{1,2})$/;
+const RUN = /\{\{b\d+\}\}(?:\s*(?:\||,|\/|;|and|&)?\s*\{\{b\d+\}\})+/g;
+
+/**
+ * D70: a row of cheque-date blanks ("Cheque Dates {{b1}} | {{b2}} | {{b3}} | {{b4}}") is numbered by position: the
+ * nth blank prints the nth instalment's date, whatever each one was labelled ("Cheque dates" on the first is common).
+ * Only a run of two or more cheque-date blanks (at least two already mapped to cheque-date keys) is changed.
+ */
+export function numberChequeDateRuns<
+  B extends { id: string; field: string; label: string; fieldType: string | null; role: string },
+>(texts: readonly (string | null | undefined)[], blanks: B[]): B[] {
+  const byId = new Map(blanks.map((b) => [b.id, b]));
+  const renumber = new Map<string, number>();
+  for (const text of texts) {
+    for (const m of (text ?? "").matchAll(RUN)) {
+      const ids = [...m[0].matchAll(/\{\{(b\d+)\}\}/g)].map((x) => x[1]!);
+      const run = ids.map((id) => byId.get(id));
+      // A blank left empty whose label says it is a cheque date belongs to the row too (the mapping is not always sure).
+      const dated = (x: B) =>
+        CHEQUE_DATE_KEY.test(x.field) || (/\b(?:cheques?|checks?)\b/i.test(x.label) && /\bdates?\b/i.test(x.label));
+      if (ids.length > 12 || !run.every((x) => x && x.role === "field" && dated(x))) continue;
+      if (run.filter((x) => CHEQUE_DATE_KEY.test(x!.field)).length < 2) continue;
+      ids.forEach((id, i) => renumber.set(id, i + 1));
+    }
+  }
+  return blanks.map((b) => {
+    const n = renumber.get(b.id);
+    return n ? { ...b, field: `chequeDate${n}`, fieldType: "date", label: `Cheque ${n} date` } : b;
+  });
 }

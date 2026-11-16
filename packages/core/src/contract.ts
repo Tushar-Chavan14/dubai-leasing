@@ -104,17 +104,25 @@ export const CompanyClauseText = z.object({
 });
 export type CompanyClauseText = z.infer<typeof CompanyClauseText>;
 
+/** One cap for the addendum and for a contract rule's clause list (the rule save schema reuses it), so they cannot diverge. */
+export const MAX_ADDENDUM_CLAUSES = 60;
+
 export const Addendum = z.object({
   clauses: z
     .array(z.union([ContractClauseId, CompanyClauseRef]) as z.ZodType<ContractClauseId | CompanyClauseRef>)
-    .max(20),
+    .max(MAX_ADDENDUM_CLAUSES),
   /** Staff-written extra terms. Untrusted text: reviewed by a model for conflicts, shown to the approver. */
   freeText: z.string().trim().max(4000).nullable(),
   /**
    * Wording of the `cc:` clauses above, filled in by the Manager from approved rows when the contract
    * is prepared (anything a client sends here is overwritten). Printed under "Additional terms (company)".
    */
-  companyClauses: z.array(CompanyClauseText).max(20).optional(),
+  companyClauses: z.array(CompanyClauseText).max(MAX_ADDENDUM_CLAUSES).optional(),
+  /**
+   * Clauses the officer removed through change marks, also those the contract rule lists (a linked template paragraph
+   * then does not print). Kept by "prepare again".
+   */
+  removedClauses: z.array(z.string()).max(MAX_ADDENDUM_CLAUSES).optional(),
 });
 export type Addendum = z.infer<typeof Addendum>;
 

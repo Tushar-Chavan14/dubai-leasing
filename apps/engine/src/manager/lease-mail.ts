@@ -1,6 +1,7 @@
 import {
   contractSignedEmail,
   contractSignEmail,
+  contractSignPausedEmail,
   ejariIssuedEmail,
   type MailAttachment,
   type MailReceipt,
@@ -12,6 +13,7 @@ import {
   contracts,
   contractSigners,
   documents,
+  contractChangeRequests,
   ejariSubmissions,
   leaseParties,
   leases,
@@ -21,13 +23,14 @@ import {
   units,
   withTx,
 } from "@leasing/db";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
 import { appendEvent, getCompanyPolicy } from "./events.ts";
 import { quietNow, scheduleTimed, sendTime } from "./agent-switches.ts";
 import { createLink } from "./links.ts";
 import { onFormalReminderSent } from "./collections.ts";
 import { createTask } from "./milestones.ts";
+import { declineNoteFor, signingPaused } from "./contract-changes.ts";
 import { leaseEmirate } from "./registries.ts";
 import { composeTenancyMail, type TenancyMailKind } from "./tenancy-mail.ts";
 
@@ -39,7 +42,17 @@ import { composeTenancyMail, type TenancyMailKind } from "./tenancy-mail.ts";
  */
 export const LEASE_MAIL_JOB = "lease.mail";
 /** `sign_reminder`: a reminder to a signer who has not signed (switch `sign_reminder`, D37), with a fresh link. */
-export type LeaseMailKind = "sign" | "sign_reminder" | "signed" | "ejari_issued" | TenancyMailKind;
+/** D67: `sign_paused` tells a signer a change was requested (no link); `sign_resumed` brings a fresh link after it. */
+export type LeaseMailKind =
+  | "sign"
+  | "sign_reminder"
+  | "sign_paused"
+  | "sign_resumed"
+  /** D67: the version this signer signed was replaced through a change request; they will sign the new one. */
+  | "signed_replaced"
+  | "signed"
+  | "ejari_issued"
+  | TenancyMailKind;
 export interface LeaseMailJob {
   leaseId: string;
   kind: LeaseMailKind;
@@ -61,6 +74,9 @@ export async function queueLeaseMail(ctx: EngineContext, tx: Tx, j: LeaseMailJob
 const PURPOSE: Record<LeaseMailKind, "link" | "receipt" | "reminder" | "formal_reminder"> = {
   sign: "link",
   sign_reminder: "reminder",
+  sign_paused: "receipt",
+  sign_resumed: "link",
+  signed_replaced: "receipt",
   signed: "receipt",
   ejari_issued: "receipt",
   move_in: "link",
@@ -123,9 +139,15 @@ export async function sendLeaseMail(ctx: EngineContext, j: LeaseMailJob) {
         ? "contract_sign"
         : j.kind === "sign_reminder"
           ? "contract_sign_reminder"
-          : j.kind === "signed"
-            ? "contract_signed"
-            : "ejari_issued";
+          : j.kind === "sign_paused"
+            ? "contract_sign_paused"
+            : j.kind === "sign_resumed"
+              ? "contract_sign_resumed"
+              : j.kind === "signed_replaced"
+                ? "contract_signed_replaced"
+                : j.kind === "signed"
+                  ? "contract_signed"
+                  : "ejari_issued";
     const attachments: MailAttachment[] = [];
     const missingEmail = async (who: string) => {
       await createTask(ctx, tx, lease.id, {
@@ -148,7 +170,8 @@ export async function sendLeaseMail(ctx: EngineContext, j: LeaseMailJob) {
         return null;
       }
     }
-    if (j.kind === "sign" || j.kind === "sign_reminder" || j.kind === "signed") {
+    const signing = j.kind === "sign" || j.kind === "sign_reminder" || j.kind === "sign_resumed";
+    if (signing || j.kind === "sign_paused" || j.kind === "signed_replaced" || j.kind === "signed") {
       const [s] = await tx.db
         .select({ signer: contractSigners, contract: contracts })
         .from(contractSigners)
@@ -156,21 +179,46 @@ export async function sendLeaseMail(ctx: EngineContext, j: LeaseMailJob) {
         .where(eq(contractSigners.id, j.key))
         .for("update");
       if (!s) return null;
-      const still =
-        j.kind === "sign" || j.kind === "sign_reminder"
-          ? s.contract.status === "sent" && !s.signer.signedAt && lease.state === "CONTRACT"
-          : s.contract.status === "signed";
+      const paused = await signingPaused(tx, s.contract.id);
+      const open = s.contract.status === "sent" && !s.signer.signedAt && lease.state === "CONTRACT";
+      // D67: no signing link goes out while a change request pauses signing; the "paused" note only while it does.
+      const still = signing
+        ? open && !paused
+        : j.kind === "sign_paused"
+          ? open && paused
+          : j.kind === "signed_replaced"
+            ? s.contract.status === "superseded" && !!s.signer.signedAt
+            : s.contract.status === "signed";
       if (!still) return null;
       if (!s.signer.email) return missingEmail(s.signer.role === "tenant" ? "The tenant" : "The landlord");
       to = s.signer.email;
-      const doc = await readDoc(ctx, tx, j.kind === "signed" ? s.contract.signedDocumentId : s.contract.documentId);
-      if (!doc) return null;
-      attachments.push({
-        filename: `tenancy-contract-${lease.ref.replace(/[^A-Za-z0-9-]/g, "-")}-v${s.contract.version}${j.kind === "signed" ? "-signed" : ""}.pdf`,
-        content: doc.bytes,
-        contentType: "application/pdf",
-      });
-      if (j.kind === "sign" || j.kind === "sign_reminder") {
+      // The unsigned contract is read on the signing page; only the signed copy is attached.
+      if (j.kind === "signed") {
+        const doc = await readDoc(ctx, tx, s.contract.signedDocumentId);
+        if (!doc) return null;
+        attachments.push({
+          filename: `tenancy-contract-${lease.ref.replace(/[^A-Za-z0-9-]/g, "-")}-v${s.contract.version}-signed.pdf`,
+          content: doc.bytes,
+          contentType: "application/pdf",
+        });
+      }
+      if (j.kind === "sign_paused" || j.kind === "signed_replaced") {
+        const [req] = await tx.db
+          .select({ role: contractChangeRequests.role })
+          .from(contractChangeRequests)
+          .where(eq(contractChangeRequests.contractId, s.contract.id))
+          .orderBy(asc(contractChangeRequests.createdAt))
+          .limit(1);
+        mail = contractSignPausedEmail({
+          signerName: s.signer.nameEn,
+          unitLabel,
+          leaseRef: lease.ref,
+          version: s.contract.version,
+          byRole: req?.role ?? null,
+          demo: ctx.demoMode,
+          ...(j.kind === "signed_replaced" ? { replaced: true } : {}),
+        });
+      } else if (signing) {
         const ttl = (await getCompanyPolicy(tx, ctx.clock.today())).signLinkValidDays;
         // A new link replaces the signer's previous one.
         if (s.signer.linkId) {
@@ -196,12 +244,16 @@ export async function sendLeaseMail(ctx: EngineContext, j: LeaseMailJob) {
           validDays: ttl,
           demo: ctx.demoMode,
           ...(j.kind === "sign_reminder" ? { reminder: true } : {}),
+          ...(j.kind === "sign_resumed"
+            ? { resumed: true, declineNote: await declineNoteFor(tx, s.contract.id, s.signer.id) }
+            : {}),
         });
       } else {
         mail = contractSignedEmail({ name: s.signer.nameEn, unitLabel, leaseRef: lease.ref, demo: ctx.demoMode });
       }
     } else if (j.kind !== "ejari_issued") {
-      const c = await composeTenancyMail(ctx, tx, lease, unitLabel, j.kind, j.key);
+      // Every signing kind returned above; what is left is a tenancy mail.
+      const c = await composeTenancyMail(ctx, tx, lease, unitLabel, j.kind as TenancyMailKind, j.key);
       if (!c) return null;
       if ("noEmail" in c) return missingEmail("The tenant");
       to = c.to;
@@ -262,7 +314,7 @@ export async function sendLeaseMail(ctx: EngineContext, j: LeaseMailJob) {
         createdAt: ctx.clock.now(),
       });
     }
-    if (j.kind === "sign" || j.kind === "sign_reminder") {
+    if (signing) {
       await tx.db.update(contractSigners).set({ outboundMessageId: id }).where(eq(contractSigners.id, j.key));
     }
     return { id, to, mail, attachments };

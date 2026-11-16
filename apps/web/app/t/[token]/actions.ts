@@ -212,3 +212,53 @@ export async function depositResponse(_prev: PortalState, formData: FormData): P
   }
   return { error: "Choose accept or dispute." };
 }
+
+async function portalPost(token: string, path: string, body: unknown): Promise<PortalState> {
+  const res = await fetch(`${ENGINE_URL}/api/portal/${encodeURIComponent(token)}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  }).catch(() => null);
+  if (!res) return { error: "We couldn't reach the leasing system. Please try again in a few minutes." };
+  const b = (await res.json().catch(() => ({}))) as { ref?: string; error?: string };
+  if (!res.ok) return { error: b.error ?? "Something went wrong. Please try again." };
+  revalidatePath(`/t/${token}`, "layout");
+  return { ref: b.ref ?? "" };
+}
+
+/** D67: the signer asks for a change to the contract. Signing pauses until the leasing team answers. */
+export async function requestChange(_prev: PortalState, formData: FormData): Promise<PortalState> {
+  const token = String(formData.get("token") ?? "");
+  const text = String(formData.get("text") ?? "").trim();
+  const target = String(formData.get("target") ?? "other") || "other";
+  if (text.length < 5) return { error: "Tell us what you would like changed." };
+  return portalPost(token, "/change-requests", { target, text });
+}
+
+/** The signer sends every mark made on the contract pages as one change request. */
+export async function requestChangeMarks(_prev: PortalState, formData: FormData): Promise<PortalState> {
+  const token = String(formData.get("token") ?? "");
+  let raw: unknown;
+  try {
+    raw = JSON.parse(String(formData.get("marks") ?? "[]"));
+  } catch {
+    raw = null;
+  }
+  const marks = (Array.isArray(raw) ? raw : []).flatMap((m: { page?: unknown; quote?: unknown; note?: unknown }) => {
+    const page = Number(m?.page);
+    const quote = String(m?.quote ?? "").trim();
+    const note = String(m?.note ?? "").trim();
+    return Number.isInteger(page) && page >= 1 && quote && note ? [{ page, quote, note }] : [];
+  });
+  if (!marks.length) return { error: "Select some words and add a note first." };
+  if (marks.length > 20) return { error: "You can send up to 20 changes at once." };
+  return portalPost(token, "/change-requests", { marks });
+}
+
+/** D67: the signer withdraws one of their open change requests. */
+export async function withdrawChange(_prev: PortalState, formData: FormData): Promise<PortalState> {
+  const token = String(formData.get("token") ?? "");
+  const id = String(formData.get("requestId") ?? "");
+  return portalPost(token, `/change-requests/${encodeURIComponent(id)}/withdraw`, {});
+}

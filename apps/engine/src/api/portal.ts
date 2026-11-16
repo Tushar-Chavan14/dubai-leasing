@@ -28,6 +28,7 @@ import { offerRegistrationFee } from "../manager/registries.ts";
 import { receiveInbound, storeInboundWhileTenancyOff, termReplies } from "../manager/inbound.ts";
 import { addApplicationDocument, removeApplicationDocument, uploadedDocuments } from "../manager/applications.ts";
 import { contractPdf, signContract, signView } from "../manager/contracts.ts";
+import { anchorCheck, requestContractChange, withdrawContractChange } from "../manager/contract-changes.ts";
 import { openForReply } from "../manager/collections.ts";
 import { portalStatement } from "../manager/deposit.ts";
 import { getCompanyPolicy } from "../manager/events.ts";
@@ -38,6 +39,7 @@ import { addTenancyPhoto } from "../manager/tenancy-files.ts";
 import { noticeSentForTerm, sentNoticeValid } from "../manager/outbound.ts";
 import { companyKycConfig } from "../manager/kyc-config.ts";
 import type { AuthEnv } from "./auth.ts";
+import { MAX_PDF_PAGES, pdfPageCount, pdfPageText, renderPdfPage } from "../pdf-pages.ts";
 
 /**
  * Tenant portal API (architecture §8a). Authenticated by the magic-link token only; a token
@@ -45,11 +47,13 @@ import type { AuthEnv } from "./auth.ts";
  */
 const WINDOW_MS = 60_000;
 const MAX_PER_WINDOW = 30;
+/** The page-image viewer fetches every page of a contract, so it gets its own, larger allowance. */
+const PAGES_MAX_PER_WINDOW = MAX_PDF_PAGES * 2 + 10;
 const hits = new Map<string, { n: number; until: number }>();
 
 /** Small per-token rate limit (wall-clock, not domain time). */
-function limited(token: string): boolean {
-  const key = sha256Hex(token);
+function limited(token: string, bucket = "", max = MAX_PER_WINDOW): boolean {
+  const key = sha256Hex(token) + bucket;
   const now = Date.now();
   // Random tokens must not grow the map without bound: drop expired windows when it gets big.
   if (hits.size > 10_000) for (const [k, v] of hits) if (v.until < now) hits.delete(k);
@@ -59,7 +63,7 @@ function limited(token: string): boolean {
     return false;
   }
   h.n++;
-  return h.n > MAX_PER_WINDOW;
+  return h.n > max;
 }
 
 const unknownLink = () =>
@@ -182,7 +186,7 @@ export function registerPortalRoutes(app: Hono<AuthEnv>, ctx: EngineContext, med
       const link = await resolveLink(tx, token, ctx.clock.now());
       if (link?.entityKind === "application") return applicationView(tx, link);
       if (link?.purpose === "sign") {
-        const view = await signView(tx, link);
+        const view = await signView(tx, link, ctx.clock.today());
         if (!view) throw unknownLink();
         return maskPii({ ...view, demo: ctx.demoMode });
       }
@@ -269,11 +273,12 @@ export function registerPortalRoutes(app: Hono<AuthEnv>, ctx: EngineContext, med
     });
   });
 
-  /** The contract a signer is asked to sign (the approved PDF). Only through that signer's link. */
-  app.get("/api/portal/:token/contract.pdf", async (c) => {
-    const token = c.req.param("token");
-    if (limited(token)) return c.json({ error: "Too many requests" }, 429);
-    const bytes = await withTx(ctx.database, async (tx) => {
+  /**
+   * The contract a signer is asked to sign, for reading only: server-rendered page images, never the PDF.
+   * Every request re-checks the signer's link.
+   */
+  const contractBytes = (token: string) =>
+    withTx(ctx.database, async (tx) => {
       const link = await resolveLink(tx, token, ctx.clock.now());
       if (link?.purpose !== "sign") throw unknownLink();
       const [s] = await tx.db
@@ -282,13 +287,38 @@ export function registerPortalRoutes(app: Hono<AuthEnv>, ctx: EngineContext, med
         .innerJoin(contracts, eq(contracts.id, contractSigners.contractId))
         .where(eq(contractSigners.linkId, link.id));
       if (!s) throw unknownLink();
-      return contractPdf(ctx, tx, s.contract, "approved");
+      const [lease] = await tx.db.select({ ref: leases.ref }).from(leases).where(eq(leases.id, link.entityId));
+      return { bytes: await contractPdf(ctx, tx, s.contract, "approved"), reference: lease?.ref ?? "" };
     });
-    return c.body(bytes, 200, {
-      "content-type": "application/pdf",
-      "content-disposition": `inline; filename="tenancy-contract.pdf"`,
+
+  app.get("/api/portal/:token/contract/pages", async (c) => {
+    const token = c.req.param("token");
+    if (limited(token, ":pages", PAGES_MAX_PER_WINDOW)) return c.json({ error: "Too many requests" }, 429);
+    const { bytes, reference } = await contractBytes(token);
+    return c.json({ pages: await pdfPageCount(bytes), reference }, 200, { "cache-control": "private, no-store" });
+  });
+
+  app.get("/api/portal/:token/contract/pages/:n", async (c) => {
+    const token = c.req.param("token");
+    if (limited(token, ":pages", PAGES_MAX_PER_WINDOW)) return c.json({ error: "Too many requests" }, 429);
+    const { bytes } = await contractBytes(token);
+    const png = await renderPdfPage(bytes, Number(c.req.param("n")));
+    if (!png) return c.json({ error: "No such page" }, 404);
+    return c.body(new Uint8Array(png), 200, {
+      "content-type": "image/png",
+      "content-disposition": "inline",
       "cache-control": "private, no-store",
+      "x-content-type-options": "nosniff",
     });
+  });
+
+  app.get("/api/portal/:token/contract/pages/:n/text", async (c) => {
+    const token = c.req.param("token");
+    if (limited(token, ":pages", PAGES_MAX_PER_WINDOW)) return c.json({ error: "Too many requests" }, 429);
+    const { bytes } = await contractBytes(token);
+    const text = await pdfPageText(bytes, Number(c.req.param("n")));
+    if (!text) return c.json({ error: "No such page" }, 404);
+    return c.json(text, 200, { "cache-control": "private, no-store" });
   });
 
   app.post("/api/portal/:token/sign", async (c) => {
@@ -304,9 +334,39 @@ export function registerPortalRoutes(app: Hono<AuthEnv>, ctx: EngineContext, med
     return c.json(r, 201);
   });
 
+  /** D67: the signer asks for a change to the contract; signing pauses until staff re-issue or decline. */
+  app.post("/api/portal/:token/change-requests", async (c) => {
+    const token = c.req.param("token");
+    if (limited(token, ":change", 5)) return c.json({ error: "Too many requests; try again in a minute." }, 429);
+    const link = await withTx(ctx.database, (tx) => resolveLink(tx, token, ctx.clock.now()));
+    if (!link || link.purpose !== "sign") throw unknownLink();
+    return c.json(await requestContractChange(ctx, link, await c.req.json()), 201);
+  });
+
+  /** Marked text: which part of the contract a selection is, and whether it can be marked at all. */
+  app.post("/api/portal/:token/change-requests/anchor", async (c) => {
+    const token = c.req.param("token");
+    if (limited(token, ":pages", PAGES_MAX_PER_WINDOW)) return c.json({ error: "Too many requests" }, 429);
+    const link = await withTx(ctx.database, (tx) => resolveLink(tx, token, ctx.clock.now()));
+    if (!link || link.purpose !== "sign") throw unknownLink();
+    return c.json(await anchorCheck(ctx, link, await c.req.json()));
+  });
+
+  app.post("/api/portal/:token/change-requests/:id/withdraw", async (c) => {
+    const token = c.req.param("token");
+    if (limited(token)) return c.json({ error: "Too many requests; try again in a minute." }, 429);
+    const link = await withTx(ctx.database, (tx) => resolveLink(tx, token, ctx.clock.now()));
+    if (!link || link.purpose !== "sign") throw unknownLink();
+    const id = z.uuid().safeParse(c.req.param("id"));
+    if (!id.success) throw unknownLink();
+    return c.json(await withdrawContractChange(ctx, link, id.data));
+  });
+
   app.post("/api/inbound", async (c) => {
     const body = z.object({ token: z.string(), type: InboundType, payload: z.unknown() }).parse(await c.req.json());
     if (limited(body.token)) return c.json({ error: "Too many requests; try again in a minute." }, 429);
+    // Signing and change requests have their own routes (evidence, locks); never through the generic form path.
+    if (body.type === "CONTRACT_SIGNED_BY" || body.type === "CONTRACT_CHANGE_REQUESTED") throw unknownLink();
     if (!ctx.tenancyOps && TENANCY_OPS_INBOUND.has(body.type)) {
       // Kept as evidence and marked for a person; never processed while tenancy operations are off.
       const stored = await withTx(ctx.database, async (tx) => {

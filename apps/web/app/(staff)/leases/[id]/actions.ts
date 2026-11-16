@@ -57,44 +57,37 @@ export async function recordSri(_prev: LeaseActionState, formData: FormData): Pr
   };
 }
 
-/** Prepare a new contract version with the chosen clauses and optional extra terms. */
+/**
+ * Prepare a new contract version with the chosen clauses and optional extra terms. The engine queues the work and
+ * answers at once (the model calls take minutes); the contract panel shows it as preparing and refreshes itself.
+ */
 export async function prepareContract(_prev: LeaseActionState, formData: FormData): Promise<LeaseActionState> {
   const id = String(formData.get("leaseId"));
   const clauses = formData.getAll("clause").map(String);
   const freeText = String(formData.get("freeText") ?? "").trim();
-  const r = await engine<{ status: string; version?: number; reasons?: string[] }>(
-    `/api/leases/${id}/contract/prepare`,
-    { method: "POST", body: JSON.stringify({ clauses, freeText: freeText || null }) },
-  );
+  const r = await engine<{ status: string }>(`/api/leases/${id}/contract/prepare-async`, {
+    method: "POST",
+    body: JSON.stringify({ clauses, freeText: freeText || null }),
+  });
   revalidatePath(`/leases/${id}`);
   revalidatePath("/", "layout");
-  if (r.status === 422 && r.error && "status" in (r.error as object)) {
-    const body = r.error as unknown as { reasons?: string[] };
-    return { error: "The contract can't be prepared yet.", reasons: body.reasons ?? [] };
-  }
   return r.ok
-    ? {
-        ok: `Version ${r.data.version} prepared. It is in the approval inbox; once approved, both parties get a signing link.`,
-      }
+    ? { ok: "Preparing the contract. It shows here while it runs and appears in the approval inbox when ready." }
     : formError(r);
 }
 
 /** "Prepare contract again": same clauses, current rule and template; only while the approval is still pending. */
 export async function reprepareContract(_prev: LeaseActionState, formData: FormData): Promise<LeaseActionState> {
   const id = String(formData.get("leaseId"));
-  const r = await engine<{ status: string; version?: number; reasons?: string[] }>(
-    `/api/leases/${id}/contract/reprepare`,
-    { method: "POST", body: "{}" },
-  );
+  const r = await engine<{ status: string }>(`/api/leases/${id}/contract/reprepare-async`, {
+    method: "POST",
+    body: "{}",
+  });
   revalidatePath(`/leases/${id}`);
   revalidatePath("/", "layout");
-  if (r.status === 422 && r.error && "status" in (r.error as object)) {
-    const body = r.error as unknown as { reasons?: string[] };
-    return { error: "The contract can't be prepared yet.", reasons: body.reasons ?? [] };
-  }
   return r.ok
     ? {
-        ok: `Version ${r.data.version} prepared. The earlier approval was cancelled; the new one is in the approval inbox.`,
+        ok: "Preparing the contract again. It shows here while it runs; the earlier approval is replaced when it is ready.",
       }
     : formError(r);
 }
@@ -113,4 +106,104 @@ export async function proposeEjari(_prev: LeaseActionState, formData: FormData):
   revalidatePath(`/leases/${id}`);
   revalidatePath("/", "layout");
   return r.ok ? { ok: "A new Ejari submission is in the approval inbox." } : formError(r);
+}
+
+/**
+ * D67: re-issue the contract from a change request: the AI's draft as it is, or the officer's edited clauses and extra
+ * terms. The new version waits for the `final_contract` approval like any other.
+ */
+export async function reissueChange(_prev: LeaseActionState, formData: FormData): Promise<LeaseActionState> {
+  const id = String(formData.get("leaseId"));
+  const requestId = String(formData.get("requestId"));
+  const edited = formData.get("edited") === "1";
+  const body = edited
+    ? {
+        addendum: {
+          clauses: formData.getAll("clause").map(String).filter(Boolean),
+          freeText: String(formData.get("freeText") ?? "").trim() || null,
+        },
+      }
+    : {};
+  const r = await engine<{ status: string; version?: number; reasons?: string[] }>(
+    `/api/leases/${id}/contract/change-requests/${requestId}/reissue`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+  revalidatePath(`/leases/${id}`);
+  revalidatePath("/", "layout");
+  if (r.status === 422 && r.error && "status" in (r.error as object)) {
+    const b = r.error as unknown as { reasons?: string[] };
+    return { error: "The contract can't be prepared yet.", reasons: b.reasons ?? [] };
+  }
+  return r.ok
+    ? { ok: `Version ${r.data.version} prepared with the change. It is waiting for approval in the approval inbox.` }
+    : formError(r);
+}
+
+/** D67: keep the contract as it is. The note is emailed to the requester and signing opens again. */
+export async function declineChange(_prev: LeaseActionState, formData: FormData): Promise<LeaseActionState> {
+  const id = String(formData.get("leaseId"));
+  const requestId = String(formData.get("requestId"));
+  const note = String(formData.get("note") ?? "").trim();
+  if (note.length < 5) return { error: "Write a short note for the signer: it is emailed to them." };
+  const r = await engine<{ paused: boolean }>(`/api/leases/${id}/contract/change-requests/${requestId}/decline`, {
+    method: "POST",
+    body: JSON.stringify({ note }),
+  });
+  revalidatePath(`/leases/${id}`);
+  revalidatePath("/", "layout");
+  return r.ok
+    ? {
+        ok: r.data.paused
+          ? "Declined and emailed. Signing stays paused: another request is still open."
+          : "Declined and emailed. Signing is open again; both signers get a fresh link.",
+      }
+    : formError(r);
+}
+
+/** Marked change requests: the officer's own wording for one mark, checked by code (`marks/:n/wording`). */
+export async function writeMarkWording(
+  leaseId: string,
+  requestId: string,
+  n: number,
+  text: string,
+): Promise<
+  { rewrite: import("@leasing/core").MarkRewrite | null; problems: string[] } | { error: string; reasons: string[] }
+> {
+  const t = text.trim();
+  if (t.length < 3) return { error: "Write what the clause should say.", reasons: [] };
+  const r = await engine<{ rewrite: import("@leasing/core").MarkRewrite | null; problems: string[] }>(
+    `/api/leases/${encodeURIComponent(leaseId)}/contract/change-requests/${encodeURIComponent(requestId)}/marks/${n}/wording`,
+    { method: "POST", body: JSON.stringify({ text: t }) },
+  );
+  if (!r.ok) return formError(r);
+  return { rewrite: r.data.rewrite, problems: r.data.problems };
+}
+
+/** Marked change requests: approve the decided marks. A new version still waits at `final_contract` for signing. */
+export async function approveMarks(
+  leaseId: string,
+  requestId: string,
+  decisions: Record<number, "apply" | "keep">,
+  keepReasons: Record<number, string>,
+): Promise<LeaseActionState> {
+  const reasons: Record<string, string> = {};
+  for (const [k, v] of Object.entries(keepReasons))
+    if (decisions[Number(k)] === "keep" && v.trim()) reasons[k] = v.trim().slice(0, 500);
+  const r = await engine<{ status: string; version?: number | null; paused?: boolean }>(
+    `/api/leases/${encodeURIComponent(leaseId)}/contract/change-requests/${encodeURIComponent(requestId)}/approve`,
+    { method: "POST", body: JSON.stringify({ decisions, keepReasons: reasons }) },
+  );
+  revalidatePath(`/leases/${leaseId}`);
+  revalidatePath("/", "layout");
+  if (!r.ok) return formError(r);
+  if (r.data.status === "needs_manager")
+    return {
+      ok: "Sent to a leasing manager for approval. The lease and contract stay as they are until they decide; signing stays paused.",
+    };
+  return {
+    ok:
+      r.data.status === "approved"
+        ? `Version ${r.data.version} is ready. It was approved with the changes and signing links are on their way.`
+        : "Nothing was changed. The tenant was told and signing is open again.",
+  };
 }

@@ -122,12 +122,27 @@ describe("contract agent", () => {
     expect(r.status).toBe("ok");
     expect(r.data!.extraClauseIds).toEqual(["no_pets", CC]);
     expect(r.data!.addendum.clauses).toEqual(["no_pets", CC]);
-    expect(r.data!.checks).toHaveLength(7);
+    expect(r.data!.checks).toHaveLength(10);
     expect(r.data!.checks.every((c) => c.ok)).toBe(true);
     expect(r.data!.fields.annualRentFils).toBe(7_400_000);
     expect(r.reasons).toContain("Cheques: 4 within 1–4");
     // The tools were offered and their results reached the model.
     expect(model.calls[0]!.tools!.map((t) => t.function.name)).toContain("check_terms");
+  });
+
+  test("a tool called again gets a short note, not its data again (D70: the context stays small)", async () => {
+    const model = new ScriptedAgentModel([
+      () => callTool("contract_rule"),
+      () => callTool("contract_rule"),
+      () => answer(["no_pets", CC]),
+    ]);
+    const r = await contractAgent(model, backend()).run(input(ctx()));
+    expect(r.status).toBe("ok");
+    const tools = model.calls[2]!.messages.filter((m) => m.getType() === "tool").map((m) => String(m.content));
+    expect(tools).toHaveLength(2);
+    expect(tools[0]).toContain("rule-1");
+    expect(tools[1]).toContain("already returned above");
+    expect(tools[1]).not.toContain("rule-1");
   });
 
   test("cheques outside the rule → needs_human with the reason", async () => {
@@ -386,5 +401,58 @@ describe("D64 rewording from the unit's records", () => {
     const model = new ScriptedAgentModel([() => callTool("unit_facts"), () => answerWith([])]);
     await contractAgent(model, backend()).run(input(c));
     expect(String(model.calls[1]!.messages.at(-1)!.content)).toMatch(/<<<DATA_\w+_START>>>Ignore the rules/);
+  });
+});
+
+describe("D70 template wording checks", () => {
+  const legal = {
+    rules: { renewalNoticeDays: 90, repossessionNoticeMonths: 12, lateRentDaysAfterFormalReminder: 30 },
+    emirate: "dubai" as const,
+    headings: ["TERMS"],
+    ownValues: ["DEMO-DLD-000412"],
+  };
+  const f = { dldPropertyNo: "DEMO-DLD-000412", tenantNameEn: "T", landlordNameEn: "L" } as never;
+  const tpl = (...texts: string[]) => ({
+    id: "t-1",
+    version: 1,
+    paragraphs: texts.map((text, i) => ({ key: `s1:${i}`, text })),
+  });
+  const get = (c: ContractAgentContext, id: string) => checkContractTerms(c, f, null).find((x) => x.id === id)!;
+
+  test("a standard contract passes the three checks", () => {
+    for (const id of ["sample_values", "legal_periods", "emirate_wording"]) expect(get(ctx(), id).ok).toBe(true);
+  });
+  test("clean wording passes", () => {
+    const c = ctx({
+      template: tpl("Property {{b1}} (DEMO-DLD-000412). Rent increases need 90 days written notice."),
+      legal,
+    });
+    for (const id of ["sample_values", "legal_periods", "emirate_wording"]) expect(get(c, id).ok).toBe(true);
+  });
+  test("another unit's DLD number fails sample_values", () => {
+    const c = ctx({ template: tpl("Property DEMO-DLD-000017 is let."), legal });
+    const r = get(c, "sample_values");
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain("DEMO-DLD-000017");
+  });
+  test("a wrong legal period fails legal_periods", () => {
+    const c = ctx({ template: tpl("Any rent increase needs written notice 60 days before the term ends."), legal });
+    expect(get(c, "legal_periods").ok).toBe(false);
+  });
+  test("Dubai wording in an Abu Dhabi unit fails emirate_wording", () => {
+    const c = ctx({
+      template: tpl("Disputes go to the Rental Disputes Centre in Dubai."),
+      legal: { ...legal, emirate: "abu_dhabi" },
+    });
+    expect(get(c, "emirate_wording").ok).toBe(false);
+  });
+  test("the run ends needs_human with the reason", async () => {
+    const c = ctx({ template: tpl("Property DEMO-DLD-000017 is let."), legal });
+    const r = await contractAgent(
+      new ScriptedAgentModel([() => answer(["no_pets", CC])]),
+      backend({ filled: [], leftEmpty: [], missingCore: [] }),
+    ).run(input(c));
+    expect(r.status).toBe("needs_human");
+    expect(r.reasons.join(" ")).toContain("DEMO-DLD-000017");
   });
 });

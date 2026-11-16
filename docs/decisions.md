@@ -1488,3 +1488,210 @@ The leasing assistant automates the work up to the contract. Staff should approv
 - **Rules.** Amends D45 (no rewording) and D47 (the template's fixed wording) for wording about the unit only. Rule 1
   holds: no legal or money value is written by a model; the facts are the unit record's, checked by code. Rule 3 is
   unchanged: a person approves every contract. Rule 8 is unchanged: local model only.
+
+## D65 — Site visit wording, company emirates, contract emirate tabs, read-only signing, certificate reading
+
+- **Site visit.** Screens say "site visit"; the stage key stays `Viewing` (URLs, filters, copilot) and shows as
+  "Site visit". The customer agent, leasing assistant and copilot prompts treat "viewing" and "site visit" as the same
+  thing and reply with "site visit". The customer agent's claim guard also catches "your site visit is booked".
+- **Agent name.** Activity says "the leasing agent", never a model tag; `helper:<name>` actors show as
+  "Leasing agent (<what it does>)". `helper_runs.model` still records the model for audit (rule 4).
+- **Company emirates.** `companies.emirates` (migration 0038; backfilled from each company's units, else Dubai) lists
+  where a company operates. Rent rules, contract rules, units (form and CSV import) and sample uploads for another
+  emirate are refused (422 `emirate_not_operated`); removing an emirate still in use is refused (422
+  `emirate_in_use`). A new rent rule without an emirate takes the company's only emirate; with several it is
+  refused (422 `emirate_required`), for the copilot too (resolved before the Confirm card). A replace keeps its emirate. Company-free settings (rent index, registration, rulebook drafts) offer the union of active
+  companies' emirates; existing rows for others still show. The copilot reads `operatesIn` and gets the same refusal.
+- **Contract emirate tabs.** Settings → Contracts has emirate tabs under the company tabs (the company's emirates
+  plus "All emirates" for any-emirate rules and templates). A new rule and a sample upload take the tab's emirate;
+  the per-row emirate dropdown is gone. Editing a rule can move it to another emirate.
+- **Read-only signing (amends D22's delivery, not its evidence).** Sign and sign-reminder emails carry no PDF; the
+  signed copy is still emailed after signing. The signing page shows the approved PDF as server-rendered page images
+  (`/api/portal/:token/contract/pages/:n`, pdf.js through unpdf + `@napi-rs/canvas`, 60-page cap, `no-store`, the
+  sign link checked on every request) in a modal with no download link. The signature still binds the approved PDF's
+  hash. A screen can always be photographed; this removes the file and the download path.
+- **Certificate reading (D53 manual registration).** Picking the certificate PDF reads it
+  (`registration-certificate` helper: code labels first; the local chat model only when code finds no reference,
+  values kept only if verbatim in the text, one retry). It prefills Reference and Issued on and lists checks against
+  the signed contract (reference format, property, unit, Makani, tenant, dates, rent). Nothing is stored; the officer
+  still records the registration (rule 3). Rules 6 and 8 hold: Zod-checked, local model, no text in logs.
+
+## D66 — Company property types; the demo in five emirates
+
+- **Property types per company.** `companies.categories` (migration 0040; backfilled from each company's units, rent
+  rules and contract rules, else all three) lists what a company leases: residential, commercial, retail. Rent rules,
+  contract rules, units (form, update, CSV import) and sample uploads of another type are refused (422
+  `category_not_offered`); removing a type still used by units or active rules is refused (422 `category_in_use`,
+  company row locked; inserts take a share lock on it). A unit can't be archived yet, so a company keeps a type
+  while any of its units use it. Lease imports that create a unit check the type and emirate too. The companies CSV stores `categories` and a new `emirates` column (replacing an existing company's lists; a
+  removal in use fails the row). The copilot reads `offers` and gets the same refusal when it proposes.
+- **Screens.** The category tabs on Settings → Contracts and Rent rules, and the unit form's category, show only the
+  selected company's types (falling back to its first). The company form and edit page have "Offers for lease".
+- **Demo (amends D55).** Silverline is seeded in Dubai, Abu Dhabi, Sharjah, Ras Al Khaimah and Umm Al Quwain only.
+  Ajman and Fujairah lose their demo units, rent index rows, rent rules and demo rulebooks, so they stay fail-closed
+  (no rulebook, no offer) and show as "coming soon" in the chat.
+
+
+## D67 — Contract change requests from the signing page
+
+- **Why.** When a contract went out for signing, a tenant or landlord who wanted a clause changed had to email
+  or phone, and staff re-did the contract by hand. The user decided: either party can ask from their signing
+  link, the AI rewrites the addendum and shows a diff with an analysis to the officer handling the application,
+  and the copilot can say what is happening.
+- **Asking.** A signer who hasn't signed picks a clause on the contract (or "additional terms", or "something
+  else") and writes what they want. Stored at once as evidence (`inbound_events` `CONTRACT_CHANGE_REQUESTED`,
+  table `contract_change_requests`, migration 0041), a lease event without the words, and a
+  `contract_change_request` officer task. The words are untrusted everywhere. The requester can withdraw it.
+- **Signing pauses for both parties** (the user's choice) while any request on that version is open: signing,
+  signing emails and "send a new link" are refused; the other unsigned signer gets a "signing paused" email
+  with no link. Declining or withdrawing the last open request sends every unsigned signer a fresh link (the
+  requester's email carries the officer's note).
+- **The draft (`contract_change` helper, chat model + code).** The model may remove a clause on the contract,
+  add an approved clause (standard or the company's `cc:`), and rewrite the "Additional terms". Approved clause
+  wording is never edited. Code refuses unknown ids and any added amount, number, date, period or money word,
+  sends the draft back once, then keeps the analysis without a draft. Requests about rent, cheques, deposit,
+  dates or notice periods are never drafted (`money_or_dates`): those are the offer's, changed by a person.
+  Code builds the word diff. Local model only (rule 8).
+- **Deciding (person).** The officer sees the request, the AI's summary, analysis, risks and the diff, and can
+  re-issue with the AI's draft as it is (the user's choice), edit it first, or decline with a note. Re-issue
+  goes through `prepareContract`, so the new version waits at `final_contract` (rule 3); the old version and its
+  other open requests are superseded. **Amends D47**: a version one party already signed may be replaced through
+  a change request (both sign the new version; the old signature stays as evidence on the superseded version).
+  A fully signed or approved contract is never replaced.
+- **Settings.** Admin, versioned company policy `contractChanges` (on by default; tenant and landlord; 2 open per
+  signer; 1,000 characters), Settings → Contracts. `PUT /api/policy/contract-changes`.
+- **Copilot.** `contract_status` reports `signingPaused` and the requests (words untrusted, AI summary, whether
+  drafted, staff's decision). It never re-issues or declines (rule 11); the officer does in the Workspace.
+- **Eval (2026-11-12, `bun run eval -- contract-change`, local CHAT_MODEL, 30 cases).** 23/30 drafted or held as
+  expected; money, date and injection requests drafted: 0/14 (hard limit); no invalid answers; p50 12.9 s. Misses
+  are add-a-term requests the model labels `other`, or wording the guard refuses ("after 11pm", "notice"); the
+  officer then edits by hand.
+
+## D68 — Contract template library; rules cover several unit types; one rule per unit
+
+- **Why.** A company with one template for villas and apartments in Dubai and Abu Dhabi needed four contract rules
+  and four uploads of the same sample: a sample was uploaded onto a rule, a rule named one type, and a template one
+  emirate. The user asked to normalise this.
+- **Template library.** Samples are uploaded to the company, once, with the emirates the template is for (none =
+  any emirate). Rules pick an approved template. Approving a new version replaces (retires) the approved templates
+  for the same emirates by default; the admin can untick that to keep both, or pick others. **Amends D56** (a
+  template had one emirate or none) and **D47** (approval no longer adds clauses to "the rule the sample was uploaded
+  on"; ticked clauses join the rules on the template).
+- **Rules cover a list of types** (`subtypes`, empty = all types), for contract rules and rent rules. Each rule keeps
+  one emirate (or all emirates for contract rules), so the emirate tabs (D65) stay; "Copy to emirate" makes the same
+  rule for another emirate. We did not make rules span several emirates: cheque practice and rulebooks differ by
+  emirate, and the tabs would no longer show one place to edit a rule.
+- **One rule per unit.** Two active rules of the same company, category and emirate (and community, for rent rules)
+  may not both cover all types or share a type (422 `rule_overlap`). "Most specific wins, then newest" (D32, D58)
+  stays for an all-types rule next to a named-types rule, but two equally specific rules can no longer compete.
+- **Copilot (D45).** Same quote rule per value: each type added or removed must be in the user's words; "all types"
+  must be said. It can't upload, approve, retire or copy templates or rules (UI only).
+- **Screens.** Templates have their own page, Settings → Contract templates (upload, review, approve, retire, per
+  company); Settings → Contracts keeps the rules (with a template picker and a link to that page) and clauses. Rule
+  lists on Contracts and Rent rules are stacked rows, not wide tables, so nothing scrolls sideways beside the agent.
+- **Migration 0042** turns each row into one-item lists; no rows are merged. Contracts keep their `templateId`.
+  **0043** deactivates older active rules with exactly the same scope as a newer one (they were never used: newest
+  won), so the overlap check never trips over old data.
+
+
+## D69 — Named contract templates, each with its own versions
+
+- **Why.** Under D68 a new upload, once approved, replaced the approved templates for the same emirates by default.
+  A company using one "any emirate" template for residential rules that added a second "any emirate" template for
+  commercial rules would retire the first unless the admin unticked it, and the templates had no names to tell apart.
+- **Decision.** A template has a name and its own versions (`company_contract_templates.family_id`, `name`;
+  migration 0044). "New template" asks for a name, the emirates and the sample and never retires anything. "Upload
+  new version" on a template replaces only that template's approved version when approved, and the rules on it move
+  to the new version. The "Replaces" choice on approval is gone. Names are unique per company (case-insensitive) and
+  can be changed (`COMPANY_TEMPLATE_RENAMED`); the name is not part of the contract hash.
+- **Not linked to a property type.** The user chose this: a template stands on its own by name, and any rule may pick
+  it (subject to its emirates, D68).
+- **Screens.** Settings → Contract templates: company, then one tab per template (fields, the clauses read from it,
+  the rules using it, older versions, Rename, Upload new version) and "+ New template". Clauses not read from a
+  template stay on Settings → Contracts as Additional terms clauses. **Amends D68** (approval default).
+- **Migration 0044** makes one template per (company, emirates) of the existing rows; the company's first is named
+  "Contract template", others name their emirates. Version numbers are kept (they are part of the contract hash);
+  new versions are numbered within their template.
+
+## D70 — Contracts from a filled sample: no sample values, rulebook periods, cheque schedule, contract fees
+
+- **Why.** A contract for a Business Bay studio printed another unit's DLD number, "Residential / Villa", "4 Bedrooms",
+  "Arabian Ranches", the sample landlord in the signature block, the landlord's licence as the tenant's ID, blank
+  cheque dates and the sample's "Data source map" annexe. The template had been read from a filled villa contract, and
+  the reader only blanked values after a label at the start of a line (headings were never read).
+- **Reading a sample (code).** Headings are read like lines ("DLD Property No. X" → label + blank). New labels: DEWA
+  premise no., Category / Type, Unit Code. Counts before their label on a label row ("4 Bedrooms", "4 cheques") become
+  blanks. A sample name or community found once is blanked wherever else it stands (2+ words or a capitalised word of 6+
+  letters, same capitals). In a signature row the name before "Authorised Signatory" is the landlord's, the next the
+  tenant's. A label line that wraps from a sentence takes that sentence's party. Reference codes (`ARR-0017`,
+  `DEMO-DLD-000017`) are values, and the review checks headings and the title too. The product's own data source map
+  is a sample note and is left out. A row of cheque-date blanks is numbered by position.
+- **Checks at prepare (code, → `needs_human`).** `sample_values`: fixed wording with an ID, code, phone, email, amount,
+  date or company name that is not this lease's. `legal_periods`: a notice period in the wording must equal the lease's
+  pinned rulebook (`renewalNoticeDays`, `repossessionNoticeMonths`, `lateRentDaysAfterFormalReminder`); only a number
+  tied to a notice is compared. `emirate_wording`: wording citing another emirate's law or authorities. Unit-description
+  conflicts stay flags only (D64 unchanged, the user's choice).
+- **Approval.** The same period and emirate checks run on a template against the latest published rulebook of each
+  emirate it covers; a template citing Dubai law must be set to Dubai (`template_legal_wording`).
+- **Cheques.** Data-sheet keys `chequeAmountFils`, `chequeDate1`–`12`, `chequeDates` from core `paymentSchedule` (the
+  function collections uses). Every contract, template or standard, prints a "Payment schedule" (each cheque's date and
+  amount, payee).
+- **Contract fees.** `companies.contract_fees` (migration 0045): a per-company list of fees (name, registration or
+  other, amount in fils, payer, emirates; empty = any). A "registration fee" blank (Ejari, Tawtheeq, …) takes the
+  registration fee for the unit's emirate; every applicable fee is listed under "Fees". Edited in Settings → Companies
+  by admins; the audit event records the new list.
+- **Contract agent.** Its answer may use up to 2,000 tokens (the copilot keeps 400). A tool called again returns a short
+  note instead of its data again, so repeated calls can't fill the 16k context and cut the answer off.
+- **Rules.** Rule 1 holds: periods come from the lease's rulebook, money from the lease and company records, by code.
+  Rule 3 unchanged: a person approves every contract. Amends D43/D47 (what reading a sample keeps) and D45 (the agent's
+  tool replies).
+
+## D71 — Marking changes on the contract PDF
+
+- **Why.** Under D67 a signer picked one addendum clause from a list and wrote a note; template clauses (4.1 …) could
+  not be picked and the AI could not draft any change with a number ("24 → 48 hours"). The user wanted paper and
+  pencil: select the words on the contract, write the change there, send all marks together; the contract AI rewrites
+  unless a rule is broken; the officer only approves, in one modal.
+- **Marking (signing page).** Pages get a selectable text layer (`GET /api/portal/:token/contract/pages/:n/text`).
+  A selection is anchored by code to a paragraph (`contracts.paragraph_texts`, written at prepare; migration 0046)
+  with `anchorQuote`; a quote over a record value (rent, dates, names, printed from a blank) is refused at once. Marks
+  are numbered, kept in the browser until sent, and sent as one request (`contract_change_requests.marks`, 1–20). D67's
+  evidence, task and signing pause are unchanged. Old requests without marks still work.
+- **Rewriting (helper `contract_marks` + code).** The AI rewrites each marked paragraph from the note (several marks in
+  one paragraph → one rewrite); a clause mark may only remove the clause; a mark on fixed text (standard body, law
+  terms) becomes an Additional terms proposal. Code (`checkMarkRewrite`) refuses: a number, period or amount not in the
+  note (AED amounts are never written by a mark); a changed or dropped rulebook period (lease's pinned rulebook); a
+  changed record blank; a new money, permission or negation word not in the note; another emirate's wording; personal
+  data. A refused mark goes to the officer with the reason. **Replaces D67's "no number" guard for marks.**
+- **Approving (officer modal).** Per mark: the quote, the note (untrusted), current vs new wording, checks. Keep as it
+  is (reason to the signer) or Write my own change (the officer's words go through the same AI and checks). Preview
+  shows the new PDF. "Approve changes" prepares the new version without a model run (stored blank mapping, code checks
+  incl. D70) and approves its `final_contract` as the clicking officer in the same transaction — **amends D22 for this
+  route only**: the officer may approve a version with their own wording (the user's choice). All marks kept → D67
+  decline. Removed rule clauses don't print (`Addendum.removedClauses`). Events record mark numbers, decisions and
+  checks, never the note text.
+- **Copilot.** `contract_status` lists marks (notes untrusted, compact); it never approves (rule 11).
+
+## D72 — The officer's own change is applied as written; lease terms change in full sync
+
+- **Why.** Under D71 the officer's "Write my own change" went through the signer's strict checks, so "since the unit has
+  no neighbours this line can be removed" was refused, a mark on a contract prepared before D71 ("Unknown place") could
+  not be applied, and an amount could never change. The user decided: signers may ask for anything; the AI's conflict
+  flag on a signer's mark stays; the officer's explicit instruction is applied straight; amounts and dates change the
+  lease itself so contract, collections, cheque schedule and Ejari stay in sync.
+- **Officer checks (law only).** For officer-authored rewrites `checkMarkRewrite` keeps: the rulebook periods (lease's
+  pinned version), another emirate's law, every record blank kept, printable. Clause removal or rewording (as removal +
+  additional terms), paragraph removal, any non-legal period and permission wording are allowed. A paragraph that prints
+  the lease's terms or the parties can't be removed; a paragraph that prints a company clause is handled as that clause.
+- **Unknown place.** For versions with no paragraph record, code finds the selected words in the version's paragraphs
+  (template wording, clauses as "Title: text", free text); the model's suggestion is accepted only when the words are
+  found there.
+- **Terms (full sync).** The officer may change rent, deposit, cheques, start or move-in; each value must appear in the
+  officer's words (code). `planTermChange` computes the full terms (end = start + 12 months − 1 day, deposit by policy
+  unless given) and checks the offer limits. Inside limits: on Approve changes the lease terms, the application's offer
+  and (if the start moves) the rules version are updated in the same transaction as the new contract version, with
+  `LEASE_TERMS_CHANGED`, and `final_contract` is approved. Outside limits: an `offer_out_of_limits` approval on the
+  lease (leasing manager, rule 3) carrying a frozen snapshot; approving applies exactly that snapshot (stale if the terms
+  changed meanwhile). A paid reservation is not changed; the approval reasons note a difference.
+- **Rules.** Rule 1: values come from the officer's words and code, never from the model. Rule 3: outside limits need a
+  manager. Rule 4: every term change is an event with before and after. Amends D71 (officer checks).

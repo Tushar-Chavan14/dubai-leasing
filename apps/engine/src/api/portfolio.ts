@@ -1,4 +1,11 @@
-import { Addendum, Emirate, PropertyCategory, PropertySubtype, type StaffUser } from "@leasing/core";
+import {
+  Addendum,
+  MAX_ADDENDUM_CLAUSES,
+  Emirate,
+  PropertyCategory,
+  PropertySubtype,
+  type StaffUser,
+} from "@leasing/core";
 import { companies, contractRules, rentRules, units, withTx } from "@leasing/db";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import type { Hono } from "hono";
@@ -13,6 +20,7 @@ import {
   retryTemplateExtraction,
   reviewTemplate,
   templateLogo,
+  renameTemplate,
 } from "../manager/company-templates.ts";
 import {
   addCompanyClause,
@@ -24,7 +32,7 @@ import {
   setClauseRules,
   MAX_SAMPLE_BYTES,
   retrySample,
-  ruleClauseReview,
+  sampleClauseReview,
   uploadSample,
 } from "../manager/contract-templates.ts";
 import { notFound, unprocessable } from "../errors.ts";
@@ -44,8 +52,11 @@ import {
 } from "../manager/company-legal.ts";
 import {
   createCompany,
+  copyContractRule,
+  copyRentRule,
   createContractRule,
   createRentRule,
+  defaultEmirate,
   deactivateContractRule,
   deactivateRentRule,
   replaceContractRule,
@@ -65,16 +76,37 @@ const CompanyCreate = z.object({
   kind: CompanyKind,
   tradeLicenceNo: optText(60),
   email: z.string().trim().email().max(200).nullable().optional(),
+  /** Emirates the company operates in (at least one); default Dubai. */
+  emirates: z.array(Emirate).min(1).optional(),
+  /** Property types the company leases (at least one); default all three. */
+  categories: z.array(PropertyCategory).min(1).optional(),
   /** Legal (landlord) details and authorised signatory (D44). */
   legal: CompanyLegalInput.optional(),
 });
 const CompanyPatch = CompanyCreate.omit({ legal: true }).partial().extend({ active: z.boolean().optional() });
 
 /** Range checks give 400 (Zod); cross-field checks give 422 in the manager. */
+/**
+ * D68: `subtypes` lists the unit types a rule covers ([] = all types; omitted on replace = the rule's own). A single
+ * `subtype` (clients before D68) is still read as a one-item list.
+ */
+const Subtypes = {
+  subtypes: z.array(PropertySubtype).max(10).optional(),
+  subtype: PropertySubtype.nullable().optional(),
+};
+function withSubtypes<
+  T extends { subtypes?: PropertySubtype[] | undefined; subtype?: PropertySubtype | null | undefined },
+>(body: T): Omit<T, "subtype"> {
+  const { subtype, ...rest } = body;
+  if (rest.subtypes !== undefined || subtype === undefined) return rest;
+  return { ...rest, subtypes: subtype ? [subtype] : [] };
+}
+
 const RentRuleBody = z.object({
   category: PropertyCategory,
-  subtype: PropertySubtype.nullable().optional(),
-  emirate: Emirate.default("dubai"),
+  ...Subtypes,
+  /** Omitted: the company's only emirate (422 when it operates in several); on replace, the rule's own. */
+  emirate: Emirate.optional(),
   community: z.string().trim().min(1).max(120).nullable().optional(),
   minPctBp: z.number().int().min(-5000).max(5000),
   maxPctBp: z.number().int().min(-5000).max(5000),
@@ -87,7 +119,7 @@ const RentRuleInput = RentRuleBody.extend({ companyId: z.string().uuid() });
 
 const ContractRuleBody = z.object({
   category: PropertyCategory,
-  subtype: PropertySubtype.nullable().optional(),
+  ...Subtypes,
   /** The emirate the rule is for; null = any emirate (D58). On replace: omitted keeps it, null clears it. */
   emirate: Emirate.nullable().optional(),
   tenures: z.array(z.enum(["annual", "short_term"])).min(1),
@@ -95,11 +127,10 @@ const ContractRuleBody = z.object({
   maxCheques: z.number().int().min(1).max(12),
   // Standard clause ids and `cc:<uuid>` of approved company clauses (checked against the company in the manager).
   clauseIds: Addendum.shape.clauses.default([]),
-  sampleDocumentId: z.string().uuid().nullable().optional(),
   /** An approved company template of the same company (422 otherwise). On replace: omitted keeps it, null clears it. */
   templateId: z.string().uuid().nullable().optional(),
   /** Replace only: the `clauseIds` the caller saw. A different current list is a 409 `rule_changed`. */
-  expectedClauseIds: z.array(z.string()).max(20).optional(),
+  expectedClauseIds: z.array(z.string()).max(MAX_ADDENDUM_CLAUSES).optional(),
 });
 const ContractRuleInput = ContractRuleBody.extend({ companyId: z.string().uuid() });
 
@@ -164,6 +195,8 @@ export function registerPortfolioRoutes(api: Hono<AuthEnv>, ctx: EngineContext) 
         active: companies.active,
         tradeLicenceNo: companies.tradeLicenceNo,
         email: companies.email,
+        emirates: companies.emirates,
+        categories: companies.categories,
         unitCount: sql<number>`count(${units.id})::int`,
       })
       .from(companies)
@@ -230,14 +263,24 @@ export function registerPortfolioRoutes(api: Hono<AuthEnv>, ctx: EngineContext) 
   api.post("/rent-rules", async (c) => {
     const user = c.get("user");
     requireRole(user, ["admin"]);
-    const body = RentRuleInput.parse(await c.req.json());
-    return c.json(await withTx(ctx.database, (tx) => createRentRule(ctx, tx, body, actorOf(user))), 201);
+    const body = withSubtypes(RentRuleInput.parse(await c.req.json()));
+    return c.json(
+      await withTx(ctx.database, async (tx) =>
+        createRentRule(
+          ctx,
+          tx,
+          { ...body, emirate: body.emirate ?? (await defaultEmirate(tx, body.companyId)) },
+          actorOf(user),
+        ),
+      ),
+      201,
+    );
   });
 
   api.put("/rent-rules/:id", async (c) => {
     const user = c.get("user");
     requireRole(user, ["admin"]);
-    const body = RentRuleBody.parse(await c.req.json());
+    const body = withSubtypes(RentRuleBody.parse(await c.req.json()));
     return c.json(await withTx(ctx.database, (tx) => replaceRentRule(ctx, tx, c.req.param("id"), body, actorOf(user))));
   });
 
@@ -245,6 +288,20 @@ export function registerPortfolioRoutes(api: Hono<AuthEnv>, ctx: EngineContext) 
     const user = c.get("user");
     requireRole(user, ["admin"]);
     return c.json(await withTx(ctx.database, (tx) => deactivateRentRule(ctx, tx, c.req.param("id"), actorOf(user))));
+  });
+
+  /** "Copy to emirate" (D68): the same rent rule for another emirate (admin). */
+  api.post("/rent-rules/:id/copy", async (c) => {
+    const user = c.get("user");
+    requireRole(user, ["admin"]);
+    const body = z
+      .object({ emirate: Emirate })
+      .strict()
+      .parse(await c.req.json());
+    return c.json(
+      await withTx(ctx.database, (tx) => copyRentRule(ctx, tx, c.req.param("id"), body.emirate, actorOf(user))),
+      201,
+    );
   });
 
   api.get("/contract-rules", async (c) => {
@@ -260,14 +317,14 @@ export function registerPortfolioRoutes(api: Hono<AuthEnv>, ctx: EngineContext) 
   api.post("/contract-rules", async (c) => {
     const user = c.get("user");
     requireRole(user, ["admin"]);
-    const body = ContractRuleInput.parse(await c.req.json());
+    const body = withSubtypes(ContractRuleInput.parse(await c.req.json()));
     return c.json(await withTx(ctx.database, (tx) => createContractRule(ctx, tx, body, actorOf(user))), 201);
   });
 
   api.put("/contract-rules/:id", async (c) => {
     const user = c.get("user");
     requireRole(user, ["admin"]);
-    const body = ContractRuleBody.parse(await c.req.json());
+    const body = withSubtypes(ContractRuleBody.parse(await c.req.json()));
     return c.json(
       await withTx(ctx.database, (tx) => replaceContractRule(ctx, tx, c.req.param("id"), body, actorOf(user))),
     );
@@ -281,18 +338,34 @@ export function registerPortfolioRoutes(api: Hono<AuthEnv>, ctx: EngineContext) 
     );
   });
 
-  /** The sample's reading status and the clauses proposed from it (any staff may read). */
-  api.get("/contract-rules/:id/clauses", async (c) => {
+  /** "Copy to emirate" (D68): the same contract rule for another emirate, or for all emirates (null). Admin. */
+  api.post("/contract-rules/:id/copy", async (c) => {
+    const user = c.get("user");
+    requireRole(user, ["admin"]);
+    const body = z
+      .object({ emirate: Emirate.nullable() })
+      .strict()
+      .parse(await c.req.json());
+    return c.json(
+      await withTx(ctx.database, (tx) => copyContractRule(ctx, tx, c.req.param("id"), body.emirate, actorOf(user))),
+      201,
+    );
+  });
+
+  /** The reading status of the company's latest sample and the clauses proposed from it (any staff may read). */
+  api.get("/companies/:id/sample", async (c) => {
     const id = z.uuid().catch("00000000-0000-0000-0000-000000000000").parse(c.req.param("id"));
-    return c.json(await ruleClauseReview(ctx, id));
+    return c.json(await sampleClauseReview(ctx, id));
   });
 
   /**
-   * Upload a sample contract (PDF, 10 MB): stored content-addressed, pinned on a new row of the rule,
-   * read by the contract-template helper in a job. A second upload of the same file does nothing.
-   * Body: the raw PDF, or multipart with a `file` part.
+   * Upload a sample contract to the company's template library (PDF, 10 MB; D68): stored content-addressed and read
+   * by the clause and structure helpers in jobs. A second upload of the same file for the same emirates does nothing.
+   * Body: the raw PDF (query `emirates=dubai,abu_dhabi`), or multipart with a `file` part and `emirates` parts.
+   * No emirates = any emirate. D69: `name` starts a new named template; `familyId` adds a version to one (exactly
+   * one of the two, as query or multipart parts).
    */
-  api.post("/contract-rules/:id/sample", async (c) => {
+  api.post("/companies/:id/sample", async (c) => {
     const user = c.get("user");
     requireRole(user, ["admin"]);
     const id = z.uuid().catch("00000000-0000-0000-0000-000000000000").parse(c.req.param("id"));
@@ -300,25 +373,41 @@ export function registerPortfolioRoutes(api: Hono<AuthEnv>, ctx: EngineContext) 
     const raw = await readLimited(c.req.raw, MAX_SAMPLE_BYTES + 64 * 1024);
     const type = c.req.header("content-type") ?? "";
     let bytes = raw;
-    // Optional emirate (D56): query `emirate` or a multipart `emirate` part; empty or absent = any emirate.
-    let emirateRaw: unknown = c.req.query("emirate");
+    let list: unknown[] = (c.req.query("emirates") ?? "").split(",").filter(Boolean);
+    let name = c.req.query("name");
+    let familyId = c.req.query("familyId");
     if (type.startsWith("multipart/form-data")) {
       const form = await new Response(raw, { headers: { "content-type": type } }).formData().catch(() => null);
       const file = form?.get("file");
       if (!(file instanceof File)) throw unprocessable("attach the contract as `file`", [], "invalid_request");
       bytes = new Uint8Array(await file.arrayBuffer());
-      emirateRaw ??= form?.get("emirate") ?? undefined;
+      const parts = (form?.getAll("emirates") ?? []).flatMap((v) => String(v).split(",")).filter(Boolean);
+      if (parts.length) list = parts;
+      const n = form?.get("name");
+      const f = form?.get("familyId");
+      if (typeof n === "string" && n.trim()) name = n;
+      if (typeof f === "string" && f) familyId = f;
     }
-    const emirate = z
-      .union([Emirate, z.literal("")])
-      .optional()
-      .safeParse(emirateRaw === null ? undefined : emirateRaw);
-    if (!emirate.success) throw unprocessable("emirate must be one of the seven emirates", [], "invalid_request");
-    const r = await uploadSample(ctx, id, bytes, actorOf(user), emirate.data || null);
+    const emirates = z.array(Emirate).max(7).safeParse(list);
+    if (!emirates.success) throw unprocessable("emirates must be among the seven emirates", [], "invalid_request");
+    if (name !== undefined && name.trim() !== "" && familyId !== undefined)
+      throw unprocessable(
+        "Give a name for a new template, or the template to add a version to.",
+        [],
+        "invalid_request",
+      );
+    // Neither: a version of the template for the same emirates, else a new one (as before D69).
+    const target =
+      familyId !== undefined
+        ? { familyId: z.uuid().catch("00000000-0000-0000-0000-000000000000").parse(familyId) }
+        : name !== undefined && name.trim() !== ""
+          ? { name }
+          : undefined;
+    const r = await uploadSample(ctx, id, bytes, actorOf(user), emirates.data, target);
     return c.json(r, r.duplicate ? 200 : 202);
   });
 
-  api.post("/contract-rules/:id/sample/retry", async (c) => {
+  api.post("/companies/:id/sample/retry", async (c) => {
     const user = c.get("user");
     requireRole(user, ["admin"]);
     const id = z.uuid().catch("00000000-0000-0000-0000-000000000000").parse(c.req.param("id"));
@@ -441,12 +530,26 @@ export function registerPortfolioRoutes(api: Hono<AuthEnv>, ctx: EngineContext) 
     requireRole(user, ["admin"]);
     const raw = await c.req.text();
     const body = z
-      .object({ ruleClauseIds: z.array(z.uuid()).max(200).optional(), checked: z.boolean().optional() })
+      .object({
+        ruleClauseIds: z.array(z.uuid()).max(200).optional(),
+        checked: z.boolean().optional(),
+      })
       .strict()
       .parse(raw ? JSON.parse(raw) : {});
     return c.json(await approveSample(ctx, idOf(c), actorOf(user), body));
   });
 
+  /** D69: rename a named template (every version of it). Admin only. */
+  api.patch("/companies/:id/contract-templates/:familyId", async (c) => {
+    const user = c.get("user");
+    requireRole(user, ["admin"]);
+    const familyId = z.uuid().catch("00000000-0000-0000-0000-000000000000").parse(c.req.param("familyId"));
+    const body = z
+      .object({ name: z.string().max(200) })
+      .strict()
+      .parse(await c.req.json());
+    return c.json(await renameTemplate(ctx, idOf(c), familyId, body.name, actorOf(user)));
+  });
   api.post("/contract-templates/:id/resuggest", async (c) => {
     const user = c.get("user");
     requireRole(user, ["admin"]);

@@ -187,6 +187,8 @@ describe("value post-check", () => {
     expect(actionClaim("Done, I've booked your viewing.")).not.toBeNull();
     expect(actionClaim("I have applied for you.")).not.toBeNull();
     expect(actionClaim("Your viewing is confirmed.")).not.toBeNull();
+    expect(actionClaim("Great, your site visit is confirmed.")).not.toBeNull();
+    expect(actionClaim("Good news, your visit has been booked.")).not.toBeNull();
     expect(actionClaim("I sent you an email.")).not.toBeNull();
     expect(actionClaim("تم حجز موعدك")).not.toBeNull();
     expect(actionClaim("I'll send a 6-digit code to your email.")).not.toBeNull(); // a promise only a tool can keep

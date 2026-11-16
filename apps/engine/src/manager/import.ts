@@ -25,7 +25,7 @@ import {
   lookupCompanyLandlord,
   updateCompanyLegal,
 } from "./company-legal.ts";
-import { createCompany, slugify } from "./portfolio.ts";
+import { assertOffers, assertOperates, createCompany, slugify, updateCompany } from "./portfolio.ts";
 import { appendEvent } from "./events.ts";
 import { createSameRentFallbackTask, scheduleLeaseMilestones } from "./milestones.ts";
 import { createUnitInTx } from "./units.ts";
@@ -218,7 +218,14 @@ async function importCompanyRow(
   actor: Actor,
 ): Promise<Omit<CompanyImportRowResult, "row">> {
   const known = await tx.db
-    .select({ id: companies.id, name: companies.name, slug: companies.slug, active: companies.active })
+    .select({
+      id: companies.id,
+      name: companies.name,
+      slug: companies.slug,
+      active: companies.active,
+      categories: companies.categories,
+      emirates: companies.emirates,
+    })
     .from(companies);
   const found = findCompany(known, r.slug ?? r.name) ?? (r.slug ? findCompany(known, r.name) : null);
   const provided = providedLegal(r);
@@ -227,11 +234,35 @@ async function importCompanyRow(
   if (!found) {
     if (!r.kind) return { status: "error", reasons: ["kind: required for a new company (developer, realty or owner)"] };
     const slug = r.slug ?? slugify(r.name);
-    const company = await createCompany(ctx, tx, { name: r.name, kind: r.kind }, actor);
+    const company = await createCompany(
+      ctx,
+      tx,
+      {
+        name: r.name,
+        kind: r.kind,
+        ...(r.categories.length ? { categories: r.categories } : {}),
+        ...(r.emirates.length ? { emirates: r.emirates } : {}),
+      },
+      actor,
+    );
     if (company.slug !== slug) throw new Error("slug mismatch");
     companyId = company.id;
   }
-  let changedFields: string[] = [];
+  const changedFields: string[] = [];
+  // D65/D66: an existing company's lists are replaced when the row gives them and they differ. Removing a type or
+  // emirate still in use is refused by `updateCompany` (422 category_in_use / emirate_in_use), which fails the row.
+  if (found) {
+    const same = (a: readonly string[], b: readonly string[]) => [...a].sort().join() === [...b].sort().join();
+    const current = known.find((k) => k.id === found.id)!;
+    const patch = {
+      ...(r.categories.length && !same(r.categories, current.categories) ? { categories: r.categories } : {}),
+      ...(r.emirates.length && !same(r.emirates, current.emirates) ? { emirates: r.emirates } : {}),
+    };
+    if (Object.keys(patch).length) {
+      await updateCompany(ctx, tx, found.id, patch, actor);
+      changedFields.push(...Object.keys(patch));
+    }
+  }
   if (Object.keys(provided).length) {
     const { company, party } = await lookupCompanyLandlord(tx, companyId!);
     const current = legalView(company, party);
@@ -249,7 +280,7 @@ async function importCompanyRow(
           }),
         ),
       ]);
-    ({ changedFields } = await updateCompanyLegal(ctx, tx, company.id, legal.data, actor));
+    changedFields.push(...(await updateCompanyLegal(ctx, tx, company.id, legal.data, actor)).changedFields);
   }
   const [row] = await tx.db.select({ slug: companies.slug }).from(companies).where(eq(companies.id, companyId!));
   if (!created && !changedFields.length) return { status: "skipped", ref: row!.slug, reasons: ["already up to date"] };
@@ -358,6 +389,9 @@ async function importRow(
       });
     }
   } else {
+    // D65/D66: a unit created here is residential in this row's emirate; the company must lease that type there.
+    await assertOffers(tx, companyId, "residential");
+    await assertOperates(tx, companyId, emirate);
     [unit] = await tx.db
       .insert(units)
       .values({

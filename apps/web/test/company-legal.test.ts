@@ -52,3 +52,37 @@ describe("company legal form", () => {
     expect(validateCompanyLegal(f)).toBeNull();
   });
 });
+
+describe("contract fees field", () => {
+  const fee = {
+    id: "f1",
+    name: "Ejari registration fee",
+    kind: "registration",
+    amountFils: 22_000,
+    payer: "tenant",
+    emirates: ["dubai"],
+  };
+  const valid = (over: Record<string, unknown> = {}) => {
+    const f = new FormData();
+    f.set("contractFees", JSON.stringify([{ ...fee, ...over }]));
+    return f;
+  };
+  test("the editor's JSON goes to the engine as a list; blank is none", () => {
+    expect(legalBody(valid()).contractFees).toEqual([fee]);
+    const f = new FormData();
+    f.set("contractFees", "");
+    expect(legalBody(f).contractFees).toBeNull();
+  });
+  test("a bad row is reported once on the list, never on the company's own fields", () => {
+    expect(validateCompanyLegal(valid({ name: " " }))!.contractFees).toBe("Fee 1: Enter the fee name");
+    expect(validateCompanyLegal(valid({ name: " " }))!.name).toBeUndefined();
+    expect(validateCompanyLegal(valid({ amountFils: "abc" }))!.contractFees).toBe(
+      "Fee 1: Enter whole dirhams, like 220",
+    );
+    expect(validateCompanyLegal(valid({ amountFils: 100_000_001 }))!.contractFees).toBe(
+      "Fee 1: Use at most AED 1,000,000",
+    );
+    expect(validateCompanyLegal(valid({ payer: "agent" }))!.contractFees).toContain("Fee 1:");
+    expect(validateCompanyLegal(valid())!.contractFees).toBeUndefined();
+  });
+});

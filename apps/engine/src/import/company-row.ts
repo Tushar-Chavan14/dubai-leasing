@@ -1,8 +1,21 @@
 import { z } from "zod";
-import { PropertyCategory } from "@leasing/core";
+import { type Emirate, EMIRATE_LABELS, EMIRATES, PropertyCategory } from "@leasing/core";
 import { opt } from "./lease-row.ts";
 
 const EID_FORMAT = /^784-\d{4}-\d{7}-\d$/;
+
+/** "residential; retail" → ["residential", "retail"] (`,` `;` or `|`, case-insensitive, duplicates dropped). */
+const splitList = (v: string | null): string[] =>
+  v
+    ? [
+        ...new Set(
+          v
+            .split(/[,;|]/)
+            .map((x) => x.trim().toLowerCase())
+            .filter(Boolean),
+        ),
+      ]
+    : [];
 
 /** One row of the companies import CSV. Column names are documented in docs/import.md. */
 export const CompanyImportRow = z.object({
@@ -17,17 +30,17 @@ export const CompanyImportRow = z.object({
       .nullable(),
   ),
   kind: opt.transform((v) => v?.toLowerCase() ?? null).pipe(z.enum(["developer", "realty", "owner"]).nullable()),
-  /** Checked, not stored: companies have no category column; categories come from their units and rent rules. */
-  categories: opt
-    .transform((v) =>
-      v
-        ? v
-            .split(/[,;|]/)
-            .map((x) => x.trim().toLowerCase())
-            .filter(Boolean)
-        : [],
-    )
-    .pipe(z.array(PropertyCategory)),
+  /** Property types the company leases (D66), stored on the company. Empty: a new company gets all three. */
+  categories: opt.transform(splitList).pipe(z.array(PropertyCategory)),
+  /** Emirates the company operates in (D65), by key or name ("abu_dhabi", "Abu Dhabi"). Empty: Dubai for a new one. */
+  emirates: opt.transform((v, ctx): Emirate[] =>
+    splitList(v).map((x) => {
+      const key = x.replace(/[\s-]+/g, "_");
+      const hit = EMIRATES.find((e) => e === key || EMIRATE_LABELS[e].toLowerCase().replace(/[\s-]+/g, "_") === key);
+      if (!hit) ctx.addIssue({ code: "custom", message: `unknown emirate "${x}"` });
+      return hit ?? "dubai";
+    }),
+  ),
   legal_name_en: opt,
   legal_name_ar: opt,
   trade_licence_no: opt,

@@ -356,6 +356,12 @@ for (const c of cases) {
           : null;
   const factsHit = c.facts.filter((f) => factMatches(f, answer)).length;
   results.push({ c, tools, answer, unverified: done?.unverified ?? [], ms, toolOk, factsHit, forbidden });
+  // EVAL_VERBOSE=1: the event stream of a case whose tool choice or answer missed (args and errors shortened).
+  if (process.env.EVAL_VERBOSE === "1" && (toolOk === false || !answer.trim()))
+    for (const e of events)
+      console.log(
+        `       · ${e.type}${e.name ? ` ${e.name}` : ""}${e.args ? ` ${JSON.stringify(e.args).slice(0, 300)}` : ""}${e.error ? ` ${String(e.error).slice(0, 200)}` : ""}`,
+      );
   const mark = forbidden.length ? "✗!" : toolOk === false || factsHit < c.facts.length ? "✗ " : "  ";
   console.log(
     `${mark} ${c.id} ${c.kind.padEnd(10)} ${(ms / 1000).toFixed(1).padStart(5)}s tools=[${tools.join(",")}] facts ${factsHit}/${c.facts.length}${done?.unverified?.length ? ` unverified=${JSON.stringify(done.unverified)}` : ""}${forbidden.length ? ` FORBIDDEN: ${forbidden.join("; ")}` : ""}${failedTools.length ? ` failed=${JSON.stringify(failedTools)}` : ""}`,

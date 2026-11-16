@@ -99,7 +99,8 @@ landlord details in bulk. Rows are matched by `slug`, else by name (case-insensi
 | `name` | required |
 | `slug` | optional; letters, digits, dashes; default is made from the name |
 | `kind` | `developer`, `realty` or `owner`; required for a new company |
-| `categories` | `residential`, `commercial`, `retail` separated by `;` or `,`. Validated, not stored (companies have no category column) |
+| `categories` | Property types the company leases (D66): `residential`, `commercial`, `retail`, separated by `;` or `,`. A new company with none gets all three. For an existing company the list replaces the stored one; removing a type its units or active rules use fails the row |
+| `emirates` | Emirates the company operates in (D65), by key or name (`abu_dhabi` or `Abu Dhabi`), separated by `;` or `,`. A new company with none gets Dubai. For an existing company the list replaces the stored one; removing an emirate in use fails the row |
 | `legal_name_en`, `legal_name_ar`, `trade_licence_no`, `licence_authority`, `trade_licence_expires_on`, `rera_orn` | legal details; expiry `YYYY-MM-DD` |
 | `registered_address`, `email`, `phone`, `cheque_payee` | |
 | `signatory_name`, `signatory_title`, `signatory_email`, `signatory_id_no`, `signatory_id_expires_on` | ID is an Emirates ID (`784-YYYY-NNNNNNN-C`) or, if not of that shape, a passport number |

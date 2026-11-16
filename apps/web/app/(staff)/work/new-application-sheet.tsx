@@ -25,7 +25,7 @@ export function NewApplicationSheet({
     <Sheet open={open} onClose={() => router.replace(closeHref)} title="New application">
       <div className="flex flex-col gap-4">
         <p className="m-0 text-sm text-muted">
-          For walk-in or phone enquiries. The applicant gets a viewing invitation by email; their ID documents come
+          For walk-in or phone enquiries. The applicant gets a site visit invitation by email; their ID documents come
           later through a one-time link. Names and numbers on the contract come from those documents, not from this
           form.
         </p>

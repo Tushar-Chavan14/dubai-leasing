@@ -82,9 +82,11 @@ Cap rule note: demo rulebooks use one flat band (`gapUpTo: 100`) plus the above-
 
 ## Ajman
 
+> D66: no longer seeded in the demo (no rulebook; fail-closed until an admin publishes a reviewed version).
+
 | Item | Current value | Where it lives | Source / confidence | Confirmed by | Date |
 |---|---|---|---|---|---|
-| Rulebook version | ajman-2025-01 (demo seed) | `apps/engine/src/demo/emirate-rulebooks.ts` | Demo seed |  |  |
+| Rulebook version | ajman-2025-01 (demo seed until D66; not seeded now) | `apps/engine/src/demo/emirate-rulebooks.ts` | Demo seed |  |  |
 | Governing law cited | Law 3/2009 | rulebook `sources` | General data; verify against the gazette |  |  |
 | Rent-change notice (days) | 90 (assumed) | rulebook `renewalNoticeDays` | Assumed |  |  |
 | Company send day (days before end) | 100 | rulebook `renewalSendAtDays` | Notice + 10 days (product choice) |  |  |
@@ -120,9 +122,11 @@ Cap rule note: demo rulebooks use one flat band (`gapUpTo: 100`) plus the above-
 
 ## Fujairah
 
+> D66: no longer seeded in the demo (no rulebook; fail-closed until an admin publishes a reviewed version).
+
 | Item | Current value | Where it lives | Source / confidence | Confirmed by | Date |
 |---|---|---|---|---|---|
-| Rulebook version | fujairah-2025-01 (demo seed) | `apps/engine/src/demo/emirate-rulebooks.ts` | Demo seed |  |  |
+| Rulebook version | fujairah-2025-01 (demo seed until D66; not seeded now) | `apps/engine/src/demo/emirate-rulebooks.ts` | Demo seed |  |  |
 | Governing law cited | No law cited in the rulebook (no primary text found) | rulebook `sources` | General data; verify against the gazette |  |  |
 | Rent-change notice (days) | 90 (assumed) | rulebook `renewalNoticeDays` | Assumed |  |  |
 | Company send day (days before end) | 100 | rulebook `renewalSendAtDays` | Notice + 10 days (product choice) |  |  |

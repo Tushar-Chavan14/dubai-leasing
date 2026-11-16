@@ -4,6 +4,12 @@ import { revalidatePath } from "next/cache";
 import { engine } from "../../../../lib/engine";
 import { type RuleResult, ruleError } from "../../../../lib/portfolio";
 
+/** Rules and templates show on two pages (D68): refresh both. */
+function revalidate() {
+  revalidatePath("/settings/contracts");
+  revalidatePath("/settings/contract-templates");
+}
+
 /** Create (no `id`) or replace (`id`) a contract rule. Clause ids on an existing rule are kept. */
 export async function saveContractRule(_prev: RuleResult, formData: FormData): Promise<RuleResult> {
   const fieldErrors: Record<string, string> = {};
@@ -16,17 +22,15 @@ export async function saveContractRule(_prev: RuleResult, formData: FormData): P
   if (Object.keys(fieldErrors).length) return { error: "Some fields need attention.", fieldErrors };
 
   const id = String(formData.get("id") ?? "");
-  const subtype = String(formData.get("subtype") ?? "");
   const clauseIds = String(formData.get("clauseIds") ?? "")
     .split(",")
     .filter(Boolean);
-  const sampleDocumentId = String(formData.get("sampleDocumentId") ?? "");
   const rule = {
-    sampleDocumentId: sampleDocumentId || null,
     // The select's value: empty means the standard contract (clears the template on a replace).
     templateId: String(formData.get("templateId") ?? "") || null,
     category: String(formData.get("category")),
-    subtype: subtype || null,
+    // D68: the ticked types; none ticked = all types.
+    subtypes: formData.getAll("subtypes").map(String),
     // Empty: any emirate (D58).
     emirate: String(formData.get("emirate") ?? "") || null,
     tenures,
@@ -41,14 +45,26 @@ export async function saveContractRule(_prev: RuleResult, formData: FormData): P
         body: JSON.stringify({ ...rule, companyId: String(formData.get("companyId") ?? "") }),
       });
   if (!r.ok) return ruleError(r);
-  revalidatePath("/settings/contracts");
+  revalidate();
+  return { ok: true };
+}
+
+/** D68 "Copy to emirate": the same rule for another emirate ("" = all emirates). */
+export async function copyContractRule(_prev: RuleResult, formData: FormData): Promise<RuleResult> {
+  const emirate = String(formData.get("emirate") ?? "");
+  const r = await engine(`/api/contract-rules/${String(formData.get("id"))}/copy`, {
+    method: "POST",
+    body: JSON.stringify({ emirate: emirate || null }),
+  });
+  if (!r.ok) return ruleError(r);
+  revalidate();
   return { ok: true };
 }
 
 export async function removeContractRule(_prev: RuleResult, formData: FormData): Promise<RuleResult> {
   const r = await engine(`/api/contract-rules/${String(formData.get("id"))}`, { method: "DELETE" });
   if (!r.ok) return ruleError(r);
-  revalidatePath("/settings/contracts");
+  revalidate();
   return { ok: true };
 }
 
@@ -69,7 +85,7 @@ export async function decideClause(_prev: RuleResult, formData: FormData): Promi
     if (r.error?.code === "already_decided") return { error: "This clause was already decided. Reload the page." };
     return ruleError(r);
   }
-  revalidatePath("/settings/contracts");
+  revalidate();
   return { ok: true };
 }
 
@@ -82,17 +98,17 @@ export async function toggleRuleClause(_prev: RuleResult, formData: FormData): P
     .split(",")
     .filter(Boolean);
   const clauseIds = on ? [...current.filter((c) => c !== ref), ref] : current.filter((c) => c !== ref);
-  const subtype = String(formData.get("subtype") ?? "");
   const rule = {
     category: String(formData.get("category")),
-    subtype: subtype || null,
+    subtypes: String(formData.get("subtypes") ?? "")
+      .split(",")
+      .filter(Boolean),
     tenures: String(formData.get("tenures") ?? "")
       .split(",")
       .filter(Boolean),
     minCheques: Number(formData.get("minCheques")),
     maxCheques: Number(formData.get("maxCheques")),
     clauseIds,
-    sampleDocumentId: String(formData.get("sampleDocumentId") ?? "") || null,
     // The list the page showed: the engine refuses if the rule was replaced or changed since.
     expectedClauseIds: current,
   };
@@ -102,18 +118,18 @@ export async function toggleRuleClause(_prev: RuleResult, formData: FormData): P
       return { error: "This rule changed; reload." };
     return ruleError(r);
   }
-  revalidatePath("/settings/contracts");
+  revalidate();
   return { ok: true };
 }
 
-/** "Try again" after a failed or stopped reading of the sample (no re-upload). */
+/** "Try again" after a failed or stopped reading of the company's latest sample (no re-upload). */
 export async function retrySample(_prev: RuleResult, formData: FormData): Promise<RuleResult> {
-  const r = await engine(`/api/contract-rules/${String(formData.get("ruleId"))}/sample/retry`, {
+  const r = await engine(`/api/companies/${String(formData.get("companyId"))}/sample/retry`, {
     method: "POST",
     body: "{}",
   });
   if (!r.ok) return ruleError(r);
-  revalidatePath("/settings/contracts");
+  revalidate();
   return { ok: true };
 }
 
@@ -128,11 +144,14 @@ export async function reviewTemplateAction(_prev: RuleResult, formData: FormData
   } else if (toggle) body[toggle] = formData.get("on") === "on";
   const r = await engine(`/api/contract-templates/${id}`, { method: "PATCH", body: JSON.stringify(body) });
   if (!r.ok) return ruleError(r);
-  revalidatePath("/settings/contracts");
+  revalidate();
   return { ok: true };
 }
 
-/** D47 "Approve all": the latest sample's clauses (ticked ones join its rule) and its template, in one step. */
+/**
+ * D47 "Approve all": the latest sample's clauses (ticked ones join the rules on its template) and its template, in
+ * one step. D69: a new version replaces its own named template's approved version, whose rules move to it.
+ */
 export async function approveSampleAction(_prev: RuleResult, formData: FormData): Promise<RuleResult> {
   const body = {
     ruleClauseIds: formData.getAll("ruleClauseIds").map(String),
@@ -143,7 +162,7 @@ export async function approveSampleAction(_prev: RuleResult, formData: FormData)
     body: JSON.stringify(body),
   });
   if (!r.ok) return ruleError(r);
-  revalidatePath("/settings/contracts");
+  revalidate();
   return { ok: true };
 }
 
@@ -154,7 +173,7 @@ export async function setClauseRulesAction(_prev: RuleResult, formData: FormData
     body: JSON.stringify({ ruleIds: formData.getAll("ruleIds").map(String) }),
   });
   if (!r.ok) return ruleError(r);
-  revalidatePath("/settings/contracts");
+  revalidate();
   return { ok: true };
 }
 
@@ -165,7 +184,7 @@ export async function resuggestTemplateAction(_prev: RuleResult, formData: FormD
     body: "{}",
   });
   if (!r.ok) return ruleError(r);
-  revalidatePath("/settings/contracts");
+  revalidate();
   return { ok: true };
 }
 
@@ -175,7 +194,20 @@ export async function retireTemplateAction(_prev: RuleResult, formData: FormData
     body: "{}",
   });
   if (!r.ok) return ruleError(r);
-  revalidatePath("/settings/contracts");
+  revalidate();
+  return { ok: true };
+}
+
+/** D69: rename a named template (every version of it). */
+export async function renameTemplateAction(_prev: RuleResult, formData: FormData): Promise<RuleResult> {
+  const company = encodeURIComponent(String(formData.get("companyId")));
+  const family = encodeURIComponent(String(formData.get("familyId")));
+  const r = await engine(`/api/companies/${company}/contract-templates/${family}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name: String(formData.get("name") ?? "") }),
+  });
+  if (!r.ok) return ruleError(r);
+  revalidate();
   return { ok: true };
 }
 
@@ -186,7 +218,7 @@ export async function retryTemplateAction(_prev: RuleResult, formData: FormData)
     body: "{}",
   });
   if (!r.ok) return ruleError(r);
-  revalidatePath("/settings/contracts");
+  revalidate();
   return { ok: true };
 }
 
@@ -205,7 +237,7 @@ export async function addClause(
   const r = await engine(`/api/companies/${companyId}/clauses`, { method: "POST", body: JSON.stringify(body) });
   if (r.error?.code === "confirm_values") return { error: r.error.error, needsConfirm: true };
   if (!r.ok) return ruleError(r);
-  revalidatePath("/settings/contracts");
+  revalidate();
   return { ok: true };
 }
 
@@ -225,7 +257,7 @@ export async function editClause(
   });
   if (r.error?.code === "confirm_values") return { error: r.error.error, needsConfirm: true };
   if (!r.ok) return ruleError(r);
-  revalidatePath("/settings/contracts");
+  revalidate();
   return { ok: true };
 }
 
@@ -233,6 +265,20 @@ export async function editClause(
 export async function removeClause(_prev: RuleResult, formData: FormData): Promise<RuleResult> {
   const r = await engine(`/api/company-clauses/${String(formData.get("clauseId"))}`, { method: "DELETE" });
   if (!r.ok) return ruleError(r);
-  revalidatePath("/settings/contracts");
+  revalidate();
+  return { ok: true };
+}
+
+/** D67: change requests from the signing page (admin only; the engine checks the role and versions the policy). */
+export async function saveChangePolicy(_prev: RuleResult, formData: FormData): Promise<RuleResult> {
+  const body = {
+    enabled: formData.get("enabled") === "on",
+    roles: formData.getAll("roles").map(String),
+    maxOpenPerSigner: Number(formData.get("maxOpenPerSigner")),
+    maxChars: Number(formData.get("maxChars")),
+  };
+  const r = await engine("/api/policy/contract-changes", { method: "PUT", body: JSON.stringify(body) });
+  if (!r.ok) return ruleError(r);
+  revalidate();
   return { ok: true };
 }

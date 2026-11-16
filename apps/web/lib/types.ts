@@ -1,6 +1,6 @@
 /** Shapes returned by the engine API (only the fields the staff app reads). */
 
-import type { Emirate } from "@leasing/core";
+import type { ContractFee, Emirate, PropertyCategory } from "@leasing/core";
 
 export interface Me {
   id: string;
@@ -175,6 +175,10 @@ export interface CompanyRow {
   slug: string;
   kind: "developer" | "realty" | "owner";
   active: boolean;
+  /** Emirates the company operates in. */
+  emirates: Emirate[];
+  /** Property types the company leases. */
+  categories: PropertyCategory[];
   unitCount: number;
   /** Legal details and signatory are complete enough to prepare a contract. */
   legalComplete: boolean;
@@ -194,6 +198,7 @@ export interface CompanyLegalView {
     email: string | null;
     phone: string | null;
     chequePayeeName: string | null;
+    contractFees: ContractFee[] | null;
     signatoryName: string | null;
     signatoryTitle: string | null;
     signatoryEmail: string | null;
@@ -208,7 +213,8 @@ export interface RentRuleRow {
   id: string;
   companyId: string;
   category: "residential" | "commercial" | "retail";
-  subtype: string | null;
+  /** D68: unit types the rule covers; empty = all types. */
+  subtypes: string[];
   emirate: Emirate;
   community: string | null;
   minPctBp: number;
@@ -223,19 +229,19 @@ export interface ContractRuleRow {
   id: string;
   companyId: string;
   category: "residential" | "commercial" | "retail";
-  subtype: string | null;
+  /** D68: unit types the rule covers; empty = all types. */
+  subtypes: string[];
   /** The emirate the rule is for; null: any emirate (D58). */
   emirate: Emirate | null;
   tenures: ("annual" | "short_term")[];
   minCheques: number;
   maxCheques: number;
   clauseIds: string[];
-  sampleDocumentId: string | null;
   /** An approved company template this rule's contracts are rendered in; null: the standard contract. */
   templateId: string | null;
 }
 
-/** Contract AI: a clause proposed from a sample contract (engine `/api/contract-rules/:id/clauses`). */
+/** Contract AI: a clause proposed from a sample contract (engine `/api/companies/:id/sample`). */
 export interface CompanyClauseView {
   id: string;
   ref: string;
@@ -249,10 +255,13 @@ export interface CompanyClauseView {
   fromTemplate?: boolean;
   /** Older clause in a template's fixed wording without a link: not editable. */
   locked?: boolean;
+  /** The template version the clause is linked to (D47); null for Additional terms clauses (D69). */
+  templateId?: string | null;
   /** Active contract rules that include it (clause list only). */
   ruleIds?: string[];
 }
-export interface RuleReview {
+/** The company's latest sample: reading status and proposed clauses (engine `/api/companies/:id/sample`). */
+export interface SampleReview {
   sample: {
     documentId: string;
     status: "queued" | "done" | "failed" | "needs_human";
@@ -285,10 +294,13 @@ export interface TemplateBlankView {
 }
 export interface CompanyTemplateView {
   id: string;
+  /** D69: the named template this version belongs to, and its name. */
+  familyId: string;
+  name: string;
   version: number;
   status: "proposed" | "approved" | "retired";
-  /** The emirate the template is for; null = any emirate. */
-  emirate: Emirate | null;
+  /** D68: the emirates the template may be used in; empty = any emirate. */
+  emirates: Emirate[];
   sampleDocumentId: string | null;
   sections: {
     numbering: string;
@@ -336,8 +348,19 @@ export interface CompanyTemplateView {
   blockers: string[];
   approvedAt: string | null;
 }
+/** D69: a named template and its versions (newest first). */
+export interface TemplateFamily {
+  familyId: string;
+  name: string;
+  templateIds: string[];
+  /** The approved version, else the newest. */
+  current: string;
+  /** Active contract rules that use one of its versions. */
+  ruleCount: number;
+}
 export interface CompanyTemplatePanel {
   templates: CompanyTemplateView[];
+  families: TemplateFamily[];
   extraction: {
     sampleDocumentId: string;
     status: "reading" | "ready" | "failed" | "retired";
@@ -354,7 +377,13 @@ export interface CompanyTemplatePanel {
   /** D47: the latest sample's clauses waiting for "Approve all", and its proposed template if any. */
   review: {
     sampleDocumentId: string;
-    ruleId: string | null;
+    /** The emirates chosen at upload; empty = any emirate. */
+    emirates: Emirate[];
+    /** The approved version approving this one replaces: its named template's (D69). */
+    replaces: string[];
+    /** D69: the named template the sample's version joins (null: an upload before D69 not read yet). */
+    familyId: string | null;
+    name: string | null;
     clauses: CompanyClauseView[];
     templateId: string | null;
     needsCheck: boolean;

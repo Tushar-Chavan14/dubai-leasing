@@ -63,7 +63,7 @@ export const findAvailableUnits: CopilotTool<typeof Input, typeof Output> = {
   name: "find_available_units",
   kind: "read",
   description:
-    "Units that can be booked for a viewing now (listed, approved price, no lease being signed), cheapest first (up to 10), with the approved annual asking rent and the next free viewing slots (Dubai time). Filter by emirate, area, bedrooms, company, category, size band and maximum rent. Use it for 'what is available' and 'find a 2-bed in Marina under 120k' questions, and before proposing an application. When the user names a unit, pass only unitCode. An empty list means nothing matches. The units show as cards in the chat.",
+    "Units that can be booked for a site visit now (listed, approved price, no lease being signed), cheapest first (up to 10), with the approved annual asking rent and the next free site visit slots (Dubai time). Filter by emirate, area, bedrooms, company, category, size band and maximum rent. Use it for 'what is available' and 'find a 2-bed in Marina under 120k' questions, and before proposing an application. When the user names a unit, pass only unitCode. An empty list means nothing matches. The units show as cards in the chat.",
   input: Input,
   output: Output,
   roles: ALL_STAFF,
@@ -97,7 +97,7 @@ export const findAvailableUnits: CopilotTool<typeof Input, typeof Output> = {
       ui: {
         cards: rows.flatMap((r) => (r.card ? [{ kind: "unit" as const, card: r.card, href: unitHref(r.unitId) }] : [])),
       },
-      note: "Rent is the approved annual asking rent from the unit record. Slots follow company viewing hours; staff may also book other times.",
+      note: "Rent is the approved annual asking rent from the unit record. Slots follow company site visit hours; staff may also book other times.",
     };
   },
 };

@@ -1,11 +1,13 @@
 import { CONTRACT_CLAUSES, type ContractClauseId, formatAed } from "@leasing/core";
 import type { Metadata } from "next";
-import { ArrowSquareOutIcon as IconOpen, FilePdfIcon as IconPdf } from "@phosphor-icons/react/dist/ssr";
 import { Note, PAGE, PortalTitle, Rows, Section, Tiles } from "../../../../components/ui/portal";
 import { portalView } from "../../../../lib/engine";
 import { dateTime, longDate } from "../../../../lib/format";
 import type { SignPortalView } from "../../../../lib/portal";
 import { LinkGone } from "../link-gone";
+import { ChangeRequestForm, ChangeRequestList } from "./change-request";
+import { ContractViewer } from "./contract-viewer";
+import { MarkChanges } from "./mark-changes";
 import { SignForm } from "./sign-form";
 
 export const metadata: Metadata = { title: "Sign your tenancy contract" };
@@ -23,6 +25,19 @@ export default async function SignPage({ params }: { params: Promise<{ token: st
         : f.tenantPassportNo && `Passport ${f.tenantPassportNo}`;
   const hasAddendum = v.contract.addendum.clauses.length > 0 || v.contract.addendum.freeText;
   const companyClauses = v.contract.addendum.companyClauses ?? [];
+  const changeForm = (
+    <ChangeRequestForm
+      token={token}
+      maxChars={v.changeMaxChars}
+      clauses={[
+        ...v.contract.addendum.clauses.flatMap((c) => {
+          const std = CONTRACT_CLAUSES[c as ContractClauseId];
+          return std ? [{ ref: c, title: std.title }] : [];
+        }),
+        ...companyClauses.map((c) => ({ ref: `cc:${c.id}`, title: c.title })),
+      ]}
+    />
+  );
   return (
     <div className={PAGE}>
       <PortalTitle
@@ -104,23 +119,17 @@ export default async function SignPage({ params }: { params: Promise<{ token: st
           )}
         </Section>
       )}
-      <a
-        className="flex min-h-12 items-center justify-between gap-3 rounded-xl border border-line px-3.5 py-3 text-[15px] text-ink! focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
-        href={`/t/${token}/contract.pdf`}
-        target="_blank"
-        rel="noreferrer"
-      >
-        <span className="flex items-center gap-2.5">
-          <IconPdf size={22} aria-hidden />
-          Read the full contract (PDF)
-        </span>
-        <IconOpen size={18} className="text-muted" aria-hidden />
-      </a>
+      {v.canSign && v.canRequestChange && !v.signedAt && !v.paused ? (
+        <MarkChanges token={token} fallback={changeForm} />
+      ) : (
+        <ContractViewer token={token} />
+      )}
       <Note>
         Document fingerprint <span className="font-mono">{v.contract.sha256.slice(0, 16)}</span>.
         {v.demo && " Demo: this electronic signature is simulated and the contract is a demo template."}
       </Note>
 
+      <ChangeRequestList token={token} items={v.changeRequests ?? []} />
       {v.signedAt ? (
         <Section tone="accent">
           <p role="status" className="m-0">
@@ -128,8 +137,18 @@ export default async function SignPage({ params }: { params: Promise<{ token: st
             signed.
           </p>
         </Section>
+      ) : v.paused ? (
+        <Section tone="accent">
+          <p role="status" className="m-0">
+            {v.pausedByOther
+              ? "Signing is paused: the other party asked for a change to the contract. The leasing team is reviewing it and will email you a signing link, for this version or a revised one."
+              : "Signing is paused while the leasing team reviews your change request. We'll email you their answer."}
+          </p>
+        </Section>
       ) : v.canSign ? (
-        <SignForm token={token} name={v.signerName} />
+        <>
+          <SignForm token={token} name={v.signerName} />
+        </>
       ) : (
         <LinkGone message="This contract can't be signed from this link any more. Use the newest email from us." />
       )}

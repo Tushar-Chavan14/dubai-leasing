@@ -10,7 +10,7 @@ export default async function ChatPage({ searchParams }: PageProps<"/customer/ch
   return (
     <div
       data-fit-screen
-      className="mx-auto flex min-h-0 w-full max-w-[820px] flex-1 flex-col px-4 py-4 md:px-8 md:py-6"
+      className="mx-auto flex min-h-0 w-full max-w-[1240px] flex-1 flex-col px-4 py-4 md:px-8 md:py-6"
     >
       <div className="flex min-h-0 w-full max-h-[820px] flex-1 flex-col overflow-hidden rounded-[22px] border border-line bg-page">
         <header className="flex items-center gap-3 border-b border-line px-5 py-4">

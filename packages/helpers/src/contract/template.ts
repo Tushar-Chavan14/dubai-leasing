@@ -6,9 +6,11 @@ import {
   EMIRATE_LABELS,
   type Emirate,
   formatAed,
+  type ParagraphText,
   registrationSystemName,
 } from "@leasing/core";
 import type { NoticeBlock, NoticeDocument } from "../renewal/notice.ts";
+import { feesBlocks, scheduleBlocks } from "./schedule.ts";
 
 /**
  * Terms the product requires in every contract, whatever the template: the Ejari registration
@@ -74,6 +76,39 @@ export function addendumBlocks(addendum: Addendum): NoticeBlock[] {
 }
 
 /**
+ * The addendum's printed paragraphs for change marks: standard clauses by clause id, company clauses as `cc:<uuid>`
+ * (never rewritable: approved wording), and the parties' free text as `free_text` (rewritable). `page` is not known here.
+ */
+export function addendumParagraphs(addendum: Addendum): ParagraphText[] {
+  const out: ParagraphText[] = [];
+  const wording = new Map((addendum.companyClauses ?? []).map((c) => [`cc:${c.id}`, c]));
+  for (const c of addendum.clauses) {
+    if (Object.hasOwn(CONTRACT_CLAUSES, c)) {
+      const k = CONTRACT_CLAUSES[c as ContractClauseId];
+      out.push({ key: c, label: k.title, text: `${k.title}: ${k.text}`, values: [], rewritable: false, page: null });
+    } else {
+      const w = wording.get(c);
+      if (w)
+        out.push({ key: c, label: w.title, text: `${w.title}: ${w.text}`, values: [], rewritable: false, page: null });
+    }
+  }
+  if (addendum.freeText) {
+    out.push({
+      key: "free_text",
+      label: "Additional terms agreed by the parties",
+      text: addendum.freeText
+        .split(/\n{2,}/)
+        .map((p) => p.trim())
+        .join("\n\n"),
+      values: [],
+      rewritable: true,
+      page: null,
+    });
+  }
+  return out;
+}
+
+/**
  * The tenancy contract as a document (English demo template). Plain layout written for this
  * product: no DLD form layout, logo or wording is copied. Every value is a contract field, printed
  * as stored. WORDING TO BE REVIEWED BY A DUBAI PROPERTY LAWYER before real use.
@@ -83,8 +118,17 @@ const dash = (v: string | number | null) => (v === null || v === "" ? "-" : Stri
 export function contractDocument(
   f: ContractFields,
   addendum: Addendum,
-  o: { version: number; reference: string; preparedOn: string; demo: boolean; emirate?: Emirate },
-): NoticeDocument {
+  o: {
+    version: number;
+    reference: string;
+    preparedOn: string;
+    demo: boolean;
+    emirate?: Emirate;
+    /** The company's fees that apply in the unit's emirate, one line each (`allFeesList`), and the cheque payee. */
+    fees?: readonly string[];
+    payee?: string | null;
+  },
+): NoticeDocument & { paragraphs: ParagraphText[] } {
   const emirate = o.emirate ?? "dubai";
   const dubai = emirate === "dubai";
   const terms = requiredTerms(emirate);
@@ -141,12 +185,14 @@ export function contractDocument(
         ["Rent-free days", String(f.rentFreeDays)],
       ],
     },
+    ...scheduleBlocks(f, o.payee),
+    ...feesBlocks(o.fees),
     { kind: "heading", text: "Standard terms" },
     {
       kind: "list",
       items: [
         terms.rentChange,
-        "The tenant pays the rent by the cheques listed above. A bounced cheque is handled under the law and the company's collection process.",
+        "The tenant pays the rent by the cheques listed in the payment schedule above. A bounced cheque is handled under the law and the company's collection process.",
         "The security deposit is refunded at the end of the tenancy, less the cost of any damage beyond normal wear.",
         "The landlord keeps the unit fit to live in and does structural repairs and repairs to the building's main systems.",
         "The tenant uses the unit for the use stated above and keeps it in good condition.",
@@ -155,6 +201,27 @@ export function contractDocument(
     },
   ];
   blocks.push(...addendumBlocks(addendum));
+  const stdTexts = [
+    terms.rentChange,
+    "The tenant pays the rent by the cheques listed in the payment schedule above. A bounced cheque is handled under the law and the company's collection process.",
+    "The security deposit is refunded at the end of the tenancy, less the cost of any damage beyond normal wear.",
+    "The landlord keeps the unit fit to live in and does structural repairs and repairs to the building's main systems.",
+    "The tenant uses the unit for the use stated above and keeps it in good condition.",
+    terms.ejari,
+    terms.signatures,
+  ];
+  // Body paragraphs are the standard product wording: shown for change marks, never rewritten by the agent.
+  const paragraphs: ParagraphText[] = [
+    ...stdTexts.map((text, n) => ({
+      key: `std:${n}`,
+      label: n === stdTexts.length - 1 ? "Signatures" : "Standard terms",
+      text,
+      values: [],
+      rewritable: false,
+      page: null,
+    })),
+    ...addendumParagraphs(addendum),
+  ];
   blocks.push({ kind: "heading", text: "Signatures" });
   blocks.push({
     kind: "para",
@@ -170,5 +237,5 @@ export function contractDocument(
         ? "Template wording to be reviewed by a Dubai property lawyer before use."
         : `TO BE REVIEWED BY A PROPERTY LAWYER IN ${EMIRATE_LABELS[emirate].toUpperCase()} before use.`,
   });
-  return { title: `Tenancy contract ${f.leaseRef} (v${o.version})`, blocks };
+  return { title: `Tenancy contract ${f.leaseRef} (v${o.version})`, blocks, paragraphs };
 }

@@ -9,7 +9,7 @@ import { createApi } from "../src/api/app.ts";
 import { issueToken } from "../src/api/auth.ts";
 import { fillMissingCompanyLegal } from "../src/manager/company-legal-fill.ts";
 import { landlordGaps } from "../src/manager/company-legal.ts";
-import { importCompaniesCsv } from "../src/manager/import.ts";
+import { importCompaniesCsv, importUnitsCsv } from "../src/manager/import.ts";
 import { addStaff, freshDatabase, noDb, testContext } from "./harness.ts";
 
 const EID = "784-1900-4000001-1";
@@ -83,6 +83,45 @@ describe.skipIf(noDb)("company import and demo legal fill (Postgres)", () => {
     expect((await importCompaniesCsv(ctx, csv, "import"))[0]!.status).toBe("skipped");
     const ev = await database.db.select().from(leaseEvents).where(eq(leaseEvents.entityId, c.id));
     expect(ev.filter((e) => e.type === "COMPANY_LEGAL_UPDATED").at(-1)?.actor).toBe("import");
+  });
+
+  test("categories and emirates are stored (D65, D66): new company, update, unknown value, removal in use", async () => {
+    const created = await importCompaniesCsv(
+      ctx,
+      "name,kind,categories,emirates\nShop Co,owner,retail; Commercial,Dubai; abu dhabi\nPlain Co,owner,,",
+      "import",
+    );
+    expect(created.map((r) => r.status)).toEqual(["imported", "imported"]);
+    expect((await bySlug("shop-co")).categories).toEqual(["commercial", "retail"]);
+    expect((await bySlug("shop-co")).emirates).toEqual(["dubai", "abu_dhabi"]);
+    expect((await bySlug("plain-co")).categories).toEqual(["residential", "commercial", "retail"]);
+    expect((await bySlug("plain-co")).emirates).toEqual(["dubai"]);
+    const updated = await importCompaniesCsv(ctx, "name,categories,emirates\nshop co,retail,Sharjah", "import");
+    expect(updated[0]).toMatchObject({
+      status: "imported",
+      action: "updated",
+      changedFields: ["categories", "emirates"],
+    });
+    expect((await bySlug("shop-co")).emirates).toEqual(["sharjah"]);
+    // Same lists again: nothing to change.
+    expect(
+      (await importCompaniesCsv(ctx, "name,categories,emirates\nshop co,retail,sharjah", "import"))[0]!.status,
+    ).toBe("skipped");
+    const bad = await importCompaniesCsv(ctx, "name,emirates\nshop co,Atlantis", "import");
+    expect(bad[0]?.status).toBe("error");
+    expect(bad[0]?.reasons.join(" ")).toContain('unknown emirate "atlantis"');
+    // A type its units use can't be dropped: the row fails and nothing changes.
+    const harbour = await bySlug("harbour-co");
+    await importUnitsCsv(
+      ctx,
+      "unit_code,building,community,category\nHB-1,Tower,Marina,residential",
+      "import",
+      harbour.id,
+    );
+    const inUse = await importCompaniesCsv(ctx, "name,categories\nharbour co,retail", "import");
+    expect(inUse[0]?.status).toBe("error");
+    expect(inUse[0]?.reasons.join(" ")).toContain("residential");
+    expect((await bySlug("harbour-co")).categories).toContain("residential");
   });
 
   test("invalid rows are reported per row; a bad row doesn't block the rest", async () => {

@@ -5,6 +5,10 @@ import type {
   ApprovalStatus,
   CalendarDate,
   CompanyPolicy,
+  ChangeMark,
+  ContractChangeAnalysis,
+  ContractChangeStatus,
+  ContractFee,
   ContractFields,
   ContractStatus,
   EjariAutofix,
@@ -19,6 +23,7 @@ import type {
   InboundType,
   LeaseState,
   OfferTerms,
+  ParagraphText,
   PropertyCategory,
   PropertySubtype,
   StaffRole,
@@ -111,6 +116,11 @@ export const companies = pgTable("companies", {
   registeredAddress: text("registered_address"),
   /** Payee name on post-dated cheques (optional). */
   chequePayeeName: text("cheque_payee_name"),
+  /**
+   * Contract fees this company charges (registration fee, agency fee ...), validated by `ContractFee` in
+   * `@leasing/core`. Printed in contracts as stored; never decided by a model. Null = none set.
+   */
+  contractFees: jsonb("contract_fees").$type<ContractFee[]>(),
   /** Authorised signatory: signs contracts for the company. */
   signatoryName: text("signatory_name"),
   signatoryTitle: text("signatory_title"),
@@ -118,6 +128,18 @@ export const companies = pgTable("companies", {
   signatoryIdKind: text("signatory_id_kind").$type<"emirates_id" | "passport">(),
   signatoryIdNo: text("signatory_id_no"),
   signatoryIdExpiresOn: calDate("signatory_id_expires_on"),
+  /** Emirates the company operates in. Units, rent rules and contract rules must stay inside this set. */
+  emirates: text("emirates")
+    .array()
+    .$type<Emirate[]>()
+    .notNull()
+    .default(sql`'{dubai}'`),
+  /** Property types the company leases. Units, rent rules and contract rules must stay inside this set. */
+  categories: text("categories")
+    .array()
+    .$type<PropertyCategory[]>()
+    .notNull()
+    .default(sql`'{residential,commercial,retail}'`),
   active: boolean("active").notNull().default(true),
   createdBy: text("created_by"),
   createdAt: createdAt(),
@@ -737,7 +759,12 @@ export const rentRules = pgTable(
       .notNull()
       .references(() => companies.id),
     category: text("category").$type<PropertyCategory>().notNull(),
-    subtype: text("subtype").$type<PropertySubtype>(),
+    /** The unit types this rule covers (D68); empty = every type of the category. */
+    subtypes: text("subtypes")
+      .array()
+      .$type<PropertySubtype[]>()
+      .notNull()
+      .default(sql`'{}'::text[]`),
     emirate: text("emirate").$type<Emirate>().notNull(),
     community: text("community"),
     minPctBp: integer("min_pct_bp").notNull(),
@@ -773,7 +800,12 @@ export const contractRules = pgTable(
       .notNull()
       .references(() => companies.id),
     category: text("category").$type<PropertyCategory>().notNull(),
-    subtype: text("subtype").$type<PropertySubtype>(),
+    /** The unit types this rule covers (D68); empty = every type of the category. */
+    subtypes: text("subtypes")
+      .array()
+      .$type<PropertySubtype[]>()
+      .notNull()
+      .default(sql`'{}'::text[]`),
     /** The emirate this rule is for; null = any emirate (D58). A rule for the unit's emirate beats an any-emirate one. */
     emirate: text("emirate").$type<Emirate>(),
     tenures: text("tenures").array().$type<("annual" | "short_term")[]>().notNull(),
@@ -783,7 +815,6 @@ export const contractRules = pgTable(
       .array()
       .notNull()
       .default(sql`'{}'::text[]`),
-    sampleDocumentId: uuid("sample_document_id"),
     /** An approved company template of the same company (checked by the manager); contracts of this rule render in it. */
     templateId: uuid("template_id"),
     active: boolean("active").notNull().default(true),
@@ -841,8 +872,6 @@ export const companyClauses = pgTable(
     companyId: uuid("company_id")
       .notNull()
       .references(() => companies.id),
-    /** The contract rule the sample was uploaded on (rules are replaced, so this may be an older row of the chain). */
-    contractRuleId: uuid("contract_rule_id"),
     title: text("title").notNull(),
     textEn: text("text_en").notNull(),
     /** The words in the sample the clause was taken from (never shown to tenants). */
@@ -902,8 +931,20 @@ export const companyContractTemplates = pgTable(
      * confirmation. Written only while `proposed`; frozen with the row on approval.
      */
     review: jsonb("review").notNull().default({}),
-    /** The emirate this template is for; null = any emirate (D56). Approval and retirement work per (company, emirate). */
-    emirate: text("emirate").$type<Emirate>(),
+    /** The emirates this template may be used in (D68); empty = any emirate. */
+    emirates: text("emirates")
+      .array()
+      .$type<Emirate[]>()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    /**
+     * The named template this version belongs to (D69): the first version's id. Approving a new version retires only
+     * the approved version of the same family.
+     */
+    familyId: uuid("family_id").notNull(),
+    /** The template's name (D69), the same on every version of the family; renaming changes it on all of them. */
+    name: text("name").notNull(),
+    /** Numbered within the family (D69); versions made before D69 keep their company-wide number. */
     version: integer("version").notNull(),
     helperRunId: uuid("helper_run_id"),
     approvedBy: text("approved_by"),
@@ -912,7 +953,7 @@ export const companyContractTemplates = pgTable(
     createdAt: createdAt(),
   },
   (t) => [
-    uniqueIndex("company_contract_templates_version_uq").on(t.companyId, t.version),
+    uniqueIndex("company_contract_templates_version_uq").on(t.companyId, t.familyId, t.version),
     index("company_contract_templates_company_idx").on(t.companyId, t.status),
   ],
 );
@@ -1199,6 +1240,8 @@ export const contracts = pgTable(
     sources: jsonb("sources").$type<Record<string, FieldSource>>().notNull(),
     addendum: jsonb("addendum").$type<Addendum>().notNull(),
     flags: jsonb("flags").$type<AddendumFlag[]>().notNull().default([]),
+    /** Paragraph texts as printed, for change marks (nullable). */
+    paragraphTexts: jsonb("paragraph_texts").$type<ParagraphText[]>(),
     /** D64: template paragraphs the contract agent reworded from the unit's records (code-checked), shown at the gate. */
     templateRewrites: jsonb("template_rewrites")
       .$type<{ key: string; before: string; after: string; reason: string }[]>()
@@ -1252,6 +1295,53 @@ export const contractSigners = pgTable(
     createdAt: ts("created_at").notNull(),
   },
   (t) => [uniqueIndex("contract_signers_uq").on(t.contractId, t.role)],
+);
+
+/**
+ * D67: a change a signer asked for from their signing page. The text is untrusted. While a request is `open` or
+ * `analysed`, signing of its contract version is paused for both parties. The AI's draft (`analysis`) is checked by
+ * code; a person re-issues (new version, `final_contract` gate) or declines.
+ */
+export const contractChangeRequests = pgTable(
+  "contract_change_requests",
+  {
+    id: id(),
+    ref: text("ref").notNull(),
+    leaseId: uuid("lease_id")
+      .notNull()
+      .references(() => leases.id),
+    contractId: uuid("contract_id")
+      .notNull()
+      .references(() => contracts.id),
+    signerId: uuid("signer_id")
+      .notNull()
+      .references(() => contractSigners.id),
+    role: text("role").$type<"tenant" | "landlord">().notNull(),
+    partyId: uuid("party_id")
+      .notNull()
+      .references(() => parties.id),
+    /** A clause id, `cc:<uuid>`, `free_text` or `other`. */
+    target: text("target").notNull(),
+    /** The signer's words. Untrusted data, never instructions. */
+    text: text("text").notNull(),
+    status: text("status").$type<ContractChangeStatus>().notNull().default("open"),
+    analysis: jsonb("analysis").$type<ContractChangeAnalysis>(),
+    /** Marks on the annotated contract pages (old rows null). */
+    marks: jsonb("marks").$type<ChangeMark[]>(),
+    helperRunId: uuid("helper_run_id"),
+    inboundEventId: uuid("inbound_event_id"),
+    /** The contract prepared from it (status `reissued`). */
+    newContractId: uuid("new_contract_id"),
+    decidedBy: text("decided_by"),
+    decidedAt: ts("decided_at"),
+    /** Staff's note to the requester (decline) or the reason it closed. */
+    decisionNote: text("decision_note"),
+    createdAt: ts("created_at").notNull(),
+  },
+  (t) => [
+    index("contract_change_requests_lease_idx").on(t.leaseId, t.createdAt),
+    index("contract_change_requests_contract_idx").on(t.contractId, t.status),
+  ],
 );
 
 /**

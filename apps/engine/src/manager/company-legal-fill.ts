@@ -1,4 +1,11 @@
-import { addYears, type Actor, type CalendarDate, DEMO_COMPANY_LEGAL, luhnCheckDigit } from "@leasing/core";
+import {
+  addYears,
+  type Actor,
+  type CalendarDate,
+  DEMO_COMPANY_LEGAL,
+  DEMO_CONTRACT_FEES,
+  luhnCheckDigit,
+} from "@leasing/core";
 import { companies, withTx } from "@leasing/db";
 import { asc } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
@@ -49,6 +56,7 @@ export function demoLegalFor(company: { name: string; slug: string }, today: Cal
     email: `legal@${company.slug}.demo.example`,
     phone: `+971 4 000 ${String(h % 10000).padStart(4, "0")}`,
     chequePayeeName: legalName,
+    contractFees: DEMO_CONTRACT_FEES,
     signatoryName: `Demo Signatory ${company.name}`,
     signatoryTitle: "Leasing Director",
     signatoryEmail: `signatory@${company.slug}.demo.example`,

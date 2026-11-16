@@ -9,6 +9,8 @@ import { validateCompanyCreate } from "../../../../lib/company-legal";
 import { KIND_LABEL, type RuleResult } from "../../../../lib/portfolio";
 import { useActionForm } from "../../../../lib/use-action-form";
 import { createCompany } from "./actions";
+import { CategoriesField } from "../../../../components/categories-field";
+import { EmiratesField } from "../../../../components/emirates-field";
 import { LegalFields } from "./legal-fields";
 
 export function CompanyForm() {
@@ -54,6 +56,12 @@ export function CompanyForm() {
             </select>
           </SField>
         </div>
+      </Block>
+      <Block title="Operates in" lede="Units, rent rules and contract rules can only use these emirates.">
+        <EmiratesField selected={["dubai"]} error={errors.emirates} />
+      </Block>
+      <Block title="Offers for lease" lede="Units, rent rules and contract rules can only use these property types.">
+        <CategoriesField selected={["residential", "commercial", "retail"]} error={errors.categories} />
       </Block>
       <LegalFields legal={{}} errors={errors} />
       <SaveBar>

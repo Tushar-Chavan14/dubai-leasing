@@ -33,7 +33,7 @@ export default async function CustomerLayout({ children }: { children: ReactNode
           <div className="flex items-center justify-end gap-2 md:col-start-3">
             <ThemeMenu current={theme} />
             <Link href="/customer/properties#homes" className={buttonClass("primary", "sm")}>
-              Book a viewing
+              Book a site visit
             </Link>
           </div>
         </div>

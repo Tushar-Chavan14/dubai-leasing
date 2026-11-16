@@ -7,7 +7,8 @@ import { FormGrid, Panel, Preview, SetPage, TABLE, TD, TH } from "../../../../co
 import { askPrompts } from "../../../../lib/ask-ai/prompts";
 import { get } from "../../../../lib/engine";
 import { aedShort, bedroomsLabel, longDate } from "../../../../lib/format";
-import type { Me } from "../../../../lib/types";
+import { operatedEmirates } from "../../../../lib/portfolio";
+import type { CompanyRow, Me } from "../../../../lib/types";
 import { SriForm } from "./sri-form";
 
 export const metadata: Metadata = { title: "Rent index" };
@@ -23,7 +24,11 @@ interface SriRow {
 }
 
 export default async function SriPage() {
-  const [rows, me] = await Promise.all([get<SriRow[]>("/api/sri"), get<Me>("/api/me")]);
+  const [rows, me, companies] = await Promise.all([
+    get<SriRow[]>("/api/sri"),
+    get<Me>("/api/me"),
+    get<CompanyRow[]>("/api/companies"),
+  ]);
   const canEdit = me?.role === "admin" || me?.role === "leasing_manager";
   const list = rows ?? [];
   return (
@@ -44,7 +49,7 @@ export default async function SriPage() {
           >
             {canEdit ? (
               <>
-                <SriForm />
+                <SriForm emirates={operatedEmirates(companies)} />
                 <div>
                   <AskAi label="Ask AI to add a rent index value" prompt="Add a rent index value of AED " />
                 </div>

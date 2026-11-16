@@ -287,7 +287,7 @@ sequenceDiagram
   M->>M: contract.prepare job: Contract helper copies fields, PDF, hash
   M->>O: final_contract approval (fields + sources, addendum flags)
   O->>M: approve (records and PDF re-checked)
-  M->>T: signing link per party (single use) + PDF
+  M->>T: signing link per party (single use); contract shown as page images, no PDF attached (D65)
   T->>M: typed name + consent (evidence stored)
   M->>M: contract.finish: signature record page, signed hash, CONTRACT_SIGNED → REGISTRATION
   M->>O: ejari_submission approval (payload from the signed contract)
@@ -321,6 +321,34 @@ sequenceDiagram
   hash of the PDF they were shown. When the last party signs, `contract.finish` appends a
   "Signature record" page (pdf-lib), stores the signed copy and its hash, fires
   `CONTRACT_SIGNED` and emails both parties the signed copy.
+- **Officer changes (D72)**: officer-authored marks get law-only checks (`checkMarkRewrite({author:"officer"})`);
+  unknown-place marks are found by code (`findQuotePlace`); term changes (`MarkRewrite.target "terms"`,
+  `planTermChange` in helpers/offer) update `leases` + the application's offer in the new version's transaction
+  (`LEASE_TERMS_CHANGED`), or wait at `offer_out_of_limits` on the lease with a frozen snapshot when outside limits.
+- **Change marks (D71)**: signers select words on the PDF (text layer per page), `anchorQuote` maps each quote to
+  `contracts.paragraph_texts`; marks are stored on `contract_change_requests.marks`; the `contract_marks` helper
+  rewrites per paragraph and `checkMarkRewrite` checks it; staff decide in a modal (`/marks/:n/wording`, `/preview`,
+  `/approve`); approve prepares the version with `prepareContract({ fromMarks })` (no model) and approves
+  `final_contract` as the officer (`decideApproval({ allowPreparer: true })`, this route only).
+- **Change requests (D67)** (`manager/contract-changes.ts`, table `contract_change_requests`): a signer
+  who hasn't signed asks for a change from their signing page (`POST /api/portal/:token/change-requests`;
+  clause picker + their words, untrusted; policy `contractChanges`: on/off, who may ask, open requests per
+  signer, length). Stored at once as an `inbound_events` row `CONTRACT_CHANGE_REQUESTED`, a lease event (no
+  text) and a `contract_change_request` officer task. While any request on a version is `open` or `analysed`,
+  **signing of that version is paused for both parties**: `signContract`, sign/sign-reminder emails and
+  "send a new link" are refused, the other unsigned signer gets a "signing paused" email (no link). The
+  `contract.change.analyse` job (singletonKey `<leaseId>:contract-change:<id>`) runs the `contract_change`
+  helper: the chat model classifies the request and drafts a revised addendum (remove a clause on the
+  contract, add an approved clause, rewrite "Additional terms"); code refuses ids not on the contract or
+  not approved and any added amount, number, date, period or money word (then one retry, then no draft),
+  and builds the word diff. Rent, cheques, deposit and dates are never drafted (`money_or_dates`). The
+  officer (Workspace contract panel: request, analysis, risks, diff) **re-issues** (AI draft or their own
+  edit → `prepareContract` with `reprepare` + `fromChangeRequest`: a new version at the `final_contract`
+  gate, the old one superseded with its other open requests; allowed even if one party already signed
+  that version, never once fully signed or approved) or **declines** with a note (emailed to the requester
+  with a fresh link; every unsigned signer gets a "signing open again" link once nothing is open). The
+  requester may withdraw. Staff routes `POST /api/leases/:id/contract/change-requests/:rid/{reissue,decline}`
+  (leasing roles); admin `PUT /api/policy/contract-changes`.
 - **Registration**: entering REGISTRATION proposes `ejari_submission` (leasing officer,
   always) with a payload built only from the signed contract. Approving queues `ejari.submit`
   (`singletonKey <leaseId>:ejari-submit:<submissionId>`; the submission id is the registry's
@@ -1221,7 +1249,8 @@ staff UI.
   `list_records` (the Workspace rows with `company`, `category`, `mine`, `limit` <= 20 and a `total`),
   `get_record` (header, last 10 log entries, the actions this user could take, described only),
   `contract_status` (contract version and status, signers, company template version and clauses,
-  Ejari submission), `list_companies`, and `find_available_units` extended with `company`,
+  Ejari submission, and D67 change requests: `signingPaused`, each request's words as untrusted, the AI
+  summary, risks and whether a draft exists, staff's decision; the copilot never re-issues or declines), `list_companies`, and `find_available_units` extended with `company`,
   `category`, `sizeBand` (company matching is `resolveCompany` in `manager/availability.ts`, shared
   with the public chat agent). New engine reads: `GET /api/copilot/{pipeline,companies,records,contract-status}`
   (any staff role), all on the client allowlist. Applicant names are wrapped as untrusted for the model.
@@ -1501,10 +1530,10 @@ Key columns:
 - `inbound_events`: `ref`, `type`, `entity_id`, `channel (portal|staff|telegram)`, `actor`, `link_id`, `dedupe_key` unique, `payload jsonb`, `received_at`, `processed_at`, `status (received|applied|stored_only|failed)`, `result jsonb`
 - `companies` (D32): `name`, `slug` unique, `kind (developer|realty|owner)`, `trade_licence_no`, `email`, `active`, `created_by`
 - `units` (D32): `company_id` (not null), `category (residential|commercial|retail)` (was `kind`), `subtype`, `emirate` (default `dubai`), `country` (default `AE`)
-- `rent_rules` (D32): `company_id`, `category`, `subtype`, `emirate`, `community`, `min_pct_bp`, `max_pct_bp` (signed basis points vs SRI), `min_rent_fils`, `max_rent_fils`, `active`, `supersedes_id`, `created_by`; immutable, replaced by a new row
-- `contract_rules` (D32): `company_id`, `category`, `subtype`, `emirate` (null = any emirate, D58, migration 0035), `tenures`, `min_cheques`, `max_cheques` (1 to 12), `clause_ids`, `sample_document_id`, `active`, `supersedes_id`, `created_by`
+- `rent_rules` (D32): `company_id`, `category`, `subtypes` (text[], empty = all types; D68, migration 0042), `emirate`, `community`, `min_pct_bp`, `max_pct_bp` (signed basis points vs SRI), `min_rent_fils`, `max_rent_fils`, `active`, `supersedes_id`, `created_by`; immutable, replaced by a new row
+- `contract_rules` (D32): `company_id`, `category`, `subtypes` (text[], empty = all types; D68), `emirate` (null = any emirate, D58, migration 0035), `tenures`, `min_cheques`, `max_cheques` (1 to 12), `clause_ids`, `template_id`, `active`, `supersedes_id`, `created_by` (`sample_document_id` dropped in 0042: samples belong to the company's template library)
 - `visitor_verifications` (D34, migration 0020): `conversation_id`, `email`, `code_hash` (HMAC, never the code), `attempts`, `expires_at`, `verified_at`, `created_at`; `outbound_messages.purpose` gains `chat_code`
-- `company_clauses` (D35, migration 0021): `company_id`, `contract_rule_id`, `title`, `text_en`, `quote`, `category`, `has_values` (set by code), `status (proposed|approved|rejected|removed)`, `in_template_id`, `template_paragraph_key` (D47, migration 0029), `source_document_id`, `helper_run_id`, `approved_by`, `approved_at`, `created_by`; an admin may edit an approved row outside the template wording (`PATCH /company-clauses/:id`, event `COMPANY_CLAUSE_EDITED` with the earlier wording) or remove it (`DELETE`, status `removed`, dropped from the company's active rules as new rule versions, skipped when a contract is prepared from an earlier offer); prepared contracts then show "rules changed" through the config hash, signed ones keep their PDF; contracts reference them as `cc:<uuid>` in `addendum.clauses`
+- `company_clauses` (D35, migration 0021): `company_id`, `title` (`contract_rule_id` dropped in 0042, D68), `text_en`, `quote`, `category`, `has_values` (set by code), `status (proposed|approved|rejected|removed)`, `in_template_id`, `template_paragraph_key` (D47, migration 0029), `source_document_id`, `helper_run_id`, `approved_by`, `approved_at`, `created_by`; an admin may edit an approved row outside the template wording (`PATCH /company-clauses/:id`, event `COMPANY_CLAUSE_EDITED` with the earlier wording) or remove it (`DELETE`, status `removed`, dropped from the company's active rules as new rule versions, skipped when a contract is prepared from an earlier offer); prepared contracts then show "rules changed" through the config hash, signed ones keep their PDF; contracts reference them as `cc:<uuid>` in `addendum.clauses`
 - `registration_settings` (D53): `emirate` (PK), `values jsonb` (mode, portal, instructions, checklist, reference pattern), `updated_by`, `updated_at`; overrides the code defaults, one row per emirate
 - `sri_averages`: `emirate` (default `dubai`, part of the unique key; D52), `community`, `category`, `bedrooms` (null for commercial and retail), `avg_annual_rent_fils` or `avg_annual_rent_per_sqft_fils` (exactly one), `source (mock|manual)`, `effective_from`; `sri_overrides`: `lease_id`, `lease_end_on`, `avg_annual_rent_fils`, `reason`, `entered_by`
 - `rulebooks`: `version` unique, `emirate`, `status (draft|published)`, `based_on`, `effective_from` (date), `values jsonb` (`RulebookValues`), `reference_rules jsonb`, `created_by`, `published_by`, `published_at`; published rows immutable (trigger); see §4
@@ -1533,3 +1562,50 @@ Key columns:
 3. MCP server (`apps/mcp`) exposing the copilot's tool registry (§8b) to outside AI clients:
    the same read, draft and propose tools and the same safeguards. No tool can approve a gate.
 4. Optional Claude plugin wrapping the MCP server plus a usage skill.
+
+### D65 additions
+
+- `companies.emirates` (text[]): where a company operates. `assertOperates` (manager/portfolio.ts) guards rent rules,
+  contract rules, units, imports and sample uploads (422 `emirate_not_operated`); a company can't drop an emirate in
+  use (422 `emirate_in_use`).
+- Signing page: `GET /api/portal/:token/contract/pages` (`{pages, reference}`) and `/contract/pages/:n` (PNG,
+  `apps/engine/src/pdf-pages.ts`, unpdf + `@napi-rs/canvas`, ≤60 pages, `private, no-store`). The old
+  `contract.pdf` portal route is gone; staff PDF routes are unchanged.
+- `POST /api/leases/:id/registration/read-certificate` (leasing roles, ≤10 MB PDF): `readCertificate` helper reads
+  the reference, issued date and record fields; returns checks against the signed contract. No writes.
+
+### D68: contract template library and multi-type rules
+
+- `company_contract_templates.emirates` (text[], empty = any emirate) replaces `emirate` (migration 0042). Samples
+  are uploaded to the company (`POST /api/companies/:id/sample`, PDF, `?emirates=dubai,abu_dhabi`), not to a rule;
+  `GET /api/companies/:id/sample` and `POST /api/companies/:id/sample/retry` read and retry its latest sample.
+- D69: templates are named (`family_id`, `name`; migration 0044), each with its own versions. The upload takes
+  `?name=` (a new template) or `?familyId=` (a new version of one); neither: a version of the template for the same
+  emirates. Approving (`POST /api/companies/:id/sample/approve`) retires only the same template's approved version and
+  moves its active rules (when the new version may serve them); a first version replaces nothing. Rules with no
+  template move only to a company's first any-emirate template. `PATCH /api/companies/:id/contract-templates/:familyId`
+  renames a template (admin, unique per company, `COMPANY_TEMPLATE_RENAMED`). The panel lists `families`.
+- D70: reading a filled sample blanks values in headings, counts before labels, the sample's names and community
+  wherever they recur, signature-row names and reference codes; the product's data source map is left out. Prepare runs
+  code checks `sample_values`, `legal_periods` (notice periods vs the lease's pinned rulebook) and `emirate_wording`
+  (→ `needs_human`); approval runs the period and emirate checks (`template_legal_wording`). Every contract prints a
+  "Payment schedule" from core `paymentSchedule` (keys `chequeAmountFils`, `chequeDate1`–`12`, `chequeDates`) and the
+  company's fees for the unit's emirate (`companies.contract_fees`, migration 0045; keys `registrationFeeFils`,
+  `registrationFeePayer`, `feesSummary`). The contract agent may answer in 2,000 tokens; a repeated tool call gets a
+  short note.
+- Template choice per unit (`templateForUnit`): the rule's template when it lists the unit's emirate or none; else the
+  newest approved template naming the unit's emirate; else the newest any-emirate one; else the standard form. A rule
+  for one emirate may only point at a template listing it or listing none (422 `template_emirate`).
+- A rule pointed at a (different) template gets the template's approved linked clauses; approval moves rules
+  without adding the unticked ones.
+- `rent_rules.subtypes` and `contract_rules.subtypes` (empty = all types). Matching (`manager/rule-scope.ts`):
+  rules of the unit's company and category whose emirate, community and types fit; most specific wins (emirate,
+  then community, then named types), then newest. Two active rules with the same emirate (and community) that both
+  cover all types or share a type are refused (422 `rule_overlap`, advisory lock per company and category), so each
+  unit has one rule. A single `subtype` in a request body is still read as a one-item list.
+- `POST /api/contract-rules/:id/copy` (`{emirate | null}`) and `POST /api/rent-rules/:id/copy` (`{emirate}`; not for a
+  community rule): the same rule for another emirate, admin, events `CONTRACT_RULE_COPIED` / `RENT_RULE_COPIED`.
+- Copilot: `save_contract_rule` / `save_rent_rule` take `subtypes`; each type added or taken off must be in the
+  user's words, "all types" must be said and not negated; omitted on a replace keeps the rule's own. Overlaps are
+  refused at propose time. `get_company_settings` lists each rule's types and template, and the approved templates
+  (version, emirates; no wording).

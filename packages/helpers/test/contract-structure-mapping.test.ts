@@ -6,6 +6,7 @@ import {
   mappingMessages,
   matchBlank,
   matchLabel,
+  numberChequeDateRuns,
   partyIn,
   proposeMappings,
   redactValues,
@@ -14,6 +15,7 @@ import {
   sheetExtras,
   sheetForPrompt,
   type TemplateBlank,
+  validateMapping,
 } from "../src/index.ts";
 
 const noModel = () =>
@@ -50,6 +52,23 @@ describe("label matcher (code rules)", () => {
     ["Security deposit", null, "depositFils"],
     ["Number of cheques", null, "cheques"],
     ["Cheque no.", null, "leave_empty"],
+    ["Cheque amount", null, "chequeAmountFils"],
+    ["Amount per cheque", null, "chequeAmountFils"],
+    ["4 cheques of", null, "chequeAmountFils"],
+    ["Cheque dates", null, "chequeDates"],
+    ["First cheque date", null, "chequeDate1"],
+    ["Second cheque date", null, "chequeDate2"],
+    ["Twelfth cheque date", null, "chequeDate12"],
+    ["Cheque date 3", null, "chequeDate3"],
+    ["4th cheque date", null, "chequeDate4"],
+    ["Cheque date 13", null, "leave_empty"],
+    ["Ejari registration fee", null, "registrationFeeFils"],
+    ["Ejari fee", null, "registrationFeeFils"],
+    ["Tawtheeq registration fee", null, "registrationFeeFils"],
+    ["Registration fee", null, "registrationFeeFils"],
+    ["Ejari fee paid by", null, "registrationFeePayer"],
+    ["Other fees", null, "feesSummary"],
+    ["Additional fees", null, "feesSummary"],
     ["Start date", null, "startOn"],
     ["Tenancy starts on", null, "startOn"],
     ["End date", null, "endOn"],
@@ -254,6 +273,66 @@ describe("data sheet", () => {
     expect(sheetExtras({}).tenancyPeriod).toBeNull();
   });
 
+  const FEES = [
+    {
+      id: "any",
+      name: "Any registration fee",
+      kind: "registration",
+      amountFils: 10_000,
+      payer: "landlord",
+      emirates: [],
+    },
+    {
+      id: "dxb",
+      name: "Ejari registration fee",
+      kind: "registration",
+      amountFils: 22_000,
+      payer: "tenant",
+      emirates: ["dubai"],
+    },
+    { id: "ag", name: "Agency fee", kind: "other", amountFils: 100_000, payer: "tenant", emirates: [] },
+  ];
+
+  test("cheque and registration fee keys come from the payment schedule and the company row", () => {
+    const four = sheetExtras({
+      ...records,
+      lease: { startOn: "2027-01-01", endOn: "2027-12-31", annualRentFils: 8_500_000, cheques: 4 },
+      unit: { emirate: "dubai" },
+      company: { contractFees: FEES },
+    });
+    expect(four.chequeAmountFils).toBe(2_125_000);
+    expect(four.chequeDate1).toBe("2027-01-01");
+    expect(four.chequeDate4).toBe("2027-10-01");
+    expect(four.chequeDate5).toBeNull();
+    expect(four.chequeDates).toBe("1 January 2027 | 1 April 2027 | 1 July 2027 | 1 October 2027");
+    // The Dubai-specific registration fee beats the any-emirate one; other fees are summarised.
+    expect(four.registrationFeeFils).toBe(22_000);
+    expect(four.registrationFeePayer).toBe("Tenant");
+    expect(four.feesSummary).toBe("Agency fee AED 1,000 (tenant)");
+    expect(four.allFeesList).toBe(
+      "Any registration fee AED 100 (landlord)\nEjari registration fee AED 220 (tenant)\nAgency fee AED 1,000 (tenant)",
+    );
+    // Abu Dhabi: the any-emirate registration fee; the Dubai one doesn't apply.
+    const ad = sheetExtras({ ...records, unit: { emirate: "abu_dhabi" }, company: { contractFees: FEES } });
+    expect(ad.registrationFeeFils).toBe(10_000);
+    expect(ad.registrationFeePayer).toBe("Landlord");
+    // No unit emirate: only the any-emirate fees.
+    expect(sheetExtras({ ...records, company: { contractFees: FEES } }).registrationFeeFils).toBe(10_000);
+    // Unequal instalments (remainder fils): no single amount.
+    const uneven = sheetExtras({ ...records, lease: { ...records.lease, annualRentFils: 8_500_001, cheques: 4 } });
+    expect(uneven.chequeAmountFils).toBeNull();
+    expect(uneven.chequeDate2).toBe("2027-04-01");
+    // No cheque info on the lease: nothing.
+    const none = sheetExtras(records);
+    expect(none.chequeDate1).toBeNull();
+    expect(none.chequeDates).toBeNull();
+    expect(none.registrationFeeFils).toBeNull();
+    expect(none.registrationFeePayer).toBeNull();
+    expect(none.feesSummary).toBeNull();
+    expect(SHEET_KEYS.chequeDate12!.type).toBe("date");
+    expect(SHEET_KEYS.chequeAmountFils!.type).toBe("money_fils");
+  });
+
   test("the mapper never sees a value: the prompt holds descriptions and the blank's own words only", async () => {
     const text = [sheetForPrompt(), ...mappingMessages([item("b1", "Plot")]).map((m) => m.content)].join("\n");
     for (const v of ["MRN-1204", "DEWA-77", "Z1234567", "P9999999", "1991-03-07", "Silverline Realty", "8500000"]) {
@@ -352,5 +431,76 @@ describe("filled samples never leak values to the model (rule 8)", () => {
     }
     expect(seen).toContain("[value]");
     expect(redactValues("Rent is due monthly")).toBe("Rent is due monthly");
+  });
+});
+
+describe("cheque and Ejari fee blanks pass the type check", () => {
+  const raw = { before: "", after: "" } as never;
+  const cases: [string, string][] = [
+    ["First cheque date", "chequeDate1"],
+    ["Cheque date 3", "chequeDate3"],
+    ["Cheque dates", "chequeDates"],
+    ["Cheque amount", "chequeAmountFils"],
+    ["Ejari registration fee", "registrationFeeFils"],
+    ["Other fees", "feesSummary"],
+    ["Ejari fee paid by", "registrationFeePayer"],
+  ];
+  test.each(cases)("%s -> %s", (label, key) => {
+    expect(validateMapping(key, label, raw).field).toBe(key);
+  });
+  test("the cheque count is still a count", () => {
+    expect(validateMapping("cheques", "Number of cheques", raw).field).toBe("cheques");
+  });
+});
+
+describe("D70: a row of cheque-date blanks is numbered by position", () => {
+  const b = (id: string, field: string, label: string) => ({ id, field, label, fieldType: "date", role: "field" });
+  test("the first blank labelled 'Cheque dates' becomes cheque 1, the rest follow", () => {
+    const out = numberChequeDateRuns(
+      ["Cheque Dates {{b46}} | {{b47}} | {{b48}} | {{b49}} Security Deposit {{b30}}"],
+      [
+        b("b46", "chequeDates", "Cheque dates"),
+        b("b47", "chequeDate1", "First cheque date"),
+        b("b48", "chequeDate2", "Second cheque date"),
+        b("b49", "chequeDate3", "Third cheque date"),
+        { ...b("b30", "depositFils", "Security deposit"), fieldType: "money_fils" },
+      ],
+    );
+    expect(out.map((x) => x.field)).toEqual([
+      "chequeDate1",
+      "chequeDate2",
+      "chequeDate3",
+      "chequeDate4",
+      "depositFils",
+    ]);
+  });
+  test("a blank left empty but labelled as a cheque date joins its row", () => {
+    const out = numberChequeDateRuns(
+      ["Cheque Dates {{b47}} | {{b48}} | {{b49}}"],
+      [
+        b("b47", "leave_empty", "First cheque date"),
+        b("b48", "chequeDate2", "Second cheque date"),
+        b("b49", "chequeDate3", "Third cheque date"),
+      ],
+    );
+    expect(out.map((x) => x.field)).toEqual(["chequeDate1", "chequeDate2", "chequeDate3"]);
+  });
+  test("a single 'cheque dates' blank keeps the whole list; a run with another key is left alone", () => {
+    const one = numberChequeDateRuns(["Cheque Dates {{b1}}"], [b("b1", "chequeDates", "Cheque dates")]);
+    expect(one[0]!.field).toBe("chequeDates");
+    const mixed = numberChequeDateRuns(
+      ["{{b1}} | {{b2}}"],
+      [b("b1", "chequeDates", "Cheque dates"), b("b2", "startOn", "Start")],
+    );
+    expect(mixed.map((x) => x.field)).toEqual(["chequeDates", "startOn"]);
+  });
+});
+
+describe("D70: unit labels that are not the unit number", () => {
+  test("description, unit code and property type map to their own keys", () => {
+    expect(matchLabel("Unit description", null)).toBe("unitDescription");
+    expect(matchLabel("Unit code", null)).toBe("unitCode");
+    expect(matchLabel("Property type", null)).toBe("propertySubtype");
+    expect(matchLabel("Unit number", null)).toBe("unitNo");
   });
 });

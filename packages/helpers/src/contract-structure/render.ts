@@ -1,6 +1,7 @@
-import { type Addendum, calendarDate, type ContractFields, type Emirate } from "@leasing/core";
+import { type Addendum, calendarDate, type ContractFields, type Emirate, type ParagraphText } from "@leasing/core";
 import { z } from "zod";
-import { addendumBlocks, requiredTerms } from "../contract/template.ts";
+import { feesBlocks, scheduleBlocks } from "../contract/schedule.ts";
+import { addendumBlocks, addendumParagraphs, requiredTerms } from "../contract/template.ts";
 import { hasValues } from "../contract-template/values.ts";
 import { compatible, inferBlankType } from "./blanks.ts";
 import { sheetKeyInfo } from "./datasheet.ts";
@@ -173,9 +174,9 @@ export function liveBlankIds(
   const scan = (text: string | null | undefined) => {
     for (const m of (text ?? "").matchAll(/\{\{(b\d+)\}\}/g)) ids.add(m[1]!);
   };
-  scan(sections.title);
+  if (!dropped.has("title")) scan(sections.title);
   for (const s of sections.items) {
-    scan(s.heading);
+    if (!dropped.has(`${s.id}:h`)) scan(s.heading);
     s.paragraphs.forEach((p, i) => {
       if (!dropped.has(`${s.id}:${i}`)) scan(p);
     });
@@ -257,7 +258,7 @@ export function approvalProblems(
   const valuesOk = new Set(review.valuesConfirmed);
   const authorityOk = new Set(review.authorityBodyConfirmed);
   for (const p of templateParagraphs(t.sections)) {
-    if (dropped.has(p.key) && p.kind === "paragraph") continue;
+    if (dropped.has(p.key)) continue;
     const quote = `"${p.text.slice(0, 60)}${p.text.length > 60 ? "..." : ""}"`;
     if (p.fixedValues.length) {
       out.push(
@@ -376,6 +377,18 @@ export function nextSectionNumber(style: NumberingStyle, lastNumber: string | nu
   }
 }
 
+/**
+ * What a cheque blank prints when the lease has no value for it, chosen by code: a "cheque date N" beyond the lease's
+ * cheques is "\u2013"; the single cheque amount of unequal instalments points at the payment schedule. Null otherwise
+ * (an unrelated key, or a lease with no cheque count: the blank stays an empty line).
+ */
+function scheduleNeutral(field: string, fields: ContractFields): string | null {
+  if (!Number.isInteger(fields.cheques)) return null;
+  const n = /^chequeDate(\d{1,2})$/.exec(field)?.[1];
+  if (n) return Number(n) > fields.cheques ? "\u2013" : null;
+  return field === "chequeAmountFils" ? "see payment schedule" : null;
+}
+
 export const LAW_SECTION_HEADING = "Additional terms required by law";
 
 export interface TemplateRenderInput {
@@ -390,6 +403,8 @@ export interface TemplateRenderInput {
    * or `null` to leave the paragraph out (its clause was removed or isn't in the contract's rule).
    */
   paragraphs?: Readonly<Record<string, string | null>>;
+  /** Keys in `paragraphs` that are agent rewrites from the records (D64), not linked company clauses: still rewritable. */
+  rewritten?: readonly string[];
 }
 
 export interface TemplateRenderOptions {
@@ -417,7 +432,13 @@ export function templateContractBlocks(
   fields: ContractFields,
   addendum: Addendum,
   o: TemplateRenderOptions,
-): { title: string; blocks: TemplateBlock[]; leftEmpty: string[]; filled: { label: string; key: string }[] } {
+): {
+  title: string;
+  blocks: TemplateBlock[];
+  leftEmpty: string[];
+  filled: { label: string; key: string }[];
+  paragraphs: ParagraphText[];
+} {
   const problems: string[] = [];
   // Record values by key: the contract fields, then the extras copied from the other records.
   const values: Record<string, unknown> = { ...o.extras, ...fields };
@@ -449,6 +470,12 @@ export function templateContractBlocks(
       return "";
     }
     if (v === null) {
+      const scheduled = scheduleNeutral(b.field, fields);
+      if (scheduled !== null) {
+        if (!filled.some((f) => f.label === b.label && f.key === b.field))
+          filled.push({ label: b.label, key: b.field });
+        return scheduled;
+      }
       const neutral = NEUTRAL_WHEN_ABSENT[b.field];
       if (neutral !== undefined) {
         if (!filled.some((f) => f.label === b.label && f.key === b.field))
@@ -483,7 +510,7 @@ export function templateContractBlocks(
       .replace(/\s+/g, " ")
       .trim();
   /** A paragraph: signature blanks end it as signature lines labelled by the words before them. */
-  const paragraph = (text: string): TemplateBlock[] => {
+  const paragraph = (text: string, printed?: string[]): TemplateBlock[] => {
     const out: TemplateBlock[] = [];
     let cur = "";
     for (const part of text.split(TOKEN)) {
@@ -498,7 +525,11 @@ export function templateContractBlocks(
         const label = cur.replace(/[\s:_.-]+$/, "").trim();
         out.push({ kind: "sigline", label: label || b.label });
         cur = "";
-      } else cur += valueOf(b);
+      } else {
+        const v = valueOf(b);
+        if (printed && v.trim()) printed.push(v.trim());
+        cur += v;
+      }
     }
     const rest = cur.replace(/\s+/g, " ").trim();
     if (rest) out.push({ kind: "para", text: rest });
@@ -506,15 +537,31 @@ export function templateContractBlocks(
   };
 
   const blocks: TemplateBlock[] = [];
-  const title = t.sections.title ? inline(t.sections.title) : "Tenancy contract";
+  const texts: ParagraphText[] = [];
+  // Label of a paragraph: its own leading number and name ("4.5 Maintenance") or else its section's number and heading.
+  const labelOf = (raw: string, sectionLabel: string): string => {
+    const m = /^(\d+(?:\.\d+)+\.?)\s+([^:.\n]{1,40})/.exec(raw.replace(/\{\{b\d+\}\}/g, "").trim());
+    return m ? `${m[1]} ${m[2]!.trim()}` : sectionLabel;
+  };
+  // D70: a title or heading the review dropped (a value of the sample stood in it) is not printed.
+  const title = t.sections.title && !dropped.has("title") ? inline(t.sections.title) : "Tenancy contract";
   blocks.push({ kind: "title", text: title });
+  texts.push({ key: "title", label: "Title", text: title, values: [], rewritable: false, page: null });
   const seen: string[] = [];
   let numbered = 0;
   let lastNumber: string | null = null;
   for (const s of t.sections.items) {
-    if (s.heading !== null) {
+    if (s.heading !== null && !dropped.has(`${s.id}:h`)) {
       const heading = inline(s.heading);
       blocks.push({ kind: "heading", text: s.number ? `${s.number} ${heading}` : heading });
+      texts.push({
+        key: `${s.id}:h`,
+        label: s.number ? `${s.number} ${heading}` : heading,
+        text: heading,
+        values: [],
+        rewritable: false,
+        page: null,
+      });
       seen.push(heading);
       if (s.number) {
         numbered++;
@@ -526,16 +573,52 @@ export function templateContractBlocks(
       if (dropped.has(key)) continue;
       const linked = t.paragraphs && Object.hasOwn(t.paragraphs, key) ? t.paragraphs[key] : undefined;
       if (linked === null) continue;
-      for (const b of paragraph(linked ?? p)) {
+      const printed: string[] = [];
+      const made = paragraph(linked ?? p, printed);
+      for (const b of made) {
         blocks.push(b);
         if (b.kind === "para") seen.push(b.text);
+      }
+      // Signature lines are not text for marking; a paragraph that is only signature lines gives no entry.
+      const body = made.flatMap((b) => (b.kind === "para" ? [b.text] : [])).join(" ");
+      if (body) {
+        const sectionLabel = s.heading ? (s.number ? `${s.number} ${s.heading}` : s.heading) : "Contract";
+        texts.push({
+          key,
+          label: labelOf(p, sectionLabel),
+          text: body,
+          values: printed,
+          // A clause linked from the company's rule prints approved wording: never rewritten.
+          rewritable: linked === undefined || (t.rewritten?.includes(key) ?? false),
+          page: null,
+        });
       }
     }
   }
 
   // Company clauses and parties' free text, as in the standard contract.
+  texts.push(...addendumParagraphs(addendum));
   for (const b of addendumBlocks(addendum)) {
     if (b.kind === "heading" || b.kind === "para" || b.kind === "list" || b.kind === "small") blocks.push(b);
+  }
+
+  // The payment schedule (cheque dates and amounts from `paymentSchedule`), always: it is the record of what is due.
+  if (o.preview) {
+    blocks.push({ kind: "heading", text: "Payment schedule" });
+    blocks.push({
+      kind: "list",
+      items: ["Cheque 1 \u2013 \u00abCheque date\u00bb \u2013 \u00abCheque amount (AED)\u00bb"],
+    });
+  } else {
+    for (const b of scheduleBlocks(fields, o.extras?.chequePayeeName as string | null | undefined)) blocks.push(b);
+  }
+  // The company's fees that apply in the unit's emirate (name, amount, payer), always listed.
+  if (o.preview) {
+    blocks.push({ kind: "heading", text: "Fees" });
+    blocks.push({ kind: "list", items: ["\u00abFee name\u00bb \u00abAmount (AED)\u00bb (\u00abpayer\u00bb)"] });
+  } else {
+    const fees = typeof o.extras?.allFeesList === "string" ? o.extras.allFeesList.split("\n") : [];
+    for (const b of feesBlocks(fees)) blocks.push(b);
   }
 
   // What the product requires. No keyword guessing: each term is appended unless its exact standard sentence is
@@ -551,9 +634,17 @@ export function templateContractBlocks(
   if (needRent || needEjari || needSigning || needSignLines) {
     const n = nextSectionNumber(t.sections.numbering, lastNumber, numbered);
     blocks.push({ kind: "heading", text: n ? `${n} ${LAW_SECTION_HEADING}` : LAW_SECTION_HEADING });
-    if (needRent) blocks.push({ kind: "para", text: REQUIRED_TERMS.rentChange });
-    if (needEjari) blocks.push({ kind: "para", text: REQUIRED_TERMS.ejari });
-    if (needSigning) blocks.push({ kind: "para", text: REQUIRED_TERMS.signatures });
+    const lawLabel = n ? `${n} ${LAW_SECTION_HEADING}` : LAW_SECTION_HEADING;
+    let lawIndex = 0;
+    for (const [need, text] of [
+      [needRent, REQUIRED_TERMS.rentChange],
+      [needEjari, REQUIRED_TERMS.ejari],
+      [needSigning, REQUIRED_TERMS.signatures],
+    ] as const) {
+      if (!need) continue;
+      blocks.push({ kind: "para", text });
+      texts.push({ key: `law:${lawIndex++}`, label: lawLabel, text, values: [], rewritable: false, page: null });
+    }
     if (needSignLines) {
       blocks.push({ kind: "sigline", label: o.preview ? "Landlord" : `Landlord: ${fields.landlordNameEn}` });
       blocks.push({ kind: "sigline", label: o.preview ? "Tenant" : `Tenant: ${fields.tenantNameEn}` });
@@ -570,7 +661,13 @@ export function templateContractBlocks(
         : ref,
   });
   if (problems.length) throw new TemplateRenderError(problems);
-  return { title: `Tenancy contract ${fields.leaseRef} (v${o.version})`, blocks, leftEmpty: [...leftEmpty], filled };
+  return {
+    title: `Tenancy contract ${fields.leaseRef} (v${o.version})`,
+    blocks,
+    leftEmpty: [...leftEmpty],
+    filled,
+    paragraphs: texts,
+  };
 }
 
 /** Demo values for the "Preview contract" button (fictional; never stored on a contract). */
@@ -705,12 +802,30 @@ export function autoReview(
     changes.push("Removed the logo: its area has DLD, RERA or Ejari marks.");
   }
   if (t.style.flags.authorityMarks) changes.push("A neutral accent colour is used (marks were found in the sample).");
+  // D70: a section that is the product's own annexe (a data source map) is left out whole, heading and lines.
+  const sampleSections = new Set(
+    (t.sections?.items ?? []).filter((s) => s.heading && isSampleOnlyText(s.heading)).map((s) => s.id),
+  );
+  const drop = (key: string) => {
+    if (next.droppedParagraphs.includes(key)) return false;
+    next.droppedParagraphs.push(key);
+    return true;
+  };
+  for (const s of t.sections?.items ?? []) {
+    if (!sampleSections.has(s.id)) continue;
+    const added = [`${s.id}:h`, ...s.paragraphs.map((_, i) => `${s.id}:${i}`)].map(drop).some(Boolean);
+    if (added) changes.push(`Left out the section "${s.heading}": a note about the sample, not contract wording.`);
+  }
   for (const p of templateParagraphs(t.sections)) {
-    if (p.kind !== "paragraph" || next.droppedParagraphs.includes(p.key)) continue;
+    if (next.droppedParagraphs.includes(p.key)) continue;
     const quote = `"${p.text.replace(/\{\{b\d+\}\}/g, "…").slice(0, 60)}${p.text.length > 60 ? "…" : ""}"`;
     if (p.fixedValues.length) {
       next.droppedParagraphs.push(p.key);
-      changes.push(`Left out ${quote}: it has ${p.fixedValues.join(", ")} from the sample.`);
+      changes.push(
+        p.kind === "paragraph"
+          ? `Left out ${quote}: it has ${p.fixedValues.join(", ")} from the sample.`
+          : `Left out the ${p.kind} text ${quote}: it has ${p.fixedValues.join(", ")} from the sample.`,
+      );
     } else if (p.sampleOnly) {
       next.droppedParagraphs.push(p.key);
       changes.push(`Left out ${quote}: a note about the sample, not contract wording.`);

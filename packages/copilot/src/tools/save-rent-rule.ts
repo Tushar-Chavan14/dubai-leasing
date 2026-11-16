@@ -7,7 +7,11 @@ const Input = z.object({
   ...ModeArgs,
   company: z.string().min(2).max(120).describe("Company name or slug"),
   category: z.enum(["residential", "commercial", "retail"]),
-  subtype: z.string().max(40).nullable().optional(),
+  subtypes: z
+    .array(z.enum(["apartment", "villa", "townhouse", "penthouse", "office", "shop", "showroom", "warehouse"]))
+    .max(10)
+    .optional()
+    .describe("Unit types it covers; [] = all. Omit on a replace to keep them"),
   emirate: Emirate.optional().describe("Emirate the rule applies to; omit for Dubai"),
   community: z.string().max(120).nullable().optional().describe("Area, or omit for all areas"),
   minPctBp: z.number().int().describe("Lowest rent vs the Smart Rental Index, basis points (-3% = -300)"),
@@ -32,7 +36,7 @@ export const saveRentRule: CopilotTool<typeof Input, typeof ConfigChangeOutput> 
   name: "save_rent_rule",
   kind: "propose",
   description:
-    "Create or replace a company's rent rule (for one emirate; Dubai when emirate is omitted): how far above or below the Smart Rental Index rents may be, and how far below the asking rent an offer or a tenant's counter may go without a manager (maxOfferDiscountPct). When replacing a rule, copy its other values from get_company_settings. Use mode explicit only when the user's own latest message asks for this change, with their words as userQuote; otherwise mode suggest.",
+    "Create or replace a company's rent rule (for one emirate; Dubai when emirate is omitted; it may cover several unit types; if get_company_settings shows a rule for that emirate, area and types, replace it (replaceRuleId)): how far above or below the Smart Rental Index rents may be, and how far below the asking rent an offer or a tenant's counter may go without a manager (maxOfferDiscountPct). When replacing a rule, copy its other values from get_company_settings. Use mode explicit only when the user's own latest message asks for this change, with their words as userQuote; otherwise mode suggest.",
   input: Input,
   output: ConfigChangeOutput,
   roles: ["admin"],

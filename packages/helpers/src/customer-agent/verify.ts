@@ -87,9 +87,9 @@ const MONTH_DAY = new RegExp(
  */
 const CLAIM_EN = new RegExp(
   [
-    // Done: "I've booked", "your viewing is confirmed", "I sent you an email".
+    // Done: "I've booked", "your viewing / site visit is confirmed", "I sent you an email".
     "\\bI(?:'ve| have)?\\s+(?:just\\s+|now\\s+)?(?:booked|applied|submitted|scheduled|reserved|registered)\\b",
-    "\\byour (?:viewing|application) (?:is|has been|was) (?:now\\s+)?(?:booked|confirmed|submitted|scheduled|received)\\b",
+    "\\byour (?:viewing|site visit|visit|application) (?:is|has been|was) (?:now\\s+)?(?:booked|confirmed|submitted|scheduled|received)\\b",
     "\\bI(?:'ve| have)?\\s+(?:just\\s+)?(?:sent|emailed)\\b",
     // Promised: only a tool can do these, so a promise without a call is as wrong as a claim.
     "\\bI(?:'ll| will|'m going to|am going to)\\s+(?:now\\s+|go ahead and\\s+)?(?:book|apply|submit|schedule|reserve|send|email|register|hand|pass|forward)\\b",

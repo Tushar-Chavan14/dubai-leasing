@@ -1,4 +1,4 @@
-import { PDFDocument, type PDFFont, rgb, StandardFonts } from "pdf-lib";
+import { degrees, PDFDocument, type PDFFont, rgb, StandardFonts } from "pdf-lib";
 
 /**
  * Renders a simple structured document to an A4 PDF: plain typography, no logos or government
@@ -27,7 +27,11 @@ export const safe = (s: string) =>
     .replace(/[“”]/g, '"')
     .replace(/[^\x20-\x7e\xa0-\xff\n]/g, "?");
 
-export async function renderPdf(meta: { title: string; subject: string }, blocks: PdfBlock[]): Promise<Uint8Array> {
+export async function renderPdf(
+  meta: { title: string; subject: string },
+  blocks: PdfBlock[],
+  opts: { watermark?: string | null } = {},
+): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
   doc.setTitle(safe(meta.title));
   doc.setSubject(safe(meta.subject));
@@ -133,6 +137,20 @@ export async function renderPdf(meta: { title: string; subject: string }, blocks
       color: MUTED,
     }),
   );
+  if (opts.watermark) {
+    const size = Math.min(110, (A4[0] * 0.9) / Math.max(4, opts.watermark.length) / 0.7);
+    for (const p of pages) {
+      p.drawText(safe(opts.watermark), {
+        x: A4[0] * 0.14,
+        y: A4[1] * 0.3,
+        size,
+        font: bold,
+        color: rgb(0.85, 0.85, 0.85),
+        opacity: 0.45,
+        rotate: degrees(40),
+      });
+    }
+  }
   // Deterministic output for the same content: fixed dates in the PDF metadata.
   doc.setCreationDate(new Date(0));
   doc.setModificationDate(new Date(0));

@@ -83,8 +83,8 @@ export function recordActions(r: RecordRowDto, pendingSigners: string[], role: S
   if (r.kind === "application" && r.stage === "Enquiry")
     say(
       "invite",
-      "Invite to viewing",
-      `Propose inviting application ${r.ref} to a viewing: check the free slots and propose the earliest one.`,
+      "Invite to a site visit",
+      `Propose inviting application ${r.ref} to a site visit: check the free slots and propose the earliest one.`,
     );
   if (r.kind === "application" && (r.stage === "Viewing" || r.stage === "Documents")) {
     say("docs", "Request documents", `Propose requesting the screening documents from the applicant on ${r.ref}.`);

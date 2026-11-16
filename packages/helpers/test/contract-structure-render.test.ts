@@ -21,6 +21,7 @@ import {
   type TemplateBlank,
   type TemplateSections,
   templateContractBlocks,
+  contractDocument,
 } from "../src/index.ts";
 
 const blank = (
@@ -87,6 +88,87 @@ describe("formatting by code", () => {
       "LENA  Testova",
     );
     expect(formatField("cheques", SAMPLE_CONTRACT_FIELDS)).toBe("4");
+  });
+});
+
+describe("payment schedule", () => {
+  const add = { clauses: [], freeText: null };
+  const dates = ["1 January 2027", "1 April 2027", "1 July 2027", "1 October 2027"];
+
+  test("a template without cheque-date blanks gets a Payment schedule section from paymentSchedule", () => {
+    const r = templateContractBlocks(input(), SAMPLE_CONTRACT_FIELDS, add, {
+      ...opts,
+      extras: { chequePayeeName: "Sample Landlord LLC" },
+    });
+    const text = textOf(r.blocks);
+    expect(text).toContain("Payment schedule");
+    expect(text).toContain("Cheque 1 \u2013 1 January 2027 \u2013 AED 21,250");
+    expect(text).toContain("Cheque 4 \u2013 1 October 2027 \u2013 AED 21,250");
+    expect(text).toContain("Payable to Sample Landlord LLC");
+  });
+
+  test("it is printed even when the template's blanks print every date (D70: always)", () => {
+    const b = [...blanks()];
+    for (let n = 1; n <= 4; n++) b.push(blank(`d${n}`, `Cheque ${n} date`, `chequeDate${n}`, "on "));
+    const r = templateContractBlocks(input(b), SAMPLE_CONTRACT_FIELDS, add, opts);
+    expect(textOf(r.blocks)).toContain("Payment schedule");
+  });
+  test("cheque date blanks print their date; ones beyond the lease's cheques print a dash; unequal amounts point at the schedule", () => {
+    const sec: TemplateSections = {
+      ...sections,
+      items: [{ id: "s0", number: null, heading: null, paragraphs: ["{{b1}} / {{b4}} / {{b5}} / {{b6}}"] }],
+    };
+    const b = [
+      blank("b1", "First cheque date", "chequeDate1", ""),
+      blank("b4", "Fourth cheque date", "chequeDate4", ""),
+      blank("b5", "Fifth cheque date", "chequeDate5", ""),
+      blank("b6", "Cheque amount", "chequeAmountFils", ""),
+    ];
+    const extras = { chequeDate1: "2027-01-01", chequeDate4: "2027-10-01", chequeDate5: null, chequeAmountFils: null };
+    const r = templateContractBlocks({ sections: sec, blanks: b, templateVersion: 1 }, SAMPLE_CONTRACT_FIELDS, add, {
+      ...opts,
+      extras,
+    });
+    expect(textOf(r.blocks)).toContain("1 January 2027 / 1 October 2027 / \u2013 / see payment schedule");
+    expect(r.leftEmpty).toEqual([]);
+    // A lease with no cheque count leaves the blank for hand-filling.
+    const none = templateContractBlocks(
+      { sections: sec, blanks: b, templateVersion: 1 },
+      { ...SAMPLE_CONTRACT_FIELDS, cheques: Number.NaN },
+      add,
+      { ...opts, extras },
+    );
+    expect(none.leftEmpty).toContain("Fifth cheque date");
+  });
+
+  test("the fees that apply are listed under Fees, even when the blanks print every cheque date", () => {
+    const extras = { allFeesList: "Ejari registration fee AED 220 (tenant)\nAgency fee AED 1,000 (tenant)" };
+    const r = templateContractBlocks(input(), SAMPLE_CONTRACT_FIELDS, add, { ...opts, extras });
+    const i = r.blocks.findIndex((b) => b.kind === "heading" && b.text === "Fees");
+    expect(i).toBeGreaterThan(0);
+    expect(r.blocks[i + 1]).toEqual({
+      kind: "list",
+      items: ["Ejari registration fee AED 220 (tenant)", "Agency fee AED 1,000 (tenant)"],
+    });
+    expect(textOf(templateContractBlocks(input(), SAMPLE_CONTRACT_FIELDS, add, opts).blocks)).not.toContain("Fees");
+  });
+
+  test("the standard contract lists every cheque date and amount", () => {
+    const doc = contractDocument(SAMPLE_CONTRACT_FIELDS, add, {
+      version: 1,
+      reference: "C-1",
+      preparedOn: "2027-01-01",
+      demo: false,
+      fees: ["Agency fee AED 1,000 (tenant)"],
+      payee: "Sample Landlord LLC",
+    });
+    expect(doc.blocks.some((x) => x.kind === "para" && x.text === "Payable to Sample Landlord LLC")).toBe(true);
+    expect(doc.blocks.some((x) => x.kind === "list" && x.items.includes("Agency fee AED 1,000 (tenant)"))).toBe(true);
+    const items = doc.blocks.flatMap((x) => (x.kind === "list" ? x.items : []));
+    expect(items.filter((i) => i.startsWith("Cheque "))).toEqual(
+      dates.map((d, i) => `Cheque ${i + 1} \u2013 ${d} \u2013 AED 21,250`),
+    );
+    expect(doc.blocks.some((x) => x.kind === "heading" && x.text === "Payment schedule")).toBe(true);
   });
 });
 
@@ -572,5 +654,114 @@ describe("D47: clause wording in template paragraphs", () => {
     expect(text).toBe("From [Date] to [Date (2)].");
     expect(paragraphFromClauseText(text, raw, bs)).toBe(raw);
     expect(unknownPlaceholders("From [Date] to [Datum].", raw, bs)).toEqual(["Datum"]);
+  });
+
+  test("D70: autoReview also reads headings and the title; the product annexe is left out whole", () => {
+    const sec: TemplateSections = {
+      numbering: "decimal",
+      title: "Lease ARR-0017",
+      items: [
+        { id: "s1", number: "1.", heading: "PARTIES", paragraphs: ["Fine wording."] },
+        { id: "s2", number: null, heading: "Ref DEMO-DEWA-17", paragraphs: ["More wording."] },
+        {
+          id: "s3",
+          number: null,
+          heading: "ANNEXURE B - DATA SOURCE MAP",
+          paragraphs: ["Shows where each value in this contract was copied from, so it can be traced."],
+        },
+        { id: "s4", number: null, heading: "Field Value Copied from", paragraphs: ["Tenant name {{b1}} tenantNameEn"] },
+      ],
+    };
+    const bs = [blank("b1", "Tenant name", "tenantNameEn", "Tenant name")];
+    const { review, changes } = autoReview({ style: DEFAULT_STYLE, logoDocumentId: null, sections: sec }, EMPTY_REVIEW);
+    expect(review.droppedParagraphs).toEqual(expect.arrayContaining(["title", "s2:h", "s3:h", "s3:0", "s4:h", "s4:0"]));
+    expect(review.droppedParagraphs).not.toContain("s1:h");
+    expect(review.droppedParagraphs).not.toContain("s2:0");
+    expect(changes.join(" ")).toContain("Ref");
+    const problems = approvalProblems(
+      { blanks: bs, style: DEFAULT_STYLE, logoDocumentId: null, sections: sec },
+      review,
+    );
+    expect(problems.filter((x) => /sample|taken from/.test(x))).toEqual([]);
+    const out = templateContractBlocks(
+      { sections: sec, blanks: bs, templateVersion: 3, dropped: review.droppedParagraphs },
+      SAMPLE_CONTRACT_FIELDS,
+      { clauses: [], freeText: null },
+      opts,
+    );
+    const text = textOf(out.blocks);
+    expect(text).not.toMatch(/ARR-0017|DEMO-DEWA|DATA SOURCE|Copied from|Shows where/);
+    expect(out.blocks[0]).toMatchObject({ kind: "title", text: "Tenancy contract" });
+    expect(text).toContain("More wording.");
+  });
+});
+
+describe("paragraph texts for change marks", () => {
+  test("paragraph texts carry keys, labels and printed values", () => {
+    const sec: TemplateSections = {
+      numbering: "article",
+      title: "AGREEMENT",
+      items: [
+        {
+          id: "s0",
+          number: "4.",
+          heading: "TERMS AND CONDITIONS",
+          paragraphs: ["Rent {{b1}} per year", "4.5 Maintenance: the landlord repairs."],
+        },
+        { id: "s1", number: null, heading: null, paragraphs: ["Landlord: {{b5}}"] },
+      ],
+    };
+    const bl = [
+      blank("b1", "Annual rent", "annualRentFils", "Rent "),
+      blank("b5", "Landlord signature", "unmapped", "Landlord: ", { role: "signature" }),
+    ];
+    const r = templateContractBlocks(
+      { sections: sec, blanks: bl, templateVersion: 1, paragraphs: { "s0:1": "4.5 Maintenance: approved clause." } },
+      SAMPLE_CONTRACT_FIELDS,
+      { clauses: [], freeText: "Pets allowed." },
+      opts,
+    );
+    const by = (k: string) => r.paragraphs.find((p) => p.key === k);
+    expect(by("s0:0")).toEqual({
+      key: "s0:0",
+      label: "4. TERMS AND CONDITIONS",
+      text: "Rent AED 85,000 per year",
+      values: ["AED 85,000"],
+      rewritable: true,
+      page: null,
+    });
+    expect(by("s0:1")).toMatchObject({
+      label: "4.5 Maintenance",
+      text: "4.5 Maintenance: approved clause.",
+      rewritable: false,
+    });
+    expect(by("s0:h")?.rewritable).toBe(false);
+    expect(by("s1:0")).toBeUndefined();
+    expect(by("free_text")).toMatchObject({ text: "Pets allowed.", rewritable: true });
+    expect(r.paragraphs.filter((p) => p.key.startsWith("law:")).every((p) => !p.rewritable)).toBe(true);
+    expect(r.paragraphs.some((p) => p.key.startsWith("law:"))).toBe(true);
+  });
+
+  test("standard contract body paragraphs are not rewritable", () => {
+    const doc = contractDocument(
+      SAMPLE_CONTRACT_FIELDS,
+      { clauses: [], freeText: "Extra." },
+      { version: 1, reference: "C", preparedOn: "2026-11-13", demo: false },
+    );
+    const std = doc.paragraphs.filter((p) => p.key.startsWith("std:"));
+    expect(std.length).toBeGreaterThan(5);
+    expect(std.every((p) => !p.rewritable)).toBe(true);
+    expect(doc.paragraphs.find((p) => p.key === "free_text")?.rewritable).toBe(true);
+  });
+
+  test("a paragraph reworded from the records stays rewritable", () => {
+    const r = templateContractBlocks(
+      { ...input(), paragraphs: { "s1:0": "Layout is a studio.", "s1:1": "Approved clause." }, rewritten: ["s1:0"] },
+      SAMPLE_CONTRACT_FIELDS,
+      { clauses: [], freeText: null },
+      opts,
+    );
+    expect(r.paragraphs.find((p) => p.key === "s1:0")).toMatchObject({ text: "Layout is a studio.", rewritable: true });
+    expect(r.paragraphs.find((p) => p.key === "s1:1")?.rewritable).toBe(false);
   });
 });

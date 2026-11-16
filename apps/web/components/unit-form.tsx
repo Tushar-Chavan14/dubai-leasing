@@ -12,7 +12,7 @@ import {
 } from "../app/(staff)/units/actions";
 import { aedShort } from "../lib/format";
 import { uploadPhoto } from "../lib/images";
-import { type Category, CATEGORIES, COMMUNITIES, subtypeLabel } from "../lib/portfolio";
+import { type Category, CATEGORIES, COMMUNITIES, offeredCategories, subtypeLabel } from "../lib/portfolio";
 import type { CompanyRow, UnitRow } from "../lib/types";
 import { Button } from "./ui/button";
 import { FormAlert } from "./ui/action-form";
@@ -86,9 +86,17 @@ export function UnitForm({
   lockedFields?: string[];
 }) {
   const router = useRouter();
-  const [v, setV] = useState<Values>(() =>
-    initial(unit, companies.find((c) => c.active)?.id ?? companies[0]?.id ?? ""),
-  );
+  const [v, setV] = useState<Values>(() => {
+    const first = initial(unit, companies.find((c) => c.active)?.id ?? companies[0]?.id ?? "");
+    const co = companies.find((c) => c.id === first.companyId);
+    const ems = co?.emirates;
+    const cats = offeredCategories(co);
+    const withEmirate =
+      ems && !ems.includes(first.emirate) && !unit ? { ...first, emirate: ems[0] ?? first.emirate } : first;
+    return !unit && !cats.includes(withEmirate.category)
+      ? { ...withEmirate, category: cats[0]!, subtype: "" }
+      : withEmirate;
+  });
   const [photos, setPhotos] = useState<PhotoItem[]>([]);
   const [result, setResult] = useState<ActionResult>({});
   const [progress, setProgress] = useState<string | null>(null);
@@ -148,6 +156,8 @@ export function UnitForm({
   }, [rangeEnabled, rangeKey, v.companyId, v.category, v.subtype, v.emirate, v.community, bedrooms, rangeArea]);
   const loaded = view && view !== "loading" && view !== "idle" ? view : null;
   const range = loaded?.range ?? null;
+  const offeringCompany = companies.find((c) => c.id === v.companyId);
+  const operated = offeringCompany?.emirates ?? EMIRATES;
   const companyName = companies.find((c) => c.id === v.companyId)?.name ?? "The company";
   const rentTone =
     rentFils === null || Number.isNaN(rentFils) || !range
@@ -303,7 +313,7 @@ export function UnitForm({
           <label className={`${FIELD} ${W3}`}>
             <span className={LABEL}>Emirate</span>
             <select className={INPUT} value={v.emirate} onChange={set("emirate")} required {...inv("emirate")}>
-              {EMIRATES.map((e) => (
+              {EMIRATES.filter((e) => operated.includes(e) || e === unit?.emirate).map((e) => (
                 <option key={e} value={e}>
                   {EMIRATE_LABELS[e]}
                 </option>
@@ -337,7 +347,23 @@ export function UnitForm({
           </label>
           <label className={`${FIELD} ${W3}`}>
             <span className={LABEL}>Company</span>
-            <select className={INPUT} value={v.companyId} onChange={set("companyId")} required {...inv("companyId")}>
+            <select
+              className={INPUT}
+              value={v.companyId}
+              onChange={(e) => {
+                const next = companies.find((c) => c.id === e.target.value);
+                setV((p) => ({
+                  ...p,
+                  companyId: e.target.value,
+                  emirate: next && !next.emirates.includes(p.emirate) ? (next.emirates[0] ?? p.emirate) : p.emirate,
+                  ...(next && !offeredCategories(next).includes(p.category)
+                    ? { category: offeredCategories(next)[0]!, subtype: "" }
+                    : {}),
+                }));
+              }}
+              required
+              {...inv("companyId")}
+            >
               {companies.length === 0 && <option value="">No companies yet</option>}
               {companies
                 .filter((c) => c.active || c.id === v.companyId)
@@ -352,7 +378,7 @@ export function UnitForm({
           <div className={`${FIELD} ${W3}`}>
             <span className={LABEL}>Category</span>
             <Choices label="Category">
-              {CATEGORIES.map((c) => (
+              {CATEGORIES.filter((c) => offeredCategories(offeringCompany).includes(c.value)).map((c) => (
                 <Choice
                   key={c.value}
                   name="category"

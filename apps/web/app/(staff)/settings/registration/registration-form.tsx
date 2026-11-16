@@ -58,11 +58,14 @@ export function RegistrationForm({
   row,
   options,
   canEdit,
+  operated = true,
 }: {
   emirate: string;
   row: RegistrationRow;
   options: DocumentOption[];
   canEdit: boolean;
+  /** Some active company operates in this emirate. */
+  operated?: boolean;
 }) {
   // A saved item no company's form asks any more still shows, so it can be unticked.
   const known = new Set(options.map((o) => o.key));
@@ -86,8 +89,11 @@ export function RegistrationForm({
           <h2 className="m-0 font-sans text-[15px] font-semibold tracking-tight text-ink">
             {EMIRATE_LABELS[emirate as Emirate] ?? emirate}
           </h2>
-          <span className="rounded-full border border-line px-2.5 py-0.5 text-xs text-muted">
-            {row.source === "saved" ? "Saved" : "Default"}
+          <span className="flex items-center gap-2">
+            {!operated && <span className="text-xs text-muted">No company operates here</span>}
+            <span className="rounded-full border border-line px-2.5 py-0.5 text-xs text-muted">
+              {row.source === "saved" ? "Saved" : "Default"}
+            </span>
           </span>
         </div>
         {row.forcedManual && (

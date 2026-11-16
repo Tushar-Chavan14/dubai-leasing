@@ -9,7 +9,7 @@ import {
   type ContractFields,
   newId,
   type PropertyCategory,
-  type PropertySubtype,
+  type ParagraphText,
 } from "@leasing/core";
 import {
   companyClauses,
@@ -48,9 +48,12 @@ import {
   TemplateSections,
   TemplateStyle,
   templateContractBlocks,
+  legalPeriodProblems,
+  templateEmirateProblems,
 } from "@leasing/helpers";
+import { getRulebook, rulebookVersions } from "@leasing/rulebook";
 import { sha256Hex } from "@leasing/core/tokens";
-import { and, desc, eq, gt, gte, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, sql } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
 import { conflict, notFound, unprocessable } from "../errors.ts";
 import { appendEvent } from "./events.ts";
@@ -89,8 +92,10 @@ export async function extractCompanyTemplate(
   if (existing && !input.force) return { skipped: true as const, templateId: existing.id };
 
   const entity = { kind: "company" as const, id: companyId };
-  // The emirate chosen at upload (null = any emirate) travels on the sample document.
-  const emirate = parseEmirate((doc.extracted as { emirate?: unknown } | null)?.emirate);
+  // The emirates chosen at upload (empty = any emirate) travel on the sample document (D68).
+  const emirates = parseEmirates((doc.extracted as { emirates?: unknown } | null)?.emirates);
+  // The named template the new version joins (D69): set at upload; older samples join the family for the same emirates.
+  const meta = doc.extracted as { familyId?: string; name?: string } | null;
   const helperRunId = newId();
   const helper = contractStructureHelper(ctx.contractAiLlm ?? ctx.llm, {
     readFile: async (id) => {
@@ -158,13 +163,16 @@ export async function extractCompanyTemplate(
         extracted: { sampleDocumentId, widthPx: data.logo!.widthPx, heightPx: data.logo!.heightPx },
       });
     }
+    const templateId = newId();
+    const family = await familyForSample(tx, companyId, emirates, meta, templateId);
     const [last] = await tx.db
       .select({ version: companyContractTemplates.version })
       .from(companyContractTemplates)
-      .where(eq(companyContractTemplates.companyId, companyId))
+      .where(
+        and(eq(companyContractTemplates.companyId, companyId), eq(companyContractTemplates.familyId, family.familyId)),
+      )
       .orderBy(desc(companyContractTemplates.version))
       .limit(1);
-    const templateId = newId();
     const version = (last?.version ?? 0) + 1;
     // D47: code makes the review decisions it can (marked header or footer, sample notes and values) up front.
     const auto = autoReview({ style: data.style, logoDocumentId, sections: data.sections }, EMPTY_REVIEW);
@@ -178,7 +186,9 @@ export async function extractCompanyTemplate(
       style: data.style,
       review: auto.review,
       logoDocumentId,
-      emirate,
+      emirates,
+      familyId: family.familyId,
+      name: family.name,
       version,
       helperRunId,
       createdBy: HELPER_ACTOR,
@@ -190,9 +200,11 @@ export async function extractCompanyTemplate(
       actor: HELPER_ACTOR,
       payload: {
         templateId,
+        familyId: family.familyId,
+        name: family.name,
         version,
         sampleDocumentId,
-        emirate,
+        emirates,
         helperRunId,
         sections: data.sections.items.length,
         blanks: data.blanks.length,
@@ -310,12 +322,11 @@ export async function linkSampleClauses(ctx: EngineContext, tx: Tx, companyId: s
         r.id,
         {
           category: r.category as PropertyCategory,
-          subtype: r.subtype as PropertySubtype | null,
+          subtypes: r.subtypes,
           tenures: r.tenures as ("annual" | "short_term")[],
           minCheques: r.minCheques,
           maxCheques: r.maxCheques,
           clauseIds: [...r.clauseIds, ...add] as typeof r.clauseIds,
-          sampleDocumentId: r.sampleDocumentId,
         },
         HELPER_ACTOR,
       );
@@ -418,9 +429,103 @@ export function parseEmirate(v: unknown): Emirate | null {
   return r.success ? r.data : null;
 }
 
-/** SQL for "this template group": the same emirate, or no emirate (null = any). */
-const inGroup = (emirate: Emirate | null) =>
-  emirate === null ? isNull(companyContractTemplates.emirate) : eq(companyContractTemplates.emirate, emirate);
+/** Parses stored or posted emirates: the known ones, deduplicated and sorted; empty = any emirate (D68). */
+export function parseEmirates(v: unknown): Emirate[] {
+  const list = Array.isArray(v) ? v : v === null || v === undefined ? [] : [v];
+  return [...new Set(list.flatMap((e) => (Emirate.safeParse(e).success ? [e as Emirate] : [])))].sort();
+}
+
+/** The name a company's first template gets when none is given (D69). */
+export const DEFAULT_TEMPLATE_NAME = "Contract template";
+
+/**
+ * A template name is free for the company (D69): trimmed, 1 to 80 characters, and not the name of another named
+ * template (case-insensitive). `familyId` is the template being renamed (its own name is free). Returns the trimmed name.
+ */
+export async function assertTemplateNameFree(
+  tx: Pick<Tx, "db">,
+  companyId: string,
+  raw: string,
+  familyId: string | null,
+) {
+  const name = raw.trim().replace(/\s+/g, " ");
+  if (name.length === 0 || name.length > 80)
+    throw unprocessable("Give the template a name of 1 to 80 characters.", [], "template_name");
+  const [taken] = await tx.db
+    .select({ familyId: companyContractTemplates.familyId })
+    .from(companyContractTemplates)
+    .where(
+      and(
+        eq(companyContractTemplates.companyId, companyId),
+        sql`lower(${companyContractTemplates.name}) = lower(${name})`,
+        ...(familyId ? [sql`${companyContractTemplates.familyId} <> ${familyId}`] : []),
+      ),
+    )
+    .limit(1);
+  if (taken) throw unprocessable(`Another template is already called "${name}".`, [], "template_name_taken");
+  return name;
+}
+
+/**
+ * The named template a version read from a sample joins (D69): the one chosen at upload; for a sample uploaded before
+ * D69, the company's template for the same emirates, else a new one.
+ */
+async function familyForSample(
+  tx: Pick<Tx, "db">,
+  companyId: string,
+  emirates: Emirate[],
+  meta: { familyId?: string; name?: string } | null,
+  /** The new version's id: a new family started here takes it as its id. */
+  newFamilyId: string,
+) {
+  if (meta?.familyId) {
+    const [row] = await tx.db
+      .select({ name: companyContractTemplates.name })
+      .from(companyContractTemplates)
+      .where(
+        and(eq(companyContractTemplates.companyId, companyId), eq(companyContractTemplates.familyId, meta.familyId)),
+      )
+      .limit(1);
+    return { familyId: meta.familyId, name: row?.name ?? meta.name ?? DEFAULT_TEMPLATE_NAME };
+  }
+  const rows = await tx.db
+    .select({
+      familyId: companyContractTemplates.familyId,
+      name: companyContractTemplates.name,
+      emirates: companyContractTemplates.emirates,
+    })
+    .from(companyContractTemplates)
+    .where(eq(companyContractTemplates.companyId, companyId))
+    .orderBy(desc(companyContractTemplates.createdAt));
+  const same = rows.find((r) => sameEmirates(r.emirates, emirates));
+  if (same) return { familyId: same.familyId, name: same.name };
+  const base =
+    rows.length === 0
+      ? DEFAULT_TEMPLATE_NAME
+      : `${DEFAULT_TEMPLATE_NAME} (${emirates.length ? emirateNames(emirates) : "any emirate"})`;
+  // Names are unique per company (checked in code): add a number when an admin already chose this one.
+  const taken = new Set(rows.map((r) => r.name.toLowerCase()));
+  let name = base;
+  for (let n = 2; taken.has(name.toLowerCase()); n++) name = `${base} ${n}`;
+  return { familyId: newFamilyId, name };
+}
+
+/** Two templates cover the same emirates (D68). */
+export const sameEmirates = (a: readonly string[], b: readonly string[]) =>
+  a.length === b.length && a.every((e) => b.includes(e));
+
+/** A template may be used for a unit in `emirate`: it lists that emirate, or no emirate (any). */
+export const templateCovers = (t: { emirates: readonly string[] }, emirate: Emirate) =>
+  t.emirates.length === 0 || t.emirates.includes(emirate);
+
+/**
+ * A rule may point at the template: it lists the rule's emirate, or no emirate. An any-emirate rule may use any
+ * template (its units in other emirates fall back to their own template, `templateForUnit`).
+ */
+export const templateFitsRule = (t: { emirates: readonly string[] }, ruleEmirate: Emirate | null) =>
+  ruleEmirate === null || t.emirates.length === 0 || t.emirates.includes(ruleEmirate);
+
+const emirateNames = (list: readonly Emirate[]) => list.map((e) => EMIRATE_LABELS[e]).join(", ");
 
 /**
  * The template a contract rule points at: it must exist, be the company's own, be approved and, when `emirate` is
@@ -442,14 +547,14 @@ export async function approvedTemplateFor(
   }
   if (row.status !== "approved") {
     throw unprocessable(
-      `The contract rule's company template (v${row.version}) is ${row.status}, not approved. Point the rule at an approved template.`,
+      `The contract rule's template "${row.name}" v${row.version} is ${row.status}, not approved. Point the rule at an approved template.`,
       [],
       "template_unavailable",
     );
   }
-  if (emirate && row.emirate !== null && row.emirate !== emirate) {
+  if (emirate && !templateCovers(row, emirate)) {
     throw unprocessable(
-      `The contract rule's company template (v${row.version}) is for ${EMIRATE_LABELS[row.emirate]}, not ${EMIRATE_LABELS[emirate]}.`,
+      `The contract rule's template "${row.name}" v${row.version} is for ${emirateNames(row.emirates)}, not ${EMIRATE_LABELS[emirate]}.`,
       [],
       "template_unavailable",
     );
@@ -476,14 +581,17 @@ export async function templateForUnit(
     // Same checks as before for a rule's template; only a different emirate falls through to the lookup below.
     if (!row || row.companyId !== companyId || row.status !== "approved")
       return approvedTemplateFor(tx, companyId, ruleTemplateId);
-    if (row.emirate === null || row.emirate === emirate) return row;
+    if (templateCovers(row, emirate)) return row;
   }
   const approved = await tx.db
     .select()
     .from(companyContractTemplates)
     .where(and(eq(companyContractTemplates.companyId, companyId), eq(companyContractTemplates.status, "approved")))
-    .orderBy(desc(companyContractTemplates.version));
-  return approved.find((r) => r.emirate === emirate) ?? approved.find((r) => r.emirate === null) ?? null;
+    .orderBy(asc(companyContractTemplates.familyId));
+  // A template naming the unit's emirate beats an any-emirate one; then the company's oldest named template (D69:
+  // family ids are time-ordered). Each family has one approved version, so adding a new named template never changes
+  // which template a rule without one uses; only approving a new version of the same template does (audited).
+  return approved.find((r) => r.emirates.includes(emirate)) ?? approved.find((r) => r.emirates.length === 0) ?? null;
 }
 
 /** Rule check: `templateId` must be an approved template of the same company. */
@@ -577,8 +685,16 @@ export async function renderCompanyContract(
      * paragraph still reads as it did (`before`) and no clause prints there.
      */
     rewrites?: readonly { key: string; before: string; after: string }[];
+    /** A watermark over every page with the real values (change-mark preview); `preview` uses its own. */
+    watermark?: string;
   },
-): Promise<{ pdf: Uint8Array; title: string; leftEmpty: string[]; filled: { label: string; key: string }[] }> {
+): Promise<{
+  pdf: Uint8Array;
+  title: string;
+  leftEmpty: string[];
+  filled: { label: string; key: string }[];
+  paragraphs: ParagraphText[];
+}> {
   const t = parseTemplate(row);
   const look = effectiveStyle(t.style, t.review, row.logoDocumentId);
   const linked = await linkedParagraphs(
@@ -589,8 +705,13 @@ export async function renderCompanyContract(
   );
   const raw = new Map(templateParagraphs(t.sections).map((p) => [p.key, p.text]));
   const paragraphs: Record<string, string | null> = { ...linked.paragraphs };
+  const rewritten: string[] = [];
   for (const r of input.rewrites ?? []) {
-    if (!Object.hasOwn(paragraphs, r.key) && raw.get(r.key) === r.before) paragraphs[r.key] = r.after;
+    if (!Object.hasOwn(paragraphs, r.key) && raw.get(r.key) === r.before) {
+      // D72: an empty rewrite leaves the paragraph out (no empty line).
+      paragraphs[r.key] = r.after.trim() ? r.after : null;
+      rewritten.push(r.key);
+    }
   }
   // A clause linked to a paragraph prints there, never again under the additional terms.
   const extra = input.addendum.companyClauses?.filter((c) => !linked.clauseIds.has(c.id));
@@ -606,6 +727,7 @@ export async function renderCompanyContract(
         templateVersion: row.version,
         dropped: t.review.droppedParagraphs,
         paragraphs,
+        rewritten,
       },
       // The date of the contract is the day it is prepared (Clock), never read from the lease.
       { ...input.fields, contractOn: input.fields.contractOn ?? ctx.clock.today() },
@@ -615,14 +737,14 @@ export async function renderCompanyContract(
         reference: input.reference,
         demo: ctx.demoMode,
         preview: input.preview === true,
-        emirate: input.emirate ?? row.emirate ?? "dubai",
+        emirate: input.emirate ?? (row.emirates.length === 1 ? row.emirates[0]! : "dubai"),
         ...(input.extras ? { extras: input.extras } : {}),
       },
     );
   } catch (e) {
     if (e instanceof TemplateRenderError) {
       throw unprocessable(
-        `The contract can't be prepared in the company template (v${row.version}): ${e.problems[0]}`,
+        `The contract can't be prepared in the template "${row.name}" v${row.version}: ${e.problems[0]}`,
         e.problems,
         "template_blank_unfilled",
       );
@@ -643,7 +765,7 @@ export async function renderCompanyContract(
       header: look.style.header,
       footer: look.style.footer,
     },
-    { logo, watermark: input.preview ? "Preview" : null },
+    { logo, watermark: input.preview ? "Preview" : (input.watermark ?? null) },
   ).catch((e: unknown) => {
     if (e instanceof PdfLogoError) {
       throw unprocessable(
@@ -654,7 +776,7 @@ export async function renderCompanyContract(
     }
     throw e;
   });
-  return { pdf, title: built.title, leftEmpty: built.leftEmpty, filled: built.filled };
+  return { pdf, title: built.title, leftEmpty: built.leftEmpty, filled: built.filled, paragraphs: built.paragraphs };
 }
 
 /** A sample contract in the template with demo values, watermarked "Preview" (admin only; nothing stored). */
@@ -669,22 +791,64 @@ export async function previewTemplate(ctx: EngineContext, templateId: string) {
     addendum: { clauses: [], freeText: null },
     version: 1,
     reference: "PREVIEW",
-    subject: `Preview of company template v${row.version}`,
+    subject: `Preview of template ${row.name} v${row.version}`,
     preview: true,
   });
   return pdf;
 }
 
+/**
+ * D70: legal periods and emirate wording of the template's fixed wording, checked by code. Periods are compared with
+ * the latest published rulebook of each emirate the template covers (empty = every emirate with one); a paragraph
+ * the review drops is not checked. Each entry is a reason that blocks approval.
+ */
+export function templateWordingProblems(
+  t: { sections: TemplateSections | undefined; review: TemplateReview },
+  emirates: readonly Emirate[],
+  /**
+   * D47: paragraphs that print a company clause (key → the clause's current wording, null = not printed). The check
+   * reads what prints, so an admin's edit of the clause (60 → 90 days) clears the problem.
+   */
+  linked: Readonly<Record<string, string | null>> = {},
+): string[] {
+  const dropped = new Set(t.review.droppedParagraphs);
+  const texts = templateParagraphs(t.sections)
+    .filter((p) => !dropped.has(p.key))
+    .flatMap((p) => {
+      if (!Object.hasOwn(linked, p.key)) return [{ key: p.key, text: p.text }];
+      const text = linked[p.key];
+      return text === null || text === undefined ? [] : [{ key: p.key, text }];
+    });
+  const out = templateEmirateProblems(texts, emirates);
+  const latest = new Map<string, ReturnType<typeof getRulebook>>();
+  for (const v of rulebookVersions()) {
+    const r = getRulebook(v);
+    const cur = latest.get(r.emirate);
+    if (!cur || r.effectiveFrom >= cur.effectiveFrom) latest.set(r.emirate, r);
+  }
+  for (const r of latest.values()) {
+    if (emirates.length && !emirates.includes(r.emirate)) continue;
+    for (const p of legalPeriodProblems(texts, r))
+      out.push(
+        `${p.problem} (checked against the latest published rulebook for ${EMIRATE_LABELS[r.emirate]}, ${r.version})`,
+      );
+  }
+  return [...new Set(out)];
+}
+
 /** What the review screen shows for one template. */
-export function templateView(row: TemplateRow) {
+export function templateView(row: TemplateRow, linked: Readonly<Record<string, string | null>> = {}) {
   const t = parseTemplate(row);
   const look = effectiveStyle(t.style, t.review, row.logoDocumentId);
   return {
     id: row.id,
+    /** The named template this version belongs to (D69). */
+    familyId: row.familyId,
+    name: row.name,
     version: row.version,
     status: row.status,
-    /** The emirate the template is for; null = any emirate. */
-    emirate: row.emirate,
+    /** The emirates the template may be used in; empty = any emirate (D68). */
+    emirates: row.emirates,
     sampleDocumentId: row.sampleDocumentId,
     sections: t.sections,
     // Read-only: which data-sheet key fills each blank and how it was chosen (matched, model or left empty).
@@ -714,7 +878,13 @@ export function templateView(row: TemplateRow) {
     changes: autoReview({ style: t.style, logoDocumentId: row.logoDocumentId, sections: t.sections }, EMPTY_REVIEW)
       .changes,
     /** D47: what still blocks approval (text the PDF fonts can't print). */
-    blockers: row.status === "proposed" ? approvalBlockers({ style: t.style, sections: t.sections }) : [],
+    blockers:
+      row.status === "proposed"
+        ? [
+            ...approvalBlockers({ style: t.style, sections: t.sections }),
+            ...templateWordingProblems({ sections: t.sections, review: t.review }, row.emirates, linked),
+          ]
+        : [],
     problems:
       row.status === "proposed"
         ? approvalProblems(
@@ -735,6 +905,43 @@ export function templateView(row: TemplateRow) {
  */
 const extractionStuckMs = (ctx: EngineContext) =>
   (contractJobBudgetSeconds(ctx.backgroundModelTimeoutSeconds ?? 300) + 180) * 1000;
+
+/** The approved version a new version replaces (D69): its own named template's; a first version replaces nothing. */
+function familyReplaces(rows: TemplateRow[], target: TemplateRow): string[] {
+  return rows
+    .filter((r) => r.id !== target.id && r.status === "approved" && r.familyId === target.familyId)
+    .map((r) => r.id);
+}
+
+/**
+ * Active rules that move to `target` when it is approved replacing `replaces` (D69): rules on a replaced version or on
+ * a retired version of the same named template, and rules with no template when an any-emirate template is the
+ * company's only approved one (its first template). A rule the new version may not serve (another emirate) stays.
+ */
+async function rulesToMove(
+  db: Pick<Tx, "db">["db"],
+  companyId: string,
+  target: TemplateRow,
+  rows: TemplateRow[],
+  replaces: readonly string[],
+) {
+  const from = new Set([
+    ...replaces,
+    ...rows.filter((r) => r.status === "retired" && r.familyId === target.familyId).map((r) => r.id),
+  ]);
+  const onlyOne = !rows.some((r) => r.status === "approved" && r.familyId !== target.familyId);
+  const active = await db
+    .select()
+    .from(contractRules)
+    .where(and(eq(contractRules.companyId, companyId), eq(contractRules.active, true)));
+  return active.filter(
+    (r) =>
+      r.templateId !== target.id &&
+      ((r.templateId !== null && from.has(r.templateId)) ||
+        (r.templateId === null && target.emirates.length === 0 && onlyOne)) &&
+      templateFitsRule(target, r.emirate as Emirate | null),
+  );
+}
 
 /** The company's templates (newest first) and the state of reading its latest sample (any staff). */
 export async function companyTemplatePanel(ctx: EngineContext, companyId: string) {
@@ -848,24 +1055,12 @@ export async function companyTemplatePanel(ctx: EngineContext, companyId: string
           ),
         )
     : [];
-  // What approving a proposed version would move: active rules on the approved or any retired version of its own
-  // (company, emirate) group; rules with no template only for an "any emirate" template.
+  // What approving the proposed version would move (D69): active rules on its named template's approved version (or
+  // default those for the same emirates) or on a retired version of the same emirates, and rules with no template
+  // for an any-emirate template; only rules the new template may serve.
   const target = sample ? rows.find((r) => r.sampleDocumentId === sample.id && r.status === "proposed") : undefined;
-  const groupRows = target ? rows.filter((r) => r.emirate === target.emirate) : rows;
-  const groupRetired = groupRows.filter((r) => r.status === "retired").map((r) => r.id);
-  const approvedId = groupRows.find((r) => r.status === "approved")?.id;
-  const movable = [...groupRetired, ...(approvedId ? [approvedId] : [])];
-  const noTemplate = !target || target.emirate === null ? isNull(contractRules.templateId) : undefined;
-  const toMove = await db
-    .select({ id: contractRules.id })
-    .from(contractRules)
-    .where(
-      and(
-        eq(contractRules.companyId, companyId),
-        eq(contractRules.active, true),
-        movable.length ? or(noTemplate, inArray(contractRules.templateId, movable)) : (noTemplate ?? sql`false`),
-      ),
-    );
+  const replaces = target ? familyReplaces(rows, target) : [];
+  const toMove = target ? await rulesToMove(db, companyId, target, rows, replaces) : [];
   // D47: the latest sample's clauses waiting for approval (shown on the review with "Approve all").
   const proposedClauses = sample
     ? await db
@@ -883,8 +1078,35 @@ export async function companyTemplatePanel(ctx: EngineContext, companyId: string
   const openTemplate = sample
     ? rows.find((r) => r.sampleDocumentId === sample.id && r.status === "proposed")
     : undefined;
+  // D69: the named templates, newest first; each lists its versions (newest first) and how many active rules use it.
+  const ruleRows = await db
+    .select({ id: contractRules.id, templateId: contractRules.templateId })
+    .from(contractRules)
+    .where(and(eq(contractRules.companyId, companyId), eq(contractRules.active, true)));
+  const familyIds = [...new Set(rows.map((r) => r.familyId))];
+  const families = familyIds
+    .map((familyId) => {
+      const versions = rows.filter((r) => r.familyId === familyId);
+      const ids = new Set(versions.map((v) => v.id));
+      return {
+        familyId,
+        name: versions[0]!.name,
+        templateIds: versions.map((v) => v.id),
+        current: (versions.find((v) => v.status === "approved") ?? versions[0]!).id,
+        ruleCount: ruleRows.filter((r) => r.templateId !== null && ids.has(r.templateId)).length,
+        createdAt: versions[versions.length - 1]!.createdAt,
+      };
+    })
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+    .map(({ createdAt: _c, ...f }) => f);
+  // A proposed template's blockers read the wording that will print: its linked clauses as they are now.
+  const linkedFor = new Map<string, Record<string, string | null>>();
+  for (const r of rows.filter((x) => x.status === "proposed")) {
+    linkedFor.set(r.id, (await linkedParagraphs(ctx.database, r, null, true)).paragraphs);
+  }
   return {
-    templates: rows.map(templateView),
+    templates: rows.map((r) => templateView(r, linkedFor.get(r.id))),
+    families,
     extraction,
     catalogue,
     rulesOnRetired: onRetired.length,
@@ -892,7 +1114,21 @@ export async function companyTemplatePanel(ctx: EngineContext, companyId: string
     review: sample
       ? {
           sampleDocumentId: sample.id,
-          ruleId: (sample.extracted as { ruleId?: string } | null)?.ruleId ?? null,
+          /** The emirates chosen at upload (empty = any emirate). */
+          emirates: parseEmirates((sample.extracted as { emirates?: unknown } | null)?.emirates),
+          /** The approved version approving this one replaces: its named template's (D69). */
+          replaces,
+          /** The named template the sample's version joins (D69); older samples: the one for the same emirates. */
+          familyId:
+            target?.familyId ??
+            (sample.extracted as { familyId?: string } | null)?.familyId ??
+            rows.find((r) => r.sampleDocumentId === sample.id)?.familyId ??
+            null,
+          name:
+            target?.name ??
+            (sample.extracted as { name?: string } | null)?.name ??
+            rows.find((r) => r.sampleDocumentId === sample.id)?.name ??
+            null,
           clauses: proposedClauses.map(clauseView),
           templateId: openTemplate?.id ?? null,
           // The one tick is needed when kept wording or these clauses have amounts, dates, DLD/RERA words or a logo.
@@ -1133,7 +1369,6 @@ export async function approveSample(
       .orderBy(desc(documents.createdAt))
       .limit(1);
     if (!sample) throw conflict("This company has no sample contract.", "no_sample");
-    const sampleRuleId = (sample.extracted as { ruleId?: string } | null)?.ruleId ?? null;
     const [locked] = await tx.db
       .select()
       .from(companyContractTemplates)
@@ -1189,6 +1424,10 @@ export async function approveSample(
       ).review;
       const blockers = approvalBlockers({ style: t.style, sections: t.sections });
       if (blockers.length) throw unprocessable("This template can't be approved.", blockers, "template_not_ready");
+      const { paragraphs: linked } = await linkedParagraphs(tx, locked, null, true);
+      const wording = templateWordingProblems({ sections: t.sections, review }, locked.emirates, linked);
+      if (wording.length)
+        throw unprocessable("This template's legal wording needs a fix.", wording, "template_legal_wording");
     }
     const texts = proposed.map((c) => c.textEn);
     const mustCheck = locked
@@ -1214,17 +1453,16 @@ export async function approveSample(
     let retired: string[] = [];
     let moved = 0;
     if (locked) {
-      const previous = await tx.db
+      const companyRows = await tx.db
         .select()
         .from(companyContractTemplates)
-        .where(
-          and(
-            eq(companyContractTemplates.companyId, companyId),
-            eq(companyContractTemplates.status, "approved"),
-            inGroup(locked.emirate),
-          ),
-        )
+        .where(eq(companyContractTemplates.companyId, companyId))
         .for("update");
+      // D69: a new version replaces its own named template's approved version; a new template replaces nothing.
+      const replaceIds = familyReplaces(companyRows, locked);
+      const previous = companyRows.filter((r) => replaceIds.includes(r.id));
+      // Rules to move are worked out before the old versions are retired (the same set either way).
+      const moving = await rulesToMove(tx.db, companyId, locked, companyRows, replaceIds);
       for (const p of previous) {
         await tx.db
           .update(companyContractTemplates)
@@ -1234,7 +1472,7 @@ export async function approveSample(
           entity,
           type: "COMPANY_TEMPLATE_RETIRED",
           actor,
-          payload: { templateId: p.id, version: p.version, replacedBy: locked.id },
+          payload: { templateId: p.id, familyId: p.familyId, version: p.version, replacedBy: locked.id },
           rulesVersion: ctx.rulesVersion,
         });
       }
@@ -1250,41 +1488,13 @@ export async function approveSample(
         .where(eq(companyContractTemplates.id, locked.id))
         .returning();
       approved = row ?? null;
-      // Active rules of this company with no template, or on a retired (older) one, move to the new version as a
-      // new rule version, in this transaction, audited with the approving user.
-      const retiredIds = (
-        await tx.db
-          .select({ id: companyContractTemplates.id })
-          .from(companyContractTemplates)
-          .where(
-            and(
-              eq(companyContractTemplates.companyId, companyId),
-              eq(companyContractTemplates.status, "retired"),
-              inGroup(locked.emirate),
-            ),
-          )
-      ).map((r) => r.id);
-      // Rules with no template join only an "any emirate" template; a template for one emirate is found by the unit's
-      // emirate anyway, so it takes over only the rules that were on an older version of the same (company, emirate).
-      const noTemplate = locked.emirate === null ? isNull(contractRules.templateId) : undefined;
-      const toMove = await tx.db
-        .select({ id: contractRules.id })
-        .from(contractRules)
-        .where(
-          and(
-            eq(contractRules.companyId, companyId),
-            eq(contractRules.active, true),
-            retiredIds.length
-              ? or(noTemplate, inArray(contractRules.templateId, retiredIds))
-              : (noTemplate ?? sql`false`),
-          ),
-        )
-        .for("update");
-      for (const r of toMove) await repointContractRule(ctx, tx, r.id, locked.id, actor);
-      moved = toMove.length;
+      // Those rules move to the new version as a new rule version, in this transaction, audited with the approving
+      // user (repointing also adds the new template's approved linked clauses, D68).
+      for (const r of moving) await repointContractRule(ctx, tx, r.id, locked.id, actor);
+      moved = moving.length;
     }
 
-    // The ticked clauses join the rule the sample was uploaded on (its current version).
+    // The ticked clauses join the rules on this template (below).
     // Clauses auto-approved from this sample (D37) and linked to the template print with it too.
     const auto = locked
       ? await tx.db
@@ -1302,12 +1512,10 @@ export async function approveSample(
       ...proposed.filter((c) => toRule.has(c.id)).map((c) => `cc:${c.id}`),
       ...auto.filter((c) => !proposed.some((p) => p.id === c.id)).map((c) => `cc:${c.id}`),
     ];
-    // The ticked clauses join the rule the sample was uploaded on and every active rule now on this template (so
-    // wording from the template prints for each rule using it); each rule can be changed later from the clause list.
+    // The ticked clauses join every active rule now on this template (so wording from the template prints for each
+    // rule using it); a rule pointed at the template later gets them too (D68). Each rule can be changed later.
     const targets = new Map<string, typeof contractRules.$inferSelect>();
     if (added.length) {
-      const fromSample = sampleRuleId ? await activeRuleFrom(tx, sampleRuleId) : null;
-      if (fromSample) targets.set(fromSample.id, fromSample);
       if (locked) {
         const onTemplate = await tx.db
           .select()
@@ -1339,12 +1547,11 @@ export async function approveSample(
         rule.id,
         {
           category: rule.category as PropertyCategory,
-          subtype: rule.subtype as PropertySubtype | null,
+          subtypes: rule.subtypes,
           tenures: rule.tenures as ("annual" | "short_term")[],
           minCheques: rule.minCheques,
           maxCheques: rule.maxCheques,
           clauseIds: clauseIds as typeof rule.clauseIds,
-          sampleDocumentId: rule.sampleDocumentId,
         },
         actor,
       );
@@ -1359,6 +1566,8 @@ export async function approveSample(
         ...(approved
           ? {
               templateId: approved.id,
+              familyId: approved.familyId,
+              name: approved.name,
               version: approved.version,
               contentHash: templateKey(approved).contentHash,
               retired,
@@ -1379,24 +1588,37 @@ export async function approveSample(
   });
 }
 
-/** The active version of a contract rule, following `supersedesId` forward from any of its versions. */
-async function activeRuleFrom(tx: Tx, ruleId: string) {
-  let id: string | null = ruleId;
-  for (let i = 0; id && i < 200; i++) {
-    const [r]: (typeof contractRules.$inferSelect)[] = await tx.db
-      .select()
-      .from(contractRules)
-      .where(eq(contractRules.id, id))
+/** Renames a named template (D69): every version of it. The name is not part of the contract hash. */
+export async function renameTemplate(
+  ctx: EngineContext,
+  companyId: string,
+  familyId: string,
+  rawName: string,
+  actor: Actor,
+) {
+  return withTx(ctx.database, async (tx) => {
+    await tx.db.execute(sql`select pg_advisory_xact_lock(hashtext(${`template:${companyId}`}))`);
+    const rows = await tx.db
+      .select({ id: companyContractTemplates.id, name: companyContractTemplates.name })
+      .from(companyContractTemplates)
+      .where(and(eq(companyContractTemplates.companyId, companyId), eq(companyContractTemplates.familyId, familyId)))
       .for("update");
-    if (!r) return null;
-    if (r.active) return r;
-    const [next]: { id: string }[] = await tx.db
-      .select({ id: contractRules.id })
-      .from(contractRules)
-      .where(eq(contractRules.supersedesId, r.id));
-    id = next?.id ?? null;
-  }
-  return null;
+    if (rows.length === 0) throw notFound("contract template");
+    const name = await assertTemplateNameFree(tx, companyId, rawName, familyId);
+    if (rows[0]!.name === name) return { familyId, name };
+    await tx.db
+      .update(companyContractTemplates)
+      .set({ name })
+      .where(and(eq(companyContractTemplates.companyId, companyId), eq(companyContractTemplates.familyId, familyId)));
+    await appendEvent(tx, ctx, {
+      entity: { kind: "company", id: companyId },
+      type: "COMPANY_TEMPLATE_RENAMED",
+      actor,
+      payload: { familyId, from: rows[0]!.name, to: name },
+      rulesVersion: ctx.rulesVersion,
+    });
+    return { familyId, name };
+  });
 }
 
 /** Retires an approved template: contract rules that point at it fall back to no template (new rule version). */

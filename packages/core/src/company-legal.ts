@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ContractFees } from "./contract-fees.ts";
 
 /**
  * Legal (landlord) details of a company (D44). Shared by the engine (the real check) and the web forms (the same check
@@ -51,6 +52,10 @@ export const CompanyLegalInput = z
     email,
     phone: optText(40),
     chequePayeeName: optText(200),
+    /** Contract fees (registration fee, agency fee ...): see `ContractFee`. */
+    contractFees: ContractFees.nullable()
+      .optional()
+      .transform((v) => (v && v.length ? v : null)),
     signatoryName: text(200),
     signatoryTitle: text(120),
     signatoryEmail: email,

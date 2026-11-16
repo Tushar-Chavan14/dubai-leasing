@@ -28,11 +28,11 @@ export async function saveRentRule(_prev: RuleResult, formData: FormData): Promi
   if (Object.keys(fieldErrors).length) return { error: "Some fields need attention.", fieldErrors };
 
   const id = String(formData.get("id") ?? "");
-  const subtype = String(formData.get("subtype") ?? "");
   const community = String(formData.get("community") ?? "").trim();
   const rule = {
     category: String(formData.get("category")),
-    subtype: subtype || null,
+    // D68: the ticked types; none ticked = all types.
+    subtypes: formData.getAll("subtypes").map(String),
     emirate: String(formData.get("emirate") ?? "") || "dubai",
     community: community || null,
     minPctBp,
@@ -47,6 +47,17 @@ export async function saveRentRule(_prev: RuleResult, formData: FormData): Promi
         method: "POST",
         body: JSON.stringify({ ...rule, companyId: String(formData.get("companyId") ?? "") }),
       });
+  if (!r.ok) return ruleError(r);
+  revalidatePath("/settings/rent-rules");
+  return { ok: true };
+}
+
+/** D68 "Copy to emirate": the same rent rule for another emirate. */
+export async function copyRentRule(_prev: RuleResult, formData: FormData): Promise<RuleResult> {
+  const r = await engine(`/api/rent-rules/${String(formData.get("id"))}/copy`, {
+    method: "POST",
+    body: JSON.stringify({ emirate: String(formData.get("emirate") ?? "") }),
+  });
   if (!r.ok) return ruleError(r);
   revalidatePath("/settings/rent-rules");
   return { ok: true };

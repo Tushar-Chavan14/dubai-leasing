@@ -29,7 +29,7 @@ export const proposeViewingInvite: CopilotTool<typeof Input, typeof Output> = {
   name: "propose_viewing_invite",
   kind: "propose",
   description:
-    "Propose booking a viewing for an existing enquiry application and emailing the applicant the invitation, only when the user asks for it. Call viewing_slots first and pass a slot's `at`. Nothing is booked or emailed until the user clicks Confirm on the card; never say it was. Only enquiries without a viewing can be booked; for a viewing that is already booked, draft_email can write a reminder instead.",
+    "Propose booking a site visit (viewing) for an existing enquiry application and emailing the applicant the invitation, only when the user asks for it. Call viewing_slots first and pass a slot's `at`. Nothing is booked or emailed until the user clicks Confirm on the card; never say it was. Only enquiries without a viewing can be booked; for a viewing that is already booked, draft_email can write a reminder instead.",
   input: Input,
   output: Output,
   roles: ["leasing_officer", "leasing_manager"],

@@ -5,7 +5,7 @@ import { FakeEjari, FakeMailer, LocalDiskStore } from "@leasing/adapters";
 import type { CopilotModel } from "@leasing/copilot";
 import type { AgentModel } from "@leasing/helpers";
 import { FakeLlm, type SystemOneResponse } from "@leasing/llm";
-import { type CalendarDate, FixedClock, newId, type StaffRole, type StaffUser } from "@leasing/core";
+import { type CalendarDate, EMIRATES, FixedClock, newId, type StaffRole, type StaffUser } from "@leasing/core";
 import { companies, createDatabase, type Database, parties, rentRules, runMigrations, staffUsers } from "@leasing/db";
 import { eq } from "drizzle-orm";
 import type { EngineContext, JobRequest, Scheduler } from "../src/context.ts";
@@ -238,9 +238,15 @@ export async function testCompany(
   const [found] = await database.db.select({ id: companies.id }).from(companies).where(eq(companies.slug, slug));
   if (found) return found.id;
   const id = newId();
-  await database.db
-    .insert(companies)
-    .values({ id, slug, name: opts.name ?? "Test Company", kind: "developer", createdBy: "test" });
+  await database.db.insert(companies).values({
+    id,
+    slug,
+    name: opts.name ?? "Test Company",
+    kind: "developer",
+    emirates: [...EMIRATES],
+    categories: ["residential", "commercial", "retail"],
+    createdBy: "test",
+  });
   await completeLegalDetails(database, id);
   if (opts.rules ?? true) {
     for (const category of ["residential", "commercial", "retail"] as const) {

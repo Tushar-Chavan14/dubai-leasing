@@ -6,7 +6,7 @@ import { SetPage } from "../../../../components/ui/settings";
 import { askPrompts } from "../../../../lib/ask-ai/prompts";
 import { get } from "../../../../lib/engine";
 import { possessive } from "../../../../lib/format";
-import { categoryOf } from "../../../../lib/portfolio";
+import { categoryFor, offeredCategories } from "../../../../lib/portfolio";
 import type { CompanyRow, Me, RentRuleRow } from "../../../../lib/types";
 import { OfferDiscountForm } from "./offer-discount";
 import { RentRules } from "./rule-form";
@@ -19,15 +19,16 @@ export default async function RentRulesPage({
   searchParams: Promise<{ category?: string; company?: string }>;
 }) {
   const sp = await searchParams;
-  const category = categoryOf(sp.category);
-  const [rules, companies, me, policy] = await Promise.all([
-    get<RentRuleRow[]>(`/api/rent-rules?category=${category}`),
+  const [companies, me, policy] = await Promise.all([
     get<CompanyRow[]>("/api/companies"),
     get<Me>("/api/me"),
     get<{ maxRentDiscountPercent: number }>("/api/policy"),
   ]);
   const isAdmin = me?.role === "admin";
   const company = pickCompany(companies ?? [], sp.company);
+  // Only the types the company offers; a type it doesn't offer falls back to its first one.
+  const category = categoryFor(sp.category, company);
+  const rules = await get<RentRuleRow[]>(`/api/rent-rules?category=${category}`);
   const counts: Record<string, number> = {};
   for (const r of rules ?? []) counts[r.companyId] = (counts[r.companyId] ?? 0) + 1;
   return (
@@ -41,7 +42,12 @@ export default async function RentRulesPage({
         value={policy?.maxRentDiscountPercent ?? 0}
         canEdit={isAdmin}
       />
-      <CategoryControl value={category} base="/settings/rent-rules" />
+      <CategoryControl
+        value={category}
+        base="/settings/rent-rules"
+        offered={offeredCategories(company)}
+        params={company ? { company: company.id } : {}}
+      />
       <CompanySplit
         companies={companies ?? []}
         selected={company}

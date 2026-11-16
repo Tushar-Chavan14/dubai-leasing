@@ -7,9 +7,11 @@ import { type CalendarDate, type Emirate, newId, type OfferTerms } from "@leasin
 import {
   applications,
   actionLinks,
+  companies,
   approvals,
   companyClauses,
   companyContractTemplates,
+  contractChangeRequests,
   contractRules,
   contractSigners,
   contracts,
@@ -38,7 +40,7 @@ import {
 import { FakeLlm } from "@leasing/llm";
 import { and, eq } from "drizzle-orm";
 import { createApi } from "../src/api/app.ts";
-import { backfillTemplateClauseLinks } from "../src/manager/company-templates.ts";
+import { backfillTemplateClauseLinks, templateForUnit } from "../src/manager/company-templates.ts";
 import { contractAgentContext } from "../src/manager/contract-agent-backend.ts";
 import { contractInputs } from "../src/manager/contracts.ts";
 import { issueToken } from "../src/api/auth.ts";
@@ -231,9 +233,22 @@ async function setup() {
       logo?: boolean;
       sections?: TemplateSections;
       emirate?: Emirate | null;
+      /** D68: several emirates (wins over `emirate`). */
+      emirates?: Emirate[];
+      /** D69: a new named template with this name; default: a version of the template for the same emirates. */
+      name?: string;
     } = {},
   ) => {
     const cid = over.companyId ?? companyId;
+    const emirates = over.emirates ?? (over.emirate ? [over.emirate] : []);
+    const existing = await database.db
+      .select()
+      .from(companyContractTemplates)
+      .where(eq(companyContractTemplates.companyId, cid));
+    const same = over.name
+      ? undefined
+      : existing.find((r) => [...r.emirates].sort().join() === [...emirates].sort().join());
+    const familyId = same?.familyId ?? newId();
     const sampleId = newId();
     await database.db.insert(documents).values({
       id: sampleId,
@@ -278,10 +293,10 @@ async function setup() {
               .map((p) => p.key),
       },
       logoDocumentId,
-      emirate: over.emirate ?? null,
-      version:
-        (await database.db.select().from(companyContractTemplates).where(eq(companyContractTemplates.companyId, cid)))
-          .length + 1,
+      emirates,
+      familyId,
+      name: same?.name ?? over.name ?? `Template ${existing.length + 1}`,
+      version: existing.filter((r) => r.familyId === familyId).length + 1,
       createdBy: "helper:contract_structure",
       createdAt: new Date(),
     });
@@ -466,7 +481,8 @@ describe.skipIf(noDb)("company template review and approval", () => {
         { id: "s9", number: null, heading: "Registration", paragraphs: ["The tenancy is registered with Ejari."] },
       ],
     };
-    const id = await s.propose({ sections, unconfirmed: true });
+    // D70: Ejari is Dubai wording, so the template is for Dubai (an any-emirate one is refused).
+    const id = await s.propose({ sections, unconfirmed: true, emirates: ["dubai"] });
     const r = await s.approveSample(id, {});
     expect(r.status).toBe(422);
     expect(((await r.json()) as { code: string }).code).toBe("confirm_checked");
@@ -697,6 +713,42 @@ describe.skipIf(noDb)("contract rendered in the company template", () => {
     expect((events[0]!.payload as { templateVersion: number }).templateVersion).toBe(1);
   });
 
+  test("the company's fees for the unit's emirate print under Fees, and a registration-fee blank is filled", async () => {
+    const s = await setup();
+    await database.db.update(companies).set({
+      contractFees: [
+        {
+          id: "ej",
+          name: "Ejari registration fee",
+          kind: "registration",
+          amountFils: 22_000,
+          payer: "tenant",
+          emirates: ["dubai"],
+        },
+        {
+          id: "tw",
+          name: "Tawtheeq registration fee",
+          kind: "registration",
+          amountFils: 15_000,
+          payer: "tenant",
+          emirates: ["abu_dhabi"],
+        },
+        { id: "ag", name: "Agency fee", kind: "other", amountFils: 100_000, payer: "landlord", emirates: [] },
+      ],
+    });
+    const blanks = goodBlanks();
+    blanks[3] = blank("b4", "Ejari registration fee", "registrationFeeFils", "Registration fee: ");
+    await pinned(s, { blanks });
+    await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system" });
+    const [c] = await contractRows(s.leaseId);
+    const text = (await pdfText(s, c!.documentId!)).replace(/\s+/g, " ");
+    expect(text).toContain("Fees");
+    expect(text).toContain("Ejari registration fee AED 220 (tenant)");
+    expect(text).toContain("Agency fee AED 1,000 (landlord)");
+    expect(text).not.toContain("Tawtheeq");
+    expect(text).toContain("unit 1608 in AED 220"); // the blank (mapped to the registration fee) is filled
+  });
+
   test("a field with no data prepares with an empty line, and the approval lists what was left empty and the sources", async () => {
     const s = await setup();
     // The tenant has no Emirates ID on record; the representative blank is left empty by choice.
@@ -810,6 +862,291 @@ describe.skipIf(noDb)("contract rendered in the company template", () => {
     expect(a.status).toBe("pending"); // still a person's approval (rule 3)
   });
 
+  describe("change marks on a company template", () => {
+    const OLD_DESC = "Description: Four-bedroom villa with a private pool.";
+    const GOOD_DESC = "Description: Two-bedroom apartment.";
+    const VISITORS = "Visitors are welcome during opening hours.";
+    const sectionsWith = (...lines: string[]): TemplateSections => ({
+      ...SECTIONS,
+      items: SECTIONS.items.map((it) => (it.id === "s1" ? { ...it, paragraphs: [...it.paragraphs, ...lines] } : it)),
+    });
+    const mark = (n: number, key: string, over: Record<string, unknown> = {}) => ({
+      n,
+      page: 1,
+      quote: `quote ${n}`,
+      note: `note ${n}`,
+      anchor: { kind: "paragraph" as const, key, label: "Article I Premises" },
+      rewrite: null,
+      problems: [] as string[],
+      decision: null,
+      keepReason: null,
+      officerNote: null,
+      ...over,
+    });
+    /** Prepared with the agent's D64 rewording, approved (sent), and a request with the given marks analysed. */
+    async function sentWithRequest(s: S, marks: ReturnType<typeof mark>[]) {
+      s.ctx.contractAgent = new ScriptedAgentModel([() => agentAnswer(GOOD_DESC, "The unit record has 2 bedrooms")]);
+      expect((await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system" })).status).toBe(
+        "prepared",
+      );
+      await decideApproval(s.ctx, (await finalApproval(s.leaseId)).id, s.officer, { decision: "approve" });
+      const [c] = await contractRows(s.leaseId);
+      const [signer] = await database.db.select().from(contractSigners).where(eq(contractSigners.contractId, c!.id));
+      const requestId = newId();
+      await database.db.insert(contractChangeRequests).values({
+        id: requestId,
+        ref: "CR-TEST1",
+        leaseId: s.leaseId,
+        contractId: c!.id,
+        signerId: signer!.id,
+        role: "tenant",
+        partyId: s.tenantId,
+        target: "other",
+        text: "marked",
+        status: "analysed",
+        marks,
+        createdAt: new Date(),
+      });
+      return `/leases/${s.leaseId}/contract/change-requests/${requestId}`;
+    }
+    const approvedPrepared = async (leaseId: string) =>
+      (await database.db.select().from(leaseEvents).where(eq(leaseEvents.entityId, leaseId))).filter(
+        (e) => e.type === "CONTRACT_PREPARED",
+      );
+
+    test("a paragraph mark is applied, earlier rewrites and a kept paragraph stay, no model runs", async () => {
+      const s = await setup();
+      const id = await s.propose({ sections: sectionsWith(OLD_DESC, VISITORS) });
+      await s.approve(id);
+      await s.rule(id);
+      const newVisitors = "Visitors are welcome at any reasonable time.";
+      const base = await sentWithRequest(s, [
+        mark(1, "s1:2", {
+          rewrite: {
+            target: "paragraph",
+            key: "s1:2",
+            before: VISITORS,
+            after: newVisitors,
+            summary: "x",
+            author: "ai",
+          },
+        }),
+        mark(2, "s1:0", {
+          rewrite: {
+            target: "paragraph",
+            key: "s1:0",
+            before: "The premises are unit {{b3}} in {{b4}}.",
+            after: "The premises are unit {{b3}}.",
+            summary: "y",
+            author: "ai",
+          },
+        }),
+      ]);
+      const [v1] = await contractRows(s.leaseId);
+      const keepText = (await pdfText(s, v1!.documentId!)).replace(/\s+/g, " ");
+      const llm = s.ctx.llm as FakeLlm;
+      const counts = [llm.calls.length, llm.chatCalls.length];
+      let agentCalled = false;
+      s.ctx.contractAgent = new ScriptedAgentModel([
+        () => {
+          agentCalled = true;
+          return agentAnswer("x", "x");
+        },
+      ]);
+      const res = await s.as(s.officer)(`${base}/approve`, "POST", {
+        decisions: { "1": "apply", "2": "keep" },
+        keepReasons: { "2": "Keep the premises wording" },
+      });
+      expect(res.status).toBe(201);
+      expect(agentCalled).toBe(false);
+      expect([llm.calls.length, llm.chatCalls.length]).toEqual(counts);
+      const cs = await contractRows(s.leaseId);
+      expect(cs.map((c) => c.status)).toEqual(["superseded", "sent"]);
+      const v2 = cs[1]!;
+      const text = (await pdfText(s, v2.documentId!)).replace(/\s+/g, " ");
+      expect(text).toContain(newVisitors);
+      expect(text).not.toContain(VISITORS);
+      // The agent's D64 reworded description is still there, and the kept paragraph prints as it did.
+      expect(text).toContain(GOOD_DESC);
+      expect(v2.templateRewrites.map((r) => r.key).toSorted()).toEqual(["s1:1", "s1:2"]);
+      expect(v2.templateRewrites.find((r) => r.key === "s1:1")).toMatchObject({ before: OLD_DESC, after: GOOD_DESC });
+      expect(v2.templateRewrites.find((r) => r.key === "s1:2")).toMatchObject({ before: VISITORS, after: newVisitors });
+      expect(text).toContain("The premises are unit 1608 in Demo Marina Tower.");
+      expect(keepText).toContain("The premises are unit 1608 in Demo Marina Tower.");
+      // The blank mapping used is the first version's, kept in the event.
+      const [e1, e2] = await approvedPrepared(s.leaseId);
+      const used = (e: typeof e1) => (e!.payload.mappingRefresh as { mappingUsed: Record<string, string> }).mappingUsed;
+      expect(used(e2)).toEqual(used(e1));
+      expect(e2!.payload.rewrittenParagraphs).toEqual(["s1:1", "s1:2"]);
+      expect((await finalApproval(s.leaseId)).status).toBe("approved");
+    });
+
+    test("an officer's removal of a template paragraph (empty rewrite) leaves it out, no empty line (D72)", async () => {
+      const s = await setup();
+      const id = await s.propose({ sections: sectionsWith(OLD_DESC, VISITORS) });
+      await s.approve(id);
+      await s.rule(id);
+      const base = await sentWithRequest(s, [
+        mark(1, "s1:2", {
+          rewrite: {
+            target: "paragraph",
+            key: "s1:2",
+            before: VISITORS,
+            after: "",
+            summary: "Remove",
+            author: "officer",
+          },
+        }),
+      ]);
+      const res = await s.as(s.officer)(`${base}/approve`, "POST", { decisions: { "1": "apply" } });
+      expect(res.status).toBe(201);
+      const v2 = (await contractRows(s.leaseId))[1]!;
+      const text = await pdfText(s, v2.documentId!);
+      expect(text).not.toContain("Visitors welcome");
+      expect(v2.paragraphTexts!.some((p) => p.key === "s1:2")).toBe(false);
+      expect(v2.templateRewrites.find((r) => r.key === "s1:2")).toMatchObject({ before: VISITORS, after: "" });
+    });
+
+    test("a rewrite whose paragraph changed since the mark is refused (422 marks_invalid), nothing created", async () => {
+      const s = await setup();
+      const id = await s.propose({ sections: sectionsWith(OLD_DESC, VISITORS) });
+      await s.approve(id);
+      await s.rule(id);
+      const base = await sentWithRequest(s, [
+        mark(1, "s1:2", {
+          rewrite: {
+            target: "paragraph",
+            key: "s1:2",
+            before: "Visitors are welcome during some other hours.",
+            after: "Visitors are welcome at any reasonable time.",
+            summary: "x",
+            author: "ai",
+          },
+        }),
+      ]);
+      const res = await s.as(s.officer)(`${base}/approve`, "POST", { decisions: { "1": "apply" } });
+      expect(res.status).toBe(422);
+      expect(await res.json()).toMatchObject({ code: "marks_invalid" });
+      expect((await contractRows(s.leaseId)).map((c) => c.status)).toEqual(["sent"]);
+    });
+
+    describe("officer wording on a paragraph that prints a company clause (D72)", () => {
+      async function linkedRequest(markOver: Record<string, unknown>, clearTexts: boolean) {
+        const s = await setup();
+        const id = await s.propose({ sections: sectionsWith(VISITORS) });
+        const clauseId = newId();
+        await database.db.insert(companyClauses).values({
+          id: clauseId,
+          companyId: s.companyId,
+          title: "Visitors",
+          textEn: VISITORS,
+          quote: VISITORS,
+          category: "other",
+          hasValues: false,
+          status: "proposed",
+          sourceDocumentId: (await templateRow(id)).sampleDocumentId,
+          createdBy: "helper:contract_template",
+        });
+        await s.approve(id);
+        await s.rule(id);
+        const base = await sentWithRequest(s, [mark(1, "s1:1", { quote: "Visitors", ...markOver })]);
+        if (clearTexts) {
+          const [c] = await contractRows(s.leaseId);
+          await database.db.update(contracts).set({ paragraphTexts: null }).where(eq(contracts.id, c!.id));
+        }
+        s.ctx.contractAiLlm = new FakeLlm(agreeingDecision, undefined, (() => ({ removeClauses: [1] })) as never);
+        const call = async (text: string) =>
+          (await s.as(s.officer)(`${base}/marks/1/wording`, "POST", { text })).json() as Promise<{
+            rewrite: { target: string; key: string } | null;
+            problems: string[];
+          }>;
+        return { s, base, ref: `cc:${clauseId}`, call };
+      }
+      const NO_NEIGHBOURS = "since the unit has no neighbours this line can be removed";
+
+      for (const clear of [false, true]) {
+        test(`a mark on the linked paragraph resolves to the clause and is removed (paragraph_texts ${clear ? "null" : "stored"})`, async () => {
+          const { s, base, ref, call } = await linkedRequest(clear ? { anchor: { kind: "unknown" } } : {}, clear);
+          const body = await call(NO_NEIGHBOURS);
+          expect(body.problems).toEqual([]);
+          expect(body.rewrite).toMatchObject({ target: "clause_remove", key: ref });
+          const res = await s.as(s.officer)(`${base}/approve`, "POST", { decisions: { "1": "apply" } });
+          expect(res.status).toBe(201);
+          const v2 = (await contractRows(s.leaseId))[1]!;
+          expect(v2.addendum.removedClauses).toEqual([ref]);
+          expect(await pdfText(s, v2.documentId!)).not.toContain("Visitors");
+        });
+      }
+
+      test("rewording the linked paragraph removes the clause and adds the wording to the additional terms", async () => {
+        const { s, base, ref, call } = await linkedRequest({}, false);
+        s.ctx.contractAiLlm = new FakeLlm(agreeingDecision, undefined, (() => ({
+          rewrites: [{ n: [1], key: ref, after: "Visitors are welcome at any time.", summary: "x" }],
+        })) as never);
+        const body = await call("make visitors welcome at any time");
+        expect(body.rewrite).toMatchObject({ target: "clause_remove", key: ref });
+        const res = await s.as(s.officer)(`${base}/approve`, "POST", { decisions: { "1": "apply" } });
+        expect(res.status).toBe(201);
+        const v2 = (await contractRows(s.leaseId))[1]!;
+        expect(v2.addendum.removedClauses).toEqual([ref]);
+        expect(v2.addendum.freeText).toBe("Visitors are welcome at any time.");
+        expect(await pdfText(s, v2.documentId!)).toContain("Visitors are welcome at any time.");
+      });
+    });
+
+    test("a removed rule clause does not print in the new version", async () => {
+      const s = await setup();
+      const id = await s.propose({ sections: sectionsWith(VISITORS) });
+      const clauseId = newId();
+      await database.db.insert(companyClauses).values({
+        id: clauseId,
+        companyId: s.companyId,
+        title: "Visitors",
+        textEn: VISITORS,
+        quote: VISITORS,
+        category: "other",
+        hasValues: false,
+        status: "proposed",
+        sourceDocumentId: (await templateRow(id)).sampleDocumentId,
+        createdBy: "helper:contract_template",
+      });
+      await s.approve(id);
+      const picked = await s.rule(id);
+      const [rule] = await database.db.select().from(contractRules).where(eq(contractRules.id, picked.body.id));
+      expect(rule!.clauseIds).toEqual([`cc:${clauseId}`]);
+      const ref = `cc:${clauseId}`;
+      const base = await sentWithRequest(s, [
+        mark(1, "s1:2", {
+          anchor: { kind: "clause", ref, label: "Visitors" },
+          rewrite: {
+            target: "clause_remove",
+            key: ref,
+            before: VISITORS,
+            after: "",
+            summary: "Drops it",
+            author: "ai",
+          },
+        }),
+      ]);
+      const [v1] = await contractRows(s.leaseId);
+      expect(await pdfText(s, v1!.documentId!)).toContain("Visitors are welcome");
+      const res = await s.as(s.officer)(`${base}/approve`, "POST", { decisions: { "1": "apply" } });
+      expect(res.status).toBe(201);
+      const v2 = (await contractRows(s.leaseId))[1]!;
+      expect(v2.addendum.removedClauses).toEqual([ref]);
+      expect(await pdfText(s, v2.documentId!)).not.toContain("Visitors are welcome");
+      expect(v2.paragraphTexts!.some((p) => p.text.includes("Visitors are welcome"))).toBe(false);
+      const [, e2] = await approvedPrepared(s.leaseId);
+      expect(e2!.payload.removedClauses).toEqual([ref]);
+      // "Prepare again" keeps the removal.
+      const again = await s.as(s.officer)(`/leases/${s.leaseId}/contract/reprepare`, "POST", {});
+      expect(again.status).toBe(201);
+      const v3 = (await contractRows(s.leaseId))[2]!;
+      expect(v3.addendum.removedClauses).toEqual([ref]);
+      expect(await pdfText(s, v3.documentId!)).not.toContain("Visitors are welcome");
+    });
+  });
+
   test("D64: a rewording that stays wrong is dropped; the template wording prints and the conflict leads the gate", async () => {
     const s = await setup();
     const id = await s.propose({ sections: withDescription("Description: Four-bedroom villa.") });
@@ -901,8 +1238,20 @@ describe.skipIf(noDb)("contract rendered in the company template", () => {
     const edited = await preview();
     expect(edited).toContain("The landlord holds a refundable deposit of «Security deposit (AED)».");
     expect(edited).not.toContain("A security deposit of");
-    // A rule without the clause: the contract leaves the paragraph out; with it, it prints.
-    expect((await s.rule(id)).status).toBe(201);
+    // A rule that picks the template gets its linked clauses (D68); taken off the rule, the paragraph is left out.
+    const picked = await s.rule(id);
+    expect(picked.status).toBe(201);
+    const [created] = await database.db.select().from(contractRules).where(eq(contractRules.id, picked.body.id));
+    expect(created!.clauseIds).toEqual([`cc:${clauseId}`]);
+    const off = await s.api(`/contract-rules/${picked.body.id}`, "PUT", {
+      category: "residential",
+      tenures: ["annual"],
+      minCheques: 1,
+      maxCheques: 12,
+      clauseIds: [],
+    });
+    expect(off.status).toBe(200);
+    expect(((await off.json()) as { clauseIds: string[] }).clauseIds).toEqual([]);
     await prepareContract(s.ctx, s.leaseId, { addendum: DEFAULT_ADDENDUM, actor: "system" });
     const [c1] = await contractRows(s.leaseId);
     expect(await pdfText(s, c1!.documentId!)).not.toContain("refundable deposit");
@@ -1458,13 +1807,93 @@ describe.skipIf(noDb)("company templates per emirate (D56)", () => {
     expect(await prepared(s)).toContain("Article I Premises");
   });
 
-  test("the sample upload carries the emirate to the template row", async () => {
+  test("D68/D69: one template for Dubai and Abu Dhabi serves both; a new template joins, a new version replaces", async () => {
+    const s = await setup();
+    const both = await s.propose({ emirates: ["abu_dhabi", "dubai"] });
+    await s.approve(both);
+    expect((await withTx(database, (tx) => contractInputs(tx, s.leaseId))).template?.id).toBe(both);
+    await setEmirate(s, "abu_dhabi");
+    expect((await withTx(database, (tx) => contractInputs(tx, s.leaseId))).template?.id).toBe(both);
+    await setEmirate(s, "sharjah");
+    expect((await withTx(database, (tx) => contractInputs(tx, s.leaseId))).template).toBeNull();
+    // A rule for Abu Dhabi may point at it; a rule for Sharjah may not.
+    const forRule = (emirate: Emirate) => ({
+      companyId: s.companyId,
+      category: "residential",
+      emirate,
+      tenures: ["annual"],
+      minCheques: 1,
+      maxCheques: 12,
+      clauseIds: [],
+      templateId: both,
+    });
+    const ad = await s.api("/contract-rules", "POST", forRule("abu_dhabi"));
+    expect(ad.status).toBe(201);
+    const adRule = ((await ad.json()) as { id: string }).id;
+    expect((await s.api("/contract-rules", "POST", forRule("sharjah"))).status).toBe(422);
+    // D69: a new named template for the very same emirates joins the library; nothing is retired or moved.
+    const other = await s.propose({ emirates: ["abu_dhabi", "dubai"], name: "Commercial" });
+    await s.approve(other);
+    expect((await templateRow(both)).status).toBe("approved");
+    expect((await templateRow(other)).version).toBe(1);
+    expect(await database.db.select().from(contractRules).where(eq(contractRules.supersedesId, adRule))).toHaveLength(
+      0,
+    );
+    // A new version of the first template replaces only that template's version, and the Abu Dhabi rule moves to it.
+    const both2 = await s.propose({ emirates: ["dubai", "abu_dhabi"] });
+    expect((await templateRow(both2)).familyId).toBe((await templateRow(both)).familyId);
+    await s.approve(both2);
+    expect((await templateRow(both)).status).toBe("retired");
+    expect((await templateRow(other)).status).toBe("approved");
+    const [moved] = await database.db.select().from(contractRules).where(eq(contractRules.supersedesId, adRule));
+    expect(moved).toMatchObject({ templateId: both2, emirate: "abu_dhabi", active: true });
+    // The old "replaces" choice is gone from the route.
+    expect((await s.approveSample(both2, { checked: true, replacesIds: [] })).status).toBe(400);
+  });
+
+  test("D69: a second named template changes nothing for existing rules or for units without a template", async () => {
+    const s = await setup();
+    const first = await s.propose({ name: "Residential" });
+    await s.approve(first);
+    expect((await withTx(database, (tx) => contractInputs(tx, s.leaseId))).template?.id).toBe(first);
+    const second = await s.propose({ name: "Commercial" });
+    await s.approve(second);
+    expect((await templateRow(first)).status).toBe("approved");
+    expect((await withTx(database, (tx) => contractInputs(tx, s.leaseId))).template?.id).toBe(first);
+    // A rule with no template falls back to the company's oldest named template, not the newest approval.
+    const fallback = await withTx(database, (tx) =>
+      templateForUnit(tx, { companyId: s.companyId, ruleTemplateId: null, emirate: "dubai" }),
+    );
+    expect(fallback?.id).toBe(first);
+  });
+
+  test("D69: a named template can be renamed, and two templates can't share a name", async () => {
+    const s = await setup();
+    const a = await s.propose({ name: "Residential" });
+    const b = await s.propose({ name: "Commercial" });
+    const fa = (await templateRow(a)).familyId;
+    const r = await s.api(`/companies/${s.companyId}/contract-templates/${fa}`, "PATCH", {
+      name: "  Residential  standard ",
+    });
+    expect(r.status).toBe(200);
+    expect((await templateRow(a)).name).toBe("Residential standard");
+    const taken = await s.api(`/companies/${s.companyId}/contract-templates/${fa}`, "PATCH", { name: "commercial" });
+    expect(taken.status).toBe(422);
+    expect(((await taken.json()) as { code: string }).code).toBe("template_name_taken");
+    expect((await templateRow(b)).name).toBe("Commercial");
+    const panel = (await (await s.api(`/companies/${s.companyId}/contract-template`)).json()) as {
+      families: { familyId: string; name: string }[];
+    };
+    expect(panel.families.map((f) => f.name).sort()).toEqual(["Commercial", "Residential standard"]);
+  });
+
+  test("the template row and the panel carry the template's emirates (D68)", async () => {
     const s = await setup();
     const id = await s.propose({ emirate: "sharjah" });
-    expect((await templateRow(id)).emirate).toBe("sharjah");
+    expect((await templateRow(id)).emirates).toEqual(["sharjah"]);
     const panel = (await (await s.api(`/companies/${s.companyId}/contract-template`)).json()) as {
-      templates: { id: string; emirate: string | null }[];
+      templates: { id: string; emirates: string[] }[];
     };
-    expect(panel.templates.find((t) => t.id === id)?.emirate).toBe("sharjah");
+    expect(panel.templates.find((t) => t.id === id)?.emirates).toEqual(["sharjah"]);
   });
 });

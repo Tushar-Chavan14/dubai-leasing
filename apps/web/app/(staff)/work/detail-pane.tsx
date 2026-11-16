@@ -15,7 +15,8 @@ import { type WorkQuery, workHref } from "./url";
 
 /** Fields that can carry personal data are never printed in the pane (rule 8). */
 const PERSONAL = /emirates|passport|visa|phone|mobile|idno|eid/i;
-const SKIP = new Set(["id", "previewUrl", "leaseId", "applicationId", "unitId"]);
+// `model`: the model tag is an internal detail (helper_runs keeps it for audit); people see "the leasing agent".
+const SKIP = new Set(["id", "previewUrl", "leaseId", "applicationId", "unitId", "model"]);
 
 function Facts({ data }: { data: Record<string, unknown> }) {
   const rows = Object.entries(data).filter(([k, v]) => !SKIP.has(k) && v !== null && v !== undefined && v !== "");

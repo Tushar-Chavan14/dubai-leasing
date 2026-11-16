@@ -33,6 +33,7 @@ import { type AgentModel, extractPdf } from "@leasing/helpers";
 import { FakeLlm } from "@leasing/llm";
 import { and, eq } from "drizzle-orm";
 import { dubai2025_01, registerRulebook, resetRulebookRegistry } from "@leasing/rulebook";
+import { certificatePdf } from "../../ejari-mock/src/certificate.ts";
 import { createApi } from "../src/api/app.ts";
 import { issueToken } from "../src/api/auth.ts";
 import { decideApproval } from "../src/manager/approvals.ts";
@@ -362,6 +363,83 @@ describe.skipIf(noDb)("manual registration", () => {
         issuedOn: "2026-11-01",
       });
       expect(again.status).toBe(200);
+    }));
+
+  test("reading a certificate prefills and compares; nothing is stored or changed", () =>
+    inSharjah(async () => {
+      const llm = new FakeLlm(
+        agreeingDecision,
+        undefined,
+        () => new Error("the model must not be asked when the code finds the reference"),
+      );
+      const s = await setup({ emirate: "sharjah", ejari: okEjari(), llm });
+      await toRegistration(s);
+      const a = await approvalOf(s.leaseId, "ejari_submission");
+      const read = (file?: Uint8Array, user: { id: string } = s.officer) => {
+        const form = new FormData();
+        if (file)
+          form.set("certificate", new File([file as Uint8Array<ArrayBuffer>], "c.pdf", { type: "application/pdf" }));
+        return s.app.request(`/api/leases/${s.leaseId}/registration/read-certificate`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${issueToken(SECRET, user.id, Date.now())}` },
+          body: form,
+        });
+      };
+      const cert = await certificatePdf({
+        ejariNo: "12345678",
+        issuedOn: "2026-11-01",
+        dldPropertyNo: "DEMO-DLD-001608",
+        unitNo: "1609",
+        makaniNo: "1111144444",
+        tenantName: "lena  testova",
+        landlordName: "Fictional Holdings LLC",
+        startOn: "2026-12-01",
+        endOn: "2027-11-30",
+        annualRent: "AED 135,000.00",
+      });
+      // Before the approval there is no attempt awaiting a reference.
+      expect((await read(cert)).status).toBe(409);
+      await decideApproval(s.ctx, a.id, s.officer, { decision: "approve" });
+      const eventsBefore = (await database.db.select().from(leaseEvents).where(eq(leaseEvents.entityId, s.leaseId)))
+        .length;
+      const res = await read(cert);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        status: string;
+        reference: string;
+        issuedOn: string;
+        checks: { field: string; result: string }[];
+      };
+      expect(body).toMatchObject({ status: "ok", modelFailed: false, reference: "12345678", issuedOn: "2026-11-01" });
+      const result = (f: string) => body.checks.find((c) => c.field === f)?.result;
+      expect(result("reference")).toBe("match");
+      expect(result("unitNo")).toBe("differs");
+      expect(result("tenant")).toBe("match");
+      expect(result("annualRent")).toBe("match");
+      expect(result("startOn")).toBe("match");
+      expect((await read(new TextEncoder().encode("hello"))).status).toBe(422);
+      expect((await read()).status).toBe(422);
+      const odd = await certificatePdf({
+        ejariNo: "A1",
+        issuedOn: "2026-11-01",
+        dldPropertyNo: "X",
+        unitNo: "1",
+        makaniNo: "1",
+        tenantName: "T",
+        landlordName: "L",
+        startOn: "2026-12-01",
+        endOn: "2027-11-30",
+        annualRent: "AED 1.00",
+      });
+      const bad = (await (await read(odd)).json()) as typeof body;
+      expect(bad.checks.find((c) => c.field === "reference")?.result).toBe("differs");
+      expect(bad.checks.find((c) => c.field === "annualRent")?.result).toBe("differs");
+      expect((await read(cert, s.finance)).status).toBe(403);
+      expect((await database.db.select().from(leaseEvents).where(eq(leaseEvents.entityId, s.leaseId))).length).toBe(
+        eventsBefore,
+      );
+      expect(await leaseRow(s.leaseId)).toMatchObject({ state: "REGISTRATION", ejariNo: null });
+      expect((await subRows())[0]).toMatchObject({ status: "awaiting_manual" });
     }));
 
   test("recording without a certificate raises the certificate-missing task", () =>

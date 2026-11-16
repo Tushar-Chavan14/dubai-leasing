@@ -2,14 +2,22 @@
 
 import { ActionForm } from "../../../../components/ui/action-form";
 import { useRouter } from "next/navigation";
-import { useActionState, useEffect } from "react";
-import { EMIRATE_LABELS, EMIRATES } from "@leasing/core";
+import { useActionState, useEffect, useState } from "react";
+import { type Emirate, EMIRATE_LABELS } from "@leasing/core";
 import { WarningIcon as IconWarning } from "@phosphor-icons/react";
-import { subtypeLabel } from "../../../../lib/portfolio";
+import { subtypesLabel } from "../../../../lib/portfolio";
 import type { RuleResult } from "../../../../lib/portfolio";
-import type { CompanyRow, CompanyTemplatePanel, CompanyTemplateView, ContractRuleRow } from "../../../../lib/types";
-import { approveSampleAction, retireTemplateAction, retryTemplateAction } from "./actions";
-import { ClauseItem } from "./clause-list";
+import type {
+  CompanyClauseView,
+  CompanyRow,
+  CompanyTemplatePanel,
+  CompanyTemplateView,
+  ContractRuleRow,
+  SampleReview as SampleReviewData,
+} from "../../../../lib/types";
+import { ClauseReview, UploadSample } from "./clause-review";
+import { approveSampleAction, renameTemplateAction, retireTemplateAction, retryTemplateAction } from "./actions";
+import { ClauseItem, ClauseList } from "./clause-list";
 import { ALERT, BTN, CHECK_ROW, TABLE, TD, TH } from "../../../../components/ui/settings";
 
 const STATUS_TONE = { proposed: "warn", approved: "good", retired: "quiet" } as const;
@@ -103,11 +111,15 @@ function Changes({ t }: { t: CompanyTemplateView }) {
   );
 }
 
-/** Which emirate a template is for: a badge on its card. */
-export function EmirateBadge({ emirate }: { emirate: CompanyTemplateView["emirate"] }) {
+/** The emirates a template may be used in (D68): "Dubai, Abu Dhabi" or "Any emirate". */
+export const emiratesLabel = (list: readonly Emirate[]) =>
+  list.length ? list.map((e) => EMIRATE_LABELS[e]).join(", ") : "Any emirate";
+
+/** Which emirates a template is for: a badge on its card. */
+export function EmirateBadge({ emirates }: { emirates: CompanyTemplateView["emirates"] }) {
   return (
     <span className="inline-flex rounded-full border border-line px-2 py-0.5 text-xs font-semibold text-muted">
-      {emirate ? EMIRATE_LABELS[emirate] : "Any emirate"}
+      {emiratesLabel(emirates)}
     </span>
   );
 }
@@ -117,7 +129,7 @@ function TemplateHead({ t }: { t: CompanyTemplateView }) {
   return (
     <div className="flex flex-wrap items-center gap-2.5">
       <b>Version {t.version}</b>
-      <EmirateBadge emirate={t.emirate} />
+      <EmirateBadge emirates={t.emirates} />
       <span className="text-xs font-semibold" data-tone={STATUS_TONE[t.status]}>
         {STATUS_LABEL[t.status]}
       </span>
@@ -188,14 +200,21 @@ function SampleReview({
   canEdit: boolean;
 }) {
   const [state, approve, approving] = useActionState<RuleResult, FormData>(approveSampleAction, {});
+  const replaces = review.replaces;
   const formId = `approve-sample-${company.id}`;
-  const rule =
-    rules.find((r) => r.id === review.ruleId) ?? rules.find((r) => r.sampleDocumentId === review.sampleDocumentId);
-  const ruleLabel = rule ? `${subtypeLabel(rule.subtype)} · ${rule.category}` : undefined;
+  // D68: ticked clauses join the rules that use this template (after the replaced versions' rules move to it).
+  const onTemplate = rules.filter(
+    (r) => r.templateId !== null && (replaces.includes(r.templateId) || r.templateId === template?.id),
+  );
+  const ruleLabel = onTemplate.length
+    ? onTemplate.map((r) => `${subtypesLabel(r.subtypes)} · ${r.category}`).join("; ")
+    : undefined;
   const blocked = (template?.blockers.length ?? 0) > 0;
   return (
     <div className="grid gap-3.5 rounded-card bg-raised p-4" id="sample-review">
-      <h4 className="m-0 text-xs font-semibold uppercase tracking-wide text-muted">Review the sample</h4>
+      <h4 className="m-0 text-xs font-semibold uppercase tracking-wide text-muted">
+        Review the new version · for {emiratesLabel(review.emirates)}
+      </h4>
       {review.clauses.length > 0 && (
         <section className="grid gap-3" aria-label="Clauses">
           <p className="m-0 text-[12.5px] text-muted">
@@ -253,9 +272,12 @@ function SampleReview({
             <button type="submit" className={BTN.primary} disabled={approving || blocked}>
               {approving ? "Approving…" : "Approve all"}
             </button>
-            {template && rulesToMove > 0 && (
+            {template && (replaces.length > 0 || rulesToMove > 0) && (
               <span className="m-0 text-[12.5px] text-muted">
-                {rulesToMove} {rulesToMove === 1 ? "rule moves" : "rules move"} to version {template.version}.
+                {replaces.length > 0 ? "Replaces the version in use. " : ""}
+                {rulesToMove > 0
+                  ? `${rulesToMove} ${rulesToMove === 1 ? "rule moves" : "rules move"} to version ${template.version}.`
+                  : ""}
               </span>
             )}
           </div>
@@ -294,73 +316,207 @@ function ReadingProgress({ mins, limit }: { mins: number | null; limit: number |
   );
 }
 
-/** The "Company template" panel for one company: reading status, the sample review, the template in use. */
+/** D69: rename a named template (every version of it). */
+function RenameTemplate({ companyId, familyId, name }: { companyId: string; familyId: string; name: string }) {
+  const [open, setOpen] = useState(false);
+  const [state, action, pending] = useActionState(async (prev: RuleResult, fd: FormData) => {
+    const r = await renameTemplateAction(prev, fd);
+    if (r.ok) setOpen(false);
+    return r;
+  }, {});
+  if (!open)
+    return (
+      <button type="button" className={BTN.ghost} onClick={() => setOpen(true)}>
+        Rename
+      </button>
+    );
+  return (
+    <ActionForm state={state} action={action} className="flex flex-wrap items-center gap-2">
+      <input type="hidden" name="companyId" value={companyId} />
+      <input type="hidden" name="familyId" value={familyId} />
+      <input
+        name="name"
+        defaultValue={name}
+        maxLength={80}
+        aria-label="Template name"
+        className="h-9 w-64 max-w-full rounded-md border border-line bg-page px-2.5 text-sm text-ink"
+      />
+      <button type="submit" className={BTN.primary} disabled={pending}>
+        {pending ? "Saving…" : "Save"}
+      </button>
+      <button type="button" className={BTN.ghost} onClick={() => setOpen(false)}>
+        Cancel
+      </button>
+      {state.error && (
+        <span className="text-xs text-danger" role="alert">
+          {state.error}
+        </span>
+      )}
+    </ActionForm>
+  );
+}
+
+const CATEGORY_LABEL: Record<string, string> = {
+  residential: "Residential",
+  commercial: "Commercial",
+  retail: "Retail",
+};
+
+/** The active contract rules on one of the template's versions, each linking to its row on Settings → Contracts. */
+function RulesUsing({ company, rules }: { company: CompanyRow; rules: ContractRuleRow[] }) {
+  return (
+    <section className="grid gap-2" aria-label="Rules using it">
+      <h4 className="m-0 text-xs font-semibold uppercase tracking-wide text-muted">Contract rules using it</h4>
+      {rules.length === 0 ? (
+        <p className="m-0 text-[12.5px] text-muted">
+          None yet. Pick this template on a rule in{" "}
+          <a className="text-ink! underline" href={`/settings/contracts?company=${company.id}`}>
+            Contracts
+          </a>
+          .
+        </p>
+      ) : (
+        <ul className="m-0 grid list-none gap-1 p-0 text-[13px]">
+          {rules.map((r) => (
+            <li key={r.id}>
+              <a
+                className="text-ink! underline"
+                href={`/settings/contracts?${new URLSearchParams({ company: company.id, category: r.category, emirate: r.emirate ?? "any" }).toString()}`}
+              >
+                {CATEGORY_LABEL[r.category] ?? r.category} · {r.emirate ? EMIRATE_LABELS[r.emirate] : "All emirates"} ·{" "}
+                {subtypesLabel(r.subtypes)}
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+/**
+ * D69: one named template of a company (a tab on Contract templates): its name, the version in use, the sample being
+ * read or reviewed for it, its clauses, the rules using it and its older versions. `"new"`: the form that starts a
+ * new named template.
+ */
 export function CompanyTemplatePanelView({
   company,
   panel,
   canEdit,
   rules = [],
+  sample,
+  clauses = [],
+  selected,
+  latestTab,
+  tabName,
 }: {
   company: CompanyRow;
   panel: CompanyTemplatePanel;
   canEdit: boolean;
+  /** The company's active contract rules (every category). */
   rules?: ContractRuleRow[];
+  /** The latest sample's clause reading (shown on the tab of the template it belongs to). */
+  sample?: SampleReviewData | null;
+  /** The company's clauses (those of this template are listed here). */
+  clauses?: CompanyClauseView[];
+  /** The selected tab: a template's id, or `new`. */
+  selected: string;
+  /** The tab the company's latest sample belongs to. */
+  latestTab: string | null;
+  /** The selected tab's name (also for a template whose first version is still being read). */
+  tabName: string;
 }) {
   const router = useRouter();
-  const reading = panel.extraction?.status === "reading";
+  const here = latestTab !== null && latestTab === selected;
+  const reading = here && panel.extraction?.status === "reading";
   useEffect(() => {
     if (!reading) return;
     const timer = setInterval(() => router.refresh(), 3000);
     return () => clearInterval(timer);
   }, [reading, router]);
   const [retryState, retry, retrying] = useActionState<RuleResult, FormData>(retryTemplateAction, {});
-  const proposed = panel.review?.templateId
-    ? panel.templates.find((t) => t.id === panel.review!.templateId)
-    : undefined;
-  // One group per emirate ("any emirate" first): its template in use and its other versions (D56).
-  const groups = [null, ...EMIRATES]
-    .map((emirate) => {
-      const all = panel.templates.filter((t) => t.emirate === emirate);
-      const inUse = all.find((t) => t.status === "approved");
-      return { emirate, inUse, rest: all.filter((t) => t !== inUse && t !== proposed) };
-    })
-    .filter((g) => g.inUse || g.rest.length > 0);
-  const showReview = !!panel.review && (panel.review.clauses.length > 0 || !!proposed);
+  if (selected === "new") {
+    return (
+      <section
+        className="grid gap-3.5 rounded-card border border-line bg-page p-5"
+        aria-label={`New contract template for ${company.name}`}
+      >
+        <h3 className="m-0 text-base font-semibold">New template</h3>
+        <p className="m-0 text-[13px] text-muted">
+          Give the template a name, choose the emirates it is for and upload a sample contract. The layout, fields and
+          clauses are read from it for you to review. It sits next to the other templates; nothing else changes.
+        </p>
+        {canEdit ? (
+          <UploadSample company={company} target={{ kind: "new" }} />
+        ) : (
+          <p className="m-0 text-[13px] text-muted">Only admins can add templates.</p>
+        )}
+      </section>
+    );
+  }
+  const versions = panel.templates.filter((t) => t.familyId === selected);
+  const ids = new Set(versions.map((t) => t.id));
+  const proposed =
+    here && panel.review?.templateId ? versions.find((t) => t.id === panel.review!.templateId) : undefined;
+  const current = versions.find((t) => t.status === "approved");
+  const rest = versions.filter((t) => t !== current && t !== proposed);
+  const showReview = here && !!panel.review && (panel.review.clauses.length > 0 || !!proposed);
+  const using = rules.filter((r) => r.templateId !== null && ids.has(r.templateId));
+  const onRetired = using.filter((r) => versions.find((t) => t.id === r.templateId)?.status === "retired").length;
+  const own = clauses.filter((c) => c.templateId && ids.has(c.templateId) && c.status === "approved");
+  const latest = current ?? versions[0];
   return (
     <section
       className="grid gap-3.5 rounded-card border border-line bg-page p-5"
-      aria-label={`Company template for ${company.name}`}
+      aria-label={`Contract template ${tabName} for ${company.name}`}
       aria-live="polite"
     >
       <div className="flex flex-wrap items-center gap-2.5">
-        <h3 className="m-0 text-base font-semibold">Company template: {company.name}</h3>
-        {groups.flatMap((g) =>
-          g.inUse
-            ? [
-                <span
-                  key={g.emirate ?? "any"}
-                  className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${"bg-accent text-on-accent"}`}
-                >
-                  {g.emirate ? EMIRATE_LABELS[g.emirate] : "Any emirate"}: version {g.inUse.version} in use
-                </span>,
-              ]
-            : [],
+        <h3 className="m-0 text-base font-semibold">{tabName}</h3>
+        {current ? (
+          <span className="inline-flex rounded-full bg-accent px-2.5 py-0.5 text-xs font-semibold text-on-accent">
+            v{current.version} in use
+          </span>
+        ) : (
+          <span className="text-xs font-semibold text-muted">No approved version yet</span>
         )}
+        {latest && <EmirateBadge emirates={latest.emirates} />}
+        {canEdit && versions.length > 0 && <RenameTemplate companyId={company.id} familyId={selected} name={tabName} />}
       </div>
-      {panel.rulesOnRetired > 0 && (
+      {canEdit && versions.length > 0 && (
+        <UploadSample
+          key={selected}
+          company={company}
+          target={{
+            kind: "version",
+            familyId: selected,
+            emirates: latest?.emirates ?? [],
+            replaces: current?.version ?? null,
+          }}
+        />
+      )}
+      {here && sample && (
+        <ClauseReview
+          companyId={company.id}
+          review={sample}
+          canEdit={canEdit}
+          templateReady={sample.sample?.templateReady === true}
+        />
+      )}
+      {onRetired > 0 && (
         <div className={ALERT.warn} role="alert">
           <IconWarning size={16} />
           <div>
-            {panel.rulesOnRetired} contract {panel.rulesOnRetired === 1 ? "rule uses" : "rules use"} a retired template.
-            Contracts for {panel.rulesOnRetired === 1 ? "it" : "them"} can&rsquo;t be prepared until a new version is
-            approved or the rule is pointed at another template.
+            {onRetired} contract {onRetired === 1 ? "rule uses" : "rules use"} a retired version of this template.
+            Contracts for {onRetired === 1 ? "it" : "them"} can&rsquo;t be prepared until a new version is approved or
+            the rule is pointed at another template.
           </div>
         </div>
       )}
       {reading && (
         <ReadingProgress mins={panel.extraction?.minutes ?? null} limit={panel.extraction?.limitMinutes ?? null} />
       )}
-      {(panel.extraction?.status === "failed" || panel.extraction?.status === "retired") && (
+      {here && (panel.extraction?.status === "failed" || (panel.extraction?.status === "retired" && !current)) && (
         <div className="grid gap-2">
           {panel.extraction.status === "failed" ? (
             <p className="text-xs text-danger" role="alert">
@@ -369,8 +525,8 @@ export function CompanyTemplatePanelView({
             </p>
           ) : (
             <p className="m-0 text-muted">
-              The template read from this sample was retired. Read the sample again to propose a new version, or upload
-              another sample.
+              The version read from the last sample was retired. Read the sample again to propose a new version, or
+              upload another sample.
             </p>
           )}
           {canEdit && (
@@ -388,11 +544,6 @@ export function CompanyTemplatePanelView({
           )}
         </div>
       )}
-      {panel.templates.length === 0 && !reading && !showReview && panel.extraction?.status !== "failed" && (
-        <p className="m-0 text-muted">
-          No company template yet. Upload a sample contract on one of this company&rsquo;s rules.
-        </p>
-      )}
       {showReview && (
         <SampleReview
           company={company}
@@ -404,28 +555,26 @@ export function CompanyTemplatePanelView({
           canEdit={canEdit}
         />
       )}
-      {groups.map((g) => (
-        <div key={g.emirate ?? "any"} className="grid gap-3">
-          {g.inUse && <TemplateCard t={g.inUse} canEdit={canEdit} />}
-          {g.rest.length > 0 && (
-            <details className="grid gap-2.5 text-sm">
-              <summary className="cursor-pointer text-[13.5px] text-muted">
-                Other versions, {g.emirate ? EMIRATE_LABELS[g.emirate] : "any emirate"} ({g.rest.length})
-              </summary>
-              <div className="grid gap-3">
-                {g.rest.map((t) => (
-                  <details key={t.id} className="grid gap-2.5 text-sm">
-                    <summary className="cursor-pointer text-[13.5px] text-muted">
-                      Version {t.version}: {STATUS_LABEL[t.status]}
-                    </summary>
-                    <TemplateCard t={t} canEdit={canEdit} />
-                  </details>
-                ))}
-              </div>
-            </details>
-          )}
-        </div>
-      ))}
+      {current && <TemplateCard t={current} canEdit={canEdit} />}
+      {versions.length > 0 && (
+        <ClauseList company={company} clauses={own} rules={rules} canEdit={canEdit} scope="template" />
+      )}
+      {versions.length > 0 && <RulesUsing company={company} rules={using} />}
+      {rest.length > 0 && (
+        <details className="grid gap-2.5 text-sm">
+          <summary className="cursor-pointer text-[13.5px] text-muted">Older versions ({rest.length})</summary>
+          <div className="grid gap-3">
+            {rest.map((t) => (
+              <details key={t.id} className="grid gap-2.5 text-sm">
+                <summary className="cursor-pointer text-[13.5px] text-muted">
+                  Version {t.version} ({emiratesLabel(t.emirates)}): {STATUS_LABEL[t.status]}
+                </summary>
+                <TemplateCard t={t} canEdit={canEdit} />
+              </details>
+            ))}
+          </div>
+        </details>
+      )}
     </section>
   );
 }

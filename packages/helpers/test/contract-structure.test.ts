@@ -187,6 +187,15 @@ describe("sections and the quote guard", () => {
     expect(r.sections.items.map((s) => s.heading)).toEqual([null, "RENT"]);
     expect(r.dropped).toBe(1);
   });
+  test("D70: a heading whose value became a blank still counts when its look is a heading look", () => {
+    const l = ["T", "DLD Property No. {{b1}}", "text"];
+    expect(
+      buildSections(l, ["DLD Property No. {{b1}}"], new Set(["DLD Property No. {{b1}}"])).sections.items[0]!.heading,
+    ).toBe("DLD Property No. {{b1}}");
+    // Without the look (or when it is not a heading look) a line with a blank is never a heading.
+    expect(buildSections(l, ["DLD Property No. {{b1}}"], new Set()).dropped).toBe(1);
+    expect(buildSections(l, ["DLD Property No. {{b1}}"]).dropped).toBe(1);
+  });
   test("matches after whitespace and quote normalisation", () => {
     const r = buildSections(["T", "Tenant\u2019s   duties", "text"], ["Tenant's duties"]);
     expect(r.dropped).toBe(0);
@@ -615,5 +624,13 @@ describe("look safety", () => {
     );
     expect(out).toBe("timeout");
     expect(destroyed).toBe(true);
+  });
+});
+
+describe("D70: a cheque date blank is a date", () => {
+  test("by its own label, whatever the row says", () => {
+    expect(inferBlankType("Cheque 2 date", "12 Nov 2026 |", "")).toBe("date");
+    expect(inferBlankType("First cheque date", "Cheque Dates", "")).toBe("date");
+    expect(inferBlankType("Cheque dates", "Cheque Dates", "")).toBe("text");
   });
 });

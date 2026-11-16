@@ -2119,7 +2119,7 @@ describe.skipIf(noDb)("document check: step log, timeouts, retry (Postgres)", ()
     expect(evs[0]!.payload).toMatchObject({ documents: 2, model: "fake-vision", attempt: 1 });
     expect(JSON.stringify(evs.map((e) => e.payload))).not.toMatch(/784-1991|4820193|SPC4820193/);
     const text = (await logOf(s, s.officer, id)).map((e) => e.text);
-    expect(text).toContain("Checking 2 documents with fake-vision.");
+    expect(text).toContain("Checking 2 documents with the leasing agent.");
     expect(text.some((t) => t.startsWith("Read the Emirates ID (front) (1 of 2)"))).toBe(true);
     expect(text).toContain("Document check finished: nothing flagged.");
   });

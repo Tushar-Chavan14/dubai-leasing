@@ -106,6 +106,43 @@ describe.skipIf(noDb)("company is the landlord (D44, Postgres)", () => {
     expect(list.find((x) => x.id === companyId)?.legalComplete).toBe(true);
   });
 
+  test("contract fees are saved, read back, audited by field name and bounded", async () => {
+    const fee = (over: Record<string, unknown> = {}) => ({
+      id: "f1",
+      name: "Ejari registration fee",
+      kind: "registration",
+      amountFils: 22_000,
+      payer: "tenant",
+      emirates: ["dubai"],
+      ...over,
+    });
+    const put = (fees: unknown) => send("admin", `/companies/${companyId}/legal`, "PUT", legal({ contractFees: fees }));
+    expect((await put([fee(), fee({ id: "f2", name: "Agency fee", kind: "other", emirates: [] })])).status).toBe(200);
+    const [co] = await database.db.select().from(companies).where(eq(companies.id, companyId));
+    expect(co?.contractFees).toHaveLength(2);
+    const view = (await (await send("admin", `/companies/${companyId}/legal`)).json()) as {
+      legal: { contractFees: { id: string; amountFils: number }[] | null };
+    };
+    expect(view.legal.contractFees?.map((f) => f.amountFils)).toEqual([22_000, 22_000]);
+    const events = await database.db.select().from(leaseEvents).where(eq(leaseEvents.type, "COMPANY_LEGAL_UPDATED"));
+    expect(JSON.stringify(events.at(-1)?.payload)).toContain("contractFees");
+    for (const bad of [
+      [fee({ amountFils: -1 })],
+      [fee({ amountFils: 100_000_001 })],
+      [fee({ amountFils: 1.5 })],
+      [fee({ payer: "agent" })],
+      [fee({ kind: "tax" })],
+      [fee({ name: "" })],
+      [fee({ emirates: ["mars"] })],
+      [fee(), fee()],
+      Array.from({ length: 21 }, (_, i) => fee({ id: `f${i}` })),
+    ])
+      expect((await put(bad)).status).toBe(400);
+    expect((await put(null)).status).toBe(200);
+    const [cleared] = await database.db.select().from(companies).where(eq(companies.id, companyId));
+    expect(cleared?.contractFees).toBeNull();
+  });
+
   test("the audit event names the changed fields and never holds the ID number", async () => {
     await send("admin", `/companies/${companyId}/legal`, "PUT", legal({ signatoryIdNo: "784-1900-3000002-2" }));
     const events = (await database.db.select().from(leaseEvents).where(eq(leaseEvents.entityId, companyId))).filter(

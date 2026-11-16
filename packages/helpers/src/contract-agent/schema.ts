@@ -1,4 +1,4 @@
-import { AddendumFlag } from "@leasing/core";
+import { AddendumFlag, Emirate } from "@leasing/core";
 import { z } from "zod";
 import { ContractContext, ContractData } from "../contract/schema.ts";
 
@@ -53,6 +53,22 @@ export const ContractAgentContext = z.object({
       paragraphs: z.array(z.object({ key: z.string(), text: z.string(), rewritable: z.boolean().optional() })),
     })
     .nullable(),
+  /**
+   * D70: what the template's fixed wording is checked against, all from code: the rulebook values of the lease's
+   * pinned version, the unit's emirate, the template's headings and the lease's own record values.
+   */
+  legal: z
+    .object({
+      rules: z.object({
+        renewalNoticeDays: z.number().int(),
+        repossessionNoticeMonths: z.number().int(),
+        lateRentDaysAfterFormalReminder: z.number().int(),
+      }),
+      emirate: Emirate,
+      headings: z.array(z.string()).default([]),
+      ownValues: z.array(z.string()).default([]),
+    })
+    .optional(),
   /** D64: the unit's facts from its record, the only source a reworded paragraph may use. */
   unitFacts: ContractUnitFacts.optional(),
   /** The unit's allowed annual rent range from its rent rule and the SRI (code). Null: no band to check. */
@@ -72,6 +88,9 @@ export const TermCheckId = z.enum([
   "landlord",
   "required_terms",
   "blanks",
+  "sample_values",
+  "legal_periods",
+  "emirate_wording",
 ]);
 export const TermCheck = z.object({ id: TermCheckId, ok: z.boolean(), reason: z.string() });
 export type TermCheck = z.infer<typeof TermCheck>;

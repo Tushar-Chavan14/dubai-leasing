@@ -4,7 +4,7 @@ import { extractPdf } from "../contract-template/extract.ts";
 import { detectBlanks, guessLabel, isSignatureBlank } from "./blanks.ts";
 import { sheetKeyInfo } from "./datasheet.ts";
 import { detectFilledValues } from "./filled.ts";
-import { contextParty, partyIn, type ProposeItem, proposeMappings } from "./mapping.ts";
+import { contextParty, numberChequeDateRuns, partyIn, type ProposeItem, proposeMappings } from "./mapping.ts";
 import { DEFAULT_STYLE, extractLook, hasAuthorityMarks, lineKey } from "./look.ts";
 import { structureMessages } from "./prompt.ts";
 import {
@@ -14,7 +14,7 @@ import {
   StructureModelOutput,
   type TemplateBlank,
 } from "./schema.ts";
-import { buildSections, sectionOfLines } from "./structure.ts";
+import { buildSections, sectionOfLines, withBlankHeadings } from "./structure.ts";
 
 export {
   catalogueForPrompt,
@@ -44,6 +44,7 @@ export {
   partyIn,
   type Party,
   type Proposal,
+  numberChequeDateRuns,
   proposeMappings,
   redactValues,
   resuggestBlanks,
@@ -55,7 +56,7 @@ export { structureMessages } from "./prompt.ts";
 export * from "./render.ts";
 export { remapForData, type Remapped } from "./remap.ts";
 export * from "./schema.ts";
-export { buildSections, detectNumbering, splitNumber, toParagraphs } from "./structure.ts";
+export { buildSections, detectNumbering, splitNumber, toParagraphs, withBlankHeadings } from "./structure.ts";
 
 export interface ContractStructureDeps {
   /** Returns the uploaded file's bytes. The helper never touches disk. */
@@ -134,7 +135,7 @@ export function contractStructureHelper(
       const built = buildSections(
         det.lines,
         out.sections.map((s) => s.heading),
-        look.ok ? look.headings : undefined,
+        look.ok ? withBlankHeadings(look.headings, det0.lines, filled.lines) : undefined,
       );
       if (!built.sections.items.some((s) => s.heading !== null)) {
         return {
@@ -171,7 +172,7 @@ export function contractStructureHelper(
       }
       const { proposals, model: modelName } = await proposeMappings(llm, items);
       const unmapped = 0;
-      const blanks: TemplateBlank[] = det.blanks.map((b) => {
+      const mapped: TemplateBlank[] = det.blanks.map((b) => {
         const signature = signatureIds.has(b.id);
         const prop = proposals.get(b.id);
         const map = signature
@@ -193,6 +194,10 @@ export function contractStructureHelper(
           after: b.after.slice(0, 100),
         };
       });
+      const blanks = numberChequeDateRuns(
+        [built.sections.title, ...built.sections.items.flatMap((i) => [i.heading, ...i.paragraphs])],
+        mapped,
+      );
       const empty = blanks.filter((b) => b.role === "field" && b.field === "leave_empty").length;
       // An unreadable look can't say where the words sit.
       // Without positions, the first four and last two lines of the text stand in for letterhead and footer.

@@ -8,6 +8,9 @@ import {
   ReprepareContractButton,
   ResendSignLinkButton,
 } from "./contract-forms";
+import { ContractPreparing } from "./contract-preparing";
+import type { PreparingStatus } from "../lib/contract-preparing";
+import { type ChangeRequestRow, ContractChangeRequests } from "./contract-change-requests";
 import { ManualGuide, ManualRecordForms, type ManualRegistration } from "./manual-registration";
 import { TemplateRewrites, type TemplateRewrite } from "./template-rewrites";
 import { Status } from "./ui";
@@ -188,20 +191,28 @@ export function ContractPanel({
   canAct,
   options,
   prepareNeeded = null,
+  preparing = null,
+  changeRequests = [],
 }: {
   leaseId: string;
   state: string;
   contracts: ContractRow[];
   canAct: boolean;
   options?: ClauseOptions | undefined;
+  /** D67: change requests from the signing pages, newest first. */
+  changeRequests?: ChangeRequestRow[];
   /** Set by the engine only when the automatic preparation failed or the contract config changed since. */
   prepareNeeded?: "failed" | "rejected" | "not_prepared" | "rules_changed" | null;
+  /** The automatic preparation job's status while no contract exists. */
+  preparing?: PreparingStatus | null;
 }) {
   const current = contracts[0];
   const older = contracts.slice(1);
   if (!current && state !== "CONTRACT") return null;
   const hint = !current
-    ? "Not prepared yet"
+    ? preparing && preparing.state !== "failed"
+      ? "Preparing…"
+      : "Not prepared yet"
     : current.status === "pending_approval"
       ? "Waiting for approval"
       : current.status === "sent"
@@ -216,6 +227,7 @@ export function ContractPanel({
     <Section id="contract-h" title="Contract" hint={hint}>
       {!current && (
         <div className="grid gap-3">
+          {preparing && <ContractPreparing preparing={preparing} />}
           <p className="m-0 text-sm text-muted">
             The engine prepares the contract from the verified records when the reservation is recorded. You can also
             prepare it here.
@@ -234,6 +246,13 @@ export function ContractPanel({
 
       {current && (
         <div className="grid gap-4">
+          {preparing && <ContractPreparing preparing={preparing} />}
+          <ContractChangeRequests
+            leaseId={leaseId}
+            rows={changeRequests}
+            canAct={canAct && state === "CONTRACT"}
+            companyClauses={options?.companyClauses ?? []}
+          />
           <div className={`${ROW_CARD} flex items-center justify-between gap-3`}>
             <div className="grid gap-0.5 text-sm">
               <div className="font-semibold">

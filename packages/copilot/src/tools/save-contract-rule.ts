@@ -7,7 +7,11 @@ const Input = z.object({
   ...ModeArgs,
   company: z.string().min(2).max(120).describe("Company name or slug"),
   category: z.enum(["residential", "commercial", "retail"]),
-  subtype: z.string().max(40).nullable().optional(),
+  subtypes: z
+    .array(z.enum(["apartment", "villa", "townhouse", "penthouse", "office", "shop", "showroom", "warehouse"]))
+    .max(10)
+    .optional()
+    .describe("Unit types it covers; [] = all. Omit on a replace to keep them"),
   emirate: z
     .enum(EMIRATES)
     .nullable()
@@ -24,7 +28,7 @@ export const saveContractRule: CopilotTool<typeof Input, typeof ConfigChangeOutp
   name: "save_contract_rule",
   kind: "propose",
   description:
-    "Create or replace a company's contract rule: emirate, allowed tenures and cheque range. To change one field of a rule (its emirate, say), replace it with the rule's other values unchanged. Use mode explicit only when the user's own latest message asks for this change, with their words as userQuote; otherwise mode suggest.",
+    "Create or replace a company's contract rule: emirate, unit types (one rule may cover several), allowed tenures and cheque range. If get_company_settings shows a rule for that emirate and types, replace it (replaceRuleId) instead of adding one. To change one field of a rule (its emirate, say), replace it with the rule's other values unchanged. Use mode explicit only when the user's own latest message asks for this change, with their words as userQuote; otherwise mode suggest.",
   input: Input,
   output: ConfigChangeOutput,
   roles: ["admin"],

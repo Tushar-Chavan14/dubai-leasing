@@ -65,18 +65,18 @@ async function setup(llm: FakeLlm) {
     maxCheques: 4,
     clauseIds: ["no_pets"],
   });
-  const rule = (await mk.json()) as { id: string };
-  const upload = async (bytes: Uint8Array, ruleId = rule.id) => {
-    const r = await app.request(`/api/contract-rules/${ruleId}/sample`, {
+  expect(mk.status).toBe(201);
+  const upload = async (bytes: Uint8Array, query = "") => {
+    const r = await app.request(`/api/companies/${companyId}/sample${query}`, {
       method: "POST",
       body: bytes as unknown as ArrayBuffer,
       headers: { "content-type": "application/pdf", authorization: `Bearer ${token}` },
     });
     expect(r.status).toBe(202);
-    return (await r.json()) as { ruleId: string; documentId: string };
+    return (await r.json()) as { documentId: string };
   };
   const structureJobs = () => t.scheduler.jobs.filter((j) => j.name === CONTRACT_STRUCTURE_JOB);
-  return { ...t, companyId, upload, structureJobs, call };
+  return { ...t, companyId, upload, structureJobs, call, app, token };
 }
 
 const templates = () => database.db.select().from(companyContractTemplates);
@@ -257,7 +257,7 @@ describe.skipIf(noDb)("company contract templates (structure extraction)", () =>
     const first = await s.upload(await generatePdf(SAMPLES[0]!.spec));
     await runContractStructure(s.ctx, first.documentId);
     const [before] = await templates();
-    const second = await s.upload(await generatePdf({ ...SAMPLES[0]!.spec, accent: [10, 120, 40] }), first.ruleId);
+    const second = await s.upload(await generatePdf({ ...SAMPLES[0]!.spec, accent: [10, 120, 40] }));
     await runContractStructure(s.ctx, second.documentId);
     const rows = (await templates()).toSorted((a, b) => a.version - b.version);
     expect(rows.map((r) => [r.version, r.status])).toEqual([
@@ -266,6 +266,39 @@ describe.skipIf(noDb)("company contract templates (structure extraction)", () =>
     ]);
     expect(rows[0]).toEqual(before!);
     expect((rows[1]!.style as { accentColour: string }).accentColour).toBe("#0a7828");
+  });
+
+  test("D69: a named upload starts its own template at v1; a familyId upload adds a version to it", async () => {
+    const s = await setup(structureLlm());
+    const first = await s.upload(await generatePdf(SAMPLES[0]!.spec));
+    await runContractStructure(s.ctx, first.documentId);
+    const [res] = await templates();
+    expect(res).toMatchObject({ name: "Contract template", version: 1, familyId: res!.id });
+    const com = await s.upload(await generatePdf({ ...SAMPLES[0]!.spec, accent: [10, 120, 40] }), "?name=Commercial");
+    await runContractStructure(s.ctx, com.documentId);
+    const comRow = (await templates()).find((r) => r.sampleDocumentId === com.documentId)!;
+    expect(comRow).toMatchObject({ name: "Commercial", version: 1 });
+    expect(comRow.familyId).not.toBe(res!.familyId);
+    const v2 = await s.upload(
+      await generatePdf({ ...SAMPLES[0]!.spec, accent: [120, 10, 40] }),
+      `?familyId=${comRow.familyId}`,
+    );
+    await runContractStructure(s.ctx, v2.documentId);
+    const v2Row = (await templates()).find((r) => r.sampleDocumentId === v2.documentId)!;
+    expect(v2Row).toMatchObject({ name: "Commercial", version: 2, familyId: comRow.familyId });
+    // A name already used is refused; both a name and a familyId is refused; an unknown template is 404.
+    const pdf = await generatePdf({ ...SAMPLES[0]!.spec, accent: [1, 2, 3] });
+    const post = (q: string) =>
+      s.app.request(`/api/companies/${s.companyId}/sample${q}`, {
+        method: "POST",
+        body: pdf as unknown as ArrayBuffer,
+        headers: { "content-type": "application/pdf", authorization: `Bearer ${s.token}` },
+      });
+    const taken = await post("?name=commercial");
+    expect(taken.status).toBe(422);
+    expect(((await taken.json()) as { code: string }).code).toBe("template_name_taken");
+    expect((await post(`?name=X&familyId=${comRow.familyId}`)).status).toBe(422);
+    expect((await post(`?familyId=${crypto.randomUUID()}`)).status).toBe(404);
   });
 
   test("a sample the helper can't read stores no template and records the run", async () => {

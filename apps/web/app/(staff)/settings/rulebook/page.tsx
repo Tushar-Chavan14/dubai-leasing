@@ -9,14 +9,15 @@ import { FormGrid, Panel, Preview, SetPage, TABLE, TD, TH } from "../../../../co
 import { askPrompts } from "../../../../lib/ask-ai/prompts";
 import { get } from "../../../../lib/engine";
 import { dateTime, longDate } from "../../../../lib/format";
-import type { Me } from "../../../../lib/types";
+import { operatedEmirates } from "../../../../lib/portfolio";
+import type { CompanyRow, Me } from "../../../../lib/types";
 import type { RulebookSummary } from "./labels";
 import { NewDraft } from "./new-draft";
 
 export const metadata: Metadata = { title: "Rules" };
 
 export default async function RulesPage() {
-  const [data, me] = await Promise.all([
+  const [data, me, companies] = await Promise.all([
     get<{
       today: string;
       active: string | null;
@@ -24,6 +25,7 @@ export default async function RulesPage() {
       versions: RulebookSummary[];
     }>("/api/rulebooks"),
     get<Me>("/api/me"),
+    get<CompanyRow[]>("/api/companies"),
   ]);
   const isAdmin = me?.role === "admin";
   const versions = (data?.versions ?? []).toReversed();
@@ -37,6 +39,7 @@ export default async function RulesPage() {
           {isAdmin && data ? (
             <NewDraft
               activeByEmirate={data.activeByEmirate}
+              emirates={operatedEmirates(companies)}
               published={versions
                 .filter((v) => v.status === "published")
                 .map((v) => ({ version: v.version, emirate: v.emirate }))}

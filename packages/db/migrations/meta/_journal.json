@@ -267,6 +267,69 @@
       "when": 1794406132247,
       "tag": "0037_contract_template_rewrites",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1794472943925,
+      "tag": "0038_company_emirates",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1794473806179,
+      "tag": "0039_company_emirates_rules",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1794476998059,
+      "tag": "0040_company_categories",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1794482539529,
+      "tag": "0041_contract_change_requests",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1794486616915,
+      "tag": "0042_rule_subtypes_template_library",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1794488064983,
+      "tag": "0043_dedupe_rule_scopes",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1794553458719,
+      "tag": "0044_named_templates",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1794565050478,
+      "tag": "0045_company_ejari_fee",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1794571595486,
+      "tag": "0046_change_marks",
+      "breakpoints": true
     }
   ]
 }

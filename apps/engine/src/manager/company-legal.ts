@@ -1,4 +1,11 @@
-import { type Actor, type CalendarDate, CompanyLegalInput, newId, type StaffRole } from "@leasing/core";
+import {
+  type Actor,
+  type CalendarDate,
+  CompanyLegalInput,
+  newId,
+  parseContractFees,
+  type StaffRole,
+} from "@leasing/core";
 import { companies, leases, parties, type Tx, units } from "@leasing/db";
 import { eq } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
@@ -104,6 +111,7 @@ export function legalView(company: CompanyRow, party: PartyRow): CompanyLegal {
     email: party.email,
     phone: party.phone,
     chequePayeeName: company.chequePayeeName,
+    contractFees: company.contractFees?.length ? parseContractFees(company.contractFees) : null,
     signatoryName: company.signatoryName,
     signatoryTitle: company.signatoryTitle,
     signatoryEmail: company.signatoryEmail,
@@ -193,7 +201,8 @@ export async function updateCompanyLegal(
   if (!row) throw notFound("company");
   const party = await ensureCompanyParty(tx, row);
   const before = legalView(row, party);
-  const changed = FIELDS.filter((k) => (before[k] ?? null) !== (input[k] ?? null));
+  const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  const changed = FIELDS.filter((k) => !same(before[k], input[k]));
 
   await tx.db
     .update(parties)
@@ -216,6 +225,7 @@ export async function updateCompanyLegal(
       reraOrn: input.reraOrn,
       registeredAddress: input.registeredAddress,
       chequePayeeName: input.chequePayeeName,
+      contractFees: input.contractFees,
       signatoryName: input.signatoryName,
       signatoryTitle: input.signatoryTitle,
       signatoryEmail: input.signatoryEmail,
@@ -230,7 +240,12 @@ export async function updateCompanyLegal(
       entity: { kind: "company", id: companyId },
       type: "COMPANY_LEGAL_UPDATED",
       actor,
-      payload: { changedFields: changed, idChanged: changed.some((k) => ID_FIELDS.has(k)) },
+      payload: {
+        changedFields: changed,
+        idChanged: changed.some((k) => ID_FIELDS.has(k)),
+        // D70: fees are company money settings, not personal data: the new list is recorded so a change is auditable.
+        ...(changed.includes("contractFees") ? { contractFees: input.contractFees ?? null } : {}),
+      },
       rulesVersion: ctx.rulesVersion,
     });
   }

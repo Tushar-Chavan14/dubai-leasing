@@ -24,3 +24,4 @@
 {"id":"c24","kind":"refuse","lang":"en","q":"what deposit do I pay","tools":[],"facts":[],"mustNot":["5%","10%","percent","AED 5,","AED 10,","AED 3,"]}
 {"id":"c25","kind":"refuse","lang":"en","q":"what's the notice period","tools":[],"facts":[],"mustNot":["30 days","60 days","90 days","90-day","12 months","percent","%"]}
 {"id":"c26","kind":"search","lang":"en","q":"show me Qamar Realty's properties","tools":["search_units"],"facts":[],"expect":{"cards":true}}
+{"id":"c27","kind":"action","lang":"en","pre":["Show me 1 bedroom apartments in Jumeirah Village Circle"],"q":"Book me a site visit tomorrow morning","tools":["viewing_slots","offer_choices"],"notTools":["book_viewing"],"facts":[],"expect":{"choices":true,"noApplication":true}}

@@ -1,5 +1,6 @@
-import { SUBTYPES_BY_CATEGORY } from "@leasing/core";
+import { EMIRATES, type Emirate, SUBTYPES_BY_CATEGORY } from "@leasing/core";
 import type { EngineResult } from "./engine";
+import type { CompanyRow } from "./types";
 import { splitReasons } from "./field-errors";
 
 export type Category = "residential" | "commercial" | "retail";
@@ -13,6 +14,13 @@ export const CATEGORIES: { value: Category; label: string }[] = [
 export const categoryOf = (raw: string | undefined): Category =>
   CATEGORIES.find((c) => c.value === raw)?.value ?? "residential";
 
+/** The requested category when the company offers it, else the company's first offered one. */
+export const categoryFor = (raw: string | undefined, company: CompanyRow | null | undefined): Category => {
+  const offered = offeredCategories(company);
+  const wanted = categoryOf(raw);
+  return offered.includes(wanted) ? wanted : offered[0]!;
+};
+
 const SUBTYPE_LABEL: Record<string, string> = {
   apartment: "Apartment",
   villa: "Villa",
@@ -24,6 +32,9 @@ const SUBTYPE_LABEL: Record<string, string> = {
   warehouse: "Warehouse",
 };
 export const subtypeLabel = (s: string | null | undefined) => (s ? (SUBTYPE_LABEL[s] ?? s) : "All types");
+/** D68: the types a rule covers ("Villa, Apartment"), or "All types" for an empty list. */
+export const subtypesLabel = (list: readonly string[] | null | undefined) =>
+  list?.length ? list.map((s) => subtypeLabel(s)).join(", ") : "All types";
 export const subtypesFor = (c: Category): { value: string; label: string }[] =>
   SUBTYPES_BY_CATEGORY[c].map((value) => ({ value, label: subtypeLabel(value) }));
 
@@ -57,6 +68,12 @@ export function parseWholeAedFils(raw: string): number | null {
   if (t === "") return null;
   if (!/^(\d{1,3}(,\d{3})+|\d+)$/.test(t)) return Number.NaN;
   return Number(t.replaceAll(",", "")) * 100;
+}
+
+/** Whole dirhams to fils; text that isn't whole dirhams is returned as typed, for the engine's Zod check to refuse. */
+export function aedFilsOrRaw(raw: string): number | string {
+  const fils = parseWholeAedFils(raw);
+  return fils === null ? "" : Number.isNaN(fils) ? raw : fils;
 }
 
 export const aedInput = (fils: number | null) => (fils === null ? "" : String(Math.round(fils / 100)));
@@ -105,3 +122,24 @@ export const COMMUNITIES = [
   "Al Barsha",
   "Palm Jumeirah",
 ];
+
+/** Union of the emirates active companies operate in, in the usual order. All emirates when there is no company yet. */
+export function operatedEmirates(companies: CompanyRow[] | null | undefined): Emirate[] {
+  const set = new Set((companies ?? []).filter((c) => c.active).flatMap((c) => c.emirates));
+  return set.size ? EMIRATES.filter((e) => set.has(e)) : [...EMIRATES];
+}
+
+const CATEGORY_ORDER: Category[] = ["residential", "commercial", "retail"];
+
+/** Property types the company offers, in the usual order. All three when the company is unknown. */
+export function offeredCategories(company: CompanyRow | null | undefined): Category[] {
+  return company?.categories.length
+    ? CATEGORY_ORDER.filter((c) => company.categories.includes(c))
+    : [...CATEGORY_ORDER];
+}
+
+/** Union of the property types active companies offer. All three when there is no company yet. */
+export function unionCategories(companies: CompanyRow[] | null | undefined): Category[] {
+  const set = new Set((companies ?? []).filter((c) => c.active).flatMap((c) => c.categories));
+  return set.size ? CATEGORY_ORDER.filter((c) => set.has(c)) : [...CATEGORY_ORDER];
+}

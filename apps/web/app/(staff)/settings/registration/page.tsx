@@ -3,19 +3,22 @@ import { AskAiMenu } from "../../../../components/ask-ai";
 import { SetPage } from "../../../../components/ui/settings";
 import { askPrompts } from "../../../../lib/ask-ai/prompts";
 import { get } from "../../../../lib/engine";
-import type { Me } from "../../../../lib/types";
+import { operatedEmirates } from "../../../../lib/portfolio";
+import type { CompanyRow, Me } from "../../../../lib/types";
 import { type DocumentOption, FeePayerForm, type RegistrationRow, RegistrationForm } from "./registration-form";
 
 export const metadata: Metadata = { title: "Registration" };
 
 export default async function RegistrationSettingsPage() {
-  const [all, options, me, policy] = await Promise.all([
+  const [all, options, me, policy, companies] = await Promise.all([
     get<Record<string, RegistrationRow>>("/api/registration-settings"),
     get<DocumentOption[]>("/api/registration-settings/document-options"),
     get<Me>("/api/me"),
     get<{ registrationFeePaidBy: "tenant" | "landlord" }>("/api/policy"),
+    get<CompanyRow[]>("/api/companies"),
   ]);
   const isAdmin = me?.role === "admin";
+  const operated = operatedEmirates(companies);
   return (
     <SetPage
       title="Registration"
@@ -34,6 +37,7 @@ export default async function RegistrationSettingsPage() {
           row={row}
           options={options ?? []}
           canEdit={isAdmin}
+          operated={(operated as string[]).includes(emirate)}
         />
       ))}
       {!isAdmin && <p className="m-0 text-[13px] text-muted">Only admins can change registration settings.</p>}

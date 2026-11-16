@@ -1,6 +1,14 @@
 import { type Actor, type Emirate, newId } from "@leasing/core";
 import { sha256Hex } from "@leasing/core/tokens";
-import { companyClauses, companyContractTemplates, contractRules, documents, type Tx, withTx } from "@leasing/db";
+import {
+  companies,
+  companyClauses,
+  companyContractTemplates,
+  contractRules,
+  documents,
+  type Tx,
+  withTx,
+} from "@leasing/db";
 import {
   ContractTemplateSchemas,
   contractTemplateHelper,
@@ -9,7 +17,7 @@ import {
   templateParagraphs,
   unknownPlaceholders,
 } from "@leasing/helpers";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
 import { conflict, notFound, unprocessable } from "../errors.ts";
 import { appendEvent, getCompanyPolicy } from "./events.ts";
@@ -20,8 +28,8 @@ import {
   parseTemplate,
 } from "./company-templates.ts";
 import { recordRun, runOnly } from "./helpers.ts";
-import { replaceContractRule } from "./portfolio.ts";
-import { failStructure } from "./company-templates.ts";
+import { assertOperates, replaceContractRule } from "./portfolio.ts";
+import { assertTemplateNameFree, failStructure } from "./company-templates.ts";
 export { approvedClauses, resolveCompanyClauses } from "./clause-refs.ts";
 
 /**
@@ -52,7 +60,8 @@ export const autoApprovable = (c: { category: string; text: string; hasValues: b
 
 export type SampleStatus = "queued" | "done" | "failed" | "needs_human";
 interface SampleMeta {
-  ruleId: string;
+  /** Samples uploaded before D68 were pinned on a contract rule; library uploads have none. */
+  ruleId?: string;
   companyId: string;
   status: SampleStatus;
   reasons: string[];
@@ -63,9 +72,16 @@ interface SampleMeta {
   queuedAt: string;
   /** When the job actually began reading (Clock); absent while it still waits for the model. */
   startedAt?: string;
-  /** The emirate the template read from this sample is for; absent or null = any emirate (D56). */
-  emirate?: Emirate | null;
+  /** The emirates the template read from this sample may be used in; empty = any emirate (D56, D68). */
+  emirates: Emirate[];
+  /** The named template the version read from this sample joins (D69); absent on samples uploaded before D69. */
+  familyId?: string;
+  /** The template's name (D69). */
+  name?: string;
 }
+
+/** Where an upload goes (D69): a new named template, or a new version of an existing one. */
+export type SampleTarget = { name: string } | { familyId: string };
 
 /** A reading still "queued" after this long is treated as stopped (the job ran out of retries or was lost). */
 export const STUCK_AFTER_MS = 15 * 60 * 1000;
@@ -154,43 +170,88 @@ class JobDeadline extends Error {
 const MODEL_TIMEOUT_RE = /did not answer within (\d+) s/;
 
 /** Stores the sample (content-addressed), pins it on a new row of the rule, and queues the helper. */
+/** The company's newest sample contract (the one the settings page reviews), if any. */
+async function latestSample(db: EngineContext["database"]["db"], companyId: string) {
+  const [doc] = await db
+    .select()
+    .from(documents)
+    .where(and(eq(documents.kind, "contract_sample"), sql`${documents.extracted}->>'companyId' = ${companyId}`))
+    .orderBy(desc(documents.createdAt))
+    .limit(1);
+  return doc ?? null;
+}
+
+/**
+ * Upload a sample contract to the company's template library (D68): stored content-addressed and read by the
+ * clause and structure helpers in jobs. `emirates` are where the template may be used (empty = any emirate). No
+ * contract rule changes: rules pick an approved template later. The same file for the same emirates as the latest
+ * sample does nothing (or reads it again when that reading failed).
+ */
 export async function uploadSample(
   ctx: EngineContext,
-  ruleId: string,
+  companyId: string,
   bytes: Uint8Array,
   actor: Actor,
-  emirate: Emirate | null = null,
+  emirates: Emirate[] = [],
+  /** Absent: a version of the company's template for the same emirates, else a new one (as before D69). */
+  target?: SampleTarget,
 ) {
   if (bytes.byteLength > MAX_SAMPLE_BYTES) throw unprocessable("The file is larger than 10 MB.", [], "too_big");
   if (!isPdf(bytes)) throw unprocessable("Upload a PDF file.", [], "not_pdf");
   const sha256 = sha256Hex(bytes);
-  const [rule] = await ctx.database.db.select().from(contractRules).where(eq(contractRules.id, ruleId));
-  if (!rule) throw notFound("contract rule");
-  if (!rule.active) throw conflict("contract rule is no longer active", "rule_inactive");
-  if (rule.sampleDocumentId) {
-    const [prev] = await ctx.database.db.select().from(documents).where(eq(documents.id, rule.sampleDocumentId));
-    // The same file for another emirate is a new upload (it makes a template for that emirate).
-    if (prev?.sha256 === sha256 && ((prev.extracted as SampleMeta).emirate ?? null) === emirate) {
+  const chosen = [...new Set(emirates)].sort();
+  const family = await withTx(ctx.database, async (tx) => {
+    const [company] = await tx.db.select({ id: companies.id }).from(companies).where(eq(companies.id, companyId));
+    if (!company) throw notFound("company");
+    for (const e of chosen) await assertOperates(tx, companyId, e);
+    if (!target) return null;
+    if ("familyId" in target) {
+      const [row] = await tx.db
+        .select({ name: companyContractTemplates.name })
+        .from(companyContractTemplates)
+        .where(
+          and(
+            eq(companyContractTemplates.companyId, companyId),
+            eq(companyContractTemplates.familyId, target.familyId),
+          ),
+        )
+        .limit(1);
+      if (!row) throw notFound("contract template");
+      return { familyId: target.familyId, name: row.name, isNew: false };
+    }
+    const name = await assertTemplateNameFree(tx, companyId, target.name, null);
+    return { familyId: newId(), name, isNew: true };
+  });
+  const prev = await latestSample(ctx.database.db, companyId);
+  if (prev?.sha256 === sha256) {
+    const m = prev.extracted as SampleMeta;
+    const prevEmirates = [...(m.emirates ?? [])].sort();
+    // The same file again: for a new version of the same template (or the same new name), with the same emirates.
+    const sameTarget = !family
+      ? !m.familyId
+      : family.isNew
+        ? m.name?.toLowerCase() === family.name.toLowerCase()
+        : m.familyId === family.familyId;
+    if (sameTarget && prevEmirates.join(",") === chosen.join(",")) {
       // Same file: nothing to do unless the last reading failed, then it is read again.
-      const m = prev.extracted as SampleMeta;
       if (m.status !== "failed" && m.status !== "needs_human") {
-        return { duplicate: true as const, ruleId: rule.id, documentId: prev.id };
+        return { duplicate: true as const, documentId: prev.id };
       }
-      return requeueSample(ctx, prev.id, rule.id, actor);
+      return requeueSample(ctx, prev.id, actor);
     }
   }
   const stored = await ctx.documents.put(bytes, "pdf");
   return withTx(ctx.database, async (tx) => {
     const documentId = newId();
     const meta: SampleMeta = {
-      ruleId: "",
-      companyId: rule.companyId,
+      companyId,
       status: "queued",
       reasons: [],
       clauseCount: 0,
       attempt: 1,
       queuedAt: ctx.clock.now().toISOString(),
-      emirate,
+      emirates: chosen,
+      ...(family ? { familyId: family.familyId, name: family.name } : {}),
     };
     await tx.db.insert(documents).values({
       id: documentId,
@@ -202,39 +263,19 @@ export async function uploadSample(
       uploadedBy: actor,
       extracted: meta,
     });
-    // The rule keeps its company template while that is still approved (a retired one can't be carried).
-    const [tpl] = rule.templateId
-      ? await tx.db
-          .select({ status: companyContractTemplates.status })
-          .from(companyContractTemplates)
-          .where(eq(companyContractTemplates.id, rule.templateId))
-      : [];
-    const carriedTemplateId = tpl?.status === "approved" ? rule.templateId : null;
-    const next = await replaceContractRule(
-      ctx,
-      tx,
-      rule.id,
-      {
-        category: rule.category,
-        subtype: rule.subtype,
-        tenures: rule.tenures,
-        minCheques: rule.minCheques,
-        maxCheques: rule.maxCheques,
-        clauseIds: rule.clauseIds,
-        sampleDocumentId: documentId,
-        templateId: carriedTemplateId,
-      },
-      actor,
-    );
-    await tx.db
-      .update(documents)
-      .set({ extracted: { ...meta, ruleId: next.id } satisfies SampleMeta })
-      .where(eq(documents.id, documentId));
     await appendEvent(tx, ctx, {
-      entity: { kind: "company", id: rule.companyId },
+      entity: { kind: "company", id: companyId },
       type: "CONTRACT_SAMPLE_UPLOADED",
       actor,
-      payload: { ruleId: next.id, documentId, sha256: stored.sha256, bytes: stored.bytes, emirate },
+      payload: {
+        documentId,
+        sha256: stored.sha256,
+        bytes: stored.bytes,
+        emirates: chosen,
+        familyId: family?.familyId ?? null,
+        name: family?.name ?? null,
+        newTemplate: family?.isNew ?? null,
+      },
       rulesVersion: ctx.rulesVersion,
     });
     await ctx.scheduler.send(tx, {
@@ -242,42 +283,38 @@ export async function uploadSample(
       data: { documentId },
       singletonKey: `${documentId}:1`,
     });
-    // The same sample is also read for its structure, blanks and look (slice 4). Always queued, for every
-    // company: it only stores a `proposed` template version, which is never used until an admin approves it,
-    // so no 'has an approved template' check is needed (simpler, and a re-upload then makes the next version).
+    // The same sample is also read for its structure, blanks and look (slice 4). It only stores a `proposed`
+    // template version, which is never used until an admin approves it.
     await ctx.scheduler.send(tx, {
       name: CONTRACT_STRUCTURE_JOB,
       data: { documentId },
       singletonKey: `${documentId}:1`,
     });
-    return { duplicate: false as const, ruleId: next.id, documentId };
+    return { duplicate: false as const, documentId, familyId: family?.familyId ?? null };
   });
 }
 
-/** "Try again" on a failed or needs_human reading: queues the stored file again, no re-upload. */
-export async function retrySample(ctx: EngineContext, ruleId: string, actor: Actor) {
-  const [rule] = await ctx.database.db.select().from(contractRules).where(eq(contractRules.id, ruleId));
-  if (!rule) throw notFound("contract rule");
-  if (!rule.sampleDocumentId) throw conflict("This rule has no sample contract.", "no_sample");
-  const [doc] = await ctx.database.db.select().from(documents).where(eq(documents.id, rule.sampleDocumentId));
-  const status = (doc?.extracted as SampleMeta | undefined)?.status;
+/** "Try again" on a failed or needs_human reading of the company's latest sample: queues the stored file again. */
+export async function retrySample(ctx: EngineContext, companyId: string, actor: Actor) {
+  const doc = await latestSample(ctx.database.db, companyId);
+  if (!doc) throw conflict("This company has no sample contract.", "no_sample");
+  const status = (doc.extracted as SampleMeta | undefined)?.status;
   if (status !== "failed" && status !== "needs_human") {
     throw conflict("Only a reading that failed can be tried again.", "not_failed");
   }
-  return requeueSample(ctx, rule.sampleDocumentId, rule.id, actor);
+  return requeueSample(ctx, doc.id, actor);
 }
 
 /** Reads the same stored file again after a failed or stuck reading: fresh attempt number, fresh job key. */
-async function requeueSample(ctx: EngineContext, documentId: string, ruleId: string, actor: Actor) {
+async function requeueSample(ctx: EngineContext, documentId: string, actor: Actor) {
   return withTx(ctx.database, async (tx) => {
     const [doc] = await tx.db.select().from(documents).where(eq(documents.id, documentId)).for("update");
     const m = doc?.extracted as SampleMeta | undefined;
     if (!doc || !m) throw notFound("sample document");
-    if (m.status === "queued") return { duplicate: true as const, ruleId, documentId };
+    if (m.status === "queued") return { duplicate: true as const, documentId };
     const attempt = (m.attempt ?? 1) + 1;
     const next: SampleMeta = {
       ...m,
-      ruleId,
       status: "queued",
       reasons: [],
       clauseCount: 0,
@@ -290,7 +327,7 @@ async function requeueSample(ctx: EngineContext, documentId: string, ruleId: str
       entity: { kind: "company", id: m.companyId },
       type: "CONTRACT_SAMPLE_RETRIED",
       actor,
-      payload: { ruleId, documentId, attempt },
+      payload: { documentId, attempt },
       rulesVersion: ctx.rulesVersion,
     });
     await ctx.scheduler.send(tx, {
@@ -304,7 +341,7 @@ async function requeueSample(ctx: EngineContext, documentId: string, ruleId: str
       data: { documentId },
       singletonKey: `${documentId}:${attempt}`,
     });
-    return { duplicate: false as const, retry: true as const, ruleId, documentId };
+    return { duplicate: false as const, retry: true as const, documentId };
   });
 }
 
@@ -368,7 +405,6 @@ export async function runContractTemplate(ctx: EngineContext, documentId: string
         await tx.db.insert(companyClauses).values({
           id: clauseId,
           companyId: meta.companyId,
-          contractRuleId: meta.ruleId,
           title: c.title,
           textEn: c.text,
           quote: c.quote,
@@ -600,12 +636,11 @@ export async function addCompanyClause(
       r.id,
       {
         category: r.category,
-        subtype: r.subtype,
+        subtypes: r.subtypes,
         tenures: r.tenures,
         minCheques: r.minCheques,
         maxCheques: r.maxCheques,
         clauseIds: [...r.clauseIds, `cc:${id}`],
-        sampleDocumentId: r.sampleDocumentId,
       },
       actor,
     );
@@ -737,12 +772,11 @@ export async function removeCompanyClause(ctx: EngineContext, clauseId: string, 
         r.id,
         {
           category: r.category,
-          subtype: r.subtype,
+          subtypes: r.subtypes,
           tenures: r.tenures,
           minCheques: r.minCheques,
           maxCheques: r.maxCheques,
           clauseIds: r.clauseIds.filter((x) => x !== ref),
-          sampleDocumentId: r.sampleDocumentId,
         },
         actor,
       );
@@ -786,12 +820,11 @@ export async function setClauseRules(ctx: EngineContext, clauseId: string, ruleI
         r.id,
         {
           category: r.category,
-          subtype: r.subtype,
+          subtypes: r.subtypes,
           tenures: r.tenures,
           minCheques: r.minCheques,
           maxCheques: r.maxCheques,
           clauseIds: has ? r.clauseIds.filter((x) => x !== ref) : [...r.clauseIds, ref],
-          sampleDocumentId: r.sampleDocumentId,
         },
         actor,
       );
@@ -833,32 +866,20 @@ export async function companyClauseList(ctx: EngineContext, companyId: string) {
   };
 }
 
-/** The rule's own id and every older row it replaced (clauses stay tied to the row they were uploaded on). */
-async function ruleChain(db: EngineContext["database"]["db"], ruleId: string): Promise<string[]> {
-  const ids: string[] = [];
-  let next: string | null = ruleId;
-  while (next && !ids.includes(next) && ids.length < 200) {
-    ids.push(next);
-    const [r]: { supersedesId: string | null }[] = await db
-      .select({ supersedesId: contractRules.supersedesId })
-      .from(contractRules)
-      .where(eq(contractRules.id, next));
-    next = r?.supersedesId ?? null;
-  }
-  return ids;
-}
-
-/** The sample's reading status and the proposals for a contract rule (any staff may read). */
-export async function ruleClauseReview(ctx: EngineContext, ruleId: string) {
+/**
+ * The reading status of the company's latest sample and the clauses proposed from it (any staff may read). D68: the
+ * sample belongs to the company's template library, not to a contract rule.
+ */
+export async function sampleClauseReview(ctx: EngineContext, companyId: string) {
   const db = ctx.database.db;
-  const [rule] = await db.select().from(contractRules).where(eq(contractRules.id, ruleId));
-  if (!rule) throw notFound("contract rule");
-  const chain = await ruleChain(db, ruleId);
-  const rows = await db
-    .select()
-    .from(companyClauses)
-    .where(and(eq(companyClauses.companyId, rule.companyId), inArray(companyClauses.contractRuleId, chain)))
-    .orderBy(asc(companyClauses.createdAt), asc(companyClauses.id));
+  const latest = await latestSample(db, companyId);
+  const rows = latest
+    ? await db
+        .select()
+        .from(companyClauses)
+        .where(and(eq(companyClauses.companyId, companyId), eq(companyClauses.sourceDocumentId, latest.id)))
+        .orderBy(asc(companyClauses.createdAt), asc(companyClauses.id))
+    : [];
   let sample: {
     documentId: string;
     status: SampleStatus;
@@ -869,8 +890,8 @@ export async function ruleClauseReview(ctx: EngineContext, ruleId: string) {
     /** The company template made from this same sample is already there (proposed or approved). */
     templateReady: boolean;
   } | null = null;
-  if (rule.sampleDocumentId) {
-    const [doc] = await db.select().from(documents).where(eq(documents.id, rule.sampleDocumentId));
+  {
+    const doc = latest;
     let m = doc?.extracted as SampleMeta | undefined;
     const stuckSince = m?.startedAt ? Date.parse(m.startedAt) : m ? Date.parse(m.queuedAt) : 0;
     const stuckAfter = m?.startedAt ? RUNNING_STUCK_AFTER_MS : STUCK_AFTER_MS;
@@ -924,6 +945,8 @@ export const clauseView = (c: ClauseRow) => ({
   fromTemplate: c.templateParagraphKey !== null,
   /** Older clause approved into a template's fixed wording without a link: not editable here. */
   locked: c.inTemplateId !== null && c.templateParagraphKey === null,
+  /** The template version the clause is linked to (D47); the page lists it under that named template (D69). */
+  templateId: c.inTemplateId,
   sourceDocumentId: c.sourceDocumentId,
   approvedBy: c.approvedBy,
   approvedAt: c.approvedAt,

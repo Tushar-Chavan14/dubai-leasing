@@ -20,7 +20,7 @@ export const viewingSlots: CopilotTool<typeof Input, typeof Output> = {
   name: "viewing_slots",
   kind: "read",
   description:
-    "Free viewing slots (Dubai time) for a unit, or for the unit of an application, following the company's viewing hours and the viewings already booked. Use it before propose_viewing_invite: copy a slot's `at` value exactly. When the user must pick a time, call offer_choices with 2 to 4 of these slots (label as shown, value = `at`).",
+    "Free site visit (viewing) slots (Dubai time) for a unit, or for the unit of an application, following the company's site visit hours and the site visits already booked. Use it before propose_viewing_invite: copy a slot's `at` value exactly. When the user must pick a time, call offer_choices with 2 to 4 of these slots (label as shown, value = `at`).",
   input: Input,
   output: Output,
   roles: ALL_STAFF,

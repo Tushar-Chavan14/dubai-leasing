@@ -6,8 +6,8 @@ export const INTENT_CRITERIA: Record<EnquiryIntent, string> = {
   search_units: "Looking for a home to rent or asking what is available (size, area, budget)",
   unit_question: "Asking about the apartment they are looking at: its parking, view, furniture, size, floor or pets",
   general_question:
-    "A general question about our homes, areas or how renting with us works (which areas, furnished or not, pets, parking, viewings, next steps), not about one apartment",
-  book_viewing: "Wants to see or visit an apartment, or asks when they can view it",
+    "A general question about our homes, areas or how renting with us works (which areas, furnished or not, pets, parking, site visits or viewings, next steps), not about one apartment",
+  book_viewing: "Wants a site visit (a viewing): to see or visit an apartment, or asks when they can view it",
   talk_to_person: "Asks to speak to a person, an agent or a manager, or to be called",
   existing_tenant:
     'Already rents from us or is already our applicant and writes about their own lease, application or documents: my lease or contract status, my application, rent payment, repairs, renewal, moving out, or documents they want to upload or send (for example "my passport", "my Emirates ID", "عقدي", "طلبي")',
@@ -149,8 +149,8 @@ export function factSheet(u: UnitFacts): string {
 
 /** How renting with us works, as fixed text: no numbers, no money, no promises. */
 const PROCESS = [
-  "How it works: viewings are booked in this chat.",
-  "After the viewing, the leasing team emails a secure link to upload ID documents, then the offer and the contract come by email.",
+  "How it works: site visits are booked in this chat.",
+  "After the site visit, the leasing team emails a secure link to upload ID documents, then the offer and the contract come by email.",
   "Rent, deposit, cheques and dates come from a leasing officer, not from this chat.",
 ].join("\n");
 

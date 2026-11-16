@@ -4,6 +4,8 @@
  *   offer-reply  applicant offer-answer classifier (decision model)
  *   kyc      ID document reading and checks (vision model, fictional specimens)
  *   contract-review  addendum review for conflicts (chat model)
+ *   contract-change  signer change requests: draft or not, money/date/injection never drafted (chat model, D67)
+ *   contract-marks  marked contract paragraphs rewritten from notes; fixed/money/injection never rewritten (chat model)
  *   ejari-field  Ejari rejection → contract field (decision model)
  *   complaints  Complaint Triage: category, urgency, safety/legal routing (decision model) + acknowledgement (chat model)
  *   contract-template  sample contract PDF/text → addendum clauses with exact quotes (chat model)
@@ -19,6 +21,8 @@ const runs: Record<string, string[]> = {
   "offer-reply": ["packages/helpers/scripts/eval-reply.ts", "--offer"],
   kyc: ["packages/helpers/scripts/eval-kyc.ts"],
   "contract-review": ["packages/helpers/scripts/eval-contract.ts"],
+  "contract-change": ["packages/helpers/scripts/eval-contract-change.ts"],
+  "contract-marks": ["packages/helpers/scripts/eval-contract-marks.ts"],
   "ejari-field": ["packages/helpers/scripts/eval-ejari.ts"],
   "leasing-assistant": ["packages/helpers/scripts/eval-leasing-assistant.ts"],
   complaints: ["packages/helpers/scripts/eval-complaints.ts"],

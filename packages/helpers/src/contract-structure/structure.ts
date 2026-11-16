@@ -51,16 +51,33 @@ export function toParagraphs(lines: string[]): string[] {
 const headKey = (s: string): string => normalizeWs(s);
 
 /** A heading is short, has no sentence punctuation at the end, no blank, and isn't a numbered sub-clause (3.1 …). */
-export function looksLikeHeading(line: string): boolean {
+export function looksLikeHeading(line: string, allowBlank = false): boolean {
   const l = normalizeWs(line);
   return (
     l.length >= 2 &&
     l.length <= 80 &&
     l.split(" ").length <= 10 &&
     !/[.;,]$/.test(l) &&
-    !/\{\{b\d+\}\}/.test(l) &&
+    (allowBlank || !/\{\{b\d+\}\}/.test(l)) &&
     !/^\d+\.\d+/.test(l)
   );
+}
+
+/**
+ * D70: a heading "DLD Property No. DEMO-DLD-000017" is read as a line, so its value becomes a blank before sections are
+ * built. The look (which lines are set as headings) knows the original line; this adds the changed line to that set.
+ */
+export function withBlankHeadings(
+  allowed: ReadonlySet<string> | undefined,
+  before: string[],
+  after: string[],
+): ReadonlySet<string> | undefined {
+  if (!allowed) return undefined;
+  const out = new Set(allowed);
+  before.forEach((b, i) => {
+    if (after[i] !== undefined && after[i] !== b && allowed.has(headKey(b))) out.add(headKey(after[i]!));
+  });
+  return out;
 }
 
 /**
@@ -85,7 +102,11 @@ export function buildSections(
       for (let i = cursor; i < lines.length; i++) {
         const l = headKey(lines[i]!);
         if (!l || l.length > 160) continue;
-        if ((l === want || splitNumber(l)[1] === wantRest) && looksLikeHeading(l) && (!allowed || allowed.has(l))) {
+        if (
+          (l === want || splitNumber(l)[1] === wantRest) &&
+          looksLikeHeading(l, !!allowed?.has(l)) &&
+          (!allowed || allowed.has(l))
+        ) {
           at = i;
           break;
         }

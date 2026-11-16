@@ -12,6 +12,7 @@ import {
   isCalendarDate,
   OfferTerms,
   PropertyCategory,
+  TermValues,
 } from "@leasing/core";
 import { KycFlag, KycIdentity, StatementItem } from "@leasing/helpers";
 import type { approvals } from "@leasing/db";
@@ -218,6 +219,37 @@ export const OfferLimitsProposal = z.object({
 export type OfferLimitsProposal = z.infer<typeof OfferLimitsProposal>;
 
 /**
+ * D72: the lease variant of `offer_out_of_limits`. An officer's change of a lease's terms (through the change marks)
+ * is outside the offer limits, so a leasing manager decides it. Approving applies the same change and prepares the new
+ * contract version; `terms` is the plan when it was asked (the change is planned again by code on approval). Not
+ * editable here: the manager approves what the officer wrote or rejects with a note.
+ */
+export const LeaseTermsProposal = z.object({
+  kind: z.literal("lease_terms"),
+  leaseId: z.string(),
+  leaseRef: z.string(),
+  requestId: z.string(),
+  contractId: z.string(),
+  /** The officer's decision on every mark of the request, by number. */
+  decisions: z.record(z.string(), z.enum(["apply", "keep"])),
+  keepReasons: z.record(z.string(), z.string()).optional(),
+  /** What the officer wrote for the lease terms (merged over the applied marks). */
+  change: TermValues,
+  from: TermValues,
+  to: TermValues,
+  terms: OfferTerms,
+  problems: z.array(z.string()),
+  /** Things finance should know (the paid reservation is not changed). */
+  notes: z.array(z.string()).optional(),
+  /** A stable hash of the request's marks (their rewrites and the officer's decisions) when this was sent. */
+  marksHash: z.string(),
+  note: z.string().max(2000).optional(),
+});
+export type LeaseTermsProposal = z.infer<typeof LeaseTermsProposal>;
+export const isLeaseTermsProposal = (raw: unknown): boolean =>
+  typeof raw === "object" && raw !== null && (raw as { kind?: unknown }).kind === "lease_terms";
+
+/**
  * Final contract (step 5, always): the officer checks every field against its source and the
  * addendum review's flags. Approving sends it for signature; it can't be edited (prepare a new
  * version instead). The Manager re-checks that the records and the PDF haven't changed.
@@ -375,6 +407,20 @@ const rules: Partial<Record<GateId, GateRule>> = {
   offer_out_of_limits: {
     editable: ["annualRentFils", "cheques", "moveInOn", "note"],
     check(raw, today) {
+      if (isLeaseTermsProposal(raw)) {
+        const l = LeaseTermsProposal.safeParse(raw);
+        if (!l.success) return l.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
+        const t = l.data.terms;
+        const out: string[] = [];
+        if (l.data.change.moveInOn !== undefined && l.data.change.moveInOn <= today)
+          out.push(`moveInOn: the move-in date must be after ${today}`);
+        if (t.cheques < 1 || t.cheques > 12) out.push("cheques: must be between 1 and 12");
+        if (t.annualRentFils <= 0) out.push("annualRentFils: rent must be positive");
+        // Only when the change touches dates: a lease whose start differs from its move-in keeps that on a rent change.
+        const dates = l.data.change.moveInOn !== undefined || l.data.change.startOn !== undefined;
+        if (dates && t.startOn !== t.moveInOn) out.push("the term must start on the move-in date");
+        return out;
+      }
       const p = OfferLimitsProposal.safeParse(raw);
       if (!p.success) return p.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
       // Out of company limits is what the manager is approving; hard bounds still apply. The terms

@@ -7,9 +7,11 @@ import {
   EMIRATES,
   formatAed,
   maskPii,
+  PAUSING_CHANGE_STATUSES,
   registrationSystemName,
   rentIndexName,
 } from "@leasing/core";
+import { leaseChangeRequests } from "./contract-changes.ts";
 import {
   applications,
   companies,
@@ -26,7 +28,7 @@ import {
   units,
   withTx,
 } from "@leasing/db";
-import { and, asc, desc, eq, isNotNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
 import { DomainError, notFound } from "../errors.ts";
 import { templateForUnit } from "./company-templates.ts";
@@ -91,6 +93,24 @@ async function leaseFor(tx: Tx, ref: string) {
  * Contract and Ejari status of one record: contract version and status, who signed, the company
  * template and clauses it uses, and the Ejari submission. Names only; no ID numbers.
  */
+interface ChangeRequestRead {
+  ref: string;
+  role: string;
+  contractVersion: number;
+  status: string;
+  target: string;
+  request: string;
+  summary: string | null;
+  kind: string | null;
+  drafted: boolean;
+  blocked: string | null;
+  risks: string[];
+  decisionNote: string | null;
+  createdAt: string;
+  /** One compact line per signer mark (the note is the signer's text: untrusted). */
+  marks: { n: number; label: string; decision: string | null; drafted: boolean; problems: number; note: string }[];
+}
+
 export async function contractStatus(ctx: EngineContext, ref: string) {
   return withTx(ctx.database, async (tx) => {
     const found = await leaseFor(tx, ref);
@@ -107,6 +127,8 @@ export async function contractStatus(ctx: EngineContext, ref: string) {
         standardClauses: [] as string[],
         signers: [] as { role: string; name: string; signed: boolean; signedAt: string | null }[],
         ejari: null,
+        signingPaused: false,
+        changeRequests: [] as ChangeRequestRead[],
         note: `No lease or contract yet: the application is in ${found.app.state}.`,
       };
     const { l, unit } = found;
@@ -130,19 +152,23 @@ export async function contractStatus(ctx: EngineContext, ref: string) {
       .orderBy(desc(ejariSubmissions.createdAt))
       .limit(1);
     const rule = await matchContractRule(tx, unit);
-    let template: { version: number; status: string } | null = null;
+    let template: { name: string; version: number; status: string } | null = null;
     try {
       const t = await templateForUnit(tx, {
         companyId: unit.companyId,
         ruleTemplateId: rule?.templateId,
         emirate: unit.emirate,
       });
-      template = t ? { version: t.version, status: t.status } : null;
+      template = t ? { name: t.name, version: t.version, status: t.status } : null;
     } catch (e) {
       // The rule's template is not usable (retired, other company): shown as it was, by its stored status.
       if (!(e instanceof DomainError) || !rule?.templateId) throw e;
       const [t] = await tx.db
-        .select({ version: companyContractTemplates.version, status: companyContractTemplates.status })
+        .select({
+          name: companyContractTemplates.name,
+          version: companyContractTemplates.version,
+          status: companyContractTemplates.status,
+        })
         .from(companyContractTemplates)
         .where(
           and(eq(companyContractTemplates.id, rule.templateId), eq(companyContractTemplates.companyId, unit.companyId)),
@@ -150,6 +176,34 @@ export async function contractStatus(ctx: EngineContext, ref: string) {
       template = t ?? null;
     }
     const addendum = c?.addendum;
+    // D67: change requests from the signing pages, newest first (the words are the signer's: untrusted data).
+    const changes = (await leaseChangeRequests(tx.db, l.id)).slice(0, 5);
+    const pausedBy = c
+      ? changes.find((r) => r.contractId === c.id && PAUSING_CHANGE_STATUSES.includes(r.status))
+      : null;
+    const changeRequests: ChangeRequestRead[] = changes.map((r) => ({
+      ref: r.ref,
+      role: r.role,
+      contractVersion: r.version,
+      status: r.status,
+      target: r.target,
+      request: r.text,
+      summary: r.analysis?.summary ?? null,
+      kind: r.analysis?.kind ?? null,
+      drafted: !!r.analysis?.proposal,
+      blocked: r.analysis?.blocked ?? null,
+      risks: r.analysis?.risks ?? [],
+      decisionNote: r.decisionNote,
+      createdAt: r.createdAt.toISOString(),
+      marks: (r.marks ?? []).map((m) => ({
+        n: m.n,
+        label: "label" in m.anchor ? m.anchor.label : "unknown",
+        decision: m.decision,
+        drafted: m.rewrite !== null,
+        problems: m.problems.length,
+        note: m.note.slice(0, 120),
+      })),
+    }));
     return maskPii({
       ref: l.ref,
       unitCode: unit.code,
@@ -176,7 +230,13 @@ export async function contractStatus(ctx: EngineContext, ref: string) {
       ejari: sub
         ? { status: sub.status, attempt: sub.attempt, ejariNo: sub.ejariNo, submittedAt: sub.createdAt.toISOString() }
         : null,
-      note: c ? null : "No contract has been prepared yet.",
+      signingPaused: !!pausedBy,
+      changeRequests,
+      note: !c
+        ? "No contract has been prepared yet."
+        : pausedBy
+          ? `Signing is paused: the ${pausedBy.role} asked for a change (${pausedBy.ref}, ${pausedBy.status === "open" ? "the AI is still drafting it" : "ready for review"}). A leasing officer re-issues or declines it in the Workspace contract panel.`
+          : null,
     });
   });
 }
@@ -286,7 +346,11 @@ export async function viewingSlotsFor(
  */
 export async function companySettings(ctx: EngineContext, companyId: string) {
   const db = ctx.database.db;
-  const [rent, contract, clauses, sri] = await Promise.all([
+  const [co, rent, contract, clauses, sri, templates] = await Promise.all([
+    db
+      .select({ emirates: companies.emirates, categories: companies.categories })
+      .from(companies)
+      .where(eq(companies.id, companyId)),
     db
       .select()
       .from(rentRules)
@@ -303,12 +367,28 @@ export async function companySettings(ctx: EngineContext, companyId: string) {
       .select()
       .from(sriAverages)
       .orderBy(asc(sriAverages.emirate), asc(sriAverages.community), asc(sriAverages.bedrooms)),
+    // D68: the template library (no content), so the copilot can say which template a rule uses.
+    db
+      .select({
+        id: companyContractTemplates.id,
+        name: companyContractTemplates.name,
+        version: companyContractTemplates.version,
+        status: companyContractTemplates.status,
+        emirates: companyContractTemplates.emirates,
+      })
+      .from(companyContractTemplates)
+      .where(
+        and(eq(companyContractTemplates.companyId, companyId), inArray(companyContractTemplates.status, ["approved"])),
+      )
+      .orderBy(desc(companyContractTemplates.version)),
   ]);
   return {
+    emirates: co[0]?.emirates ?? [],
+    categories: co[0]?.categories ?? [],
     rentRules: rent.map((r) => ({
       id: r.id,
       category: r.category,
-      subtype: r.subtype,
+      subtypes: r.subtypes,
       community: r.community,
       minPctBp: r.minPctBp,
       maxPctBp: r.maxPctBp,
@@ -320,7 +400,7 @@ export async function companySettings(ctx: EngineContext, companyId: string) {
     contractRules: contract.map((r) => ({
       id: r.id,
       category: r.category,
-      subtype: r.subtype,
+      subtypes: r.subtypes,
       emirate: r.emirate,
       tenures: r.tenures,
       minCheques: r.minCheques,
@@ -341,6 +421,13 @@ export async function companySettings(ctx: EngineContext, companyId: string) {
       bedrooms: r.bedrooms,
       avgAnnualRentFils: r.avgAnnualRentFils,
       effectiveFrom: r.effectiveFrom,
+    })),
+    templates: templates.map((t) => ({
+      id: t.id,
+      name: t.name,
+      version: t.version,
+      status: t.status,
+      emirates: t.emirates,
     })),
   };
 }

@@ -79,6 +79,20 @@ export interface SignPortalView {
   signedAt: string | null;
   leaseRef: string;
   canSign: boolean;
+  /** D67: a change request on this version is open, so nobody can sign until staff answer. */
+  paused: boolean;
+  pausedByOther: boolean;
+  canRequestChange: boolean;
+  changeMaxChars: number;
+  changeRequests: {
+    id: string;
+    ref: string;
+    target: string;
+    text: string;
+    status: "open" | "analysed" | "reissued" | "declined" | "withdrawn" | "superseded";
+    createdAt: string;
+    decisionNote: string | null;
+  }[];
   contract: {
     version: number;
     status: string;

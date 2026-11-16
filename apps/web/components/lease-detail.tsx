@@ -1,3 +1,4 @@
+import type { ChangeRequestRow } from "./contract-change-requests";
 import type { ReactNode } from "react";
 import type { StaffRole } from "@leasing/core";
 import { canSeeUnits } from "../lib/shell/nav";
@@ -24,6 +25,7 @@ import { AskAi } from "./ask-ai";
 import { askPrompts } from "../lib/ask-ai/prompts";
 import { Fact, FactGrid, FactKey, FactList, FactVal, ROW_CARD, Section, Sub } from "./ui/record";
 import { AddTaskForm, EmailTenantForm, TaskActions, VacateNoticeForm } from "./work-forms";
+import type { PreparingStatus } from "../lib/contract-preparing";
 import { engine, get, publicGet } from "../lib/engine";
 import {
   actorLabel,
@@ -82,6 +84,8 @@ interface LeaseView {
   contracts: ContractRow[];
   clauseOptions?: ClauseOptions;
   prepareNeeded?: "failed" | "rejected" | "not_prepared" | "rules_changed" | null;
+  preparing?: PreparingStatus | null;
+  changeRequests?: ChangeRequestRow[];
   ejari: EjariAttempt[];
   /** The registration system of the unit's emirate (Ejari in Dubai). */
   registration?: { emirate: string; systemName: string };
@@ -243,6 +247,8 @@ export async function LeaseDetail({ id, draftId }: { id: string; draftId?: strin
           canAct={canAct}
           options={l.clauseOptions}
           prepareNeeded={l.prepareNeeded ?? null}
+          preparing={l.preparing ?? null}
+          changeRequests={l.changeRequests ?? []}
         />
         <EjariPanel
           leaseId={l.id}

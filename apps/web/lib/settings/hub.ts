@@ -61,9 +61,16 @@ export const HUB: HubGroup[] = [
       {
         href: "/settings/contracts",
         title: "Contracts",
-        blurb: "Contract templates and clauses per company, with a preview of the generated contract.",
+        blurb: "Contract rules per company: unit types, tenures, cheques, template and clauses.",
         who: "Admins change it. Everyone can read it.",
-        keywords: ["template", "clauses", "contract rules", "preview", "tenancy contract", "ejari"],
+        keywords: ["clauses", "contract rules", "cheques", "tenure", "preview", "tenancy contract"],
+      },
+      {
+        href: "/settings/contract-templates",
+        title: "Contract templates",
+        blurb: "Each company's contract layouts, read from a sample contract and used by its contract rules.",
+        who: "Admins upload and approve. Everyone can read it.",
+        keywords: ["template", "sample", "upload", "layout", "version", "retire", "pdf"],
       },
       {
         href: "/settings/registration",

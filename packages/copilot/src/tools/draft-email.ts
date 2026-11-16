@@ -32,7 +32,7 @@ export const draftEmail: CopilotTool<typeof Input, typeof Output> = {
   name: "draft_email",
   kind: "draft",
   description:
-    "Draft an email when the user asks for one: to a lease's tenant (lease) or to an application's applicant (application, for example a viewing reminder or a document chase). It is only saved: the user reviews it, edits it and sends it from the record's email form. Never promise money, dates or legal outcomes in it, and never say it was sent.",
+    "Draft an email when the user asks for one: to a lease's tenant (lease) or to an application's applicant (application, for example a site visit reminder or a document chase). It is only saved: the user reviews it, edits it and sends it from the record's email form. Never promise money, dates or legal outcomes in it, and never say it was sent.",
   input: Input,
   output: Output,
   roles: ["leasing_officer", "leasing_manager", "finance"],

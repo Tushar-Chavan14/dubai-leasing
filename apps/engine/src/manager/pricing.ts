@@ -11,6 +11,7 @@ import { contractRules, rentRules, sriAverages, type Tx, units } from "@leasing/
 import { and, desc, eq, isNull, lte } from "drizzle-orm";
 import type { OfferPolicy } from "@leasing/helpers";
 import { getCompanyPolicy } from "./events.ts";
+import { fitsUnit, specificity } from "./rule-scope.ts";
 
 export type UnitRow = typeof units.$inferSelect;
 export type RentRuleRow = typeof rentRules.$inferSelect;
@@ -26,7 +27,7 @@ const newestFirst = <T extends { createdAt: Date; id: string }>(a: T, b: T) =>
   b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
 
 /**
- * The active rent rule for the unit's company, category and emirate. A rule may name a subtype
+ * The active rent rule for the unit's company, category and emirate. A rule may name unit types (D68)
  * and a community; those must match the unit. Most specific wins (community, then subtype),
  * then the newest.
  */
@@ -42,12 +43,8 @@ export async function findRentRule(tx: Tx, unit: PricingUnit): Promise<RentRuleR
         eq(rentRules.active, true),
       ),
     );
-  const fits = rows.filter(
-    (r) =>
-      (r.subtype === null || r.subtype === unit.subtype) && (r.community === null || r.community === unit.community),
-  );
-  const rank = (r: RentRuleRow) => (r.community !== null ? 2 : 0) + (r.subtype !== null ? 1 : 0);
-  fits.sort((a, b) => rank(b) - rank(a) || newestFirst(a, b));
+  const fits = rows.filter((r) => fitsUnit(r, unit));
+  fits.sort((a, b) => specificity(b) - specificity(a) || newestFirst(a, b));
   return fits[0] ?? null;
 }
 
@@ -125,15 +122,8 @@ export async function matchContractRule(tx: Pick<Tx, "db">, unit: PricingUnit): 
         eq(contractRules.active, true),
       ),
     );
-  const fits = rows.filter(
-    (r) => (r.subtype === null || r.subtype === unit.subtype) && (r.emirate === null || r.emirate === unit.emirate),
-  );
-  fits.sort(
-    (a, b) =>
-      Number(b.emirate !== null) - Number(a.emirate !== null) ||
-      Number(b.subtype !== null) - Number(a.subtype !== null) ||
-      newestFirst(a, b),
-  );
+  const fits = rows.filter((r) => fitsUnit(r, unit));
+  fits.sort((a, b) => specificity(b) - specificity(a) || newestFirst(a, b));
   return fits[0] ?? null;
 }
 

@@ -175,6 +175,31 @@ export const isSignatureBlank = (b: Pick<RawBlank, "before" | "after">, label: s
 export function inferBlankType(label: string, before: string, after: string): FieldType | null {
   const near = after.split(/[.,;:()]/)[0]!.slice(0, 14);
   const s = `${label} ${tail(before.replace(/\{\{b\d+\}\}/g, " "), 40)} ${near}`.toLowerCase();
+  // Who pays, and the list of other fees: text, whatever the money words around them say.
+  if (/\b(paid by|payable by|borne by|payer)\b|\b(other|additional|extra) fees?\b|\bfees? (summary|list)\b/.test(s))
+    return "text";
+  // D70: the blank's own label first: one cheque's date ("Cheque 2 date", "Second cheque date") is a date, whatever
+  // the row around it says ("Cheque Dates" before the first blank of a row).
+  const own = label.toLowerCase();
+  if (
+    /\b(cheques?|checks?)\s*(?:no\.?\s*|number\s*|#\s*)?\d{1,2}(?:st|nd|rd|th)?\s*(?:due\s*)?date\b/.test(own) ||
+    /\b(?:\d{1,2}(?:st|nd|rd|th)|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth)\s+(cheques?|checks?)\s*(?:due\s*)?date\b/.test(
+      own,
+    )
+  )
+    return "date";
+  // Cheque blanks: a date, a list of dates or an amount, not a count (checked before the "cheques" count rule).
+  if (/\b(cheques?|checks?)\s*(no\.?\s*|number\s*)?dates\b/.test(s)) return "text";
+  if (/\b(cheques?|checks?)\s*(no\.?\s*|number\s*)?date\b|\bdates? of (the )?(\w+ )?(cheques?|checks?)\b/.test(s))
+    return "date";
+  if (
+    /\b(cheques?|checks?)\s*amounts?\b|\bamounts?\s*(per|of each|of every)\s*(cheques?|checks?)\b|\b(each|per)\s*(cheques?|checks?)\b|\b(cheques?|checks?)\s+of\b/.test(
+      s,
+    )
+  )
+    return "money_fils";
+  // D70: an area in square feet is a number ("Area (sq ft)"), though "area" alone reads as text.
+  if (/\b(?:sq\.?\s?f(?:ee)?t|sqft|square\s+f(?:ee|oo)t)\b/.test(s)) return "int";
   if (/\b(days?|cheques?|checks?|instal+ments?|bedrooms?|beds?|number of|no\. of)\b/.test(s)) return "int";
   if (/\b(aed|dirhams?|dhs?)\b|د\.إ|درهم/.test(s)) return "money_fils";
   if (

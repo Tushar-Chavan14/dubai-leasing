@@ -1,5 +1,6 @@
 import { type Addendum, isCompanyClauseRef, percentOfFloor } from "@leasing/core";
 import { applications, type Tx } from "@leasing/db";
+import { getRulebook } from "@leasing/rulebook";
 import { eq } from "drizzle-orm";
 import {
   type BlankFill,
@@ -49,6 +50,10 @@ export async function contractAgentContext(
   const { range } = settled ? { range: null } : await priceRangeFor(tx, i.unit, today);
   const policy = await getCompanyPolicy(tx, today);
   const pct = i.unit.furnished ? policy.depositPercentFurnished : policy.depositPercentUnfurnished;
+  const printed = i.template
+    ? await printedTemplate(tx, i.template, [...(rule?.clauseIds ?? []), ...addendum.clauses])
+    : null;
+  const rb = getRulebook(i.lease.rulesVersion);
   return {
     contract: { ...i.context, addendum: { ...addendum, clauses: addendum.clauses.filter(keep) } },
     rule: rule
@@ -61,9 +66,22 @@ export async function contractAgentContext(
         }
       : null,
     clauses,
-    template: i.template
-      ? await printedTemplate(tx, i.template, [...(rule?.clauseIds ?? []), ...addendum.clauses])
-      : null,
+    template: printed ? { id: printed.id, version: printed.version, paragraphs: printed.paragraphs } : null,
+    // D70: the rulebook pinned on the lease, the unit's emirate and the lease's own values for the wording checks.
+    legal: {
+      rules: {
+        renewalNoticeDays: rb.renewalNoticeDays,
+        repossessionNoticeMonths: rb.repossessionNoticeMonths,
+        lateRentDaysAfterFormalReminder: rb.lateRentDaysAfterFormalReminder,
+      },
+      emirate: i.unit.emirate,
+      headings: printed?.headings ?? [],
+      ownValues: [
+        ...Object.values(i.extras).filter((v): v is string => typeof v === "string"),
+        i.company.name,
+        i.lease.ref,
+      ].filter(Boolean),
+    },
     rentBand: range ? { minFils: range.min, maxFils: range.max } : null,
     // A deposit agreed at the offer was set from the policy then; only a deposit changed since is held to today's policy.
     depositMaxFils:
@@ -116,5 +134,8 @@ async function printedTemplate(tx: Tx, row: TemplateRow, clauseIds: readonly str
       // D64: only a paragraph about the unit (no legal or money terms, no company clause) may be reworded from its records.
       return [{ key: p.key, text: over ?? p.text, rewritable: over === undefined && describesUnit(p.text) }];
     });
-  return { id: row.id, version: row.version, paragraphs };
+  const headings = templateParagraphs(t.sections)
+    .filter((p) => p.kind !== "paragraph" && !dropped.has(p.key))
+    .map((p) => p.text);
+  return { id: row.id, version: row.version, paragraphs, headings };
 }

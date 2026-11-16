@@ -72,17 +72,17 @@ export const AGENT_TOOLS: Record<AgentToolName, AgentTool> = {
   ),
   viewing_slots: tool(
     "viewing_slots",
-    "Free viewing times for one unit, up to 6, optionally for today or tomorrow and a part of the day. Returns each time as text with a slot value and a choice value.",
+    "Free site visit (viewing) times for one unit, up to 6, optionally for today or tomorrow and a part of the day. Returns each time as text with a slot value and a choice value.",
     ViewingSlotsInput,
   ),
   book_viewing: tool(
     "book_viewing",
-    "Book one viewing for this visitor. The slot must be a slot value from viewing_slots in this turn. If the visitor's name is missing the system asks for it. The system writes the confirmation.",
+    "Book one site visit (viewing) for this visitor. The slot must be a slot value from viewing_slots in this turn. If the visitor's name is missing the system asks for it. The system writes the confirmation.",
     BookViewingInput,
   ),
   apply_now: tool(
     "apply_now",
-    "Apply for a unit without a viewing. The system asks for a name (and a company name for business units) and writes the confirmation.",
+    "Apply for a unit without a site visit. The system asks for a name (and a company name for business units) and writes the confirmation.",
     ApplyNowInput,
   ),
   my_status: tool(
