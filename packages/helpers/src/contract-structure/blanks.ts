@@ -17,6 +17,34 @@ export interface RawBlank {
 
 /** Underscore runs, dot runs (or ellipsis characters), and empty bracket markers: `[ ]`, `[____]`, `<< >>`, `{ }`. */
 const MARKERS = /(_{4,})|(\.{4,}|…{2,})|(\[[\s_.]*\]|<<[\s_.]*>>|\{[\s_.]*\})/g;
+/**
+ * D74: a named placeholder, `{name}`, `[name]` or `<name>`: 2 to 40 characters of letters, digits, space and `_ - / .`,
+ * starting with a letter. Never an internal token (`{{b1}}`, which was spaced to `{ {b1} }` above), `<<...>>` or
+ * `[[...]]`, and never a page marker (`{n}`, `{N}`, `{page}`, `{pages}`).
+ */
+const PH_NAME = String.raw`[A-Za-z][A-Za-z0-9 _\-/.]{1,39}`;
+const PLACEHOLDER = new RegExp(
+  String.raw`(?<!\{ ?)\{(${PH_NAME})\}(?! ?\})|(?<!\[)\[(${PH_NAME})\](?!\])|(?<!<)<(${PH_NAME})>(?!>)`,
+  "g",
+);
+const PAGE_MARKER = /^(?:n|page|pages)$/i;
+/** The name inside a placeholder as written (`{tenant name}` gives `tenant name`), or null when the text is not one. */
+export function placeholderName(marker: string): string | null {
+  const m = /^\{([^{}]+)\}$|^\[([^[\]]+)\]$|^<([^<>]+)>$/.exec(marker.trim());
+  const name = (m?.[1] ?? m?.[2] ?? m?.[3])?.trim();
+  return name && /^[A-Za-z][A-Za-z0-9 _\-/.]{1,39}$/.test(name) && !PAGE_MARKER.test(name) ? name : null;
+}
+/** A readable label for a placeholder's name ("property_community" gives "Property community"). */
+export function placeholderLabel(name: string): string {
+  const words = name
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_\-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 /** A table-of-contents leader: dots then a page number at the end of the line. */
 const TOC_LEADER = /^\s*\S.*\.{4,}\s*\d+\s*$/;
 const LABEL_LINE = /^\s*([^:\n]{2,60}):\s*$/;
@@ -81,7 +109,7 @@ const tail = (s: string, n: number) => (s.length > n ? s.slice(s.length - n) : s
  * the source are spaced apart first so a token can't be forged.
  */
 export function detectBlanks(text: string, max = 400): { lines: string[]; blanks: RawBlank[]; truncated: boolean } {
-  const src = text.replaceAll("{{", "{ {").replaceAll("}}", "} }").split("\n");
+  const src = joinSplitPlaceholders(text.replaceAll("{{", "{ {").replaceAll("}}", "} }").split("\n"));
   const blanks: RawBlank[] = [];
   const lines: string[] = [];
   let truncated = false;
@@ -101,6 +129,11 @@ export function detectBlanks(text: string, max = 400): { lines: string[]; blanks
           marker: m[0],
         });
       }
+      for (const m of line.matchAll(PLACEHOLDER)) {
+        if (PAGE_MARKER.test((m[1] ?? m[2] ?? m[3] ?? "").trim())) continue;
+        found.push({ start: m.index, end: m.index + m[0].length, kind: "placeholder", marker: m[0] });
+      }
+      found.sort((a, b) => a.start - b.start);
     }
     if (!found.length) {
       const lm = LABEL_LINE.exec(line);
@@ -139,6 +172,30 @@ export function detectBlanks(text: string, max = 400): { lines: string[]; blanks
     lines.push(out);
   }
   return { ...mergeSplitBlanks(lines, blanks), truncated };
+}
+
+const CLOSERS: Record<string, string> = { "{": "}", "[": "]", "<": ">" };
+
+/**
+ * D74: a placeholder that a line break (or a page break with its repeated header and footer already removed) cut in two
+ * ("{registering" ... "authority}") is put back on the first line. Line numbers stay: the rest of the second line stays
+ * where it was.
+ */
+function joinSplitPlaceholders(src: string[]): string[] {
+  const out = [...src];
+  for (let i = 0; i < out.length; i++) {
+    const open = /([{[<])[A-Za-z][A-Za-z0-9 _\-/.]{0,38}$/.exec(out[i]!);
+    if (!open) continue;
+    let j = i + 1;
+    while (j < out.length && j <= i + 6 && !out[j]!.trim()) j++;
+    const next = out[j];
+    if (next === undefined) continue;
+    const m = /^\s*([A-Za-z0-9 _\-/.]{1,38}?)([}\]>])/.exec(next);
+    if (!m || m[2] !== CLOSERS[open[1]!]) continue;
+    out[i] = `${out[i]!.trimEnd()} ${m[1]!.trim()}${m[2]}`;
+    out[j] = next.slice(m[0].length);
+  }
+  return out;
 }
 
 /** "__ / __ / ____" (a date written in three parts) is one blank: the first token stays, the others go. */

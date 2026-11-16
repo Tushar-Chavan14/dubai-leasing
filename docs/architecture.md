@@ -394,7 +394,7 @@ units and applications use `ctx.rulesVersion`, a getter for `activeRulesVersion(
 (`RULES_VERSION` is only the fallback).
 
 - Admins create a draft from a published version (`POST /api/rulebooks {basedOn, emirate?}`, named
-  `<emirate>-YYYY-MM-NN`; `emirate` defaults to the source's and may name another emirate, D59), edit it (`PATCH`: whole `values` validated by `RulebookValues`,
+  `<emirate>-YYYY-MM-NN`; `emirate` defaults to the source's and may name another emirate, D59; the New draft picker lists all seven emirates, the company's operated ones first, because the rulebook is shared by every company), edit it (`PATCH`: whole `values` validated by `RulebookValues`,
   `referenceRules`, `effectiveFrom` ≥ today), delete it, or publish it
   (`POST /api/rulebooks/:version/publish`). Reads (`GET /api/rulebooks[/:version]`) are open to
   all staff; drafts only to admins. UI: `/rules`.
@@ -1585,6 +1585,11 @@ Key columns:
   moves its active rules (when the new version may serve them); a first version replaces nothing. Rules with no
   template move only to a company's first any-emirate template. `PATCH /api/companies/:id/contract-templates/:familyId`
   renames a template (admin, unique per company, `COMPANY_TEMPLATE_RENAMED`). The panel lists `families`.
+- D73: approving a template that names emirates also creates, in the same transaction and through `createContractRule`
+  (actor = the approving admin), a generic rule (all types) for each of its emirates and each category the company
+  offers, but only where no active rule overlaps that scope. Values come from the company's any-emirate rule of the
+  category, else 1 to 4 cheques, annual. Existing rules are never replaced. An any-emirate template creates none. The
+  approve response and `COMPANY_TEMPLATE_APPROVED` carry `rulesCreated`.
 - D70: reading a filled sample blanks values in headings, counts before labels, the sample's names and community
   wherever they recur, signature-row names and reference codes; the product's data source map is left out. Prepare runs
   code checks `sample_values`, `legal_periods` (notice periods vs the lease's pinned rulebook) and `emirate_wording`

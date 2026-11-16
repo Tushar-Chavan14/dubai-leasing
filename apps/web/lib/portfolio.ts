@@ -94,6 +94,9 @@ export interface RuleResult {
   reasons?: string[];
   /** Field name from the engine ("minPctBp: ...") to message. */
   fieldErrors?: Record<string, string>;
+  /** D73: contract rules the approval created. */
+  rulesCreated?: { category: string; emirate: string }[];
+  rulesSkipped?: { category: string; emirate: string; reason: string }[];
 }
 
 const cap = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);

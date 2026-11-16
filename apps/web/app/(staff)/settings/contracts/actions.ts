@@ -163,7 +163,15 @@ export async function approveSampleAction(_prev: RuleResult, formData: FormData)
   });
   if (!r.ok) return ruleError(r);
   revalidate();
-  return { ok: true };
+  const data = r.data as {
+    rulesCreated?: { category: string; emirate: string }[];
+    rulesSkipped?: { category: string; emirate: string; reason: string }[];
+  } | null;
+  return {
+    ok: true,
+    ...(data?.rulesCreated?.length ? { rulesCreated: data.rulesCreated } : {}),
+    ...(data?.rulesSkipped?.length ? { rulesSkipped: data.rulesSkipped } : {}),
+  };
 }
 
 /** The rules an approved clause is part of (D47 rule ticks). */

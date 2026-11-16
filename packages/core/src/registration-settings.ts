@@ -68,6 +68,22 @@ export function documentKeyLabel(key: string, fieldLabels?: ReadonlyMap<string, 
 /** Labels of the fixed and standard KYC items (company fields need their form; see documentKeyLabel). */
 export const DOCUMENT_KEY_LABELS: Record<FixedDocumentKey | `kyc:${KycDocumentKind}`, string> = FIXED_LABELS;
 
+const WORDING = z.string().trim().min(1).max(200);
+
+/**
+ * D74: the emirate's names a generic contract template prints ("registered with {registration system} ({registering
+ * authority})", "governed by {governing law}", "{utility provider} account"). Text an admin confirms with legal; no
+ * model writes it and no deadline or amount is in it (those come from the rulebook).
+ */
+export const ContractWording = z.strictObject({
+  registrationSystem: WORDING,
+  registeringAuthority: WORDING,
+  governingLaw: WORDING,
+  disputeBody: WORDING,
+  utilityProvider: WORDING,
+});
+export type ContractWording = z.infer<typeof ContractWording>;
+
 /** Mode "online" needs a registration adapter in the engine; otherwise staff register by hand. */
 export const RegistrationSettings = z
   .strictObject({
@@ -99,6 +115,8 @@ export const RegistrationSettings = z
     /** Anchored JS regular expression (^...$) the recorded reference must match. */
     referencePattern: z.string().max(120),
     sources: z.array(z.string().max(500)).max(10),
+    /** Optional: a row saved before D74 has none, and the emirate's default wording is used. */
+    contractWording: ContractWording.optional(),
   })
   .superRefine((v, ctx) => {
     if (!v.referencePattern.startsWith("^") || !v.referencePattern.endsWith("$")) {
@@ -140,7 +158,65 @@ const MANUAL_DOCS: DocumentKey[] = [
   "previous_registration_cancelled",
 ];
 
-export const DEFAULT_REGISTRATION_SETTINGS: Record<Emirate, RegistrationSettings> = {
+/** D74 defaults, from general public data (confirm with legal): the names a generic template prints per emirate. */
+export const DEFAULT_CONTRACT_WORDING: Record<Emirate, ContractWording> = {
+  dubai: {
+    registrationSystem: "Ejari",
+    registeringAuthority: "Dubai Land Department",
+    governingLaw: "the laws of the Emirate of Dubai",
+    disputeBody: "the Rental Disputes Settlement Centre in Dubai",
+    utilityProvider: "DEWA",
+  },
+  abu_dhabi: {
+    registrationSystem: "Tawtheeq",
+    registeringAuthority: "Abu Dhabi Real Estate Centre (ADREC)",
+    governingLaw: "the laws of the Emirate of Abu Dhabi",
+    disputeBody: "the Rental Dispute Settlement Committee in Abu Dhabi",
+    utilityProvider: "ADDC / AADC",
+  },
+  sharjah: {
+    registrationSystem: "Sharjah Municipality attestation",
+    registeringAuthority: "Sharjah Municipality",
+    governingLaw: "the laws of the Emirate of Sharjah",
+    disputeBody: "the Rental Disputes Resolution Committee in Sharjah",
+    utilityProvider: "SEWA",
+  },
+  ajman: {
+    registrationSystem: "Tasdeeq",
+    registeringAuthority: "Ajman Municipality and Planning Department",
+    governingLaw: "the laws of the Emirate of Ajman",
+    disputeBody: "the competent rental disputes committee in Ajman",
+    utilityProvider: "AEWA",
+  },
+  ras_al_khaimah: {
+    registrationSystem: "RAK Municipality tenancy registration",
+    registeringAuthority: "Ras Al Khaimah Municipality",
+    governingLaw: "the laws of the Emirate of Ras Al Khaimah",
+    disputeBody: "the competent rental disputes committee in Ras Al Khaimah",
+    utilityProvider: "Etihad WE",
+  },
+  fujairah: {
+    registrationSystem: "Ejaar",
+    registeringAuthority: "Fujairah Municipality",
+    governingLaw: "the laws of the Emirate of Fujairah",
+    disputeBody: "the competent rental disputes committee in Fujairah",
+    utilityProvider: "Etihad WE",
+  },
+  umm_al_quwain: {
+    registrationSystem: "UAQ Municipality tenancy registration",
+    registeringAuthority: "Umm Al Quwain Municipality",
+    governingLaw: "the laws of the Emirate of Umm Al Quwain",
+    disputeBody: "the competent rental disputes committee in Umm Al Quwain",
+    utilityProvider: "Etihad WE",
+  },
+};
+
+/** The wording in force for an emirate: the saved settings' own, else the default. */
+export function contractWordingFor(settings: { contractWording?: ContractWording | undefined } | null, emirate: Emirate) {
+  return settings?.contractWording ?? DEFAULT_CONTRACT_WORDING[emirate];
+}
+
+const BASE_DEFAULTS: Record<Emirate, Omit<RegistrationSettings, "contractWording">> = {
   dubai: {
     mode: "online",
     portalName: "Ejari (Dubai REST / DLD)",
@@ -228,3 +304,8 @@ export const DEFAULT_REGISTRATION_SETTINGS: Record<Emirate, RegistrationSettings
     sources: [`${GENERAL} UAQ charges about 2% of the rent plus a small service fee; registration is in person.`],
   },
 };
+
+/** The default settings of each emirate, with its D74 contract wording. */
+export const DEFAULT_REGISTRATION_SETTINGS = Object.fromEntries(
+  (Object.keys(BASE_DEFAULTS) as Emirate[]).map((e) => [e, { ...BASE_DEFAULTS[e], contractWording: DEFAULT_CONTRACT_WORDING[e] }]),
+) as Record<Emirate, RegistrationSettings & { contractWording: ContractWording }>;

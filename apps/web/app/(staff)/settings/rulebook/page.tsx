@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { type Emirate, EMIRATE_LABELS } from "@leasing/core";
+import { type Emirate, EMIRATE_LABELS, EMIRATES } from "@leasing/core";
 import { AskAiMenu } from "../../../../components/ask-ai";
 import { Status } from "../../../../components/ui";
 import { EmptyState } from "../../../../components/ui/empty-state";
@@ -29,6 +29,9 @@ export default async function RulesPage() {
   ]);
   const isAdmin = me?.role === "admin";
   const versions = (data?.versions ?? []).toReversed();
+  // The rulebook is shared by every company, so drafts can be made for any emirate; operated ones are listed first.
+  const operated = operatedEmirates(companies);
+  const draftEmirates = [...operated, ...EMIRATES.filter((e) => !operated.includes(e))];
   return (
     <SetPage
       title="Rulebook"
@@ -39,7 +42,7 @@ export default async function RulesPage() {
           {isAdmin && data ? (
             <NewDraft
               activeByEmirate={data.activeByEmirate}
-              emirates={operatedEmirates(companies)}
+              emirates={draftEmirates}
               published={versions
                 .filter((v) => v.status === "published")
                 .map((v) => ({ version: v.version, emirate: v.emirate }))}

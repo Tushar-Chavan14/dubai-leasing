@@ -1,10 +1,17 @@
 import type { Helper } from "@leasing/core";
 import type { Llm } from "@leasing/llm";
 import { extractPdf } from "../contract-template/extract.ts";
-import { detectBlanks, guessLabel, isSignatureBlank } from "./blanks.ts";
+import { detectBlanks, guessLabel, isSignatureBlank, placeholderLabel, placeholderName } from "./blanks.ts";
 import { sheetKeyInfo } from "./datasheet.ts";
 import { detectFilledValues } from "./filled.ts";
-import { contextParty, numberChequeDateRuns, partyIn, type ProposeItem, proposeMappings } from "./mapping.ts";
+import {
+  contextParty,
+  numberChequeDateRuns,
+  partyIn,
+  type ProposeItem,
+  proposeMappings,
+  unknownPlaceholderNote,
+} from "./mapping.ts";
 import { DEFAULT_STYLE, extractLook, hasAuthorityMarks, lineKey } from "./look.ts";
 import { structureMessages } from "./prompt.ts";
 import {
@@ -26,6 +33,7 @@ export {
   isFieldName,
 } from "./fields.ts";
 export {
+  ADDITIONAL_TERMS_KEY,
   isSheetKey,
   SHEET_KEY_NAMES,
   SHEET_KEYS,
@@ -41,6 +49,7 @@ export {
   mappingMessages,
   matchBlank,
   matchLabel,
+  matchPlaceholder,
   partyIn,
   type Party,
   type Proposal,
@@ -49,7 +58,16 @@ export {
   redactValues,
   resuggestBlanks,
 } from "./mapping.ts";
-export { compatible, detectBlanks, guessLabel, inferBlankType, type RawBlank, validateMapping } from "./blanks.ts";
+export {
+  compatible,
+  detectBlanks,
+  guessLabel,
+  inferBlankType,
+  placeholderLabel,
+  placeholderName,
+  type RawBlank,
+  validateMapping,
+} from "./blanks.ts";
 export { DEFAULT_STYLE, extractLook, hasAuthorityMarks, type Look, LOOK_MAX_PAGES } from "./look.ts";
 export { encodePng } from "./png.ts";
 export { structureMessages } from "./prompt.ts";
@@ -155,9 +173,16 @@ export function contractStructureHelper(
       for (const b of det.blanks) {
         const p = proposed.get(b.id);
         const fx = fixed.get(b.id);
-        const label = fx?.fixedLabel ?? (cleanLabel(p?.label ?? "") || guessLabel(b));
+        // D74: a named placeholder is labelled by its name, and only a signature or initials name is a signature line.
+        const phName = b.kind === "placeholder" ? placeholderName(b.marker) : null;
+        const label = phName
+          ? placeholderLabel(phName)
+          : (fx?.fixedLabel ?? (cleanLabel(p?.label ?? "") || guessLabel(b)));
         labelOf.set(b.id, label);
-        if (isSignatureBlank(b, label) || isSignatureBlank(b, guessLabel(b))) {
+        const signs = phName
+          ? /\b(signature|initials?|stamp|witness)\b/i.test(phName)
+          : isSignatureBlank(b, label) || isSignatureBlank(b, guessLabel(b));
+        if (signs) {
           signatureIds.add(b.id);
           continue;
         }
@@ -168,6 +193,7 @@ export function contractStructureHelper(
           after: b.after,
           party: partyIn(label) ?? contextParty(det.lines, b.line),
           known: fx?.proposedField ?? null,
+          placeholder: phName ?? undefined,
         });
       }
       const { proposals, model: modelName } = await proposeMappings(llm, items);
@@ -183,7 +209,7 @@ export function contractStructureHelper(
         return {
           id: b.id,
           kind: b.kind,
-          marker: b.marker.slice(0, 40),
+          marker: b.marker.slice(0, 60),
           label: labelOf.get(b.id) ?? "Blank",
           field: map.field,
           fieldType: map.fieldType,
@@ -192,6 +218,9 @@ export function contractStructureHelper(
           sectionIndex: sectionOf[b.line] ?? 0,
           before: b.before.slice(-200),
           after: b.after.slice(0, 100),
+          ...(b.kind === "placeholder" && !signature && map.field === "leave_empty"
+            ? { note: unknownPlaceholderNote(b.marker) }
+            : {}),
         };
       });
       const blanks = numberChequeDateRuns(

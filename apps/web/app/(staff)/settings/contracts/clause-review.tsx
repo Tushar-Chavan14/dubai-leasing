@@ -82,6 +82,9 @@ export function UploadSample({
             </label>
           ))}
         </div>
+        <p className="m-0 mt-1 text-[12.5px] text-muted">
+          Approving creates a contract rule for each emirate and category that has none yet.
+        </p>
       </fieldset>
       <div className="flex flex-wrap items-center gap-2">
         <input

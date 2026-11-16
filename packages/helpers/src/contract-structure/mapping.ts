@@ -1,9 +1,9 @@
 import type { Llm } from "@leasing/llm";
 import { z } from "zod";
 import { stripDelimiters } from "../contract-template/prompt.ts";
-import { type RawBlank, compatible, guessLabel, inferBlankType } from "./blanks.ts";
+import { type RawBlank, compatible, guessLabel, inferBlankType, placeholderName } from "./blanks.ts";
 import { VALUE_PATTERNS } from "./filled.ts";
-import { isSheetKey, sheetForPrompt, sheetKeyInfo } from "./datasheet.ts";
+import { isSheetKey, SHEET_KEY_NAMES, sheetForPrompt, sheetKeyInfo } from "./datasheet.ts";
 import type { MappingSource, TemplateBlank } from "./schema.ts";
 
 /**
@@ -213,6 +213,131 @@ export function fitsBlank(field: string, label: string, b: Pick<RawBlank, "befor
   return !!info && compatible(inferBlankType(label, b.before, b.after), info.type);
 }
 
+/**
+ * D74: names a template may give a placeholder, as the lower-case name without spaces or punctuation: the names the
+ * generic UAE template uses, and common synonyms. The name of a data-sheet key itself is read as well (`community`,
+ * `tenantNameEn`, `leaseRef` ...), then the label rules. Only code reads names; no model is asked.
+ */
+const PLACEHOLDER_ALIASES: Record<string, string> = {
+  companyname: "companyName",
+  companytradelicenceno: "companyTradeLicenceNo",
+  contractno: "leaseRef",
+  contractnumber: "leaseRef",
+  tenancycontractno: "leaseRef",
+  leaseno: "leaseRef",
+  leasenumber: "leaseRef",
+  leasereference: "leaseRef",
+  referenceno: "leaseRef",
+  emirate: "emirateName",
+  emiratename: "emirateName",
+  contractdate: "contractOn",
+  dateofcontract: "contractOn",
+  agreementdate: "contractOn",
+  landlordname: "landlordNameEn",
+  landlordfullname: "landlordNameEn",
+  lessorname: "landlordNameEn",
+  ownername: "landlordNameEn",
+  landlordtradelicenceno: "landlordTradeLicenceNo",
+  landlordtradelicencenumber: "landlordTradeLicenceNo",
+  landlordlicenceno: "landlordTradeLicenceNo",
+  landlordlicenseno: "landlordTradeLicenceNo",
+  landlordaddress: "landlordAddress",
+  landlordemail: "landlordEmail",
+  landlordphone: "landlordPhone",
+  landlordmobile: "landlordPhone",
+  signatoryname: "signatoryName",
+  signatorytitle: "signatoryTitle",
+  signatoryemail: "signatoryEmail",
+  tenantname: "tenantNameEn",
+  tenantfullname: "tenantNameEn",
+  lesseename: "tenantNameEn",
+  tenantemiratesid: "tenantEmiratesIdNo",
+  tenantemiratesidno: "tenantEmiratesIdNo",
+  tenanteid: "tenantEmiratesIdNo",
+  tenantpassportno: "tenantPassportNo",
+  tenantpassportnumber: "tenantPassportNo",
+  tenantnationality: "tenantNationality",
+  tenantemail: "tenantEmail",
+  tenantphone: "tenantPhone",
+  tenantmobile: "tenantPhone",
+  unitno: "unitNo",
+  unitnumber: "unitNo",
+  flatno: "unitNo",
+  building: "building",
+  buildingname: "building",
+  community: "community",
+  propertycommunity: "community",
+  communityarea: "community",
+  area: "community",
+  propertytype: "propertySubtype",
+  propertysubtype: "propertySubtype",
+  propertyusage: "propertyUsage",
+  usage: "propertyUsage",
+  propertyno: "dldPropertyNo",
+  propertynumber: "dldPropertyNo",
+  registrypropertyno: "dldPropertyNo",
+  makanino: "makaniNo",
+  makaninumber: "makaniNo",
+  plotno: "plotNo",
+  plotnumber: "plotNo",
+  utilityprovider: "utilityProvider",
+  utilityaccountno: "dewaPremiseNo",
+  utilityaccountnumber: "dewaPremiseNo",
+  utilitypremiseno: "dewaPremiseNo",
+  areasqft: "areaSqft",
+  bedrooms: "bedrooms",
+  bathrooms: "bathrooms",
+  parkingspaces: "parkingSpaces",
+  furnishing: "furnishing",
+  unitdescription: "unitDescription",
+  startdate: "startOn",
+  termstart: "startOn",
+  enddate: "endOn",
+  termend: "endOn",
+  moveindate: "moveInOn",
+  annualrent: "annualRentFils",
+  rent: "annualRentFils",
+  noofcheques: "cheques",
+  numberofcheques: "cheques",
+  chequecount: "cheques",
+  chequeamount: "chequeAmountFils",
+  chequedates: "chequeDates",
+  chequepayee: "chequePayeeName",
+  chequespayableto: "chequePayeeName",
+  securitydeposit: "depositFils",
+  deposit: "depositFils",
+  registrationfee: "registrationFeeFils",
+  registrationfeepayer: "registrationFeePayer",
+  otherfees: "feesSummary",
+  rentfreedays: "rentFreeDays",
+  renewalnoticedays: "renewalNoticeDays",
+  repossessionnoticemonths: "repossessionNoticeMonths",
+  laterentdays: "lateRentDays",
+  registrationsystem: "registrationSystem",
+  registeringauthority: "registeringAuthority",
+  governinglaw: "governingLaw",
+  disputebody: "disputeBody",
+  additionalterms: "additionalTerms",
+};
+const SHEET_BY_COMPACT = new Map(SHEET_KEY_NAMES.map((k) => [k.toLowerCase(), k]));
+const compactName = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
+
+/**
+ * The data-sheet key a placeholder name stands for: the alias table, then a key's own name (any case, `_` or spaces),
+ * then the label rules. `leave_empty` when the name is a known detail the system doesn't store; null when the name
+ * is unknown (the review says so and the blank prints as an empty line).
+ */
+export function matchPlaceholder(name: string): string | null {
+  const c = compactName(name);
+  if (!c) return null;
+  const alias = PLACEHOLDER_ALIASES[c];
+  if (alias && isSheetKey(alias)) return alias;
+  const own = SHEET_BY_COMPACT.get(c);
+  if (own) return own;
+  const hit = matchLabel(name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " "), null);
+  return hit && (hit === "leave_empty" || isSheetKey(hit)) ? hit : null;
+}
+
 const MODEL_BATCH = 40;
 
 export interface AskItem {
@@ -306,6 +431,8 @@ export async function askModel(
 export interface ProposeItem extends AskItem {
   /** A field already chosen by code elsewhere (a known label of a filled sample), if any. */
   known?: string | null;
+  /** D74: the blank is a named placeholder (`{tenant name}`): its name decides, by code only, whatever the words around it say. */
+  placeholder?: string | undefined;
 }
 
 /** Code rules first, then the decision model for what is left, then leave_empty. Never throws. */
@@ -316,6 +443,11 @@ export async function proposeMappings(
   const proposals = new Map<string, Proposal>();
   const toAsk: AskItem[] = [];
   for (const it of items) {
+    if (it.placeholder !== undefined) {
+      const hit = matchPlaceholder(it.placeholder);
+      proposals.set(it.id, hit && hit !== "leave_empty" ? { field: hit, source: "matched" } : { field: "leave_empty", source: "empty" });
+      continue;
+    }
     const known = it.known && it.known !== "unmapped" ? it.known : null;
     const hit = known ?? matchBlank(it.label, it, it.party);
     if (hit === "leave_empty") proposals.set(it.id, { field: "leave_empty", source: "empty" });
@@ -366,6 +498,7 @@ export async function resuggestBlanks(
       before: b.before,
       after: b.after,
       party: partyIn(b.label) ?? contextParty(lines, Math.max(0, lineOf(b.id))),
+      placeholder: b.kind === "placeholder" ? (placeholderName(b.marker) ?? b.label) : undefined,
     })),
   );
   let changed = 0;
@@ -380,6 +513,7 @@ export async function resuggestBlanks(
       source: p.source,
     };
     delete next.note;
+    if (b.kind === "placeholder" && field === "leave_empty") next.note = unknownPlaceholderNote(b.marker);
     return next;
   });
   // D70: a row of cheque-date blanks is numbered by position, as when the sample is first read.
@@ -389,6 +523,9 @@ export async function resuggestBlanks(
   for (const [i, b] of numbered.entries()) if (b.field !== blanks[i]!.field) changed++;
   return { blanks: numbered, changed, model };
 }
+
+/** The review's note on a placeholder whose name is not a data field. */
+export const unknownPlaceholderNote = (marker: string): string => `Unknown placeholder ${marker}`.slice(0, 200);
 
 const CHEQUE_DATE_KEY = /^chequeDate(?:s|\d{1,2})$/;
 const RUN = /\{\{b\d+\}\}(?:\s*(?:\||,|\/|;|and|&)?\s*\{\{b\d+\}\})+/g;

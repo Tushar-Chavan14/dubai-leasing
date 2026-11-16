@@ -1,6 +1,8 @@
 import {
   type CalendarDate,
   type ContractFee,
+  EMIRATE_LABELS,
+  Emirate,
   feesFor,
   type Instalment,
   parseContractFees,
@@ -174,6 +176,40 @@ EXTRAS.allFeesList = {
   label: "Every fee that applies, one per line (printed in the payment schedule section)",
   read: (r) => appliedFees(r).map(feeText).join("\n"),
 };
+/**
+ * D74: the emirate's names and the rulebook's periods, for generic templates. The wording comes from the emirate's
+ * registration settings and the periods from the rulebook pinned on the lease (both by code, passed in by the engine);
+ * nothing here is chosen by a model.
+ */
+const WORDING_KEYS: [string, string][] = [
+  ["registrationSystem", "Tenancy registration system of the emirate (Ejari, Tawtheeq, municipality attestation ...)"],
+  ["registeringAuthority", "Authority that registers the tenancy contract in the emirate"],
+  ["governingLaw", "Law governing the contract in the emirate"],
+  ["disputeBody", "Body tenancy disputes are referred to in the emirate"],
+  ["utilityProvider", "Electricity and water provider of the emirate (DEWA, SEWA ...)"],
+];
+for (const [key, label] of WORDING_KEYS) EXTRAS[key] = { type: "text", label, read: (r) => r.wording?.[key] };
+const RULEBOOK_KEYS: [string, string, string][] = [
+  ["renewalNoticeDays", "renewalNoticeDays", "Days of written notice before the term ends for a rent change on renewal (rulebook)"],
+  ["repossessionNoticeMonths", "repossessionNoticeMonths", "Months of notice for the landlord to end the tenancy at the end of the term (rulebook)"],
+  ["lateRentDays", "lateRentDaysAfterFormalReminder", "Days after the formal reminder before eviction can be sought (rulebook)"],
+];
+for (const [key, col, label] of RULEBOOK_KEYS) EXTRAS[key] = { type: "int", label, read: (r) => r.rulebook?.[col] };
+EXTRAS.emirateName = {
+  type: "text",
+  label: "Emirate of the unit, as a name (Dubai, Abu Dhabi ...)",
+  read: (r) => {
+    const e = Emirate.safeParse(r.unit?.emirate);
+    return e.success ? EMIRATE_LABELS[e.data] : null;
+  },
+};
+/** Printed where the template says `{additional terms}`: the contract's addendum goes there (see `templateContractBlocks`). */
+export const ADDITIONAL_TERMS_KEY = "additionalTerms";
+EXTRAS[ADDITIONAL_TERMS_KEY] = {
+  type: "text",
+  label: "Additional terms (the contract's company clauses and free text, printed in place)",
+  read: () => null,
+};
 EXTRAS.applicationRef = { type: "text", label: "Application reference", read: (r) => r.application?.ref };
 EXTRAS.reservationFils = {
   type: "money_fils",
@@ -202,6 +238,10 @@ export interface SheetRecords {
   landlord?: Record<string, unknown> | undefined;
   tenant?: Record<string, unknown> | undefined;
   application?: Record<string, unknown> | null | undefined;
+  /** D74: the emirate's contract wording (registration settings). */
+  wording?: Record<string, unknown> | null | undefined;
+  /** D74: the periods of the rulebook that applies (`renewalNoticeDays`, `repossessionNoticeMonths`, `lateRentDaysAfterFormalReminder`). */
+  rulebook?: Record<string, unknown> | null | undefined;
 }
 
 /** Values of the generated extras, copied verbatim from the records (null when the record has none). */

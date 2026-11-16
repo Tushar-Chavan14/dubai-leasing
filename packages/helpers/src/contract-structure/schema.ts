@@ -48,7 +48,7 @@ export const MAPPING_SOURCES = ["matched", "model", "empty", "admin"] as const;
 /** How a mapping was chosen: code rule, decision model, left empty (unsure or not stored), or the admin. */
 export type MappingSource = (typeof MAPPING_SOURCES)[number];
 
-export const BLANK_KINDS = ["underscore", "dots", "bracket", "label"] as const;
+export const BLANK_KINDS = ["underscore", "dots", "bracket", "label", "placeholder"] as const;
 
 /** `blanks` column entry. A blank is rendered only when `field` is set (or `role` is "signature"). */
 export const TemplateBlank = z.object({

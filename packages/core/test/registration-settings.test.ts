@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_REGISTRATION_SETTINGS, documentKeyLabel, EMIRATES, RegistrationSettings } from "../src/index.ts";
+import {
+  contractWordingFor,
+  DEFAULT_CONTRACT_WORDING,
+  DEFAULT_REGISTRATION_SETTINGS,
+  documentKeyLabel,
+  EMIRATES,
+  RegistrationSettings,
+} from "../src/index.ts";
 
 const base = DEFAULT_REGISTRATION_SETTINGS.sharjah;
 
@@ -65,5 +72,34 @@ describe("checklist items (D62)", () => {
       "Tenant document: Letter from employer",
     );
     expect(documentKeyLabel("answer:pet_count")).toBe("Applicant's answer: Pet count");
+  });
+  test("D74: every emirate has contract wording by default, and a row saved without it falls back to it", () => {
+    for (const e of EMIRATES) {
+      const w = DEFAULT_REGISTRATION_SETTINGS[e].contractWording;
+      expect(w).toEqual(DEFAULT_CONTRACT_WORDING[e]);
+      for (const v of Object.values(w)) expect(v.length).toBeGreaterThan(0);
+    }
+    expect(DEFAULT_CONTRACT_WORDING.dubai).toMatchObject({ registrationSystem: "Ejari", utilityProvider: "DEWA" });
+    expect(DEFAULT_CONTRACT_WORDING.sharjah).toMatchObject({
+      registeringAuthority: "Sharjah Municipality",
+      utilityProvider: "SEWA",
+    });
+    const { contractWording: _, ...old } = DEFAULT_REGISTRATION_SETTINGS.sharjah;
+    const parsed = RegistrationSettings.parse(old);
+    expect(parsed.contractWording).toBeUndefined();
+    expect(contractWordingFor(parsed, "sharjah")).toEqual(DEFAULT_CONTRACT_WORDING.sharjah);
+  });
+  test("D74: contract wording is checked: no empty or long text, no extra keys", () => {
+    const w = DEFAULT_CONTRACT_WORDING.dubai;
+    expect(RegistrationSettings.safeParse({ ...base, contractWording: { ...w, utilityProvider: "FEWA" } }).success).toBe(
+      true,
+    );
+    expect(RegistrationSettings.safeParse({ ...base, contractWording: { ...w, governingLaw: "  " } }).success).toBe(false);
+    expect(RegistrationSettings.safeParse({ ...base, contractWording: { ...w, disputeBody: "x".repeat(201) } }).success).toBe(
+      false,
+    );
+    expect(RegistrationSettings.safeParse({ ...base, contractWording: { ...w, extra: "x" } }).success).toBe(false);
+    expect(RegistrationSettings.safeParse({ ...base, contractWording: { registrationSystem: "Ejari" } }).success).toBe(false);
+    expect(contractWordingFor({ contractWording: { ...w, utilityProvider: "FEWA" } }, "sharjah").utilityProvider).toBe("FEWA");
   });
 });

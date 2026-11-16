@@ -55,10 +55,11 @@ import { getRulebook, rulebookVersions } from "@leasing/rulebook";
 import { sha256Hex } from "@leasing/core/tokens";
 import { and, asc, desc, eq, gt, gte, inArray, sql } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
-import { conflict, notFound, unprocessable } from "../errors.ts";
+import { conflict, DomainError, notFound, unprocessable } from "../errors.ts";
 import { appendEvent } from "./events.ts";
 import { recordRun, runOnly } from "./helpers.ts";
-import { replaceContractRule, repointContractRule } from "./portfolio.ts";
+import { createContractRule, replaceContractRule, repointContractRule } from "./portfolio.ts";
+import { overlaps } from "./rule-scope.ts";
 // Used only inside functions (the two modules import each other).
 import { clauseView, contractJobBudgetSeconds } from "./contract-templates.ts";
 
@@ -1557,6 +1558,86 @@ export async function approveSample(
       );
       ruleIds.push(next.id);
     }
+    // D73: a template naming emirates gets a generic rule (all types) for each of them and each category, where the
+    // company has none yet. Existing rules are never replaced or changed; a rule that can't be made is skipped and
+    // reported (a savepoint keeps a failed insert from poisoning the approval).
+    const rulesCreated: { category: PropertyCategory; emirate: Emirate; ruleId: string }[] = [];
+    const rulesSkipped: { category: PropertyCategory; emirate: Emirate; reason: string }[] = [];
+    if (approved && approved.emirates.length) {
+      const template = approved;
+      const [company] = await tx.db
+        .select({ emirates: companies.emirates, categories: companies.categories })
+        .from(companies)
+        .where(eq(companies.id, companyId));
+      const active = await tx.db
+        .select()
+        .from(contractRules)
+        .where(and(eq(contractRules.companyId, companyId), eq(contractRules.active, true)));
+      const templateClauses = await tx.db
+        .select({ id: companyClauses.id, status: companyClauses.status, inTemplateId: companyClauses.inTemplateId })
+        .from(companyClauses)
+        .where(eq(companyClauses.companyId, companyId));
+      const serves = new Set(
+        templateClauses
+          .filter((c) => c.status === "approved" && (c.inTemplateId === null || c.inTemplateId === template.id))
+          .map((c) => `cc:${c.id}`),
+      );
+      for (const category of ["residential", "commercial", "retail"] as const) {
+        // Values come from the company's any-emirate rule of the category, else the settings form's defaults.
+        const base = active.find((r) => r.category === category && r.emirate === null && r.subtypes.length === 0);
+        const clauseIds = [
+          ...new Set([
+            ...(base?.clauseIds ?? []).filter((id) => !isCompanyClauseRef(id) || serves.has(id)),
+            ...added.filter((id) => serves.has(id)),
+          ]),
+        ];
+        const tenures = (base?.tenures ?? ["annual"]).filter(
+          (t): t is "annual" | "short_term" => t === "annual" || t === "short_term",
+        );
+        for (const emirate of template.emirates as Emirate[]) {
+          const skip = (reason: string) => rulesSkipped.push({ category, emirate, reason });
+          if (!company?.emirates.includes(emirate)) {
+            // Said once per emirate, not once per category.
+            if (category === "residential") skip("The company doesn't operate in this emirate.");
+            continue;
+          }
+          if (!company.categories.includes(category)) {
+            skip("The company doesn't offer this category.");
+            continue;
+          }
+          if (active.some((r) => r.category === category && overlaps(r, { emirate, subtypes: [] }))) {
+            skip("The company already has a rule for this.");
+            continue;
+          }
+          await tx.db.execute(sql`savepoint d73_rule`);
+          try {
+            const rule = await createContractRule(
+              ctx,
+              tx,
+              {
+                companyId,
+                category,
+                emirate,
+                subtypes: [],
+                tenures,
+                minCheques: base?.minCheques ?? 1,
+                maxCheques: base?.maxCheques ?? 4,
+                clauseIds,
+                templateId: template.id,
+              },
+              actor,
+            );
+            await tx.db.execute(sql`release savepoint d73_rule`);
+            active.push(rule);
+            rulesCreated.push({ category, emirate, ruleId: rule.id });
+          } catch (err) {
+            await tx.db.execute(sql`rollback to savepoint d73_rule`);
+            if (!(err instanceof DomainError)) throw err;
+            skip(err.message);
+          }
+        }
+      }
+    }
     await appendEvent(tx, ctx, {
       entity,
       type: locked ? "COMPANY_TEMPLATE_APPROVED" : "COMPANY_SAMPLE_CLAUSES_APPROVED",
@@ -1576,6 +1657,8 @@ export async function approveSample(
           : {}),
         clausesApproved: proposed.map((c) => c.id),
         addedToRules: ruleIds.length ? { ruleIds, clauseIds: added } : null,
+        rulesCreated,
+        rulesSkipped,
         checked: opts.checked === true,
       },
       rulesVersion: ctx.rulesVersion,
@@ -1584,6 +1667,8 @@ export async function approveSample(
       template: approved ? templateView(approved) : null,
       clausesApproved: proposed.length,
       rulesRepointed: moved,
+      rulesCreated,
+      rulesSkipped,
     };
   });
 }

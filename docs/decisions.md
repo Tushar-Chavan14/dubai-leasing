@@ -1695,3 +1695,19 @@ The leasing assistant automates the work up to the contract. Staff should approv
   changed meanwhile). A paid reservation is not changed; the approval reasons note a difference.
 - **Rules.** Rule 1: values come from the officer's words and code, never from the model. Rule 3: outside limits need a
   manager. Rule 4: every term change is an event with before and after. Amends D71 (officer checks).
+
+## D73 — Approving a template creates its emirates' generic rules
+
+- **Why.** The user asked: a template that names emirates is useless until rules point at it, and making nine rules by
+  hand per company is slow and easy to forget.
+- **What.** When an admin approves a company template whose `emirates` is not empty, the engine creates a contract rule
+  for each of its emirates and each category the company offers (residential, commercial, retail): that emirate, all
+  types (`subtypes = []`), `templateId` = the approved template. It goes through `createContractRule` (validation, overlap
+  check, `CONTRACT_RULE_CREATED` event with the approving admin, config hash). Tenures, cheque range and clauses are
+  copied from the company's any-emirate rule of that category; with none, annual and 1 to 4 cheques (the settings form
+  defaults). Clauses kept are approved and not linked to another template.
+- **Never replaces.** A rule is created only where no active rule of the company, category and emirate covers all types
+  (`overlaps`). Existing rules are never replaced or changed. A rule naming specific types does not block it. A new
+  version of a template moves its rules (D69); then only gaps are filled.
+- **Any emirate.** A template for any emirate creates nothing.
+- **Result.** The approve response and the `COMPANY_TEMPLATE_APPROVED` event carry `rulesCreated`; the approval UI lists them.

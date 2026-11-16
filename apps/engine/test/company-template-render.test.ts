@@ -1762,6 +1762,8 @@ describe.skipIf(noDb)("company templates per emirate (D56)", () => {
       maxCheques: 12,
       templateId,
     });
+    // D73: approving the Dubai template already made its generic rules; the form checks below start from none.
+    await database.db.update(contractRules).set({ active: false }).where(eq(contractRules.companyId, s.companyId));
     const bad = await s.api("/contract-rules", "POST", body(dubai, "sharjah"));
     expect(bad.status).toBe(422);
     expect(((await bad.json()) as { code: string }).code).toBe("template_emirate");
@@ -1827,6 +1829,17 @@ describe.skipIf(noDb)("company templates per emirate (D56)", () => {
       clauseIds: [],
       templateId: both,
     });
+    // D73: approving made generic rules for both emirates; replace Abu Dhabi's residential one by hand.
+    await database.db
+      .update(contractRules)
+      .set({ active: false })
+      .where(
+        and(
+          eq(contractRules.companyId, s.companyId),
+          eq(contractRules.emirate, "abu_dhabi"),
+          eq(contractRules.category, "residential"),
+        ),
+      );
     const ad = await s.api("/contract-rules", "POST", forRule("abu_dhabi"));
     expect(ad.status).toBe(201);
     const adRule = ((await ad.json()) as { id: string }).id;
@@ -1895,5 +1908,222 @@ describe.skipIf(noDb)("company templates per emirate (D56)", () => {
       templates: { id: string; emirates: string[] }[];
     };
     expect(panel.templates.find((t) => t.id === id)?.emirates).toEqual(["sharjah"]);
+  });
+});
+
+describe.skipIf(noDb)("D73: approving a template creates its emirates' generic rules", () => {
+  beforeEach(async () => {
+    database = await freshDatabase();
+  });
+  const activeRules = (companyId: string) =>
+    database.db
+      .select()
+      .from(contractRules)
+      .where(and(eq(contractRules.companyId, companyId), eq(contractRules.active, true)));
+  const approveBody = async (s: S, id: string) => {
+    const r = await s.approveSample(id);
+    expect(r.status).toBe(200);
+    return (await r.json()) as { rulesCreated: { category: string; emirate: string; ruleId: string }[] };
+  };
+
+  test("a Sharjah template gets a rule for each category, all types", async () => {
+    const s = await setup();
+    const id = await s.propose({ emirates: ["sharjah"] });
+    const body = await approveBody(s, id);
+    const rules = await activeRules(s.companyId);
+    expect(rules.map((r) => r.category).toSorted()).toEqual(["commercial", "residential", "retail"]);
+    for (const r of rules)
+      expect(r).toMatchObject({ emirate: "sharjah", subtypes: [], templateId: id, createdBy: `user:${s.admin.id}` });
+    expect(body.rulesCreated.map((r) => r.ruleId).toSorted()).toEqual(rules.map((r) => r.id).toSorted());
+  });
+
+  test("an existing Sharjah residential rule is left unchanged", async () => {
+    const s = await setup();
+    const first = await s.propose({ emirates: ["sharjah"], name: "First" });
+    await approveBody(s, first);
+    const [mine] = (await activeRules(s.companyId)).filter((r) => r.category === "residential");
+    await database.db.update(contractRules).set({ maxCheques: 6 }).where(eq(contractRules.id, mine!.id));
+    await database.db
+      .delete(contractRules)
+      .where(and(eq(contractRules.companyId, s.companyId), eq(contractRules.category, "commercial")));
+    await database.db
+      .delete(contractRules)
+      .where(and(eq(contractRules.companyId, s.companyId), eq(contractRules.category, "retail")));
+    const second = await s.propose({ emirates: ["sharjah"], name: "Second" });
+    const body = await approveBody(s, second);
+    expect(body.rulesCreated.map((r) => r.category).toSorted()).toEqual(["commercial", "retail"]);
+    const rules = await activeRules(s.companyId);
+    expect(rules).toHaveLength(3);
+    expect(rules.find((r) => r.id === mine!.id)).toMatchObject({ maxCheques: 6, templateId: first });
+  });
+
+  test("an any-emirate template creates nothing", async () => {
+    const s = await setup();
+    const id = await s.propose();
+    expect((await approveBody(s, id)).rulesCreated).toEqual([]);
+    expect(await activeRules(s.companyId)).toHaveLength(0);
+  });
+
+  test("values come from the any-emirate rule of the category", async () => {
+    const s = await setup();
+    const r = await s.api("/contract-rules", "POST", {
+      companyId: s.companyId,
+      category: "commercial",
+      tenures: ["annual", "short_term"],
+      minCheques: 2,
+      maxCheques: 8,
+      clauseIds: [],
+    });
+    expect(r.status).toBe(201);
+    const id = await s.propose({ emirates: ["sharjah"] });
+    await approveBody(s, id);
+    const rules = await activeRules(s.companyId);
+    expect(rules.find((x) => x.category === "commercial" && x.emirate === "sharjah")).toMatchObject({
+      tenures: ["annual", "short_term"],
+      minCheques: 2,
+      maxCheques: 8,
+    });
+    expect(rules.find((x) => x.category === "retail" && x.emirate === "sharjah")).toMatchObject({
+      tenures: ["annual"],
+      minCheques: 1,
+      maxCheques: 4,
+    });
+  });
+
+  test("a new version of the template makes no duplicates", async () => {
+    const s = await setup();
+    const v1 = await s.propose({ emirates: ["sharjah"] });
+    await approveBody(s, v1);
+    const v2 = await s.propose({ emirates: ["sharjah"] });
+    const body = await approveBody(s, v2);
+    expect(body.rulesCreated).toEqual([]);
+    const rules = await activeRules(s.companyId);
+    expect(rules).toHaveLength(3);
+    for (const r of rules) expect(r.templateId).toBe(v2);
+  });
+
+  const clause = async (companyId: string, status: "approved" | "proposed" = "approved") => {
+    const id = newId();
+    await database.db.insert(companyClauses).values({
+      id,
+      companyId,
+      title: "Clause",
+      textEn: "Some wording.",
+      category: "other",
+      hasValues: false,
+      status,
+      createdBy: "helper:contract_template",
+    });
+    return id;
+  };
+  type Body = {
+    rulesCreated: { category: string; emirate: string }[];
+    rulesSkipped: { category: string; emirate: string; reason: string }[];
+  };
+  const anyRule = (s: S, clauseIds: string[]) =>
+    s.api("/contract-rules", "POST", {
+      companyId: s.companyId,
+      category: "residential",
+      tenures: ["annual"],
+      minCheques: 1,
+      maxCheques: 6,
+      clauseIds,
+    });
+
+  test("clauses of the any-emirate rule are kept and the template's are added, once each", async () => {
+    const s = await setup();
+    const base = await clause(s.companyId);
+    expect((await anyRule(s, [`cc:${base}`])).status).toBe(201);
+    const id = await s.propose({ emirates: ["sharjah"] });
+    const [row] = await database.db.select().from(companyContractTemplates).where(eq(companyContractTemplates.id, id));
+    const mine = newId();
+    await database.db.insert(companyClauses).values({
+      id: mine,
+      companyId: s.companyId,
+      title: "Term",
+      textEn: "The term starts on 1 December 2026 and ends on 30 November 2027.",
+      quote: "The term starts on 1 December 2026 and ends on 30 November 2027.",
+      category: "other",
+      hasValues: false,
+      status: "proposed",
+      sourceDocumentId: row!.sampleDocumentId,
+      createdBy: "helper:contract_template",
+    });
+    await approveBody(s, id);
+    const rule = (await activeRules(s.companyId)).find((r) => r.category === "residential" && r.emirate === "sharjah")!;
+    expect(rule.clauseIds.toSorted()).toEqual([`cc:${base}`, `cc:${mine}`].toSorted());
+    expect(rule.maxCheques).toBe(6);
+  });
+
+  test("a rule naming specific types does not block the generic one", async () => {
+    const s = await setup();
+    const r = await s.api("/contract-rules", "POST", {
+      companyId: s.companyId,
+      category: "residential",
+      emirate: "sharjah",
+      subtypes: ["apartment"],
+      tenures: ["annual"],
+      minCheques: 1,
+      maxCheques: 4,
+      clauseIds: [],
+    });
+    expect(r.status).toBe(201);
+    const id = await s.propose({ emirates: ["sharjah"] });
+    const body = await approveBody(s, id);
+    expect(body.rulesCreated.map((x) => x.category)).toContain("residential");
+    expect((await activeRules(s.companyId)).filter((x) => x.category === "residential")).toHaveLength(2);
+  });
+
+  test("a category not offered and an emirate not operated are skipped and reported", async () => {
+    const s = await setup();
+    await database.db
+      .update(companies)
+      .set({ categories: ["residential"], emirates: ["dubai"] })
+      .where(eq(companies.id, s.companyId));
+    const id = await s.propose({ emirates: ["dubai", "sharjah"] });
+    const body = (await approveBody(s, id)) as unknown as Body;
+    expect(body.rulesCreated).toMatchObject([{ category: "residential", emirate: "dubai" }]);
+    expect(body.rulesSkipped.filter((x) => x.reason.includes("operate"))).toMatchObject([{ emirate: "sharjah" }]);
+    expect(
+      body.rulesSkipped
+        .filter((x) => x.reason.includes("offer"))
+        .map((x) => x.category)
+        .toSorted(),
+    ).toEqual(["commercial", "retail"]);
+    const events = await database.db.select().from(leaseEvents).where(eq(leaseEvents.entityId, s.companyId));
+    const ev = events.find((e) => e.type === "COMPANY_TEMPLATE_APPROVED")!;
+    expect((ev.payload as { rulesSkipped: unknown[] }).rulesSkipped.length).toBe(3);
+  });
+
+  test("a rule that fails validation is skipped; the approval still succeeds", async () => {
+    const s = await setup();
+    const ids: string[] = [];
+    for (let i = 0; i < 60; i++) ids.push(`cc:${await clause(s.companyId)}`);
+    expect((await anyRule(s, ids)).status).toBe(201);
+    const id = await s.propose({ emirates: ["sharjah"] });
+    const [row] = await database.db.select().from(companyContractTemplates).where(eq(companyContractTemplates.id, id));
+    await database.db.insert(companyClauses).values({
+      id: newId(),
+      companyId: s.companyId,
+      title: "Term",
+      textEn: "The term starts on 1 December 2026 and ends on 30 November 2027.",
+      quote: "The term starts on 1 December 2026 and ends on 30 November 2027.",
+      category: "other",
+      hasValues: false,
+      status: "proposed",
+      sourceDocumentId: row!.sampleDocumentId,
+      createdBy: "helper:contract_template",
+    });
+    const body = (await approveBody(s, id)) as unknown as Body;
+    expect(body.rulesSkipped).toMatchObject([{ category: "residential", emirate: "sharjah" }]);
+    expect(body.rulesCreated.map((x) => x.category).toSorted()).toEqual(["commercial", "retail"]);
+    expect((await templateRow(id)).status).toBe("approved");
+  });
+
+  test("only an admin approves", async () => {
+    const s = await setup();
+    const id = await s.propose({ emirates: ["sharjah"] });
+    expect((await s.approveSample(id, { checked: true }, s.officer)).status).toBe(403);
+    expect(await activeRules(s.companyId)).toHaveLength(0);
   });
 });

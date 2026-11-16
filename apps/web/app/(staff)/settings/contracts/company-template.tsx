@@ -1,6 +1,7 @@
 "use client";
 
 import { ActionForm } from "../../../../components/ui/action-form";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useState } from "react";
 import { type Emirate, EMIRATE_LABELS } from "@leasing/core";
@@ -22,6 +23,43 @@ import { ALERT, BTN, CHECK_ROW, TABLE, TD, TH } from "../../../../components/ui/
 
 const STATUS_TONE = { proposed: "warn", approved: "good", retired: "quiet" } as const;
 const STATUS_LABEL = { proposed: "Waiting for review", approved: "Approved", retired: "Retired" } as const;
+
+/** D73: "Created 3 contract rules: Residential, Commercial, Retail in Sharjah". */
+function createdRulesLabel(list: { category: string; emirate: string }[]) {
+  const byEmirate = new Map<string, string[]>();
+  for (const r of list) {
+    const label = CATEGORY_LABEL[r.category] ?? r.category;
+    const where = EMIRATE_LABELS[r.emirate as Emirate] ?? r.emirate;
+    byEmirate.set(where, [...(byEmirate.get(where) ?? []), label]);
+  }
+  const parts = [...byEmirate].map(([where, cats]) => `${cats.join(", ")} in ${where}`);
+  return `Created ${list.length} contract ${list.length === 1 ? "rule" : "rules"}: ${parts.join("; ")}.`;
+}
+
+/** D73: what approving made (and could not make), kept on screen after the review form is gone. */
+function ApprovalResult({ state, companyName }: { state: RuleResult; companyName: string }) {
+  const made = state.rulesCreated ?? [];
+  const skipped = (state.rulesSkipped ?? []).filter((r) => r.reason.includes("doesn't operate"));
+  if (!made.length && !skipped.length) return null;
+  const names = [...new Set(skipped.map((r) => EMIRATE_LABELS[r.emirate as Emirate] ?? r.emirate))];
+  return (
+    <div className="grid gap-1 text-[13px]" role="status">
+      {made.length > 0 && (
+        <p className="m-0">
+          {createdRulesLabel(made)}{" "}
+          <Link href="/settings/contracts" className="underline">
+            Settings → Contracts
+          </Link>
+        </p>
+      )}
+      {names.map((n) => (
+        <p key={n} className="m-0 text-danger">
+          {companyName} doesn&apos;t operate in {n}: no rule created.
+        </p>
+      ))}
+    </div>
+  );
+}
 
 function Errors({ state }: { state: RuleResult }) {
   if (!state.error) return null;
@@ -190,7 +228,10 @@ function SampleReview({
   rules,
   rulesToMove,
   canEdit,
+  approval,
 }: {
+  /** The approve action, kept by the panel so its answer survives the review form going away (D73). */
+  approval: [RuleResult, (formData: FormData) => void, boolean];
   company: CompanyRow;
   review: NonNullable<CompanyTemplatePanel["review"]>;
   template: CompanyTemplateView | null;
@@ -199,7 +240,7 @@ function SampleReview({
   rulesToMove: number;
   canEdit: boolean;
 }) {
-  const [state, approve, approving] = useActionState<RuleResult, FormData>(approveSampleAction, {});
+  const [state, approve, approving] = approval;
   const replaces = review.replaces;
   const formId = `approve-sample-${company.id}`;
   // D68: ticked clauses join the rules that use this template (after the replaced versions' rules move to it).
@@ -426,6 +467,7 @@ export function CompanyTemplatePanelView({
   /** The selected tab's name (also for a template whose first version is still being read). */
   tabName: string;
 }) {
+  const approval = useActionState<RuleResult, FormData>(approveSampleAction, {});
   const router = useRouter();
   const here = latestTab !== null && latestTab === selected;
   const reading = here && panel.extraction?.status === "reading";
@@ -544,8 +586,10 @@ export function CompanyTemplatePanelView({
           )}
         </div>
       )}
+      <ApprovalResult state={approval[0]} companyName={company.name} />
       {showReview && (
         <SampleReview
+          approval={approval}
           company={company}
           review={panel.review!}
           template={proposed ?? null}
