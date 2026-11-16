@@ -74,6 +74,7 @@ export function RenewalPanel({
   inbound,
   canAct,
   tasks,
+  renewalCap,
 }: {
   leaseId: string;
   state: string;
@@ -82,6 +83,7 @@ export function RenewalPanel({
   inbound: InboundRow[];
   canAct: boolean;
   tasks: { kind: string; status: string }[];
+  renewalCap?: { indexNeeded: boolean; flatPercent: number | null; rulesVersion: string | null } | undefined;
 }) {
   const notices = approvals.filter((a) => a.gate === "renewal_notice");
   const sentNotices = outbound.filter((o) => o.purpose === "notice");
@@ -122,11 +124,7 @@ export function RenewalPanel({
                       <span className="font-mono tabular-nums">
                         {aedShort(Number(p.currentRentFils))} → <b>{aedShort(Number(p.proposedRentFils))}</b>
                       </span>
-                      {p.sriAverageFils ? (
-                        <span>SRI {aedShort(Number(p.sriAverageFils))}</span>
-                      ) : (
-                        <span>No SRI value</span>
-                      )}
+                      {p.sriAverageFils ? <span>SRI {aedShort(Number(p.sriAverageFils))}</span> : null}
                       <span>cap {String(p.maxIncreasePercent ?? 0)}%</span>
                     </div>
                   </div>
@@ -283,6 +281,9 @@ export function RenewalPanel({
           replied={!!replied}
           acknowledged={!!sent?.acknowledgedAt}
           readyToRenew={readyToRenew}
+          indexNeeded={renewalCap?.indexNeeded ?? true}
+          flatPercent={renewalCap?.flatPercent ?? null}
+          rulesVersion={renewalCap?.rulesVersion ?? null}
         />
       )}
       {!canAct && <p className={NOTE}>Your role can view renewals but not record responses.</p>}

@@ -4,12 +4,14 @@ import {
   canSendRenewalNotice,
   dubai2025_01 as r,
   evictionEligibleDate,
+  flatRenewalCapPercent,
   getRulebook,
   isRenewalRentAllowed,
   maxIncreasePercent,
   maxRenewalRent,
   noticeSentInTime,
   ownUseRelistAllowedFrom,
+  renewalCapFils,
   renewalMilestones,
   renewalNoticeDeadline,
   repossessionNoticeDeadline,
@@ -176,4 +178,66 @@ describe("ownUseRelistAllowedFrom", () => {
         ownUseLockYears: { residential: 4, commercial: 3 },
       }),
     ).toBe(d("2032-02-29")));
+});
+
+describe("flat renewal cap (no rent index needed)", () => {
+  const flat = (pct: number) => ({
+    ...r,
+    rentCapBands: [{ gapUpTo: 100, maxIncrease: pct }],
+    aboveLastBandMaxIncrease: pct,
+  });
+  test("mixed bands, or one band differing from the above-band rate, are never flat", () => {
+    expect(
+      flatRenewalCapPercent({
+        ...r,
+        rentCapBands: [
+          { gapUpTo: 10, maxIncrease: 5 },
+          { gapUpTo: 100, maxIncrease: 10 },
+        ],
+        aboveLastBandMaxIncrease: 10,
+      }),
+    ).toBeNull();
+    expect(
+      flatRenewalCapPercent({ ...r, rentCapBands: [{ gapUpTo: 100, maxIncrease: 5 }], aboveLastBandMaxIncrease: 20 }),
+    ).toBeNull();
+    expect(flatRenewalCapPercent({ ...r, rentCapBands: [], aboveLastBandMaxIncrease: 20 })).toBeNull();
+    expect(flatRenewalCapPercent(r)).toBeNull(); // Dubai's index-linked bands
+  });
+  test("the published non-Dubai rulebook bands (as stored, D23) read as flat", () => {
+    const published: [string, { gapUpTo: number; maxIncrease: number }[], number, number][] = [
+      ["abu_dhabi-2026-06", [{ gapUpTo: 100, maxIncrease: 0 }], 0, 0],
+      ["sharjah-2025-01", [{ gapUpTo: 100, maxIncrease: 0 }], 0, 0],
+      ["ras_al_khaimah-2025-01", [{ gapUpTo: 100, maxIncrease: 5 }], 5, 5],
+      ["umm_al_quwain-2025-01", [{ gapUpTo: 100, maxIncrease: 10 }], 10, 10],
+    ];
+    for (const [, bands, above, pct] of published)
+      expect(flatRenewalCapPercent({ ...r, rentCapBands: bands, aboveLastBandMaxIncrease: above })).toBe(pct);
+  });
+  test("flat 0 (Abu Dhabi, Sharjah)", () => {
+    expect(flatRenewalCapPercent(flat(0))).toBe(0);
+    expect(renewalCapFils(aed(50_000), null, flat(0))).toEqual({ maxFils: aed(50_000), basis: "flat" });
+    expect(isRenewalRentAllowed(aed(50_000), aed(50_000), null, flat(0))).toBe(true);
+    expect(isRenewalRentAllowed(aed(50_000), aed(50_000) + 1, null, flat(0))).toBe(false);
+  });
+  test("flat 5 ignores any index value", () => {
+    expect(flatRenewalCapPercent(flat(5))).toBe(5);
+    expect(renewalCapFils(aed(80_000), null, flat(5)).maxFils).toBe(aed(84_000));
+    expect(renewalCapFils(aed(80_000), aed(500_000), flat(5))).toEqual({ maxFils: aed(84_000), basis: "flat" });
+    expect(isRenewalRentAllowed(aed(80_000), aed(84_000), null, flat(5))).toBe(true);
+    expect(isRenewalRentAllowed(aed(80_000), aed(84_000) + 1, null, flat(5))).toBe(false);
+  });
+  test("flat 10", () => {
+    expect(flatRenewalCapPercent(flat(10))).toBe(10);
+    expect(renewalCapFils(aed(30_000), null, flat(10)).maxFils).toBe(aed(33_000));
+  });
+  test("Dubai with an index value is index-linked", () => {
+    expect(flatRenewalCapPercent(r)).toBeNull();
+    expect(renewalCapFils(below(15), SRI, r)).toEqual({ maxFils: aed(89_250), basis: "index" });
+  });
+  test("Dubai without an index value: only no increase", () => {
+    expect(renewalCapFils(aed(80_000), null, r)).toEqual({ maxFils: aed(80_000), basis: "no_index" });
+  });
+  test("flat cap rounds down to a whole fil", () => {
+    expect<number>(renewalCapFils(8_999_999, null, flat(5)).maxFils).toBe(8_999_999 + 449_999);
+  });
 });

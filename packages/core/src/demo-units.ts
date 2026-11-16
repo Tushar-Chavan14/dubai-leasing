@@ -451,7 +451,11 @@ export const DEMO_EMIRATE_UNITS: DemoListedUnit[] = [
   ]),
 ];
 
-/** Smart Rental Index rows: residential by bedrooms (annual AED), commercial and retail per sqft (annual AED). */
+/**
+ * Smart Rental Index rows (Dubai only, D75: only Dubai has an official index; other emirates price from AED limits and
+ * their flat renewal caps need no index. Index values can still be added for any emirate).
+ * Rows: residential by bedrooms (annual AED), commercial and retail per sqft (annual AED).
+ */
 export interface DemoSriRow {
   /** Defaults to Dubai. */
   emirate?: Emirate;
@@ -483,43 +487,6 @@ export const DEMO_SRI: DemoSriRow[] = [
   { community: "Business Bay", category: "commercial", bedrooms: null, avgAnnualRentPerSqftAed: 75 },
   { community: "Al Barsha", category: "retail", bedrooms: null, avgAnnualRentPerSqftAed: 120 },
   { community: "Dubai Marina", category: "retail", bedrooms: null, avgAnnualRentPerSqftAed: 250 },
-  // Other emirates: a rent index row per community of the seeded units (general public data, low to medium confidence).
-  { emirate: "abu_dhabi", community: "Al Reem Island", category: "residential", bedrooms: 1, avgAnnualRentAed: 80_000 },
-  {
-    emirate: "abu_dhabi",
-    community: "Al Reem Island",
-    category: "residential",
-    bedrooms: 2,
-    avgAnnualRentAed: 115_000,
-  },
-  {
-    emirate: "abu_dhabi",
-    community: "Yas Island",
-    category: "commercial",
-    bedrooms: null,
-    avgAnnualRentPerSqftAed: 90,
-  },
-  { emirate: "sharjah", community: "Al Nahda", category: "residential", bedrooms: 1, avgAnnualRentAed: 32_000 },
-  { emirate: "sharjah", community: "Al Nahda", category: "residential", bedrooms: 2, avgAnnualRentAed: 45_000 },
-  { emirate: "sharjah", community: "Al Majaz", category: "retail", bedrooms: null, avgAnnualRentPerSqftAed: 150 },
-  { emirate: "ras_al_khaimah", community: "Al Hamra", category: "residential", bedrooms: 1, avgAnnualRentAed: 55_000 },
-  { emirate: "ras_al_khaimah", community: "Al Hamra", category: "residential", bedrooms: 2, avgAnnualRentAed: 75_000 },
-  {
-    emirate: "ras_al_khaimah",
-    community: "Mina Al Arab",
-    category: "retail",
-    bedrooms: null,
-    avgAnnualRentPerSqftAed: 130,
-  },
-  { emirate: "umm_al_quwain", community: "Al Salamah", category: "residential", bedrooms: 1, avgAnnualRentAed: 21_000 },
-  { emirate: "umm_al_quwain", community: "Al Salamah", category: "residential", bedrooms: 2, avgAnnualRentAed: 30_000 },
-  {
-    emirate: "umm_al_quwain",
-    community: "Emirates Modern City",
-    category: "commercial",
-    bedrooms: null,
-    avgAnnualRentPerSqftAed: 50,
-  },
 ];
 
 export interface DemoRentRule {
@@ -540,9 +507,17 @@ export const DEMO_RENT_RULES: DemoRentRule[] = [
   { company: "silverline", category: "residential", community: "Dubai Marina", minPctBp: -300, maxPctBp: 800 },
   { company: "silverline", category: "commercial", minPctBp: -500, maxPctBp: 1000 },
   { company: "silverline", category: "retail", minPctBp: -500, maxPctBp: 1000 },
-  // Other emirates: residential -10%..+10% around the rent index, commercial and retail with AED bounds.
+  // Other emirates have no rent index (D75): every rule carries AED bounds so pricing works without one.
   ...(["abu_dhabi", "sharjah", "ras_al_khaimah", "umm_al_quwain"] as const).flatMap((emirate): DemoRentRule[] => [
-    { emirate, company: "silverline", category: "residential", minPctBp: -1000, maxPctBp: 1000 },
+    {
+      emirate,
+      company: "silverline",
+      category: "residential",
+      minPctBp: -1000,
+      maxPctBp: 1000,
+      minRentAed: 15_000,
+      maxRentAed: 150_000,
+    },
     {
       emirate,
       company: "silverline",

@@ -432,6 +432,9 @@ export interface Rulebook {
 }
 
 export function maxRenewalRent(currentFils: number, sriAvgFils: number, r: Rulebook): number;
+// D75: flat caps (every band = aboveLastBandMaxIncrease) need no index value
+export function flatRenewalCapPercent(r: Rulebook): number | null;
+export function renewalCapFils(currentFils: number, sriAvgFils: number | null, r: Rulebook): { maxFils: number; basis: "flat" | "index" | "no_index" };
 export function renewalMilestones(leaseEnd: CalendarDate, r: Rulebook): Milestone[];
 export function evictionEligibleDate(formalReminderSent: CalendarDate, r: Rulebook): CalendarDate;
 export function ownUseRelistAllowedFrom(vacatedOn: CalendarDate, kind: "residential" | "commercial", r: Rulebook): CalendarDate;
@@ -469,7 +472,7 @@ Company policy, not law, so it lives in `packages/core/src/portfolio.ts` and the
 
 - Band = SRI average × (1 + min bp) … × (1 + max bp), intersected with the rule's optional AED
   floor and ceiling. Commercial and retail use the per-sqft SRI rate × `areaSqft`; without an
-  area only the AED bounds apply. No SRI row: AED bounds only. No bounds at all: null, and any
+  area only the AED bounds apply. No SRI row: AED bounds only (D75: the demo seeds index rows for Dubai only; other emirates price from AED bounds). No bounds at all: null, and any
   price change opens `price_out_of_range` (fail closed).
 - Integer fils, rounded toward the narrower range.
 - `findRentRule` picks the most specific active rule for the unit's company, category, emirate

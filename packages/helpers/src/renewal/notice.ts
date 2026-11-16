@@ -44,6 +44,8 @@ export interface RenewalNoticeInput {
   /** Emirate of the lease's rulebook; names the rent index. Defaults to dubai. */
   emirate?: Emirate;
   maxIncreasePercent: number;
+  /** The cap is a flat rulebook percentage (D75): the text never cites an index average. */
+  flatCap?: boolean;
   sriAverageFils: number | null;
   /** True when sent as the same-rent fallback after the 90-day deadline. */
   sameRentFallback: boolean;
@@ -103,7 +105,7 @@ export function renewalNotice(n: RenewalNoticeInput): NoticeDocument {
         ? ([
             {
               kind: "para",
-              text: `The increase is within the maximum allowed for this renewal (${n.maxIncreasePercent}%), based on the ${rentIndexName(n.emirate ?? "dubai")} average for similar homes${n.sriAverageFils ? ` of ${formatAed(n.sriAverageFils)} a year` : ""}. This notice is given at least ${n.renewalNoticeDays} days before the end of the tenancy.`,
+              text: `The increase is within the maximum allowed for this renewal (${n.maxIncreasePercent}%), ${n.sriAverageFils && !n.flatCap ? `based on the ${rentIndexName(n.emirate ?? "dubai")} average for similar homes of ${formatAed(n.sriAverageFils)} a year. ` : "under the legal cap for this emirate. "}This notice is given at least ${n.renewalNoticeDays} days before the end of the tenancy.`,
             },
           ] satisfies NoticeBlock[])
         : n.sameRentFallback

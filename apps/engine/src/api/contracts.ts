@@ -10,6 +10,7 @@ import {
   units,
   withTx,
 } from "@leasing/db";
+import { flatRenewalCapPercent, getRulebook } from "@leasing/rulebook";
 import { and, asc, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import type { Hono } from "hono";
 import { z } from "zod";
@@ -288,14 +289,17 @@ export async function leaseContractView(db: EngineContext["database"]["db"], lea
   // What the prepare form offers: the unit's company clauses that are approved, and what the
   // matching contract rule preselects.
   const [lu] = await db
-    .select({ companyId: units.companyId, emirate: units.emirate })
+    .select({ companyId: units.companyId, emirate: units.emirate, rulesVersion: leases.rulesVersion })
     .from(leases)
     .innerJoin(units, eq(units.id, leases.unitId))
     .where(eq(leases.id, leaseId));
   const approved = lu ? await approvedClauses({ db }, lu.companyId) : [];
   const suggested = lu ? (await defaultAddendumFor({ db }, leaseId)).clauses : [];
   const emirate = lu?.emirate ?? "dubai";
+  // D75: a flat renewal cap needs no rent index value.
+  const flatPct = lu ? flatRenewalCapPercent(getRulebook(lu.rulesVersion)) : null;
   return {
+    renewalCap: { indexNeeded: flatPct === null, flatPercent: flatPct, rulesVersion: lu?.rulesVersion ?? null },
     // The registration system of the unit's emirate (Ejari in Dubai) for headings and labels.
     registration: { emirate, systemName: registrationSystemName(emirate) },
     prepareNeeded: await prepareNeeded(db, leaseId, cs),

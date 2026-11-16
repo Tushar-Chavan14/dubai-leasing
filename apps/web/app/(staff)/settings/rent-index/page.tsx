@@ -1,4 +1,4 @@
-import { EMIRATE_LABELS, type Emirate } from "@leasing/core";
+import { EMIRATE_LABELS, EMIRATES, type Emirate } from "@leasing/core";
 import type { Metadata } from "next";
 import { AskAi, AskAiMenu } from "../../../../components/ask-ai";
 import { EmptyState } from "../../../../components/ui/empty-state";
@@ -7,8 +7,7 @@ import { FormGrid, Panel, Preview, SetPage, TABLE, TD, TH } from "../../../../co
 import { askPrompts } from "../../../../lib/ask-ai/prompts";
 import { get } from "../../../../lib/engine";
 import { aedShort, bedroomsLabel, longDate } from "../../../../lib/format";
-import { operatedEmirates } from "../../../../lib/portfolio";
-import type { CompanyRow, Me } from "../../../../lib/types";
+import type { Me } from "../../../../lib/types";
 import { SriForm } from "./sri-form";
 
 export const metadata: Metadata = { title: "Rent index" };
@@ -24,11 +23,8 @@ interface SriRow {
 }
 
 export default async function SriPage() {
-  const [rows, me, companies] = await Promise.all([
-    get<SriRow[]>("/api/sri"),
-    get<Me>("/api/me"),
-    get<CompanyRow[]>("/api/companies"),
-  ]);
+  // D75: any emirate may record index values (the generic option), not only the ones the companies operate in.
+  const [rows, me] = await Promise.all([get<SriRow[]>("/api/sri"), get<Me>("/api/me")]);
   const canEdit = me?.role === "admin" || me?.role === "leasing_manager";
   const list = rows ?? [];
   return (
@@ -49,7 +45,7 @@ export default async function SriPage() {
           >
             {canEdit ? (
               <>
-                <SriForm emirates={operatedEmirates(companies)} />
+                <SriForm emirates={EMIRATES} />
                 <div>
                   <AskAi label="Ask AI to add a rent index value" prompt="Add a rent index value of AED " />
                 </div>
@@ -66,7 +62,10 @@ export default async function SriPage() {
         }
       >
         {list.length === 0 ? (
-          <EmptyState title="No rent index values yet" body="Without one, renewals are offered at the current rent." />
+          <EmptyState
+            title="No rent index values yet"
+            body="Only index-linked emirates (Dubai) need them: without one, a Dubai renewal is offered at the current rent. Flat-cap emirates need no index."
+          />
         ) : (
           <Panel className="overflow-x-auto">
             <table className={TABLE}>

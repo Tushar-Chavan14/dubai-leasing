@@ -19,8 +19,9 @@ import type { approvals } from "@leasing/db";
 import {
   canSendRenewalNotice,
   getRulebook,
+  flatRenewalCapPercent,
   isRenewalRentAllowed,
-  maxRenewalRent,
+  renewalCapFils,
   repossessionNoticeDeadline,
 } from "@leasing/rulebook";
 import { z } from "zod";
@@ -447,10 +448,13 @@ const rules: Partial<Record<GateId, GateRule>> = {
       const r = getRulebook(p.rulesVersion);
       const problems: string[] = [];
       if (!isRenewalRentAllowed(p.currentRentFils, p.proposedRentFils, p.sriAverageFils, r)) {
+        const cap = renewalCapFils(p.currentRentFils, p.sriAverageFils, r);
         problems.push(
-          p.sriAverageFils === null
+          cap.basis === "no_index"
             ? `no SRI average on record: rent can't go above the current ${formatAed(p.currentRentFils)} (${r.version})`
-            : `above the legal cap of ${formatAed(maxRenewalRent(p.currentRentFils, p.sriAverageFils, r))} (${r.version})`,
+            : cap.basis === "flat"
+              ? `above the legal cap of ${formatAed(cap.maxFils)} (${flatRenewalCapPercent(r)}% under ${r.version})`
+              : `above the legal cap of ${formatAed(cap.maxFils)} (${r.version})`,
         );
       }
       const end = p.leaseEndOn as CalendarDate;

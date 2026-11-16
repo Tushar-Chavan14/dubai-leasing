@@ -42,7 +42,7 @@ export const computeRenewalCap: CopilotTool<typeof Input, typeof Output> = {
   name: "compute_renewal_cap",
   kind: "read",
   description:
-    "The legal maximum renewal rent for a lease from the rulebook and the Smart Rental Index (SRI): current rent, SRI average, gap, max increase %, max rent, notice dates. Use for any 'how much can rent go up' question.",
+    "The legal maximum renewal rent for a lease from the rulebook (and the Smart Rental Index (SRI) where the cap is index-linked, as in Dubai; a flat-cap emirate needs no index): current rent, SRI average, gap, max increase %, max rent, notice dates. Use for any 'how much can rent go up' question.",
   input: Input,
   output: Output,
   roles: ALL_STAFF,

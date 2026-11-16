@@ -100,6 +100,32 @@ describe("renewal helper", () => {
       expect(r.result.data).toMatchObject({ maxIncreasePercent: pct, maxRentFils: rent, proposedRentFils: rent });
     });
   }
+  test("flat-cap emirate needs no index value (D75)", async () => {
+    const { dubai2025_01, registerRulebook, resetRulebookRegistry } = await import("@leasing/rulebook");
+    const flat = {
+      ...dubai2025_01,
+      version: "test-flat-5",
+      rentCapBands: [{ gapUpTo: 100, maxIncrease: 5 }],
+      aboveLastBandMaxIncrease: 5,
+    };
+    registerRulebook(flat);
+    try {
+      const r = await runHelper(
+        renewalHelper,
+        { ...input({ ...base, sri: null }), rulesVersion: "test-flat-5" },
+        { context: RenewalContext, data: RenewalData },
+        timer,
+      );
+      expect(r.result.data).toMatchObject({
+        maxIncreasePercent: 5,
+        maxRentFils: aed(89_250),
+        proposedRentFils: aed(89_250),
+        sriAverageFils: null,
+      });
+    } finally {
+      resetRulebookRegistry();
+    }
+  });
   test("records where the SRI value came from", async () => {
     expect((await run(aed(100_000))).result.data).toMatchObject({
       sriSource: "table",
@@ -138,6 +164,12 @@ describe("renewal notice content", () => {
     renewalNoticeDays: 90,
     demo: true,
   };
+  test("flat-cap notice never cites an index average, even with one on file (D75)", () => {
+    const text = noticeToText(renewalNotice({ ...n, flatCap: true }));
+    expect(text).toContain("(5%)");
+    expect(text).not.toContain("average");
+    expect(noticeToText(renewalNotice(n))).toContain("average");
+  });
   test("increase notice states both rents, the change, the cap and the rules version", () => {
     const text = noticeToText(renewalNotice(n));
     expect(text).toContain("AED 85,000.00");

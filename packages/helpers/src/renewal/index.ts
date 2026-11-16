@@ -1,5 +1,5 @@
 import { formatAed, type Helper, isCalendarDate } from "@leasing/core";
-import { getRulebook, maxIncreasePercent, maxRenewalRent } from "@leasing/rulebook";
+import { flatRenewalCapPercent, getRulebook, maxIncreasePercent, renewalCapFils } from "@leasing/rulebook";
 import { z } from "zod";
 
 /**
@@ -41,6 +41,31 @@ export const renewalHelper: Helper<RenewalContext, RenewalData> = {
   async run(input) {
     const r = getRulebook(input.rulesVersion);
     const c = input.context;
+    const flat = flatRenewalCapPercent(r);
+    if (flat !== null) {
+      // The cap does not depend on a rent index: no index value is needed (D75).
+      const { maxFils } = renewalCapFils(c.currentRentFils, null, r);
+      const sriAvg = c.sri?.avgAnnualRentFils ?? null;
+      return {
+        status: "ok",
+        data: {
+          sriAverageFils: sriAvg,
+          sriSource: c.sri?.source ?? "none",
+          sriLabel: c.sri?.label ?? null,
+          gapBasisPoints: sriAvg === null ? null : Math.floor(((sriAvg - c.currentRentFils) * 10_000) / sriAvg),
+          maxIncreasePercent: flat,
+          maxRentFils: maxFils,
+          proposedRentFils: maxFils,
+        },
+        reasons: [
+          `The legal cap is a flat ${flat}% (${r.version}); no rent index is needed.`,
+          flat > 0
+            ? `Proposed renewal rent ${formatAed(maxFils)}, the legal cap. A manager may lower it.`
+            : "Proposed renewal at the current rent.",
+        ],
+        sourceDocIds: [],
+      };
+    }
     if (!c.sri) {
       return {
         status: "ok",
@@ -62,7 +87,7 @@ export const renewalHelper: Helper<RenewalContext, RenewalData> = {
     }
     const sri = c.sri.avgAnnualRentFils;
     const pct = maxIncreasePercent(c.currentRentFils, sri, r);
-    const max = maxRenewalRent(c.currentRentFils, sri, r);
+    const max = renewalCapFils(c.currentRentFils, sri, r).maxFils;
     const gap = Math.floor(((sri - c.currentRentFils) * 10_000) / sri);
     return {
       status: "ok",

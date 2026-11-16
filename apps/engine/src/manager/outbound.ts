@@ -14,7 +14,7 @@ import {
   withTx,
 } from "@leasing/db";
 import { renewalNotice } from "@leasing/helpers";
-import { canSendRenewalNotice, getRulebook, noticeSentInTime } from "@leasing/rulebook";
+import { canSendRenewalNotice, flatRenewalCapPercent, getRulebook, noticeSentInTime } from "@leasing/rulebook";
 import { and, asc, desc, eq, inArray, isNull, like } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
 import { landlordNameForLease } from "./company-legal.ts";
@@ -274,6 +274,7 @@ export async function sendRenewalNotice(ctx: EngineContext, approvalId: string):
       newTermEndOn: p.newTermEndOn,
       rulesVersion: p.rulesVersion,
       maxIncreasePercent: p.maxIncreasePercent ?? 0,
+      flatCap: flatRenewalCapPercent(r) !== null,
       sriAverageFils: p.sriAverageFils,
       sameRentFallback: !!p.sameRentFallback,
       renewalNoticeDays: r.renewalNoticeDays,

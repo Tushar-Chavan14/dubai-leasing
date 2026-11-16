@@ -70,34 +70,18 @@ describe("demo emirate units (data)", () => {
     expect(demoPropertyNo("abu_dhabi", "2101")).toBe("DEMO-AUH-002101");
   });
 
-  test("each asking rent is inside the rent rule's range around the rent index row", () => {
+  test("other emirates have no rent index rows (D75); each asking rent is inside the rule's AED bounds", () => {
+    expect(DEMO_SRI.every((r) => (r.emirate ?? "dubai") === "dubai")).toBe(true);
     for (const u of DEMO_EMIRATE_UNITS) {
       const emirate: Emirate = u.emirate!;
       const rule = DEMO_RENT_RULES.find((r) => (r.emirate ?? "dubai") === emirate && r.category === u.category)!;
-      const row = DEMO_SRI.find(
-        (r) =>
-          (r.emirate ?? "dubai") === emirate &&
-          r.community === u.community &&
-          r.category === u.category &&
-          r.bedrooms === u.bedrooms,
-      );
       expect(rule, `${u.code} rule`).toBeDefined();
-      expect(row, `${u.code} index row`).toBeDefined();
-      const range = allowedAskingRange(
-        { category: u.category, areaSqft: u.areaSqft },
-        {
-          label: "demo",
-          avgAnnualRentFils: (row!.avgAnnualRentAed ?? 0) * 100,
-          avgAnnualRentPerSqftFils:
-            row!.avgAnnualRentPerSqftAed === undefined ? null : row!.avgAnnualRentPerSqftAed * 100,
-        },
-        {
-          minPctBp: rule.minPctBp,
-          maxPctBp: rule.maxPctBp,
-          minRentFils: rule.minRentAed === undefined ? null : rule.minRentAed * 100,
-          maxRentFils: rule.maxRentAed === undefined ? null : rule.maxRentAed * 100,
-        },
-      );
+      const range = allowedAskingRange({ category: u.category, areaSqft: u.areaSqft }, null, {
+        minPctBp: rule.minPctBp,
+        maxPctBp: rule.maxPctBp,
+        minRentFils: rule.minRentAed === undefined ? null : rule.minRentAed * 100,
+        maxRentFils: rule.maxRentAed === undefined ? null : rule.maxRentAed * 100,
+      });
       expect(range, u.code).not.toBeNull();
       expect(u.askingRentFils).toBeGreaterThanOrEqual(range!.min);
       expect(u.askingRentFils).toBeLessThanOrEqual(range!.max);

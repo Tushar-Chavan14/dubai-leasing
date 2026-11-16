@@ -16,12 +16,18 @@ export function RenewalForms({
   replied,
   acknowledged,
   readyToRenew,
+  indexNeeded = true,
+  flatPercent = null,
+  rulesVersion = null,
 }: {
   leaseId: string;
   canRecord: boolean;
   replied: boolean;
   acknowledged: boolean;
   readyToRenew: boolean;
+  indexNeeded?: boolean;
+  flatPercent?: number | null;
+  rulesVersion?: string | null;
 }) {
   const [respState, respond, responding] = useActionState<LeaseActionState, FormData>(recordResponse, {});
   const [renewState, renew, renewing] = useActionState<LeaseActionState, FormData>(renewLease, {});
@@ -55,14 +61,20 @@ export function RenewalForms({
             Record a tenant response
           </button>
         )}
-        <button
-          type="button"
-          className={buttonClass("ghost", "sm")}
-          onClick={() => setOpen(open === "sri" ? null : "sri")}
-          aria-expanded={open === "sri"}
-        >
-          Record an SRI value
-        </button>
+        {indexNeeded ? (
+          <button
+            type="button"
+            className={buttonClass("ghost", "sm")}
+            onClick={() => setOpen(open === "sri" ? null : "sri")}
+            aria-expanded={open === "sri"}
+          >
+            Record an SRI value
+          </button>
+        ) : (
+          <p className="m-0 text-[13px] text-muted">
+            Rent increase is capped at {flatPercent}% by {rulesVersion}; no rent index needed.
+          </p>
+        )}
       </div>
 
       {open === "respond" && (
@@ -100,7 +112,7 @@ export function RenewalForms({
         </ActionForm>
       )}
 
-      {open === "sri" && (
+      {indexNeeded && open === "sri" && (
         <ActionForm state={sriState} action={saveSri} className={BOX}>
           <input type="hidden" name="leaseId" value={leaseId} />
           <p className={NOTE}>

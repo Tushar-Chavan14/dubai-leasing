@@ -9,7 +9,7 @@ import { Banner } from "../../../../components/ui/form";
 import { Affix, SET_INPUT, SET_SELECT, SField } from "../../../../components/ui/settings";
 import { type SriState, saveSri } from "./actions";
 
-export function SriForm({ emirates }: { emirates: Emirate[] }) {
+export function SriForm({ emirates }: { emirates: readonly Emirate[] }) {
   const [s, action, pending] = useActionState<SriState, FormData>(saveSri, {});
   return (
     <ActionForm state={s} action={action} className="grid gap-3.5">

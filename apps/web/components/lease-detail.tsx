@@ -83,6 +83,8 @@ interface LeaseView {
   }[];
   contracts: ContractRow[];
   clauseOptions?: ClauseOptions;
+  /** D75: a flat renewal cap needs no rent index value. */
+  renewalCap?: { indexNeeded: boolean; flatPercent: number | null; rulesVersion: string | null };
   prepareNeeded?: "failed" | "rejected" | "not_prepared" | "rules_changed" | null;
   preparing?: PreparingStatus | null;
   changeRequests?: ChangeRequestRow[];
@@ -319,6 +321,7 @@ export async function LeaseDetail({ id, draftId }: { id: string; draftId?: strin
           inbound={l.inbound}
           tasks={l.tasks}
           canAct={canAct}
+          renewalCap={l.renewalCap}
         />
       ) : null}
 

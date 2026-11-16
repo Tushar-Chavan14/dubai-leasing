@@ -10,6 +10,7 @@ import {
 } from "@leasing/core";
 import { approvals, deadlines, leases, outboundMessages, type Tx, tasks, units, withTx } from "@leasing/db";
 import {
+  flatRenewalCapPercent,
   getRulebook,
   type MilestoneId,
   noticeSentInTime,
@@ -662,7 +663,9 @@ export async function draftRenewalNotice(
               value: `${formatAed(data.sriAverageFils)} (${data.sriLabel ?? data.sriSource})`,
             },
           ]
-        : [{ kind: "field" as const, label: "SRI average", value: "none on record" }]),
+        : flatRenewalCapPercent(r) !== null
+          ? []
+          : [{ kind: "field" as const, label: "SRI average", value: "none on record" }]),
       {
         kind: "rule",
         rulesVersion: r.version,

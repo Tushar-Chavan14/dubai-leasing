@@ -486,6 +486,28 @@ describe.skipIf(noDb)("contract (step 5)", () => {
       expect(view.prepareNeeded).toBeNull();
     });
 
+    test("the lease view says whether a renewal needs a rent index (D75)", async () => {
+      const s = await setup({ contractAgent: new ScriptedAgentModel([() => agentAnswer([])]) });
+      const get = async () =>
+        (await (await s.staff(s.officer, `/api/leases/${s.leaseId}/contract`)).json()) as {
+          renewalCap: { indexNeeded: boolean; flatPercent: number | null; rulesVersion: string };
+        };
+      expect((await get()).renewalCap).toEqual({
+        indexNeeded: true,
+        flatPercent: null,
+        rulesVersion: "dubai-2025-01",
+      });
+      registerRulebook({
+        ...dubai2025_01,
+        version: "flat-5-test",
+        rentCapBands: [{ gapUpTo: 100, maxIncrease: 5 }],
+        aboveLastBandMaxIncrease: 5,
+      });
+      await database.db.update(leases).set({ rulesVersion: "flat-5-test" }).where(eq(leases.id, s.leaseId));
+      expect((await get()).renewalCap).toEqual({ indexNeeded: false, flatPercent: 5, rulesVersion: "flat-5-test" });
+      await database.db.update(leases).set({ rulesVersion: "dubai-2025-01" }).where(eq(leases.id, s.leaseId));
+    });
+
     test("a rent agreed at the offer passes even when it's outside today's band", async () => {
       const s = await setup({ contractAgent: new ScriptedAgentModel([() => agentAnswer([])]) });
       // Today's band for a Dubai Marina 2-bed tops out far below the agreed AED 135,000.

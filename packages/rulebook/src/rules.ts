@@ -23,6 +23,38 @@ export function maxRenewalRent(currentFils: number, sriAvgFils: number, r: Ruleb
   return fils(currentFils + Math.floor((currentFils * pct) / 100));
 }
 
+/**
+ * The single increase percentage when the rent cap does not depend on a rent index (every band equals
+ * `aboveLastBandMaxIncrease`, e.g. Abu Dhabi, Sharjah, Ras Al Khaimah, Umm Al Quwain), else null
+ * (Dubai: index-linked bands). A flat cap needs no index value.
+ */
+export function flatRenewalCapPercent(r: Rulebook): number | null {
+  // The schema requires one band at least; an empty list is never read as flat (it would allow the above-band rate).
+  if (r.rentCapBands.length === 0) return null;
+  return r.rentCapBands.every((b) => b.maxIncrease === r.aboveLastBandMaxIncrease) ? r.aboveLastBandMaxIncrease : null;
+}
+
+/**
+ * Highest legal renewal rent. Flat cap: from the percentage alone. Index-linked: from the index
+ * average; without one only "no increase" is provably within the cap.
+ */
+export function renewalCapFils(
+  currentFils: number,
+  sriAvgFils: number | null,
+  r: Rulebook,
+): { maxFils: Fils; basis: "flat" | "index" | "no_index" } {
+  const flat = flatRenewalCapPercent(r);
+  if (flat !== null) {
+    assertPositiveInt(currentFils, "current rent");
+    return { maxFils: fils(currentFils + Math.floor((currentFils * flat) / 100)), basis: "flat" };
+  }
+  if (sriAvgFils === null) {
+    assertPositiveInt(currentFils, "current rent");
+    return { maxFils: fils(currentFils), basis: "no_index" };
+  }
+  return { maxFils: maxRenewalRent(currentFils, sriAvgFils, r), basis: "index" };
+}
+
 /** True if `proposedFils` is within the legal cap for this renewal. */
 export function isRenewalRentAllowed(
   currentFils: number,
@@ -31,9 +63,7 @@ export function isRenewalRentAllowed(
   r: Rulebook,
 ): boolean {
   if (!Number.isSafeInteger(proposedFils) || proposedFils <= 0) return false;
-  // Without an SRI value, only "no increase" is provably within the cap.
-  if (sriAvgFils === null) return proposedFils <= currentFils;
-  return proposedFils <= maxRenewalRent(currentFils, sriAvgFils, r);
+  return proposedFils <= renewalCapFils(currentFils, sriAvgFils, r).maxFils;
 }
 
 /** The last calendar date a rent-increase notice may be sent: lease end − 90 days. */

@@ -1744,3 +1744,17 @@ The leasing assistant automates the work up to the contract. Staff should approv
 - **Rules.** Rule 1: periods come from the pinned rulebook and names from settings, by code; no model fills any of them.
   Rule 4: saving the wording is an event. Template approval (D70) is unchanged: a generic template names no emirate and
   states no period, so its checks pass.
+
+## D75 — Only Dubai has a rent index; flat caps need none
+
+- **Why.** Only Dubai publishes an official rent index (the Smart Rental Index). The other emirates' renewal caps are a flat
+  percentage (Abu Dhabi and Sharjah 0%, Ras Al Khaimah 5%, Umm Al Quwain 10%) that does not depend on any index. Feedback:
+  the demo asked for an index value in emirates where none is needed, and the seed held invented index rows for them.
+- **Rule.** `flatRenewalCapPercent(rulebook)` returns the single percentage when every band equals
+  `aboveLastBandMaxIncrease`, else null (Dubai). `renewalCapFils(current, index|null, rulebook)` returns
+  `{ maxFils, basis: "flat" | "index" | "no_index" }`; `isRenewalRentAllowed` uses it. A flat cap ignores any index value; an
+  index-linked rulebook without an index value still allows only no increase. The renewal helper, the `renewal_notice` gate
+  check, the copilot `compute_renewal_cap` tool and the notice text use it, so no screen asks for an index in a flat-cap emirate.
+- **No static index in code.** The demo seed (`DEMO_SRI`) holds Dubai rows only. Non-Dubai demo rent rules carry AED bounds so
+  asking rents have a range. Staff can still add index values for any emirate (Settings -> Rent index); they then also price
+  by index percentage.
