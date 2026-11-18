@@ -5,9 +5,13 @@ next-env.d.ts
 *.tsbuildinfo
 .env
 .env.local
+.env.spa.local
 data/
 coverage/
 .DS_Store
 graphify-out/
 .claude/
 .superpowers/
+
+brag-output/
+brag-output-2026-11-17-172532/

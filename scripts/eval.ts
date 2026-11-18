@@ -17,20 +17,20 @@
  */
 const [name, ...rest] = process.argv.slice(2);
 const runs: Record<string, string[]> = {
-  reply: ["packages/helpers/scripts/eval-reply.ts"],
-  "offer-reply": ["packages/helpers/scripts/eval-reply.ts", "--offer"],
-  kyc: ["packages/helpers/scripts/eval-kyc.ts"],
-  "contract-review": ["packages/helpers/scripts/eval-contract.ts"],
-  "contract-change": ["packages/helpers/scripts/eval-contract-change.ts"],
-  "contract-marks": ["packages/helpers/scripts/eval-contract-marks.ts"],
-  "ejari-field": ["packages/helpers/scripts/eval-ejari.ts"],
-  "leasing-assistant": ["packages/helpers/scripts/eval-leasing-assistant.ts"],
-  complaints: ["packages/helpers/scripts/eval-complaints.ts"],
-  "contract-template": ["packages/helpers/scripts/eval-contract-template.ts"],
-  "contract-structure": ["packages/helpers/scripts/eval-contract-structure.ts"],
-  "contract-agent": ["apps/engine/src/evals/contract-agent.ts"],
-  copilot: ["apps/engine/src/evals/copilot.ts"],
-  "customer-agent": ["apps/engine/src/evals/customer-agent.ts"],
+  reply: ["modules/leasing/packages/helpers/scripts/eval-reply.ts"],
+  "offer-reply": ["modules/leasing/packages/helpers/scripts/eval-reply.ts", "--offer"],
+  kyc: ["modules/leasing/packages/helpers/scripts/eval-kyc.ts"],
+  "contract-review": ["modules/leasing/packages/helpers/scripts/eval-contract.ts"],
+  "contract-change": ["modules/leasing/packages/helpers/scripts/eval-contract-change.ts"],
+  "contract-marks": ["modules/leasing/packages/helpers/scripts/eval-contract-marks.ts"],
+  "ejari-field": ["modules/leasing/packages/helpers/scripts/eval-ejari.ts"],
+  "leasing-assistant": ["modules/leasing/packages/helpers/scripts/eval-leasing-assistant.ts"],
+  complaints: ["modules/leasing/packages/helpers/scripts/eval-complaints.ts"],
+  "contract-template": ["modules/leasing/packages/helpers/scripts/eval-contract-template.ts"],
+  "contract-structure": ["modules/leasing/packages/helpers/scripts/eval-contract-structure.ts"],
+  "contract-agent": ["modules/leasing/apps/engine/src/evals/contract-agent.ts"],
+  copilot: ["modules/leasing/apps/engine/src/evals/copilot.ts"],
+  "customer-agent": ["modules/leasing/apps/engine/src/evals/customer-agent.ts"],
 };
 const names = name ? [name] : Object.keys(runs);
 let failed = false;

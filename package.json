@@ -2,14 +2,21 @@
   "name": "leasing-agents",
   "private": true,
   "workspaces": [
-    "apps/*",
-    "packages/*"
+    "modules/leasing/apps/*",
+    "modules/leasing/packages/*",
+    "platform/*",
+    "spa/apps/*",
+    "spa/packages/*"
   ],
   "type": "module",
   "scripts": {
-    "dev": "bun run --filter './apps/*' dev",
+    "dev": "bun run --filter './modules/leasing/apps/*' dev",
+    "dev:leasing": "bun run --filter './modules/leasing/apps/*' dev",
+    "dev:spa": "bun run --parallel spa:engine spa:web",
+    "spa:engine": "bun run --filter @spa/engine dev",
+    "spa:web": "bun run --filter @spa/web dev",
     "test": "bun test",
-    "typecheck": "tsc -p tsconfig.json && tsc -p apps/web/tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json && tsc -p platform/ui/tsconfig.json && tsc -p modules/leasing/apps/web/tsconfig.json && tsc -p spa/apps/web/tsconfig.json",
     "lint": "oxlint && oxfmt --check && bun scripts/check-domain-rules.ts",
     "lint:fix": "oxlint --fix && oxfmt",
     "format": "oxfmt",
@@ -22,7 +29,11 @@
     "demo:fill-legal": "bun run --filter @leasing/engine fill-legal",
     "eval": "bun scripts/eval.ts",
     "voice:setup": "bash scripts/whisper.sh setup",
-    "voice": "bash scripts/whisper.sh run"
+    "voice": "bash scripts/whisper.sh run",
+    "spa:db:generate": "bun run --filter @spa/db generate",
+    "spa:db:migrate": "bun run --filter @spa/db migrate",
+    "spa:demo:seed": "bun run --filter @spa/engine seed",
+    "spa:demo:reset": "bun run --filter @spa/engine reset"
   },
   "devDependencies": {
     "@types/bun": "1.4.3",

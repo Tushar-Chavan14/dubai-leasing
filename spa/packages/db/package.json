@@ -1,0 +1,23 @@
+{
+  "name": "@spa/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing.ts"
+  },
+  "scripts": {
+    "generate": "drizzle-kit generate",
+    "migrate": "bun src/migrate.ts"
+  },
+  "dependencies": {
+    "@spa/core": "workspace:*",
+    "drizzle-orm": "0.45.4",
+    "pg": "8.23.1"
+  },
+  "devDependencies": {
+    "@types/pg": "8.23.1",
+    "drizzle-kit": "0.31.11"
+  }
+}

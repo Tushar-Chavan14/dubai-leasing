@@ -167,3 +167,24 @@ D30 slices 1 and 2 (accounts, login, records, uploads) were built, then replaced
 - [x] Phase 3 (D55): demo rulebooks, two units, rent index rows and rent rules per emirate, all seven emirates in chat and public site. Contract templates per emirate (D56) done; legal confirmation of values stays open
 - [x] Phase 3b (D56): contract templates per emirate, who-pays setting, "UAE Leasing" branding, finder communities by emirate
 - [ ] Phase 4: client rollout and legal confirmation of values (legal review via `docs/legal-review-emirates.md`)
+
+## SPA module (separate runtime, decisions S1–S33; phases P0–P10)
+
+Sale and Purchase Agreement process, from booking to handover. It runs on its own database, jobs, clock,
+engine (:4001) and web app (:3001). Full task list: `docs/spa/task.md`. Decisions: `docs/spa/decisions.md`.
+Architecture: `docs/spa/architecture.md`. Mockup: `docs/spa/mockup.html`.
+
+- [x] P0: docs, decisions, skill, single-file mockup
+- [x] P1: shared kernel + helper profiles + import boundary (no leasing behaviour change) (S32)
+- [x] P2: SPA scaffold: `spa` database, pg-boss, Clock, engine, web, scripts; shared `@leasing/ui` (S33)
+- [ ] P3: Deal/Unit/Listing state machines, SPA gates and roles, `spa_approvals`, `deal_events`
+- [ ] P4: SPA rulebook + policy; listings, offers, deposit; KYC/AML settings
+- [ ] P5: Templates: the uploaded structure is the output structure (parties, broker, signature blocks)
+- [ ] P6: Helpers + evals (specs §6), helper modes, chasing, assistants, payments into escrow, default flag, records and alerts
+- [ ] P7: Screening fake, Oqood mock, e-sign reuse, SPA mail templates
+- [ ] P8: Staff web + party portal + public listing page from the mockup
+- [ ] P9: SPA copilot
+- [ ] P10: Portal launcher, then shared sign-in
+
+**Exit:** a fictional primary deal reaches Oqood and a fictional ready resale reaches a new title deed
+(both simulated), each agreement matches its uploaded template's structure, and a person decided every gate.

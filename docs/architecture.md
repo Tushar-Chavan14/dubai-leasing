@@ -1623,3 +1623,15 @@ Key columns:
   user's words, "all types" must be said and not negated; omitted on a replace keeps the rule's own. Overlaps are
   refused at propose time. `get_company_settings` lists each rule's types and template, and the approved templates
   (version, emirates; no wording).
+
+## 13. SPA module (separate runtime)
+
+The Sale and Purchase Agreement module lives in `spa/` and is described in its own file,
+`docs/spa/architecture.md` (decisions in `docs/spa/decisions.md`, numbered S1, S2, …). Nothing in sections 1–12
+applies to it unless that file says "same as". It has its own `spa` database, pg-boss, `Clock`, `spa_approvals`
+table, engine (:4001), web app (:3001) and Oqood mock (:4101). Leasing and SPA share code only through
+`packages/kernel`, `packages/llm`, `packages/adapters` and the shared parts of `packages/helpers` (the helper
+runner, the KYC document reader and the contract-structure reader, imported by subpath and each called with a
+profile; leasing's profile is the default). `@leasing/core` re-exports the kernel, so leasing imports are unchanged. The boundary is
+checked by `scripts/check-domain-rules.ts`: leasing never imports `@spa/*`, and SPA never imports leasing
+domain packages.

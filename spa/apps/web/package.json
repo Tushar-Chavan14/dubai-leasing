@@ -1,0 +1,31 @@
+{
+  "name": "@spa/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun scripts/next.ts dev",
+    "build": "next build",
+    "start": "bun scripts/next.ts start"
+  },
+  "dependencies": {
+    "@phosphor-icons/react": "2.1.10",
+    "@platform/ui": "workspace:*",
+    "@spa/core": "workspace:*",
+    "@spa/engine": "workspace:*",
+    "@tailwindcss/postcss": "4.3.4",
+    "geist": "1.9.1",
+    "hono": "4.13.13",
+    "motion": "14.9.1",
+    "next": "16.4.6",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "tailwindcss": "4.3.4",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0"
+  }
+}

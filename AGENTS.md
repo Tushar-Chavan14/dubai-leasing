@@ -23,6 +23,8 @@ Read before larger changes:
 - `docs/decisions.md` — decisions already made; don't reopen them without a reason
 - `docs/roadmap.md` — phases and the current task list
 - `docs/source/leasing-guide.txt` — the original business guide
+- `docs/spa/` — the SPA (Sale and Purchase Agreement) module: `specs.md` (PRD: scope and
+  acceptance criteria), `design.md` (design system and screen guide), `decisions.md` (S1, S2, …), `architecture.md`, `task.md`, `mockup.html`. Load the `dubai-sales-spa` skill before SPA work.
 
 ## Non-negotiable rules
 
@@ -80,17 +82,34 @@ apps/
   telegram-bot/    grammY bot for incoming enquiries only (step 2). Posts events to engine API.
   ejari-mock/      Simulated Ejari service (Hono). Same contract as the future DLD adapter.
   mcp/             (phase 5) MCP server exposing the copilot tool registry to Claude, ChatGPT, etc.
+  portal/          (SPA S10) Module launcher on :3100: links to leasing and SPA; later shared sign-in.
 packages/
-  core/            Domain types, Zod schemas, state machines, approval gates, Clock, maskPii.
+  kernel/          Domain-free, shared with SPA (S4, S32): Clock, dates, money, ids, maskPii, Helper contract, defineMachine, defineGates, Actor, KYC form model.
+  core/            Leasing domain types, Zod schemas, state machines, approval gates; re-exports the kernel.
   rulebook/        Versioned rules per emirate + pure functions. 100% unit-tested.
   db/              Drizzle schema, migrations, seed + demo fixtures.
   llm/             Model adapter: chat(), vision(), decide() (ollama.systemone).
   helpers/         One folder per helper (kyc, offer, contract, registration, renewal, ...).
   copilot/         Staff copilot: LangGraph tool loop, prompt, tools/ registry (read/draft/propose), evals.
   adapters/        channel/ (telegram), mail/ (nodemailer), ejari/ (mock, dld), esign/ (mock), storage/ (local disk).
+spa/               SPA module, separate runtime (docs/spa/decisions.md S1–S2): own DB `spa`, pg-boss, Clock.
+  apps/engine/     @spa/engine :4001 SpaManager + Hono API + jobs.
+  apps/web/        @spa/web :3001 staff app + buyer portal (/b/...).
+  apps/oqood-mock/ Simulated Oqood registry :4101.
+  packages/        @spa/core, @spa/rulebook, @spa/db, @spa/helpers, @spa/copilot.
 docs/
 .claude/           Claude Code skills, subagents, settings.
 ```
+
+## SPA module boundary
+
+The non-negotiable rules above apply to SPA as written, with SPA names: `SpaManager` is the only
+writer of `deals` and `listings`, gates live in `spa_approvals` (never `approvals`), events in `deal_events`,
+values in `@spa/rulebook`. SPA has its own database, jobs, clock and approvals. Leasing code never
+imports `@spa/*`; SPA code imports only shared packages (`@leasing/kernel`, `@leasing/llm`,
+`@leasing/adapters`, shared helpers), never leasing domain packages. Reuse a shared helper by
+passing a profile, not by copying it. An AI may raise an AML flag only through code rules; only a
+compliance officer clears it.
 
 ## Commands
 
