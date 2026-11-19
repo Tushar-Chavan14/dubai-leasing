@@ -22,7 +22,7 @@ export function PageTitle({
       )}
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
         <div className="min-w-0">
-          <h1 className="m-0 font-sans text-[26px] font-semibold leading-tight tracking-tight text-ink">{title}</h1>
+          <h1 className="m-0 font-sans text-[26px] font-bold leading-tight tracking-[-0.02em] text-ink">{title}</h1>
           {lede && <p className="m-0 mt-1 max-w-[62ch] text-sm text-muted">{lede}</p>}
         </div>
         {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
@@ -31,7 +31,7 @@ export function PageTitle({
   );
 }
 
-/** Filter links as pills with a count; the current one is black. */
+/** Filter links as pills with a count; the current one is a soft blue pill. */
 export function TabLinks({
   label,
   items,
@@ -46,7 +46,7 @@ export function TabLinks({
           key={i.href}
           href={i.href}
           aria-current={i.current ? "page" : undefined}
-          className="rounded-full border border-line px-3 py-1.5 font-sans text-[13px] text-ink no-underline hover:border-ink aria-[current=page]:border-transparent aria-[current=page]:bg-primary aria-[current=page]:text-on-primary! focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
+          className="rounded-full border border-transparent px-3.5 py-1.5 font-sans text-[13.5px] font-medium text-muted! no-underline hover:bg-raised hover:text-ink! aria-[current=page]:bg-accent aria-[current=page]:font-semibold aria-[current=page]:text-on-accent! focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
         >
           {i.label}
           {i.count !== undefined && <span className="ml-1.5 font-mono text-xs opacity-70">{i.count}</span>}
@@ -58,7 +58,7 @@ export function TabLinks({
 
 /** A table in a rounded, bordered frame. */
 export function TableFrame({ children }: { children: ReactNode }) {
-  return <div className="overflow-x-auto rounded-2xl border border-line bg-page">{children}</div>;
+  return <div className="overflow-x-auto rounded-2xl border border-line bg-page shadow-card">{children}</div>;
 }
 
 /** Link look for a name in a table or list row. */

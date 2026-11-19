@@ -1695,3 +1695,15 @@ The leasing assistant automates the work up to the contract. Staff should approv
   changed meanwhile). A paid reservation is not changed; the approval reasons note a difference.
 - **Rules.** Rule 1: values come from the officer's words and code, never from the model. Rule 3: outside limits need a
   manager. Rule 4: every term change is an event with before and after. Amends D71 (officer checks).
+
+## D73 — Navy and blue theme
+Product owner's choice. Amends D18 (palette and fonts).
+- **Palette.** A navy rail (`#0f1c4d`) with a blue active tile; white cards with a soft shadow on a cool canvas
+  (`#f3f5fa`); deep navy ink. One blue accent: `primary` `#2f62e3` for solid buttons and the current step,
+  soft blue `accent` `#e8eefd` with `on-accent` `#2a52c9` for selected tabs, pills and gate panels. Green
+  (`success`) only for done, signed and matched; amber stays for deadlines, red for errors. Dark mode is the same
+  scheme on navy. Tokens live in `apps/web/app/tailwind.css` (mirrored in `lib/design/tokens.ts`, guarded by
+  `test/design-contrast.test.ts`); the legacy tokens in `globals.css` mirror them.
+- **Fonts.** Plus Jakarta Sans for the interface and headings, JetBrains Mono for references, times and figures.
+  Both come from `next/font/google`, which self-hosts the files at build time (no browser request to Google).
+- **Stage stepper.** Numbered circles joined by a line: green with a tick when done, blue with a ring when current.

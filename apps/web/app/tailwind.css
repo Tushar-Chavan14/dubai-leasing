@@ -7,51 +7,71 @@
 /* dark: variant follows the same data-theme attribute as globals.css. */
 @custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
 
-/* Palette values mirror lib/design/tokens.ts. */
+/* Palette values mirror lib/design/tokens.ts. Navy rail, white cards on a cool canvas, one blue accent,
+   green only for done and success, amber for deadlines, red for errors. */
 :root {
+  --ds-canvas: #f3f5fa;
   --ds-page: #ffffff;
-  --ds-raised: #f4f6f1;
-  --ds-ink: #0b0b0b;
-  --ds-muted: #5b6157;
-  --ds-line: #e2e6dc;
-  --ds-accent: #dbe6cf;
-  --ds-on-accent: #0b0b0b;
-  --ds-primary: #0b0b0b;
+  --ds-raised: #f7f9fd;
+  --ds-ink: #111a3a;
+  --ds-muted: #56607d;
+  --ds-line: #e2e7f1;
+  --ds-accent: #e8eefd;
+  --ds-on-accent: #2a52c9;
+  --ds-primary: #2f62e3;
   --ds-on-primary: #ffffff;
+  --ds-success: #12804e;
   --ds-danger: #b42318;
   --ds-warning: #8a5200;
+  --ds-rail: #0f1c4d;
+  --ds-rail-ink: #aab5d8;
+  --ds-rail-active: #4677ee;
+  --ds-shadow: 0 1px 2px rgb(16 28 77 / 0.04), 0 10px 28px -16px rgb(16 28 77 / 0.16);
 }
 :root[data-theme="dark"] {
-  --ds-page: #0b0b0b;
-  --ds-raised: #151714;
-  --ds-ink: #f4f6f1;
-  --ds-muted: #a1a89b;
-  --ds-line: #2a2d27;
-  --ds-accent: #dbe6cf;
-  --ds-on-accent: #0b0b0b;
-  --ds-primary: #dbe6cf;
-  --ds-on-primary: #0b0b0b;
+  --ds-canvas: #0a1029;
+  --ds-page: #111a3b;
+  --ds-raised: #16214a;
+  --ds-ink: #e9edf8;
+  --ds-muted: #9ba7c9;
+  --ds-line: #253262;
+  --ds-accent: #1d2c62;
+  --ds-on-accent: #b3c7ff;
+  --ds-primary: #7aa0ff;
+  --ds-on-primary: #0a1029;
+  --ds-success: #4cd497;
   --ds-danger: #f97066;
   --ds-warning: #f5b942;
+  --ds-rail: #070d24;
+  --ds-rail-ink: #8f9cc4;
+  --ds-rail-active: #4677ee;
+  --ds-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 10px 28px -16px rgb(0 0 0 / 0.6);
 }
 /* "system" follows the OS, same as color-scheme: light dark in globals.css. */
 @media (prefers-color-scheme: dark) {
   :root[data-theme="system"] {
-    --ds-page: #0b0b0b;
-    --ds-raised: #151714;
-    --ds-ink: #f4f6f1;
-    --ds-muted: #a1a89b;
-    --ds-line: #2a2d27;
-    --ds-accent: #dbe6cf;
-    --ds-on-accent: #0b0b0b;
-    --ds-primary: #dbe6cf;
-    --ds-on-primary: #0b0b0b;
+    --ds-canvas: #0a1029;
+    --ds-page: #111a3b;
+    --ds-raised: #16214a;
+    --ds-ink: #e9edf8;
+    --ds-muted: #9ba7c9;
+    --ds-line: #253262;
+    --ds-accent: #1d2c62;
+    --ds-on-accent: #b3c7ff;
+    --ds-primary: #7aa0ff;
+    --ds-on-primary: #0a1029;
+    --ds-success: #4cd497;
     --ds-danger: #f97066;
     --ds-warning: #f5b942;
+    --ds-rail: #070d24;
+    --ds-rail-ink: #8f9cc4;
+    --ds-rail-active: #4677ee;
+    --ds-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 10px 28px -16px rgb(0 0 0 / 0.6);
   }
 }
 
 @theme inline {
+  --color-canvas: var(--ds-canvas);
   --color-page: var(--ds-page);
   --color-raised: var(--ds-raised);
   --color-ink: var(--ds-ink);
@@ -61,10 +81,15 @@
   --color-on-accent: var(--ds-on-accent);
   --color-primary: var(--ds-primary);
   --color-on-primary: var(--ds-on-primary);
+  --color-success: var(--ds-success);
   --color-danger: var(--ds-danger);
   --color-warning: var(--ds-warning);
-  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
-  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --color-rail: var(--ds-rail);
+  --color-rail-ink: var(--ds-rail-ink);
+  --color-rail-active: var(--ds-rail-active);
+  --shadow-card: var(--ds-shadow);
+  --font-sans: var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
   --radius-card: 16px;
   --radius-input: 10px;
 }

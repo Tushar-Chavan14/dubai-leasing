@@ -6,7 +6,7 @@ import { CheckIcon as IconCheck, WarningIcon as IconWarning } from "@phosphor-ic
 import { type DecisionState, decide } from "../app/(staff)/work/actions";
 import { INPUT } from "./ui/form";
 
-// The form lives on the tinted gate panel (#dbe6cf in both themes): black pills with light text, text in the on-accent ink.
+// The form lives on the tinted gate panel (soft blue accent): solid on-accent pills with accent text, text in the on-accent ink.
 const APPROVE =
   "inline-flex h-9 cursor-pointer items-center justify-center rounded-full border border-transparent bg-on-accent px-4 font-sans text-sm font-semibold text-accent disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-on-accent";
 const OUTLINE =

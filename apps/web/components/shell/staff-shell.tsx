@@ -67,7 +67,7 @@ export function StaffShell({
     </AvatarMenu>
   );
   return (
-    <div className="flex min-h-screen bg-page text-ink">
+    <div className="flex min-h-screen bg-canvas text-ink">
       <Rail items={navItems(role, { tenancyOps, waiting })} footer={footer} />
       <main
         id="main"
