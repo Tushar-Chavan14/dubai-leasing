@@ -15,6 +15,19 @@ describe("Workspace url state", () => {
     expect(workHref({ new: true }, { new: undefined })).toBe("/work");
   });
 
+  test("view is All (none), waiting, agent or a saved view id", () => {
+    expect(parseQuery({ view: "agent" }).view).toBe("agent");
+    expect(parseQuery({ view: "waiting" }).view).toBe("waiting");
+    expect(parseQuery({ view: ID }).view).toBe(ID);
+    expect(parseQuery({ view: "other" }).view).toBeUndefined();
+  });
+
+  test("log=all shows every event; anything else is the readable log", () => {
+    expect(parseQuery({ log: "all" }).log).toBe("all");
+    expect(parseQuery({ log: "x" }).log).toBeUndefined();
+    expect(workHref({}, { log: "all" })).toBe("/work?log=all");
+  });
+
   test("existing keys round-trip", () => {
     const q = parseQuery({
       view: "waiting",

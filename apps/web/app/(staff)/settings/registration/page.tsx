@@ -1,7 +1,5 @@
 import type { Metadata } from "next";
-import { AskAiMenu } from "../../../../components/ask-ai";
 import { SetPage } from "../../../../components/ui/settings";
-import { askPrompts } from "../../../../lib/ask-ai/prompts";
 import { get } from "../../../../lib/engine";
 import { operatedEmirates } from "../../../../lib/portfolio";
 import type { CompanyRow, Me } from "../../../../lib/types";
@@ -23,7 +21,6 @@ export default async function RegistrationSettingsPage() {
     <SetPage
       title="Registration"
       lede="How a tenancy contract is registered in each emirate: the portal, what to bring and what the reference looks like. Online registration needs a connection to the registry; without one, staff register by hand and record the result."
-      actions={<AskAiMenu label="Ask AI" prompts={askPrompts.settingsPage("Registration")} />}
     >
       <FeePayerForm
         key={policy?.registrationFeePaidBy}

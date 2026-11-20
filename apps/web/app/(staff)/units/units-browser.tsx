@@ -2,7 +2,7 @@
 
 import { MagnifyingGlassIcon } from "@phosphor-icons/react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { EmptyState } from "../../../components/ui/empty-state";
 import { Pill } from "../../../components/ui/pill";
 import { Segmented } from "../../../components/ui/segmented";
@@ -22,7 +22,7 @@ const FILTER_LABEL: Record<UnitFilter, string> = {
 };
 
 const SELECT =
-  "h-9 max-w-[14rem] cursor-pointer rounded-full border border-line bg-page px-3.5 font-sans text-sm text-ink hover:border-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink";
+  "h-[42px] max-w-[14rem] cursor-pointer rounded-full border border-line bg-page px-3.5 font-sans text-sm text-ink hover:border-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink";
 
 /**
  * One toolbar: state filter with counts, company and category (applied as you choose), and search; then the photo
@@ -35,6 +35,7 @@ export function UnitsBrowser({
   initialCompany,
   initialCategory,
   addHref,
+  actions,
 }: {
   units: UnitRow[];
   companies: CompanyRow[];
@@ -43,6 +44,8 @@ export function UnitsBrowser({
   initialCategory: string;
   /** Set only when the user may add units. */
   addHref?: string;
+  /** Import and Add unit, shown on the search row. */
+  actions?: ReactNode;
 }) {
   const [state, setState] = useState<UnitFilter>(initialState);
   const [company, setCompany] = useState(initialCompany);
@@ -74,63 +77,68 @@ export function UnitsBrowser({
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2.5">
-        <Segmented<UnitFilter>
-          label="Filter units by state"
-          value={state}
-          onChange={(s) => {
-            setState(s);
-            keep("state", s);
-          }}
-          options={FILTERS.map((s) => ({ value: s, label: `${FILTER_LABEL[s]} ${counts[s] ?? 0}` }))}
-        />
-        <label className="flex items-center">
-          <span className="sr-only">Company</span>
-          <select
-            className={SELECT}
-            value={company}
-            onChange={(e) => {
-              setCompany(e.target.value);
-              keep("company", e.target.value);
+      <div className="grid gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="relative flex min-w-[220px] flex-1 items-center sm:max-w-md">
+            <span className="sr-only">Search units</span>
+            <MagnifyingGlassIcon size={16} aria-hidden className="pointer-events-none absolute left-3.5 text-muted" />
+            <input
+              type="search"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search code, building, community"
+              className="h-[42px] w-full rounded-full border border-line bg-page pl-9 pr-3.5 font-sans text-sm text-ink placeholder:text-muted hover:border-ink focus:border-ink"
+            />
+          </label>
+          {actions && <div className="ml-auto flex flex-wrap items-center gap-2">{actions}</div>}
+        </div>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2.5">
+          <Segmented<UnitFilter>
+            label="Filter units by state"
+            value={state}
+            onChange={(s) => {
+              setState(s);
+              keep("state", s);
             }}
-          >
-            <option value="">All companies</option>
-            {companies.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex items-center">
-          <span className="sr-only">Category</span>
-          <select
-            className={SELECT}
-            value={category}
-            onChange={(e) => {
-              setCategory(e.target.value);
-              keep("category", e.target.value);
-            }}
-          >
-            <option value="">All categories</option>
-            {CATEGORIES.map((c) => (
-              <option key={c.value} value={c.value}>
-                {c.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="relative flex min-w-[220px] flex-1 basis-60 items-center sm:max-w-sm">
-          <span className="sr-only">Search units</span>
-          <MagnifyingGlassIcon size={16} aria-hidden className="pointer-events-none absolute left-3.5 text-muted" />
-          <input
-            type="search"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search code, building, community"
-            className="h-9 w-full rounded-full border border-line bg-page pl-9 pr-3.5 font-sans text-sm text-ink placeholder:text-muted hover:border-ink focus:border-ink"
+            options={FILTERS.map((s) => ({ value: s, label: `${FILTER_LABEL[s]} ${counts[s] ?? 0}` }))}
           />
-        </label>
+          <label className="flex items-center">
+            <span className="sr-only">Company</span>
+            <select
+              className={SELECT}
+              value={company}
+              onChange={(e) => {
+                setCompany(e.target.value);
+                keep("company", e.target.value);
+              }}
+            >
+              <option value="">All companies</option>
+              {companies.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex items-center">
+            <span className="sr-only">Category</span>
+            <select
+              className={SELECT}
+              value={category}
+              onChange={(e) => {
+                setCategory(e.target.value);
+                keep("category", e.target.value);
+              }}
+            >
+              <option value="">All categories</option>
+              {CATEGORIES.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
       </div>
 
       {rows.length === 0 ? (

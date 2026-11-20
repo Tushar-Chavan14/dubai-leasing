@@ -20,6 +20,8 @@
   --ds-on-accent: #2a52c9;
   --ds-primary: #2f62e3;
   --ds-on-primary: #ffffff;
+  --ds-cta: #0b1020;
+  --ds-on-cta: #ffffff;
   --ds-success: #12804e;
   --ds-danger: #b42318;
   --ds-warning: #8a5200;
@@ -39,6 +41,8 @@
   --ds-on-accent: #b3c7ff;
   --ds-primary: #7aa0ff;
   --ds-on-primary: #0a1029;
+  --ds-cta: #f2f4fb;
+  --ds-on-cta: #0a1029;
   --ds-success: #4cd497;
   --ds-danger: #f97066;
   --ds-warning: #f5b942;
@@ -60,6 +64,8 @@
     --ds-on-accent: #b3c7ff;
     --ds-primary: #7aa0ff;
     --ds-on-primary: #0a1029;
+    --ds-cta: #f2f4fb;
+    --ds-on-cta: #0a1029;
     --ds-success: #4cd497;
     --ds-danger: #f97066;
     --ds-warning: #f5b942;
@@ -81,6 +87,8 @@
   --color-on-accent: var(--ds-on-accent);
   --color-primary: var(--ds-primary);
   --color-on-primary: var(--ds-on-primary);
+  --color-cta: var(--ds-cta);
+  --color-on-cta: var(--ds-on-cta);
   --color-success: var(--ds-success);
   --color-danger: var(--ds-danger);
   --color-warning: var(--ds-warning);

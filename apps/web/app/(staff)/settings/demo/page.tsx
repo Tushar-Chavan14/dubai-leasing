@@ -2,8 +2,6 @@ import type { Metadata } from "next";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { TENANCY_OPS } from "../../../../lib/env";
-import { AskAiMenu } from "../../../../components/ask-ai";
-import { askPrompts } from "../../../../lib/ask-ai/prompts";
 import { Button, buttonClass } from "../../../../components/ui/button";
 import { Banner, INPUT } from "../../../../components/ui/form";
 import { Block, FormGrid, Panel, Preview, SET_SELECT, SetPage, SField } from "../../../../components/ui/settings";
@@ -161,7 +159,6 @@ export default async function DemoPage({
           everything and re-seeds.
         </>
       }
-      actions={<AskAiMenu label="Ask AI" prompts={askPrompts.settingsPage("Demo")} />}
     >
       <FormGrid
         preview={

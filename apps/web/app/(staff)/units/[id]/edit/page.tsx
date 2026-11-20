@@ -41,7 +41,13 @@ export default async function EditUnitPage({
 
   return (
     <div className="grid gap-6">
-      <PageTitle back={{ href: `/units/${id}`, label: unit.code }} title={`Edit ${unit.code}`} />
+      <PageTitle
+        back={[
+          { href: "/units", label: "Units" },
+          { href: `/units/${id}`, label: unit.code },
+        ]}
+        title={`Edit ${unit.code}`}
+      />
       {photoFlag === "failed" && (
         <Banner tone="warn" role="alert">
           <IconWarning size={16} className="mt-0.5 shrink-0" />

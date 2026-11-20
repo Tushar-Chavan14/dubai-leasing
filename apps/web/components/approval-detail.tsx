@@ -1,3 +1,4 @@
+import { CaretRightIcon } from "@phosphor-icons/react/dist/ssr";
 import Link from "next/link";
 import { TemplateRewrites, type TemplateRewrite } from "./template-rewrites";
 import { notFound } from "next/navigation";
@@ -331,7 +332,8 @@ export async function ApprovalDetail({
   const kycDocs = a.gate === "kyc_review" ? a.sources.filter((s) => s.kind === "document") : [];
   const order = FIELD_ORDER[a.gate] ?? [];
   const keys = [...order.filter((k) => k in shown), ...Object.keys(shown).filter((k) => !order.includes(k))].filter(
-    (k) => !HIDDEN.has(k),
+    // While it waits on you, the note is the field in the form below: don't repeat it as a fact.
+    (k) => !HIDDEN.has(k) && !(mine && k === "note"),
   );
   const headline = compact ? keys.slice(0, 4) : keys;
   const more = compact ? keys.slice(4) : [];
@@ -347,18 +349,46 @@ export async function ApprovalDetail({
           ? `/work?kind=application&id=${a.entity.id}`
           : null;
   const fact = (k: string) => (
-    <Fact key={k} label={humanise(k)} tone={mine ? "tinted" : "raised"} mono={k.endsWith("No") || k === "rulesVersion"}>
+    <Fact key={k} label={humanise(k)} tone="raised" mono={k.endsWith("No") || k === "rulesVersion"}>
       {proposalValue(k, shown[k])}
     </Fact>
+  );
+  // What goes to the registry, with the document it is copied from (its source), shared by the pinned card and the page.
+  const ejariTitle =
+    a.proposal.mode === "manual"
+      ? `What to enter on ${(a.proposal.portalName as string | undefined) ?? "the portal"}`
+      : `What will be sent to ${(a.proposal.systemName as string | undefined) ?? "Ejari"} (simulated)`;
+  const ejariPayload = (
+    <>
+      {typeof a.proposal.feeFils === "number" && (
+        <p className={NOTE_TEXT}>
+          Registration fee ({(a.proposal.systemName as string | undefined) ?? "Ejari"}): {formatAed(a.proposal.feeFils)}
+          , paid by {a.proposal.feePaidBy === "landlord" ? "the landlord" : "the tenant"}.
+        </p>
+      )}
+      <FactGrid>
+        {Object.entries((a.proposal.payload ?? {}) as Record<string, unknown>).map(([k, v]) => (
+          <Fact key={k} label={humanise(k)} mono={k.endsWith("No")}>
+            {proposalValue(k, v)}
+          </Fact>
+        ))}
+      </FactGrid>
+      <p className={NOTE_TEXT}>
+        Copied from the signed contract only. ID numbers are masked here; compare them on the signed PDF.
+      </p>
+      <DocLinks leaseId={a.entity?.id ?? ""} sources={a.sources} />
+    </>
   );
   return (
     <div className="grid gap-7">
       <section
         aria-labelledby="gate-h"
-        className={`grid gap-3.5 rounded-2xl p-5 ${mine ? "bg-accent text-on-accent" : "border border-line bg-page text-ink"}`}
+        className={`grid gap-3.5 rounded-2xl p-5 ${mine ? "gate-mine text-ink" : "border border-line bg-page text-ink shadow-card"}`}
       >
         <div className="flex flex-wrap items-center gap-2">
-          <span className={`inline-flex items-center gap-1.5 text-xs ${mine ? "text-on-accent/75" : "text-muted"}`}>
+          <span
+            className={`inline-flex items-center gap-1.5 text-xs ${mine ? "gate-badge text-[15px] font-semibold text-ink" : "text-muted"}`}
+          >
             <SealCheckIcon size={15} aria-hidden />
             {mine ? "Waiting for you" : waiting ? `Waiting for ${decider}` : "Decision"}
           </span>
@@ -366,10 +396,10 @@ export async function ApprovalDetail({
           {ask && <span className="ml-auto">{ask}</span>}
         </div>
         <div className="grid gap-1">
-          <h2 id="gate-h" className="m-0 font-sans text-[17px] font-semibold tracking-tight">
+          <h2 id="gate-h" className="m-0 font-sans text-[19px] font-bold tracking-tight">
             {a.title}
           </h2>
-          <p className={`m-0 text-[13px] ${mine ? "text-on-accent/75" : "text-muted"}`}>
+          <p className={`m-0 text-[13px] text-muted`}>
             {a.gate.startsWith("ejari_") && typeof a.proposal.systemName === "string"
               ? a.gateDef.label.replace(/\bEjari\b/g, a.proposal.systemName)
               : a.gateDef.label}
@@ -410,6 +440,20 @@ export async function ApprovalDetail({
             <h3 className="sr-only">{a.editedProposal ? "Proposal, as edited" : "Proposal"}</h3>
             <FactGrid>{headline.map(fact)}</FactGrid>
           </div>
+        )}
+        {a.gate === "ejari_submission" && compact && (
+          <details className="group/pay rounded-xl border border-line">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3.5 py-2.5 text-sm font-semibold [&::-webkit-details-marker]:hidden">
+              {ejariTitle}
+              <CaretRightIcon
+                size={14}
+                weight="bold"
+                aria-hidden
+                className="text-muted transition-transform group-open/pay:rotate-90"
+              />
+            </summary>
+            <div className="grid gap-3 border-t border-line px-3.5 py-3">{ejariPayload}</div>
+          </details>
         )}
         {canDecide ? (
           <DecisionForm
@@ -464,33 +508,9 @@ export async function ApprovalDetail({
       {a.gate === "final_contract" && (
         <ContractProposal p={a.proposal} leaseId={a.entity?.id ?? ""} sources={a.sources} />
       )}
-      {a.gate === "ejari_submission" && (
-        <Section
-          id="payload-h"
-          title={
-            a.proposal.mode === "manual"
-              ? `What to enter on ${(a.proposal.portalName as string | undefined) ?? "the portal"}`
-              : `What will be sent to ${(a.proposal.systemName as string | undefined) ?? "Ejari"} (simulated)`
-          }
-        >
-          {typeof a.proposal.feeFils === "number" && (
-            <p className={NOTE_TEXT}>
-              Registration fee ({(a.proposal.systemName as string | undefined) ?? "Ejari"}):{" "}
-              {formatAed(a.proposal.feeFils)}, paid by{" "}
-              {a.proposal.feePaidBy === "landlord" ? "the landlord" : "the tenant"}.
-            </p>
-          )}
-          <FactGrid>
-            {Object.entries((a.proposal.payload ?? {}) as Record<string, unknown>).map(([k, v]) => (
-              <Fact key={k} label={humanise(k)} mono={k.endsWith("No")}>
-                {proposalValue(k, v)}
-              </Fact>
-            ))}
-          </FactGrid>
-          <p className={NOTE_TEXT}>
-            Copied from the signed contract only. ID numbers are masked here; compare them on the signed PDF.
-          </p>
-          <DocLinks leaseId={a.entity?.id ?? ""} sources={a.sources} />
+      {a.gate === "ejari_submission" && !compact && (
+        <Section id="payload-h" title={ejariTitle}>
+          {ejariPayload}
         </Section>
       )}
       {a.gate === "refund" && (
@@ -571,7 +591,7 @@ export async function ApprovalDetail({
           </p>
         </Section>
       )}
-      {a.reasons.length > 0 && (
+      {a.reasons.length > 0 && !compact && (
         <Section id="why-h" title="Why this is here">
           <ul className={`${LIST} list-disc pl-5`}>
             {a.reasons.map((r) => (
@@ -580,55 +600,59 @@ export async function ApprovalDetail({
           </ul>
         </Section>
       )}
-      <Section id="src-h" title="Sources" hint="what the proposal is based on">
-        <ul className={LIST}>
-          {a.sources.map((s, i) => (
-            <li key={i} className="grid grid-cols-[96px_1fr] gap-3">
-              <span className="text-xs text-muted">{s.kind === "helper_run" ? "Helper run" : humanise(s.kind)}</span>
-              <span>
-                {s.kind === "rule" ? (
-                  <>
-                    <span className="font-mono text-xs">{s.rule}</span>: {s.value}{" "}
-                    <span className="text-muted">({s.rulesVersion})</span>
-                  </>
-                ) : s.kind === "field" ? (
-                  <>
-                    {s.label}: <b className="font-semibold tabular-nums">{s.value}</b>
-                  </>
-                ) : (
-                  s.label
-                )}
-              </span>
-            </li>
-          ))}
-          {a.sources.length === 0 && (
-            <li className="grid grid-cols-[96px_1fr] gap-3">
-              <span className="text-xs text-muted">None</span>
-              <span className="text-muted">No sources were attached to this proposal.</span>
-            </li>
-          )}
-        </ul>
-      </Section>
-      <section id="notes" aria-labelledby="notes-h" className="grid gap-3">
-        <h2 id="notes-h" className="m-0 font-sans text-[15px] font-semibold tracking-tight">
-          Notes for the approver
-        </h2>
-        {(notes ?? []).length > 0 && (
+      {!compact && (
+        <Section id="src-h" title="Sources" hint="what the proposal is based on">
           <ul className={LIST}>
-            {(notes ?? []).map((n) => (
-              <li key={n.id} className="grid grid-cols-[88px_minmax(0,1fr)] gap-3 whitespace-pre-wrap">
-                <time dateTime={n.createdAt} className="font-mono text-xs text-muted">
-                  {dateTime(n.createdAt)}
-                </time>
+            {a.sources.map((s, i) => (
+              <li key={i} className="grid grid-cols-[96px_1fr] gap-3">
+                <span className="text-xs text-muted">{s.kind === "helper_run" ? "Helper run" : humanise(s.kind)}</span>
                 <span>
-                  <b className="font-semibold">{actorLabel(n.author)}</b> {n.body}
+                  {s.kind === "rule" ? (
+                    <>
+                      <span className="font-mono text-xs">{s.rule}</span>: {s.value}{" "}
+                      <span className="text-muted">({s.rulesVersion})</span>
+                    </>
+                  ) : s.kind === "field" ? (
+                    <>
+                      {s.label}: <b className="font-semibold tabular-nums">{s.value}</b>
+                    </>
+                  ) : (
+                    s.label
+                  )}
                 </span>
               </li>
             ))}
+            {a.sources.length === 0 && (
+              <li className="grid grid-cols-[96px_1fr] gap-3">
+                <span className="text-xs text-muted">None</span>
+                <span className="text-muted">No sources were attached to this proposal.</span>
+              </li>
+            )}
           </ul>
-        )}
-        <ApprovalNoteForm key={draft?.id ?? "new"} approvalId={a.id} draft={draft} />
-      </section>
+        </Section>
+      )}
+      {!compact && (
+        <section id="notes" aria-labelledby="notes-h" className="grid gap-3">
+          <h2 id="notes-h" className="m-0 font-sans text-[15px] font-semibold tracking-tight">
+            Notes for the approver
+          </h2>
+          {(notes ?? []).length > 0 && (
+            <ul className={LIST}>
+              {(notes ?? []).map((n) => (
+                <li key={n.id} className="grid grid-cols-[88px_minmax(0,1fr)] gap-3 whitespace-pre-wrap">
+                  <time dateTime={n.createdAt} className="font-mono text-xs text-muted">
+                    {dateTime(n.createdAt)}
+                  </time>
+                  <span>
+                    <b className="font-semibold">{actorLabel(n.author)}</b> {n.body}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <ApprovalNoteForm key={draft?.id ?? "new"} approvalId={a.id} draft={draft} />
+        </section>
+      )}
       {a.entity && !compact && (
         <Section
           id="entity-h"

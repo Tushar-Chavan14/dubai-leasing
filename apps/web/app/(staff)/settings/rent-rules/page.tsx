@@ -1,11 +1,8 @@
 import type { Metadata } from "next";
-import { AskAi, AskAiMenu } from "../../../../components/ask-ai";
 import { CompanySplit, pickCompany } from "../../../../components/company-split";
 import { CategoryControl } from "../../../../components/settings-tabs";
 import { SetPage } from "../../../../components/ui/settings";
-import { askPrompts } from "../../../../lib/ask-ai/prompts";
 import { get } from "../../../../lib/engine";
-import { possessive } from "../../../../lib/format";
 import { categoryFor, offeredCategories } from "../../../../lib/portfolio";
 import type { CompanyRow, Me, RentRuleRow } from "../../../../lib/types";
 import { OfferDiscountForm } from "./offer-discount";
@@ -35,7 +32,6 @@ export default async function RentRulesPage({
     <SetPage
       title="Rent rules"
       lede="How far above or below the Smart Rental Index a company may ask, with optional AED limits. A unit's allowed asking-rent range comes from the rule that fits its company, type and area best; an asking rent outside it needs a manager. Offers and tenant counters are limited separately, by the offer discount below the asking rent."
-      actions={<AskAiMenu label="Ask AI" prompts={askPrompts.settingsPage("Rent rules")} />}
     >
       <OfferDiscountForm
         key={policy?.maxRentDiscountPercent}
@@ -62,14 +58,6 @@ export default async function RentRulesPage({
             company={company}
             category={category}
             canEdit={isAdmin}
-            askAi={
-              isAdmin ? (
-                <AskAi
-                  label="Ask AI to set a rent band"
-                  prompt={`Set ${possessive(company.name)} ${category} rent band to `}
-                />
-              ) : null
-            }
           />
         )}
         {!isAdmin && <p className="m-0 text-[13px] text-muted">Only admins can change rules.</p>}

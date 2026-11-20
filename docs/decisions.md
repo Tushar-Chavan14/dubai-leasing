@@ -1707,3 +1707,58 @@ Product owner's choice. Amends D18 (palette and fonts).
 - **Fonts.** Plus Jakarta Sans for the interface and headings, JetBrains Mono for references, times and figures.
   Both come from `next/font/google`, which self-hosts the files at build time (no browser request to Google).
 - **Stage stepper.** Numbered circles joined by a line: green with a tick when done, blue with a ring when current.
+- **Amendment: black call-to-action buttons.** Primary buttons, the chat send button, the public search and chat
+  launcher and the portal upload button use a `cta` token: near-black (`#0b1020`) in light, near-white in dark.
+  Blue `primary` stays for the current step, toggles, links and selected states.
+- **Amendment: Home and Workspace layout.** Home's agent activity is a card of rows that open (native `<details>`)
+  to labelled facts built in `apps/engine/src/manager/log-details.ts` from named columns only: never payloads
+  wholesale and never email recipients (rule 8). Each Home entry also names its record. In the Workspace detail
+  pane the outermost record sections are cards (`.record-cards` in `globals.css`); the record header carries tag
+  chips and the next step; an application's Next step comes first, outlined in blue, then its activity, then an
+  Overview of fact tiles. With nothing selected the pane shows an illustration and asks to pick a record.
+- **Amendment: one Workspace list.** Applications and leases share one list grouped by stage (the stages run from
+  Enquiry to Registered across both). Under the search, three chips: All, Needs me (`view=waiting`, the rows'
+  `waitingForMe`) and With agent (`view=agent`: owner is the agent and nothing waits on the user). The counts come
+  from the same records request. The Applications/Leases switch, the Waiting/Everything toggle, Ask AI and the
+  Table view link were removed from the list header; `/applications` and `/leases` still work as pages.
+- **Amendment: record header.** The Workspace record header is sticky in the detail pane and carries an "Email
+  applicant" (or "Email tenant") button in place of Ask AI; it opens the record's existing email form, where a
+  person still writes and sends. An application's Overview holds the applicant's details; Documents has no Ask AI.
+- **Amendment: date and time pickers.** Site visits are chosen with `components/ui/date-time-picker.tsx`: an
+  iOS-style date pill opening a month calendar (days before today in Dubai disabled) and a time pill opening hour and
+  minute wheels (15-minute steps). Both post one hidden `YYYY-MM-DDTHH:mm` value, as the old datetime-local input did,
+  so the booking and new-application actions are unchanged; their buttons stay disabled until both parts are chosen.
+  Fact grids are plain label-over-value lists on cards (boxed cells only on the tinted gate panel).
+- **Amendment: record order and activity.** A record reads Next step, Overview, its details and Documents, then
+  Activity last (before the audit trail); an open approval panel stays on top. Activity uses the same expandable rows
+  as Home (`components/activity-item.tsx`), waiting entries keeping their buttons visible. Closing an application is a
+  quiet "Not going ahead?" footer in the Next step card, with Cancel. Emailing the applicant or tenant opens a dialog
+  from the header button instead of a section on the page.
+- **Amendment: audit trail inside Activity.** The separate "Audit trail" disclosure is gone. The Activity card has an
+  Activity / All events toggle (`log=all` in the Workspace URL); All events lists every recorded event on the record,
+  newest first, append-only (rule 4), read from the record's own events. Section hints sit on a sub line under the title.
+- **Amendment: one place to ask the agent.** The page-level "Ask AI" buttons and menus (settings pages, units, Home
+  queue rows, record sections, the approval panel, New application) are removed: the copilot dock is the one way to
+  ask. The prompt catalogue (`lib/ask-ai/prompts.ts`) stays for the dock's quick actions. An approval waiting on the
+  user uses the Next step card style (`.gate-mine`: white, blue outline, blue dot). A lease's Overview holds its terms, tenant and landlord; its contract and
+  registration sit under Documents, as an application's do.
+- **Amendment: reasons on demand (UI rule).** A reason or note for a negative action appears only after the person
+  clicks it (Reject, Close this application, close a complaint), with a confirm button and Cancel. Approving needs no
+  note. Recorded in AGENTS.md conventions.
+- **Amendment: record layout rule.** Every record reads: decision card or Next step, Overview, Documents, stage
+  details, Deadlines and renewal (one card: the renewal path above the deadline table), Open work, Activity. Every
+  record card collapses with a chevron (`SectionToggle`). The approval pinned on a record is one card: "What will be
+  sent" folds inside it with its source document linked; "Why this is here", "Sources" and "Notes for the approver"
+  appear only on the standalone approval page. Recorded in AGENTS.md conventions.
+- **Amendment: Next step on every stage.** Every record without a waiting approval has a Next step card: an
+  application's own forms, or the record's next step in words (leases at Contract and later). A waiting task's buttons
+  (Send offer, Prepare contract, …) sit in that card, and its Activity row says "In Next step, above". At Offer, the
+  current offer is a foldable sub-card inside Next step. Site visit time and outcome are Overview facts. A no-show can be
+  recorded only after the visit time (the engine's pending outcome entry says so), and its note opens on demand. The
+  application's Emails list is gone (emails are in Activity). Save view is not offered for the chips.
+- **Amendment: fewer, clearer blocks.** At the site visit, Next step has two buttons: "Showed up — send document link"
+  and "No-show" (enabled once the visit time has passed; its note opens on demand); no separate close link there. The
+  offer, its current terms and every revision sit in one Offer sub-card inside Next step. Open work shows only pending
+  approvals and open tasks and is hidden when there are none; Add task is a floating button on a lease. Deadlines and
+  renewal shows only real milestones (the agent's own timed reminders are not listed). Next-step copy
+  (`nextStepFor`) is rewritten in plain professional English, e.g. "Awaiting signatures from the tenant and the landlord."

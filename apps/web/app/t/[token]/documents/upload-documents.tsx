@@ -210,7 +210,7 @@ export function UploadDocuments({ token, initial, form }: { token: string; initi
                 <div className="flex flex-wrap gap-2">
                   <label
                     aria-disabled={busy !== null}
-                    className={`${d ? "inline-flex min-h-11 cursor-pointer items-center justify-center gap-1.5 rounded-full border border-current px-4 text-sm font-semibold" : "inline-flex min-h-11 cursor-pointer items-center justify-center gap-1.5 rounded-full bg-primary px-4 text-sm font-semibold text-on-primary"} has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ink aria-disabled:cursor-not-allowed aria-disabled:opacity-50`}
+                    className={`${d ? "inline-flex min-h-11 cursor-pointer items-center justify-center gap-1.5 rounded-full border border-current px-4 text-sm font-semibold" : "inline-flex min-h-11 cursor-pointer items-center justify-center gap-1.5 rounded-full bg-cta px-4 text-sm font-semibold text-on-cta"} has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ink aria-disabled:cursor-not-allowed aria-disabled:opacity-50`}
                   >
                     <IconUpload size={16} aria-hidden />
                     {busy === k ? "Uploading…" : d ? "Replace photo" : "Take or choose photo"}

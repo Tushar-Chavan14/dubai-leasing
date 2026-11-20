@@ -17,7 +17,7 @@ export default async function NewApplicationPage({ searchParams }: { searchParam
   return (
     <div className="grid gap-5">
       <PageTitle
-        back={{ href: "/applications", label: "Applicants" }}
+        back={{ href: "/work", label: "Workspace" }}
         title="New application"
         lede="Enter the applicant's contact details and book a site visit. They get an invitation with the time, the address and a page to view the property online. Once you record that they came, they get a one-time link to upload their ID documents; the names and numbers on the contract will come from those documents, not from this form."
       />

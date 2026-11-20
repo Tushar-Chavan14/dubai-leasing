@@ -1,10 +1,11 @@
 "use client";
 
 import { ActionForm } from "../../../../components/ui/action-form";
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { WarningIcon as IconWarning } from "@phosphor-icons/react";
 import { type AppActionState, createApplication } from "../actions";
 import { buttonClass } from "../../../../components/ui/button";
+import { DateTimeFields } from "../../../../components/ui/date-time-picker";
 import { Banner, FIELD, INPUT, LABEL } from "../../../../components/ui/form";
 
 export function NewApplicationForm({
@@ -18,18 +19,10 @@ export function NewApplicationForm({
   today: string;
 }) {
   const [state, action, pending] = useActionState<AppActionState, FormData>(createApplication, {});
+  // The site visit is required: the button waits until both its day and time are chosen.
+  const [visitAt, setVisitAt] = useState("");
   return (
     <ActionForm state={state} action={action} className="grid max-w-[720px] gap-4 @container">
-      <label className={FIELD}>
-        <span className={LABEL}>Unit</span>
-        <select className={INPUT} name="unitId" defaultValue={defaultUnit} required>
-          {units.map((u) => (
-            <option key={u.id} value={u.id}>
-              {u.label}
-            </option>
-          ))}
-        </select>
-      </label>
       <fieldset aria-label="Applicant type" className="m-0 flex w-fit gap-1 rounded-full bg-raised p-[3px] border-0">
         {(
           [
@@ -46,6 +39,16 @@ export function NewApplicationForm({
           </label>
         ))}
       </fieldset>
+      <label className={FIELD}>
+        <span className={LABEL}>Unit</span>
+        <select className={INPUT} name="unitId" defaultValue={defaultUnit} required>
+          {units.map((u) => (
+            <option key={u.id} value={u.id}>
+              {u.label}
+            </option>
+          ))}
+        </select>
+      </label>
       <div className="grid gap-3 @[480px]:grid-cols-2">
         <label className={FIELD}>
           <span className={LABEL}>Name (as the applicant gave it)</span>
@@ -67,17 +70,9 @@ export function NewApplicationForm({
           </span>
           <input className={INPUT} name="requestedMoveInOn" type="date" />
         </label>
-        <label className={FIELD}>
-          <span className={LABEL}>Site visit date &amp; time (Dubai)</span>
-          <input
-            className={INPUT}
-            name="viewingAt"
-            type="datetime-local"
-            required
-            min={today ? `${today}T00:00` : undefined}
-            step={900}
-          />
-        </label>
+        <div className="@[480px]:col-span-2">
+          <DateTimeFields name="viewingAt" min={today} onChange={setVisitAt} />
+        </div>
       </div>
       {state.error && (
         <Banner tone="bad" role="alert">
@@ -94,8 +89,13 @@ export function NewApplicationForm({
           </div>
         </Banner>
       )}
-      <div>
-        <button type="submit" className={buttonClass("primary", "sm")} disabled={pending}>
+      <div className="mt-4">
+        <button
+          type="submit"
+          className={buttonClass("primary", "sm")}
+          disabled={pending || !visitAt}
+          title={visitAt ? undefined : "Choose the site visit day and time first"}
+        >
           {pending ? "Creating…" : "Create and send site visit invitation"}
         </button>
       </div>

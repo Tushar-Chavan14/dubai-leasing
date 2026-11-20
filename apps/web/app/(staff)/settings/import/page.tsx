@@ -1,6 +1,4 @@
 import type { Metadata } from "next";
-import { AskAiMenu } from "../../../../components/ask-ai";
-import { askPrompts } from "../../../../lib/ask-ai/prompts";
 import type { ReactNode } from "react";
 import { TabLinks } from "../../../../components/ui/page";
 import { FormGrid, Preview, SetPage } from "../../../../components/ui/settings";
@@ -112,11 +110,7 @@ export default async function ImportPage({ searchParams }: { searchParams: Promi
         }
       : base;
   return (
-    <SetPage
-      title={page.title}
-      lede={page.lede}
-      actions={<AskAiMenu label="Ask AI" prompts={askPrompts.settingsPage("Import")} />}
-    >
+    <SetPage title={page.title} lede={page.lede}>
       <TabLinks
         label="What to import"
         items={[

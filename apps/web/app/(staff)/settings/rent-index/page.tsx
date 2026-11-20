@@ -1,10 +1,8 @@
 import { EMIRATE_LABELS, type Emirate } from "@leasing/core";
 import type { Metadata } from "next";
-import { AskAi, AskAiMenu } from "../../../../components/ask-ai";
 import { EmptyState } from "../../../../components/ui/empty-state";
 import { Pill } from "../../../../components/ui/pill";
 import { FormGrid, Panel, Preview, SetPage, TABLE, TD, TH } from "../../../../components/ui/settings";
-import { askPrompts } from "../../../../lib/ask-ai/prompts";
 import { get } from "../../../../lib/engine";
 import { aedShort, bedroomsLabel, longDate } from "../../../../lib/format";
 import { operatedEmirates } from "../../../../lib/portfolio";
@@ -35,7 +33,6 @@ export default async function SriPage() {
     <SetPage
       title="Rent index"
       lede="The average rents by emirate, community and size. In Dubai, use the DLD Smart Rental Index averages. Rent rules set each company's band around these values, and the renewal helper uses them for the legal rent cap. A value recorded on a lease overrides the table for that lease."
-      actions={<AskAiMenu label="Ask AI" prompts={askPrompts.settingsPage("Rent index")} />}
     >
       <FormGrid
         preview={
@@ -50,9 +47,6 @@ export default async function SriPage() {
             {canEdit ? (
               <>
                 <SriForm emirates={operatedEmirates(companies)} />
-                <div>
-                  <AskAi label="Ask AI to add a rent index value" prompt="Add a rent index value of AED " />
-                </div>
               </>
             ) : (
               <p className="m-0 text-[13px] text-muted">

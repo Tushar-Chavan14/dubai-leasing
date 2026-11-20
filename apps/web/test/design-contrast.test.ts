@@ -23,6 +23,11 @@ describe.each(["light", "dark"] as const)("%s palette", (mode) => {
     expect(contrastRatio(p.onPrimary, p.primary)).toBeGreaterThanOrEqual(4.5);
     expect(contrastRatio(p.onAccent, p.accent)).toBeGreaterThanOrEqual(4.5);
   });
+  test("CTA text passes and the CTA stands out", () => {
+    expect(contrastRatio(p.onCta, p.cta)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(p.cta, p.page)).toBeGreaterThanOrEqual(3);
+    expect(contrastRatio(p.cta, p.canvas)).toBeGreaterThanOrEqual(3);
+  });
   test("status text passes 4.5 on page", () => {
     expect(contrastRatio(p.danger, p.page)).toBeGreaterThanOrEqual(4.5);
     expect(contrastRatio(p.warning, p.page)).toBeGreaterThanOrEqual(4.5);

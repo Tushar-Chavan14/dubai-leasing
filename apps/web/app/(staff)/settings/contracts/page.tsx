@@ -1,8 +1,5 @@
 import { type ChangePolicy, ChangePolicyForm } from "./change-policy-form";
 import type { Metadata } from "next";
-import { askPrompts } from "../../../../lib/ask-ai/prompts";
-import { AskAi, AskAiMenu } from "../../../../components/ask-ai";
-import { possessive } from "../../../../lib/format";
 import { CompanySplit, pickCompany } from "../../../../components/company-split";
 import { EmirateTabs, pickEmirateTab } from "../../../../components/emirate-tabs";
 import { EMIRATE_LABELS } from "@leasing/core";
@@ -50,7 +47,6 @@ export default async function ContractRulesPage({
     <SetPage
       title="Contracts"
       lede="Which tenures and how many cheques each company allows, by type, and the clauses its contracts carry. Offers and contracts follow the rule that fits the unit best. Signed contracts never change."
-      actions={<AskAiMenu label="Ask AI" prompts={askPrompts.settingsPage("Contracts")} />}
     >
       {policy?.contractChanges && (
         <ChangePolicyForm
@@ -94,20 +90,6 @@ export default async function ContractRulesPage({
                 category={category}
                 emirate={tab}
                 canEdit={isAdmin}
-                askAi={
-                  isAdmin ? (
-                    <>
-                      <AskAi
-                        label="Ask AI to add a clause"
-                        prompt={`Add a clause to ${possessive(company.name)} contract: `}
-                      />
-                      <AskAi
-                        label="Ask AI to change a contract rule"
-                        prompt={`Change ${possessive(company.name)} ${category} contract rule: `}
-                      />
-                    </>
-                  ) : null
-                }
               />
               {/* D69: clauses read from a template are on Contract templates; here only Additional terms clauses. */}
               <ClauseList

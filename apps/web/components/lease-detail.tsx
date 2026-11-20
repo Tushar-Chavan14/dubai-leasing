@@ -21,23 +21,11 @@ import {
 } from "./tenancy-panels";
 import { BuildingsIcon } from "@phosphor-icons/react/dist/ssr";
 import { Due, Status } from "./ui";
-import { AskAi } from "./ask-ai";
-import { askPrompts } from "../lib/ask-ai/prompts";
-import { Fact, FactGrid, FactKey, FactList, FactVal, ROW_CARD, Section, Sub } from "./ui/record";
-import { AddTaskForm, EmailTenantForm, TaskActions, VacateNoticeForm } from "./work-forms";
+import { Fact, FactGrid, ROW_CARD, Section, Sub } from "./ui/record";
+import { AddTaskFab, EmailTenantForm, TaskActions, VacateNoticeForm } from "./work-forms";
 import type { PreparingStatus } from "../lib/contract-preparing";
 import { engine, get, publicGet } from "../lib/engine";
-import {
-  actorLabel,
-  aedShort,
-  bedroomsLabel,
-  dateTime,
-  eventLabel,
-  longDate,
-  milestoneLabel,
-  roleLabel,
-  shortDate,
-} from "../lib/format";
+import { aedShort, bedroomsLabel, longDate, milestoneLabel, roleLabel, shortDate } from "../lib/format";
 import type { Me, UnitDetail } from "../lib/types";
 
 interface LeaseView {
@@ -106,7 +94,16 @@ function TenancyOff() {
 }
 
 /** The lease, in full: renewal path, contract, Ejari, move-in and move-out, payments, cases. Rendered in the Workspace detail pane. */
-export async function LeaseDetail({ id, draftId }: { id: string; draftId?: string | undefined }) {
+/** `activity` (the Workspace's log) comes last, after the lease's details. */
+export async function LeaseDetail({
+  id,
+  draftId,
+  activity,
+}: {
+  id: string;
+  draftId?: string | undefined;
+  activity?: ReactNode;
+}) {
   const l = await get<LeaseView>(`/api/leases/${id}`);
   if (!l) notFound();
   const [health, unit, me, payments, complaints] = await Promise.all([
@@ -165,23 +162,44 @@ export async function LeaseDetail({ id, draftId }: { id: string; draftId?: strin
   );
   const demo = !!health?.demoMode;
 
-  const contractAsk = askPrompts.contractEjari(l.ref)[0]!;
   const LIST = "m-0 grid list-none gap-1.5 p-0";
+  const openApprovals = l.approvals.filter((a) => a.status === "pending");
+  // The agent's own reminders (timed:…) are not deadlines anyone acts on; only real milestones are shown.
+  const milestones = l.deadlines.filter((d) => !d.milestone.startsWith("timed:"));
   return (
-    <div className="grid gap-8">
-      <p className="m-0 text-sm text-muted">
-        <Status value={l.state} /> Lease <span className="font-mono text-xs">{l.ref}</span>, {shortDate(l.startOn)} to{" "}
-        {longDate(l.endOn)}. Rules <span className="font-mono text-xs">{l.rulesVersion}</span>.
-      </p>
-
-      <Section id="terms-h" title="Terms">
+    <div className="grid gap-4">
+      <Section
+        id="overview-h"
+        title={
+          <span className="inline-flex items-center gap-2">
+            Overview <Status value={l.state} />
+          </span>
+        }
+      >
         <FactGrid>
+          <Fact label="Lease" mono>
+            {l.ref}
+          </Fact>
+          <Fact label="Term">
+            {shortDate(l.startOn)} to {longDate(l.endOn)}
+          </Fact>
+          <Fact label="Rules version" mono>
+            {l.rulesVersion}
+          </Fact>
           <Fact label="Annual rent">{aedShort(l.annualRentFils)}</Fact>
           <Fact label="Cheques">{l.cheques}</Fact>
           <Fact label="Deposit">{aedShort(l.depositFils)}</Fact>
           <Fact label={l.registration?.systemName ?? "Ejari"} mono={!!l.ejariNo}>
             {l.ejariNo ?? "Not registered"}
           </Fact>
+          {tenant && (
+            <Fact label="Tenant">
+              {tenant.fullNameEn}
+              <Sub className="font-normal">{[tenant.email, tenant.phone].filter(Boolean).join(", ")}</Sub>
+              {tenant.emiratesIdNo && <Sub className="font-mono font-normal">EID {tenant.emiratesIdNo}</Sub>}
+            </Fact>
+          )}
+          {landlord && <Fact label="Landlord">{landlord.fullNameEn}</Fact>}
         </FactGrid>
         {unitCard(
           <>
@@ -212,34 +230,13 @@ export async function LeaseDetail({ id, draftId }: { id: string; draftId?: strin
         )}
       </Section>
 
-      <Section id="people-h" title="People">
-        <FactList>
-          {tenant && (
-            <>
-              <FactKey>Tenant</FactKey>
-              <FactVal>
-                {tenant.fullNameEn}
-                <Sub>{[tenant.email, tenant.phone].filter(Boolean).join(", ")}</Sub>
-                {tenant.emiratesIdNo && <Sub className="font-mono">EID {tenant.emiratesIdNo}</Sub>}
-              </FactVal>
-            </>
-          )}
-          {landlord && (
-            <>
-              <FactKey>Landlord</FactKey>
-              <FactVal>{landlord.fullNameEn}</FactVal>
-            </>
-          )}
-        </FactList>
-      </Section>
-
-      <div className="grid gap-5">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="m-0 font-sans text-[15px] font-semibold tracking-tight">
-            Contract and {l.registration?.systemName ?? "Ejari"}
-          </h2>
-          <AskAi compact prompt={contractAsk.prompt} label={contractAsk.label} page={{ kind: "lease", id: l.id }} />
-        </div>
+      {/* Documents, as on an application: the contract and its registration are sub-sections of one card. */}
+      <Section
+        id="docs-h"
+        title="Documents"
+        hint={`Contract and ${l.registration?.systemName ?? "Ejari"}`}
+        className="gap-6"
+      >
         <ContractPanel
           leaseId={l.id}
           state={l.state}
@@ -262,7 +259,7 @@ export async function LeaseDetail({ id, draftId }: { id: string; draftId?: strin
           manual={manual}
           today={today}
         />
-      </div>
+      </Section>
 
       {moveOut && <MoveOutPanel leaseId={l.id} view={moveOut} role={me?.role ?? ""} today={health?.today ?? ""} />}
       {moveIn && <MoveInPanel leaseId={l.id} view={moveIn} canAct={canAct} active={l.state !== "MOVE_IN"} />}
@@ -290,26 +287,6 @@ export async function LeaseDetail({ id, draftId }: { id: string; draftId?: strin
         <EmailTenantForm key={draft?.id ?? "new"} leaseId={l.id} tenantEmail={tenant.email} draft={draft} />
       )}
 
-      <Section
-        id="tl-h"
-        title="Renewal path"
-        hint={
-          TENANCY_OPS && next && today ? (
-            <>
-              Next: {milestoneLabel(next.milestone).toLowerCase()} on {shortDate(next.dueOn)},{" "}
-              <Due today={today} on={next.dueOn} />
-            </>
-          ) : undefined
-        }
-      >
-        {!TENANCY_OPS ? (
-          <TenancyOff />
-        ) : l.deadlines.length ? (
-          <RenewalTimeline deadlines={l.deadlines} startOn={l.startOn} endOn={l.endOn} today={today} />
-        ) : (
-          <p className="m-0 text-sm text-muted">Renewal milestones are scheduled when the lease becomes active.</p>
-        )}
-      </Section>
       {TENANCY_OPS ? (
         <RenewalPanel
           leaseId={l.id}
@@ -322,45 +299,73 @@ export async function LeaseDetail({ id, draftId }: { id: string; draftId?: strin
         />
       ) : null}
 
-      <Section id="dl-h" title="Deadlines" hint="Asia/Dubai calendar days">
-        <div className="overflow-x-auto rounded-xl border border-line">
-          <table className="data">
-            <thead>
-              <tr>
-                <th>Milestone</th>
-                <th>Due</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {l.deadlines.map((d) => (
-                <tr key={d.id}>
-                  <td>
-                    {milestoneLabel(d.milestone)}
-                    {d.note && d.status !== "pending" && <Sub>{d.note}</Sub>}
-                  </td>
-                  <td className="nowrap">
-                    {longDate(d.dueOn)}
-                    {d.status === "pending" && today && (
-                      <div>
-                        <Due today={today} on={d.dueOn} />
-                      </div>
-                    )}
-                  </td>
-                  <td>
-                    <Status value={d.status === "pending" ? "upcoming" : d.status} />
-                  </td>
+      {/* Deadlines and the renewal path are one story: a renewal is driven by its deadlines. */}
+      {milestones.length > 0 && (
+        <Section
+          id="dl-h"
+          title="Deadlines and renewal"
+          hint={
+            TENANCY_OPS && next && today ? (
+              <>
+                Asia/Dubai calendar days · next: {milestoneLabel(next.milestone).toLowerCase()} on{" "}
+                {shortDate(next.dueOn)}, <Due today={today} on={next.dueOn} />
+              </>
+            ) : (
+              "Asia/Dubai calendar days"
+            )
+          }
+        >
+          {!TENANCY_OPS ? (
+            <p className="m-0 text-[13px] text-muted">
+              Renewals are switched off for this account, so no renewal path is shown.
+            </p>
+          ) : l.deadlines.length ? (
+            <RenewalTimeline deadlines={milestones} startOn={l.startOn} endOn={l.endOn} today={today} />
+          ) : (
+            <p className="m-0 text-[13px] text-muted">
+              Renewal milestones are scheduled when the lease becomes active.
+            </p>
+          )}
+          <div className="overflow-x-auto rounded-xl border border-line">
+            <table className="data">
+              <thead>
+                <tr>
+                  <th>Milestone</th>
+                  <th>Due</th>
+                  <th>Status</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Section>
+              </thead>
+              <tbody>
+                {milestones.map((d) => (
+                  <tr key={d.id}>
+                    <td>
+                      {milestoneLabel(d.milestone)}
+                      {/* A scheduled reminder's note is its stored job (JSON): not for people. */}
+                      {d.note && d.status !== "pending" && !d.note.trimStart().startsWith("{") && <Sub>{d.note}</Sub>}
+                    </td>
+                    <td className="nowrap">
+                      {longDate(d.dueOn)}
+                      {d.status === "pending" && today && (
+                        <div>
+                          <Due today={today} on={d.dueOn} />
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      <Status value={d.status === "pending" ? "upcoming" : d.status} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Section>
+      )}
 
-      {(l.approvals.length > 0 || openTasks.length > 0 || canAct) && (
+      {(openApprovals.length > 0 || openTasks.length > 0 || (TENANCY_OPS && canAct && running)) && (
         <Section id="work-h" title="Open work">
           <ul className={LIST}>
-            {l.approvals.map((a) => (
+            {openApprovals.map((a) => (
               <li key={a.id}>
                 <Link
                   href={`/work?approval=${a.id}`}
@@ -389,7 +394,6 @@ export async function LeaseDetail({ id, draftId }: { id: string; draftId?: strin
               </li>
             ))}
           </ul>
-          {canAct && <AddTaskForm leaseId={l.id} today={today} />}
           {TENANCY_OPS && canAct && running && (
             <details>
               <summary className="cursor-pointer text-sm font-semibold">Record a served 12-month notice</summary>
@@ -401,29 +405,8 @@ export async function LeaseDetail({ id, draftId }: { id: string; draftId?: strin
         </Section>
       )}
 
-      <details>
-        <summary className="cursor-pointer text-[15px] font-semibold tracking-tight">
-          Audit trail <span className="text-xs font-normal text-muted">append-only, every event</span>
-        </summary>
-        <ul className={`${LIST} mt-3`}>
-          {l.events.toReversed().map((e) => (
-            <li key={e.id} className="grid grid-cols-[88px_minmax(0,1fr)] gap-3 text-sm">
-              <time dateTime={e.at} className="font-mono text-xs text-muted">
-                {dateTime(e.at)}
-              </time>
-              <span>
-                <b className="font-semibold">{eventLabel(e.type)}</b>
-                {e.toState && <span> to {e.toState.toLowerCase().replace("_", " ")}</span>}
-                {typeof e.payload.milestone === "string" && (
-                  <span> {milestoneLabel(e.payload.milestone).toLowerCase()}</span>
-                )}
-                {typeof e.payload.title === "string" && <span> {e.payload.title}</span>}
-                <span className="text-muted">, {actorLabel(e.actor).toLowerCase()}</span>
-              </span>
-            </li>
-          ))}
-        </ul>
-      </details>
+      {activity}
+      {canAct && <AddTaskFab leaseId={l.id} today={today} />}
     </div>
   );
 }

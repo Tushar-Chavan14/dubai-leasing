@@ -1,13 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { BuildingsIcon as IconBuilding } from "@phosphor-icons/react/dist/ssr";
-import { AskAiMenu } from "../../../../components/ask-ai";
 import { RowAction } from "../../../../components/row-action";
 import { EmptyState } from "../../../../components/ui/empty-state";
 import { Pill } from "../../../../components/ui/pill";
 import { ROW_CARD, Sub } from "../../../../components/ui/record";
 import { SetPage } from "../../../../components/ui/settings";
-import { askPrompts } from "../../../../lib/ask-ai/prompts";
 import { get } from "../../../../lib/engine";
 import { KIND_LABEL } from "../../../../lib/portfolio";
 import type { CompanyRow, Me } from "../../../../lib/types";
@@ -24,7 +22,6 @@ export default async function CompaniesPage() {
     <SetPage
       title="Companies"
       lede="Companies own units. Rent rules and contract rules are set per company, so each one can price and contract in its own way. A contract can't be prepared until the company's legal details are complete."
-      actions={<AskAiMenu label="Ask AI" prompts={askPrompts.settingsPage("Companies")} />}
     >
       {isAdmin && <CompanyForm />}
       {list.length === 0 ? (

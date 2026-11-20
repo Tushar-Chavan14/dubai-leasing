@@ -10,6 +10,9 @@ export type Palette = {
   onAccent: string;
   primary: string;
   onPrimary: string;
+  /** Call-to-action buttons: near-black in light, near-white in dark. */
+  cta: string;
+  onCta: string;
   success: string;
   danger: string;
   warning: string;
@@ -30,6 +33,8 @@ export const TOKENS: { light: Palette; dark: Palette } = {
     onAccent: "#2a52c9",
     primary: "#2f62e3",
     onPrimary: "#ffffff",
+    cta: "#0b1020",
+    onCta: "#ffffff",
     success: "#12804e",
     danger: "#b42318",
     warning: "#8a5200",
@@ -48,6 +53,8 @@ export const TOKENS: { light: Palette; dark: Palette } = {
     onAccent: "#b3c7ff",
     primary: "#7aa0ff",
     onPrimary: "#0a1029",
+    cta: "#f2f4fb",
+    onCta: "#0a1029",
     success: "#4cd497",
     danger: "#f97066",
     warning: "#f5b942",

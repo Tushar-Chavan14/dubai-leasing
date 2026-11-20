@@ -1,5 +1,6 @@
 /** The Workspace keeps its whole state in the URL, so links, reloads and the old redirects all work. */
 export interface WorkQuery {
+  /** "waiting" (needs me), "agent" (with the agent), or a saved view id; none is All. */
   view?: string | undefined;
   q?: string | undefined;
   stage?: string | undefined;
@@ -11,6 +12,8 @@ export interface WorkQuery {
   draft?: string | undefined;
   /** Opens the New application sheet. */
   new?: true | undefined;
+  /** "all": the record's Activity shows every recorded event (the audit trail) instead of the readable log. */
+  log?: "all" | undefined;
 }
 
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -24,7 +27,7 @@ export function parseQuery(raw: Record<string, string | string[] | undefined>): 
   const approval = first(raw.approval);
   const view = first(raw.view);
   return {
-    view: view === "waiting" || (view && UUID_RE.test(view)) ? view : undefined,
+    view: view === "waiting" || view === "agent" || (view && UUID_RE.test(view)) ? view : undefined,
     q: first(raw.q)?.slice(0, 80),
     stage: first(raw.stage),
     kind: kind === "application" || kind === "lease" ? kind : undefined,
@@ -34,6 +37,7 @@ export function parseQuery(raw: Record<string, string | string[] | undefined>): 
     wide: first(raw.wide) === "1",
     draft: first(raw.draft),
     new: first(raw.new) === "1" ? true : undefined,
+    log: first(raw.log) === "all" ? "all" : undefined,
     ...(approval && UUID_RE.test(approval) ? { approval } : {}),
   };
 }
@@ -42,7 +46,7 @@ export function parseQuery(raw: Record<string, string | string[] | undefined>): 
 export function workHref(current: WorkQuery, change: Partial<Record<keyof WorkQuery, unknown>> = {}): string {
   const merged: Record<string, unknown> = { ...current, ...change };
   const p = new URLSearchParams();
-  for (const k of ["view", "q", "stage", "kind", "id", "entry", "pane", "draft"] as const) {
+  for (const k of ["view", "q", "stage", "kind", "id", "entry", "pane", "draft", "log"] as const) {
     const v = merged[k];
     if (typeof v === "string" && v) p.set(k, v);
   }

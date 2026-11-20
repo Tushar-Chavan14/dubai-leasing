@@ -131,6 +131,18 @@
 .num {
   font-variant-numeric: tabular-nums;
 }
+/* Every single-choice select gets the app's own chevron instead of the browser's, a mid grey that reads on
+   light and dark. Unlayered on purpose: it must beat the padding utilities so text never runs under it. */
+select:not([multiple]):not([size]) {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%238a93ad' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
+  background-position: right 12px center;
+  background-size: 14px 14px;
+  background-repeat: no-repeat;
+  padding-right: 2.25rem;
+  text-overflow: ellipsis;
+}
 .skip-link {
   position: absolute;
   left: 12px;
@@ -345,4 +357,87 @@ tr[data-current="true"] td {
 .ask-ai-menu li button:hover,
 .ask-ai-menu li button:focus-visible {
   background: var(--surface-3);
+}
+
+/* ---------- record cards ----------
+   The Workspace detail pane: its outermost sections become white cards on the canvas, so the record reads as
+   compartments. A section inside another section stays plain. The next-step section is outlined in blue. */
+.record-cards [data-section]:not([data-section] [data-section]) {
+  background: var(--ds-page);
+  border: 1px solid var(--ds-line);
+  border-radius: 16px;
+  padding: 18px 20px 20px;
+  box-shadow: var(--ds-shadow);
+}
+.record-cards [data-section]:not([data-section] [data-section]) > :first-child {
+  padding-bottom: 12px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--ds-line);
+}
+.record-cards [data-section][data-highlight]:not([data-section] [data-section]) {
+  border-color: var(--ds-primary);
+  box-shadow:
+    0 0 0 1px var(--ds-primary),
+    var(--ds-shadow);
+}
+.record-cards [data-section][data-highlight]:not([data-section] [data-section]) > :first-child h2::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 999px;
+  background: var(--ds-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ds-primary) 20%, transparent);
+  vertical-align: 1px;
+}
+
+/* ---------- the approval waiting on you ----------
+   Looks like the Next step card: white, outlined in blue, a blue dot before its label. */
+.gate-mine {
+  background: var(--ds-page);
+  border: 1px solid var(--ds-primary);
+  box-shadow:
+    0 0 0 1px var(--ds-primary),
+    var(--ds-shadow);
+}
+.gate-mine .gate-badge::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--ds-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ds-primary) 20%, transparent);
+}
+.gate-mine .gate-badge svg {
+  display: none;
+}
+
+/* ---------- collapsible record cards (UI rule) ----------
+   Every outermost record card has a chevron (SectionToggle) that folds it to its title. */
+.section-toggle {
+  display: none;
+}
+.record-cards [data-section] > :first-child .section-toggle {
+  display: grid;
+}
+.record-cards [data-section][data-collapsed] > :not(:first-child) {
+  display: none;
+}
+.record-cards [data-section][data-collapsed] > :first-child {
+  padding-bottom: 0;
+  margin-bottom: 0;
+  border-bottom: 0;
+}
+/* A section inside a record card (Contract and Ejari inside Documents) is its own bordered sub-card, also foldable. */
+.record-cards [data-section] [data-section] {
+  border: 1px solid var(--ds-line);
+  border-radius: 12px;
+  padding: 12px 14px 14px;
+  background: color-mix(in srgb, var(--ds-accent) 45%, var(--ds-page));
+  border-color: color-mix(in srgb, var(--ds-primary) 18%, var(--ds-line));
+}
+.record-cards [data-section] [data-section]:not([data-collapsed]) > :first-child {
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--ds-line);
 }

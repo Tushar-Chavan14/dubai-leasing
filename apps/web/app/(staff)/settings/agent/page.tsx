@@ -1,6 +1,4 @@
 import type { Metadata } from "next";
-import { AskAiMenu } from "../../../../components/ask-ai";
-import { askPrompts } from "../../../../lib/ask-ai/prompts";
 import {
   AUTOPILOT_GROUPS,
   AUTOPILOT_LIMIT_NUMBERS,
@@ -26,7 +24,6 @@ export default async function AgentPage() {
     <SetPage
       title="Agent"
       lede="Choose how much the agent does by itself. Anything you switch off waits for an officer instead. It never approves, sends or signs anything."
-      actions={<AskAiMenu label="Ask AI" prompts={askPrompts.settingsPage("Agent")} />}
       max="max-w-[760px]"
     >
       <AgentForm

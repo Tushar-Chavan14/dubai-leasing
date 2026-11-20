@@ -3,9 +3,7 @@
 import { MagnifyingGlassIcon } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useState } from "react";
-import { AskAiMenu } from "../../../components/ask-ai";
 import { EmptyState } from "../../../components/ui/empty-state";
-import { askPrompts } from "../../../lib/ask-ai/prompts";
 import { filterHub } from "../../../lib/settings/hub";
 import { SETTINGS_ICONS } from "./settings-icons";
 
@@ -31,14 +29,12 @@ export function HubSearch({ demo, lastChanged }: { demo: boolean; lastChanged: R
             className="h-11 w-full rounded-[14px] border border-line bg-page pr-4 pl-10 font-sans text-[15px] text-ink placeholder:text-muted hover:border-ink focus:border-ink"
           />
         </label>
-        <AskAiMenu label="Ask AI" prompts={askPrompts.settingsHub()} />
       </div>
       <div aria-live="polite" className="grid gap-7">
         {groups.length === 0 ? (
           <EmptyState
             title="No setting matches"
             body="Try a different word, or ask the agent which setting changes what you want."
-            action={<AskAiMenu label="Ask AI" prompts={askPrompts.settingsHub()} />}
           />
         ) : (
           groups.map((g, gi) => (

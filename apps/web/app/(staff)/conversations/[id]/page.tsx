@@ -22,7 +22,10 @@ export default async function ConversationPage({ params }: { params: Promise<{ i
   return (
     <div className="grid gap-6">
       <PageTitle
-        back={{ href: "/conversations", label: "Enquiries" }}
+        back={[
+          { href: "/work", label: "Workspace" },
+          { href: "/work?stage=Enquiry", label: "Enquiries" },
+        ]}
         title={
           <>
             {c.partyName ?? c.contactEmail ?? "New enquirer"} <Status value={c.status} />

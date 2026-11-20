@@ -1,11 +1,9 @@
 import type { StaffRole } from "@leasing/core";
 import type { Metadata } from "next";
 import Link from "next/link";
-import { AskAiMenu } from "../../../components/ask-ai";
 import { buttonClass } from "../../../components/ui/button";
 import { PageTitle } from "../../../components/ui/page";
 import { get } from "../../../lib/engine";
-import { askPrompts } from "../../../lib/ask-ai/prompts";
 import { PlusIcon as IconPlus, UploadSimpleIcon as IconUpload } from "@phosphor-icons/react/dist/ssr";
 import { canSeeUnits } from "../../../lib/shell/nav";
 import { NotAllowed } from "./not-allowed";
@@ -42,9 +40,15 @@ export default async function UnitsPage({
       <PageTitle
         title="Units"
         lede="Every unit in the portfolio, from preparation to occupied. A unit can be listed once its checklist is complete and its price is settled."
+      />
+      <UnitsBrowser
+        units={units ?? []}
+        companies={companies ?? []}
+        initialState={state}
+        initialCompany={companyId}
+        initialCategory={category}
         actions={
           <>
-            <AskAiMenu label="Ask AI" prompts={askPrompts.unitsList()} />
             {canEdit && canImport && (
               <Link href="/settings/import?kind=units" className={buttonClass("ghost", "sm")}>
                 <IconUpload size={16} />
@@ -59,13 +63,6 @@ export default async function UnitsPage({
             )}
           </>
         }
-      />
-      <UnitsBrowser
-        units={units ?? []}
-        companies={companies ?? []}
-        initialState={state}
-        initialCompany={companyId}
-        initialCategory={category}
         {...(canEdit ? { addHref: "/units/new" } : {})}
       />
     </div>

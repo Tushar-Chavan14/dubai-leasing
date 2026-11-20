@@ -81,7 +81,7 @@ export function ChatLauncher() {
           setMounted(true);
           setOpen((o) => !o);
         }}
-        className="fixed right-4 z-40 inline-flex h-12 cursor-pointer items-center gap-2.5 rounded-full border-0 bg-primary py-0 pr-5 pl-4 font-sans text-[15px] font-medium text-on-primary shadow-[0_10px_30px_rgb(0_0_0/0.22)] transition-transform duration-150 ease-out hover:-translate-y-0.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink motion-reduce:transition-none motion-reduce:hover:translate-y-0 sm:right-5"
+        className="fixed right-4 z-40 inline-flex h-12 cursor-pointer items-center gap-2.5 rounded-full border-0 bg-cta py-0 pr-5 pl-4 font-sans text-[15px] font-medium text-on-cta shadow-[0_10px_30px_rgb(0_0_0/0.22)] transition-transform duration-150 ease-out hover:-translate-y-0.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink motion-reduce:transition-none motion-reduce:hover:translate-y-0 sm:right-5"
         style={{ bottom: "calc(16px + env(safe-area-inset-bottom))" }}
       >
         {open ? <XIcon size={20} aria-hidden="true" /> : <ChatCircleTextIcon size={20} aria-hidden="true" />}
