@@ -1,6 +1,11 @@
+import { SectionToggle } from "./section-toggle";
 import type { ReactNode } from "react";
 
-/** Plain section of the record view: a small heading, an optional grey hint, an action on the right. No box. */
+/**
+ * Section of the record view: a small heading with an optional grey sub line under it, an action on the right. No box of its own;
+ * inside a `.record-cards` container the outermost sections become cards (globals.css), and `highlight` marks the
+ * one that holds the next thing to do.
+ */
 export function Section({
   id,
   title,
@@ -8,6 +13,7 @@ export function Section({
   action,
   children,
   className = "",
+  highlight = false,
 }: {
   id: string;
   title: ReactNode;
@@ -15,24 +21,40 @@ export function Section({
   action?: ReactNode;
   children?: ReactNode;
   className?: string;
+  highlight?: boolean;
 }) {
   return (
-    <section aria-labelledby={id} className={`grid gap-3 ${className}`}>
+    <section
+      aria-labelledby={id}
+      data-section=""
+      {...(highlight ? { "data-highlight": "" } : {})}
+      className={`grid gap-3 ${className}`}
+    >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        <h2 id={id} className="m-0 font-sans text-[15px] font-semibold tracking-tight text-ink">
-          {title}
-        </h2>
-        {hint && <span className="text-xs text-muted">{hint}</span>}
-        {action && <span className="ml-auto flex flex-wrap items-center gap-2">{action}</span>}
+        <div className="grid min-w-0 gap-0.5">
+          <h2 id={id} className="m-0 font-sans text-[15px] font-semibold tracking-tight text-ink">
+            {title}
+          </h2>
+          {/* The hint is a sub line under the title, not beside it. */}
+          {hint && <p className="m-0 text-xs text-muted">{hint}</p>}
+        </div>
+        <span className="ml-auto flex flex-wrap items-center gap-2">
+          {action}
+          <SectionToggle headingId={id} />
+        </span>
       </div>
       {children}
     </section>
   );
 }
 
-/** A grid of fact cells (label over value), two across when there is room. */
+/** A grid of facts (label over value), as many across as fit. Plain on cards; boxed only on the tinted gate panel. */
 export function FactGrid({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <dl className={`m-0 grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2 ${className}`}>{children}</dl>;
+  return (
+    <dl className={`m-0 grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-x-6 gap-y-4 ${className}`}>
+      {children}
+    </dl>
+  );
 }
 
 export function Fact({
@@ -48,7 +70,7 @@ export function Fact({
   mono?: boolean;
 }) {
   return (
-    <div className={`min-w-0 rounded-xl px-3.5 py-2.5 ${tone === "tinted" ? "bg-black/[0.06]" : "bg-raised"}`}>
+    <div className={`min-w-0 ${tone === "tinted" ? "rounded-xl bg-white/15 px-3.5 py-2.5 ring-1 ring-white/20" : ""}`}>
       <dt className={`text-xs ${tone === "tinted" ? "text-on-accent/70" : "text-muted"}`}>{label}</dt>
       <dd
         className={`m-0 mt-0.5 min-w-0 text-sm font-semibold [overflow-wrap:anywhere] ${mono ? "font-mono tabular-nums" : ""}`}

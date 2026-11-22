@@ -467,22 +467,12 @@ export function ComplaintsPanel({
                       Open ticket
                     </button>
                   </ActionForm>
-                  <ActionForm state={resState} action={resolve} className={FORM_ROW}>
-                    <input type="hidden" name="leaseId" value={leaseId} />
-                    <input type="hidden" name="complaintId" value={c.id} />
-                    <input type="hidden" name="action" value="close" />
-                    <input
-                      name="reason"
-                      placeholder="Why it's closed"
-                      required
-                      minLength={3}
-                      aria-label="Reason"
-                      className={`${SET_INPUT} w-auto!`}
-                    />
-                    <button type="submit" className={buttonClass("ghost", "sm")} disabled={resolving}>
-                      Close
-                    </button>
-                  </ActionForm>
+                  <CloseWithReason
+                    state={resState}
+                    action={resolve}
+                    pending={resolving}
+                    hidden={{ leaseId, complaintId: c.id, action: "close" }}
+                  />
                 </div>
               )}
             </ItemRow>
@@ -491,5 +481,55 @@ export function ComplaintsPanel({
       )}
       <Result s={resState} />
     </Section>
+  );
+}
+
+/**
+ * A negative action (close, reject, withdraw) that needs a reason. UI rule: the reason box appears only after the
+ * person clicks the action, with Cancel to back out; the second click confirms.
+ */
+function CloseWithReason({
+  state,
+  action,
+  pending,
+  hidden,
+  label = "Close",
+  placeholder = "Why it's closed",
+}: {
+  state: TenancyActionState;
+  action: (fd: FormData) => void;
+  pending: boolean;
+  hidden: Record<string, string>;
+  label?: string;
+  placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  if (!open)
+    return (
+      <button type="button" className={buttonClass("ghost", "sm")} onClick={() => setOpen(true)}>
+        {label}
+      </button>
+    );
+  return (
+    <ActionForm state={state} action={action} className={FORM_ROW}>
+      {Object.entries(hidden).map(([k, v]) => (
+        <input key={k} type="hidden" name={k} value={v} />
+      ))}
+      <input
+        name="reason"
+        placeholder={placeholder}
+        required
+        minLength={3}
+        autoFocus
+        aria-label="Reason"
+        className={`${SET_INPUT} w-auto!`}
+      />
+      <button type="submit" className={buttonClass("danger", "sm")} disabled={pending}>
+        {label}
+      </button>
+      <button type="button" className={buttonClass("ghost", "sm")} onClick={() => setOpen(false)}>
+        Cancel
+      </button>
+    </ActionForm>
   );
 }

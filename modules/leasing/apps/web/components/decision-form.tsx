@@ -6,11 +6,13 @@ import { CheckIcon as IconCheck, WarningIcon as IconWarning } from "@phosphor-ic
 import { type DecisionState, decide } from "../app/(staff)/work/actions";
 import { INPUT } from "@platform/ui/form";
 
-// The form lives on the tinted gate panel (#dbe6cf in both themes): black pills with light text, text in the on-accent ink.
+// The form lives on the tinted gate panel (soft blue accent): Approve is the black call to action, Reject a plain outline.
 const APPROVE =
-  "inline-flex h-9 cursor-pointer items-center justify-center rounded-full border border-transparent bg-on-accent px-4 font-sans text-sm font-semibold text-accent disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-on-accent";
+  "inline-flex h-9 cursor-pointer items-center justify-center rounded-full border border-transparent bg-cta px-4 font-sans text-sm font-semibold text-on-cta disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-on-accent";
+const REJECT =
+  "inline-flex h-9 cursor-pointer items-center justify-center rounded-full border border-danger bg-page px-4 font-sans text-sm font-semibold text-danger disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-danger";
 const OUTLINE =
-  "inline-flex h-9 cursor-pointer items-center justify-center rounded-full border border-on-accent/40 bg-transparent px-4 font-sans text-sm font-semibold text-on-accent hover:border-on-accent disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-on-accent";
+  "inline-flex h-9 cursor-pointer items-center justify-center rounded-full border border-line bg-page px-4 font-sans text-sm font-semibold text-ink hover:border-primary disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-on-accent";
 
 /** Banner names of the fields the engine can flag in a decision. */
 const FIELD_LABEL: Record<string, string> = {
@@ -47,6 +49,8 @@ export function DecisionForm({
 }) {
   const [state, action, pending] = useActionState<DecisionState, FormData>(decide, {});
   const [editing, setEditing] = useState(false);
+  // UI rule: a reason box appears only once the person chooses the negative action (Reject), with Cancel to back out.
+  const [rejecting, setRejecting] = useState(false);
 
   if (state.ok) {
     return (
@@ -146,17 +150,26 @@ export function DecisionForm({
           </span>
         </label>
       )}
-      <label className="grid gap-1.5">
-        <span className="text-xs font-semibold">
-          Note{" "}
-          <em className="font-normal not-italic opacity-75">
-            ({editing && canEditNote ? "required for an edit" : "required to reject"})
-          </em>
-        </span>
-        <textarea name="note" rows={2} placeholder="Why you decided this way" className={INPUT} />
-      </label>
+      {(rejecting || (editing && canEditNote)) && (
+        <label className="grid gap-1.5">
+          <span className="text-xs font-semibold">
+            {rejecting ? "Why are you rejecting it?" : "Note"}{" "}
+            <em className="font-normal not-italic text-muted">(kept in the audit trail)</em>
+          </span>
+          <textarea name="note" rows={2} required autoFocus placeholder="Why you decided this way" className={INPUT} />
+        </label>
+      )}
       <div className="flex flex-wrap items-center gap-2">
-        {editing ? (
+        {rejecting ? (
+          <>
+            <button type="submit" name="decision" value="reject" className={REJECT} disabled={pending}>
+              Reject
+            </button>
+            <button type="button" className={OUTLINE} onClick={() => setRejecting(false)}>
+              Cancel
+            </button>
+          </>
+        ) : editing ? (
           <>
             <button type="submit" name="decision" value="edit" className={APPROVE} disabled={pending}>
               {editOffer
@@ -179,7 +192,7 @@ export function DecisionForm({
                 {editOffer ? "Change terms" : canEditRent ? "Change rent" : "Edit note"}
               </button>
             )}
-            <button type="submit" name="decision" value="reject" className={OUTLINE} disabled={pending}>
+            <button type="button" className={OUTLINE} onClick={() => setRejecting(true)}>
               Reject
             </button>
           </>

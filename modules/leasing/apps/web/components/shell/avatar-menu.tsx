@@ -34,7 +34,7 @@ export function AvatarMenu({ initials, name, children }: { initials: string; nam
         aria-expanded={open}
         aria-controls={id}
         onClick={() => setOpen((o) => !o)}
-        className="grid size-8 cursor-pointer place-items-center rounded-full border border-line bg-raised font-sans text-[11px] font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
+        className="grid size-9 cursor-pointer place-items-center rounded-full border-2 border-white/20 bg-[linear-gradient(135deg,#f5a3c7,#c9a2f2)] font-sans text-[12px] font-bold text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
       >
         {initials}
       </button>
@@ -43,7 +43,7 @@ export function AvatarMenu({ initials, name, children }: { initials: string; nam
           id={id}
           role="dialog"
           aria-label="Account"
-          className="absolute bottom-0 left-[calc(100%+28px)] z-50 grid w-64 gap-3 rounded-card border border-line bg-page p-4 font-sans text-sm text-ink"
+          className="absolute bottom-0 left-[calc(100%+28px)] z-50 grid w-64 gap-3 rounded-card border border-line bg-page p-4 font-sans text-sm text-ink shadow-card"
         >
           {children}
         </div>

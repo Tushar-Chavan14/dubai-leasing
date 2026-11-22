@@ -184,13 +184,41 @@ export const MILESTONE_SHORT: Record<string, string> = {
 };
 
 export const milestoneId = (m: string) => m.split("@")[0] ?? m;
-export const milestoneLabel = (m: string) => MILESTONE_LABELS[milestoneId(m)] ?? humanise(milestoneId(m));
+
+/** Agent reminders scheduled for an exact time (`timed:<entity>:<kind>[:<ref>]#<attempt>`). */
+const TIMED_LABELS: Record<string, string> = {
+  docs_chase: "Documents reminder",
+  sign_reminder: "Signing reminder",
+};
+const TIMED = /^timed:/;
+
+/** "timed:<id>:sign_reminder:<id>#2@1" → { kind: "sign_reminder", attempt: "2" }; null for other milestones. */
+export function timedParts(m: string): { kind: string; attempt: string | undefined } | null {
+  if (!TIMED.test(m)) return null;
+  const [body = "", attempt] = milestoneId(m).split("#");
+  const kind = body
+    .split(":")
+    .filter((p) => /^[a-z_]+$/i.test(p) && p !== "timed")
+    .at(-1);
+  return kind ? { kind, attempt } : null;
+}
+
+export function milestoneLabel(m: string): string {
+  const t = timedParts(m);
+  if (t) {
+    const base = TIMED_LABELS[t.kind] ?? humanise(t.kind);
+    return t.attempt ? `${base}, attempt ${t.attempt}` : base;
+  }
+  if (TIMED.test(m)) return "Scheduled reminder";
+  return MILESTONE_LABELS[milestoneId(m)] ?? humanise(milestoneId(m));
+}
 
 /**
  * What a milestone key's suffix refers to: lease milestones carry the term's end date
  * (`renewal_assess@2027-04-01`), offer milestones the offer revision (`offer_expiry@1`).
  */
 export function milestoneScope(m: string): string {
+  if (TIMED.test(m)) return "";
   const suffix = m.split("@")[1]?.split("#")[0] ?? "";
   if (/^\d{4}-\d{2}-\d{2}$/.test(suffix)) return `term ending ${longDate(suffix)}`;
   if (/^\d+$/.test(suffix)) return `offer revision ${suffix}`;

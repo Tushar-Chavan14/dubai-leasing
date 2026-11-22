@@ -10,7 +10,6 @@ import {
   LOCKED_SEVERITY,
   type ReadDocKind,
 } from "@leasing/core";
-import { AskAiMenu } from "../../../../components/ask-ai";
 import { PlusIcon as IconPlus, TrashIcon as IconTrash, WarningIcon as IconWarning } from "@phosphor-icons/react";
 import type { RuleResult } from "../../../../lib/portfolio";
 import { discardKycDraft, publishKycDraft, saveKycDraft } from "./actions";
@@ -391,13 +390,11 @@ export function KycEditor({
   initial,
   canEdit,
   hasDraft,
-  companyName,
 }: {
   companyId: string;
   initial: KycConfigView;
   canEdit: boolean;
   hasDraft: boolean;
-  companyName: string;
 }) {
   const [fields, setFields] = useState<Field[]>(initial.form);
   const [base] = useState<Base>(initial.rules.base);
@@ -707,32 +704,6 @@ export function KycEditor({
                       />
                       Has an expiry date
                     </label>
-                  </div>
-                )}
-                {canEdit && f.rules && f.documentKind && f.documentKind !== "other" && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <AskAiMenu
-                      label="Ask AI about this document"
-                      prompts={[
-                        {
-                          label: "How long it must be valid",
-                          prompt: `For ${companyName}: the "${f.label}" must be valid this many days after the lease starts: `,
-                        },
-                        {
-                          label: "Make a check a blocker",
-                          prompt: `For ${companyName}: make the "${f.label}" "Read clearly?" check a blocker and email the applicant`,
-                        },
-                        {
-                          label: "Issued within N days",
-                          prompt: `For ${companyName}: the "${f.label}" as a warning, it must have been issued within this many days: `,
-                        },
-                        {
-                          label: "Read confidence",
-                          prompt: `For ${companyName}: read the "${f.label}" with at least this % confidence: `,
-                        },
-                        { label: "Explain its checks", prompt: `What checks run on ${companyName}'s "${f.label}"?` },
-                      ]}
-                    />
                   </div>
                 )}
                 {f.rules && f.documentKind && f.documentKind !== "other" && (

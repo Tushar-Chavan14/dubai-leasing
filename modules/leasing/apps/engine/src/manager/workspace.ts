@@ -28,6 +28,7 @@ import {
 } from "@leasing/db";
 import { and, desc, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
 import type { EngineContext } from "../context.ts";
+import { approvalDetails, emailDetails, eventDetails, taskDetails, type LogDetail } from "./log-details.ts";
 import { isGateEditable } from "./gate-rules.ts";
 import { DEFAULT_KYC_STUCK_MINUTES, kycCheckState } from "./kyc-check.ts";
 import { isTenancyMilestone } from "./milestones.ts";
@@ -89,6 +90,12 @@ export interface LogEntry {
   actions: LogAction[];
   /** Move-in to move-out (renewals, rent, notices, move-out): out of scope while TENANCY_OPS is off. */
   tenancy?: boolean;
+  /** The application or lease row the entry is about. */
+  entityId?: string;
+  /** Labelled facts for the expanded entry (log-details.ts). */
+  details?: LogDetail[];
+  /** On Home: the record the entry belongs to, so the expanded entry can link to it. */
+  record?: { kind: "application" | "lease"; id: string; ref: string; title: string; unitCode: string };
 }
 
 export interface RecordRow {
@@ -164,29 +171,29 @@ export function nextStepFor(r: {
 }): string {
   switch (r.stage) {
     case "Enquiry":
-      return "Confirm a site visit time with the applicant.";
+      return "Agree a site visit time with the applicant and book it.";
     case "Viewing":
-      return "Hold the site visit, then record whether the applicant came.";
+      return "Conduct the site visit, then record whether the applicant attended.";
     case "Documents":
-      return "Agent is checking the applicant's documents.";
+      return "The agent is verifying the applicant's identity documents.";
     case "Offer":
       return r.offerHeld
-        ? "Send the offer to the applicant."
+        ? "Review the offer and send it to the applicant."
         : r.reservationDue
-          ? "The applicant accepted. Record the reservation payment once it is received."
-          : "Waiting for the applicant to answer the offer.";
+          ? "The applicant has accepted the offer. Record the reservation payment once it is received."
+          : "The offer is with the applicant, awaiting their response.";
     case "Reserved":
-      return "Agent is creating the lease from the reservation.";
+      return "The agent is preparing the lease from the reservation.";
     case "Contract":
       return r.contractHeld
-        ? "Prepare the contract."
+        ? "Prepare the tenancy contract for signature."
         : r.contractSent
-          ? "Waiting for the signers."
-          : "Approve the final contract, then collect signatures.";
+          ? "Awaiting signatures from the tenant and the landlord."
+          : "Approve the final contract, then send it to the tenant and the landlord for signature.";
     case "Ejari":
-      return `Approve the ${r.system ?? "Ejari"} submission and wait for the registration.`;
+      return `Approve the ${r.system ?? "Ejari"} submission, then await the registration.`;
     case "Registered":
-      return "Registered. Nothing to do before move-in.";
+      return "Registered. No action is needed before move-in.";
   }
 }
 
@@ -508,6 +515,8 @@ async function buildLog(
       refId: e.id,
       pending: false,
       actions: [],
+      entityId: e.entityId,
+      details: eventDetails(e),
       ...(isTenancyEvent(e.type, e.payload) ? { tenancy: true } : {}),
     });
   }
@@ -533,6 +542,8 @@ async function buildLog(
       refId: ap.id,
       pending: mayDecide,
       actions: mayDecide ? ["approve", "reject", ...(isGateEditable(ap.gate) ? (["edit"] as const) : [])] : [],
+      entityId: ap.entityId,
+      details: approvalDetails(ap),
       ...(TENANCY_GATES.has(ap.gate) ? { tenancy: true } : {}),
     });
   }
@@ -545,6 +556,8 @@ async function buildLog(
       refId: m.id,
       pending: false,
       actions: [],
+      entityId: m.entityId,
+      details: emailDetails(m),
       ...(TENANCY_EMAILS.has(m.purpose) ? { tenancy: true } : {}),
     });
   }
@@ -561,6 +574,8 @@ async function buildLog(
       refId: t.id,
       pending: mine,
       actions: mine ? [...(special ? [special] : []), ...(NO_MARK_DONE.has(t.kind) ? [] : (["done"] as const))] : [],
+      entityId: t.entityId,
+      details: taskDetails(t),
     });
   }
   // A viewing whose time has passed waits for its outcome (attended or no-show), for leasing roles.
@@ -970,7 +985,13 @@ export async function homeView(ctx: EngineContext, me: Me): Promise<HomeView> {
     { ids: rows.flatMap((r) => r._entityIds), names: new Map() },
     { since: dayStart, before: dayEnd, agentOnly: true, limit: 8 },
   );
-  return { ...tiles, agentToday: recent };
+  // Point each entry at its record (an application and its lease share one row).
+  const byEntity = new Map(rows.flatMap((r) => r._entityIds.map((id) => [id, r] as const)));
+  const agentToday = recent.map((e) => {
+    const r = e.entityId ? byEntity.get(e.entityId) : undefined;
+    return r ? { ...e, record: { kind: r.kind, id: r.id, ref: r.ref, title: r.title, unitCode: r.unitCode } } : e;
+  });
+  return { ...tiles, agentToday };
 }
 
 export interface PipelineSummary {

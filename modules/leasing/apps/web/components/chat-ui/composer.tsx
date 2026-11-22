@@ -8,7 +8,7 @@ import type { Pill } from "./quick-actions.ts";
 export const TOOL_BTN =
   "inline-flex h-[34px] min-w-[34px] cursor-pointer items-center justify-center gap-1.5 rounded-full border-0 bg-transparent px-1.5 text-muted shadow-none hover:bg-raised hover:text-ink disabled:cursor-not-allowed disabled:opacity-50 data-[recording]:text-danger focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ink";
 export const SEND_BTN =
-  "grid size-[34px] cursor-pointer place-items-center rounded-full border-0 bg-primary p-0 text-on-primary disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink";
+  "grid size-[34px] cursor-pointer place-items-center rounded-full border-0 bg-cta p-0 text-on-cta disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink";
 /** The text field inside the composer card: bare, so the card draws the border and focus. */
 export const FIELD_BARE =
   "max-h-36 min-h-6 w-full resize-none !rounded-none !border-0 !bg-transparent !p-0 font-sans text-sm leading-normal text-ink !shadow-none !outline-none [field-sizing:content] placeholder:text-muted focus:!shadow-none focus-visible:!shadow-none";

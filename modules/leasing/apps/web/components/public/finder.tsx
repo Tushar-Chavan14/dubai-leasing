@@ -116,7 +116,7 @@ export function Finder({
       </label>
       <button
         type="submit"
-        className="min-h-12 cursor-pointer border-0 bg-primary px-7 font-sans text-sm font-semibold text-on-primary focus-visible:outline-2 focus-visible:-outline-offset-4 focus-visible:outline-ink"
+        className="min-h-12 cursor-pointer border-0 bg-cta px-7 font-sans text-sm font-semibold text-on-cta focus-visible:outline-2 focus-visible:-outline-offset-4 focus-visible:outline-ink"
       >
         {labels.search}
       </button>

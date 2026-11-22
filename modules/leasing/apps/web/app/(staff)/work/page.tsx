@@ -7,6 +7,7 @@ import { aedShort, bedroomsLabel } from "../../../lib/format";
 import { LiveRefresh } from "../../../components/live/live-refresh";
 import { ActivityLog, RecordHead } from "./activity-log";
 import { RecordBody } from "./detail-pane";
+import { EmptyPane } from "./empty-pane";
 import { NewApplicationSheet } from "./new-application-sheet";
 import { RecordList } from "./record-list";
 import { parseQuery, UUID_RE, workHref, type WorkQuery } from "./url";
@@ -33,9 +34,9 @@ export default async function WorkPage({
     query.pane = query.pane ?? "open";
   }
 
+  // One request feeds the list and the chip counts: "Needs me" and "With agent" are filtered here from the same rows.
   const params = new URLSearchParams();
-  if (query.view === "waiting") params.set("mine", "1");
-  else if (query.view && UUID_RE.test(query.view)) params.set("view", query.view);
+  if (query.view && UUID_RE.test(query.view)) params.set("view", query.view);
   if (query.q) params.set("q", query.q);
   if (query.stage) params.set("stage", query.stage);
 
@@ -59,11 +60,27 @@ export default async function WorkPage({
   const entries = record ? ((await get<LogEntry[]>(`/api/records/${record.kind}/${record.id}/log`)) ?? []) : [];
   const gate = entries.find((e) => e.source === "approval" && e.pending) ?? null;
   const entry = query.entry ? (entries.find((e) => e.refId === query.entry) ?? null) : null;
+  // The waiting task the Next step card carries (Send offer, Prepare contract, …); approvals have their own card,
+  // and a passed site visit is recorded by the card's own form.
+  const nextEntry =
+    entries.find(
+      (e) =>
+        e.pending && e.actions.length > 0 && e.source !== "approval" && !e.actions.includes("record_viewing_outcome"),
+    ) ?? null;
+  const viewingPassed = entries.some((e) => e.actions.includes("record_viewing_outcome"));
 
-  const apps = list.filter((r) => r.kind === "application").length;
-  const leases = list.length - apps;
-  const tab: "application" | "lease" = query.kind ?? (apps === 0 && leases > 0 ? "lease" : "application");
-  const shown = list.filter((r) => r.kind === tab);
+  // Applications and leases share one list: the stages run from Enquiry to Registered across both.
+  const counts = {
+    all: list.length,
+    waiting: list.filter((r) => r.waitingForMe).length,
+    agent: list.filter((r) => r.owner === "agent" && !r.waitingForMe).length,
+  };
+  const shown =
+    query.view === "waiting"
+      ? list.filter((r) => r.waitingForMe)
+      : query.view === "agent"
+        ? list.filter((r) => r.owner === "agent" && !r.waitingForMe)
+        : list;
   const proactiveDrafts =
     policy?.autopilot?.copilot_proactive_drafts === true &&
     ["leasing_officer", "leasing_manager", "finance"].includes(me?.role ?? "");
@@ -75,26 +92,21 @@ export default async function WorkPage({
     <div className="group/wk @container h-dvh" data-has={hasRecord ? "true" : "false"} data-wk>
       <LiveRefresh record={record ? { kind: record.kind, id: record.id } : null} />
       <div className="grid h-full grid-cols-1 @[760px]:grid-cols-[320px_minmax(0,1fr)]">
-        <RecordList
-          rows={shown}
-          views={views ?? []}
-          query={query}
-          tab={tab}
-          mine={query.view === "waiting"}
-          counts={{ application: apps, lease: leases }}
-        />
+        <RecordList rows={shown} views={views ?? []} query={query} counts={counts} />
         <section
           aria-label="Record"
           className="min-h-0 overflow-y-auto overscroll-contain px-5 py-6 @[900px]:px-7 @max-[759px]:group-data-[has=false]/wk:hidden"
         >
           {record ? (
-            <div className="mx-auto grid max-w-[860px] gap-7">
+            <div className="record-cards mx-auto grid max-w-[860px] gap-4">
               <RecordHead record={record} query={query} proactiveDrafts={proactiveDrafts} />
               <RecordBody
                 query={query}
                 record={record}
                 entry={entry}
                 gate={gate}
+                nextEntry={nextEntry}
+                viewingPassed={viewingPassed}
                 approvalId={approvalOnly}
                 activity={
                   <ActivityLog
@@ -103,6 +115,7 @@ export default async function WorkPage({
                     query={query}
                     today={today}
                     meName={me?.name ?? ""}
+                    inCardId={nextEntry?.refId}
                     // "See above" only when the gate panel is above: not when another entry is open.
                     gateId={!entry || entry.refId === gate?.refId ? gate?.refId : undefined}
                   />
@@ -121,7 +134,7 @@ export default async function WorkPage({
               </Link>
             </p>
           ) : (
-            <p className="m-0 text-sm text-muted">Pick a record to see its activity.</p>
+            <EmptyPane newHref={workHref(query, { new: true })} />
           )}
         </section>
       </div>

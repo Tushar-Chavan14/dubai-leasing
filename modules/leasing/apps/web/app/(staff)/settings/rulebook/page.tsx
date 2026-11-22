@@ -1,12 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { type Emirate, EMIRATE_LABELS, EMIRATES } from "@leasing/core";
-import { AskAiMenu } from "../../../../components/ask-ai";
 import { Status } from "../../../../components/ui";
 import { EmptyState } from "@platform/ui/empty-state";
 import { Sub } from "@platform/ui/record";
 import { FormGrid, Panel, Preview, SetPage, TABLE, TD, TH } from "@platform/ui/settings";
-import { askPrompts } from "../../../../lib/ask-ai/prompts";
 import { get } from "../../../../lib/engine";
 import { dateTime, longDate } from "../../../../lib/format";
 import { operatedEmirates } from "../../../../lib/portfolio";
@@ -38,7 +36,6 @@ export default async function RulesPage() {
       lede="Versioned leasing rules per emirate: notice periods, rent-cap bands, deadlines and company reference notes. Each lease keeps the version it was created under; new leases get the active version of their emirate. An emirate with no version takes no offers or leases."
       actions={
         <>
-          <AskAiMenu label="Ask AI" prompts={askPrompts.settingsPage("Rulebook")} />
           {isAdmin && data ? (
             <NewDraft
               activeByEmirate={data.activeByEmirate}

@@ -166,6 +166,15 @@ bun run voice                   # local whisper-server for voice input (VOICE_UR
   (`read` | `draft` | `propose`) and `roles`. Follow the `new-copilot-tool` skill.
 - Adapters are interfaces in `modules/leasing/packages/adapters/*/types.ts`; pick the implementation from env.
 - Prefer small pure functions; keep side effects at the edges (engine, adapters).
+- UI rule: a reason or note for a negative action (reject, close, withdraw, cancel) is never shown up front. The
+  action button opens the reason box with a confirm button and Cancel; the second click submits.
+- UI rule: a record (application or lease, any stage) reads top to bottom as: what waits on you (the decision card or
+  Next step), Overview, Documents, then the stage's details, Deadlines and renewal, Open work, Activity last. Every
+  section card can be collapsed with its chevron, and so can each sub-section inside it (e.g. Contract and Ejari
+  inside Documents), shown as its own bordered sub-card. No "why this is here"/"sources" blocks on a record: link the source
+  document where the data is shown.
+- UI rule: every page below a top-level section (Home, Workspace, Units, Settings) shows breadcrumbs above its title
+  (`PageTitle back` or `Breadcrumbs`): a back arrow, the parent trail, then the current page.
 - Tests: Bun test. Rulebook and state machine changes need tests for every branch.
   Model calls are mocked in unit tests; real models run only in `bun run eval`.
 

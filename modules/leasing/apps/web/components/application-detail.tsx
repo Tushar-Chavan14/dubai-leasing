@@ -1,14 +1,13 @@
+import type { ReactNode } from "react";
 import type { StaffRole } from "@leasing/core";
 import { canSeeUnits } from "../lib/shell/nav";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { AskAi } from "./ask-ai";
-import { askPrompts } from "../lib/ask-ai/prompts";
 import { Status } from "./ui";
 import { Fact, FactGrid, NOTE_TEXT, ROW_CARD, Section, Sub } from "@platform/ui/record";
 import { TENANT_TEXT } from "./ui/tenant-text";
 import { get, publicGet } from "../lib/engine";
-import { actorLabel, aedShort, dateTime, eventLabel, formatAed, longDate, viewingTime } from "../lib/format";
+import { actorLabel, aedShort, dateTime, formatAed, longDate, viewingTime } from "../lib/format";
 import { CheckIcon as IconCheck, WarningIcon as IconWarning } from "@phosphor-icons/react/dist/ssr";
 import { inboundLabel } from "../lib/status-labels";
 import type { Me } from "../lib/types";
@@ -150,7 +149,23 @@ const CHECK_LABEL: Record<string, string> = {
 };
 
 /** The application, in full: documents, checks, offer, viewing, tasks and messages. Rendered in the Workspace detail pane. */
-export async function ApplicationDetail({ id, draftId }: { id: string; draftId?: string | undefined }) {
+/** `activity` (the Workspace's log) comes last, after the record's details and documents. */
+export async function ApplicationDetail({
+  id,
+  draftId,
+  activity,
+  pendingAction,
+  nextStep,
+  viewingPassed = false,
+}: {
+  id: string;
+  draftId?: string | undefined;
+  activity?: ReactNode;
+  /** A waiting task's buttons (Send offer, …), shown in the Next step card. */
+  pendingAction?: ReactNode;
+  nextStep?: string | undefined;
+  viewingPassed?: boolean;
+}) {
   const [a, me, health] = await Promise.all([
     get<Detail>(`/api/applications/${id}`),
     get<Me>("/api/me"),
@@ -189,52 +204,10 @@ export async function ApplicationDetail({ id, draftId }: { id: string; draftId?:
     return `${label}${d.side && d.side !== "page" ? ` (${d.side})` : ""}`;
   };
 
-  const identityAsk = askPrompts.identity(a.applicant.fullNameEn, a.ref)[0]!;
-  const offerAsk = askPrompts.offer(a.applicant.fullNameEn, a.ref)[0]!;
   const unitName = `${a.unit.code}, ${a.unit.building}`;
   const LIST = "m-0 grid list-none gap-1.5 p-0";
   return (
-    <div className="grid gap-8">
-      <p className="m-0 text-sm text-muted">
-        <Status value={a.state} /> Application <span className="font-mono text-xs">{a.ref}</span> for{" "}
-        {!me || canSeeUnits(me.role as StaffRole) ? (
-          <Link href={`/units/${a.unit.id}`} className="font-semibold text-ink! underline underline-offset-2">
-            {unitName}
-          </Link>
-        ) : (
-          <span>{unitName}</span>
-        )}
-        , created {dateTime(a.createdAt)}
-        {a.requestedMoveInOn ? `, wants to move in ${longDate(a.requestedMoveInOn)}` : ""}.
-        {a.source === "copilot" && " Created from the copilot, confirmed by staff."}
-        {a.source === "telegram" && (
-          <>
-            {" "}
-            Booked through Telegram
-            {a.conversationId ? (
-              <>
-                {" "}
-                (
-                <Link href={`/conversations/${a.conversationId}`} className="font-semibold text-ink! underline">
-                  conversation
-                </Link>
-                )
-              </>
-            ) : null}
-            .
-          </>
-        )}
-        {leaseId && (
-          <>
-            {" "}
-            <Link href={`/work?kind=lease&id=${leaseId}`} className="font-semibold text-ink! underline">
-              Open the lease
-            </Link>
-            .
-          </>
-        )}
-      </p>
-
+    <div className="grid gap-4">
       {canAct && (
         <ApplicationActions
           id={a.id}
@@ -243,12 +216,105 @@ export async function ApplicationDetail({ id, draftId }: { id: string; draftId?:
           reservation={a.offer ? formatAed(a.offer.reservationFils) : null}
           today={health?.today ?? ""}
           viewingAt={a.viewingAt}
+          viewingPassed={viewingPassed}
+          nextStep={nextStep}
+          pendingAction={pendingAction}
+          offer={
+            a.offer || offers.length > 0 ? (
+              <Section
+                id="offer-h"
+                title="Offer"
+                hint={
+                  a.offerAcceptedAt
+                    ? a.reservationPaidOn
+                      ? `accepted, reservation paid ${longDate(a.reservationPaidOn)}`
+                      : "accepted, waiting for the reservation"
+                    : a.offer
+                      ? `open until ${longDate(a.offer.expiresOn)}`
+                      : ""
+                }
+              >
+                {a.offer && (
+                  <FactGrid>
+                    <Fact label="Annual rent">{formatAed(a.offer.annualRentFils)}</Fact>
+                    <Fact label="Asking rent">{a.unit.askingRentFils ? formatAed(a.unit.askingRentFils) : "—"}</Fact>
+                    <Fact label="Cheques">{a.offer.cheques}</Fact>
+                    <Fact label="Deposit">{formatAed(a.offer.depositFils)}</Fact>
+                    <Fact label="Term">
+                      {longDate(a.offer.startOn)} to {longDate(a.offer.endOn)}
+                    </Fact>
+                  </FactGrid>
+                )}
+                {offers.length > 0 && (
+                  <div className="grid gap-2">
+                    <span className="text-xs font-semibold text-muted">Revisions</span>
+                    <div className="overflow-x-auto rounded-xl border border-line">
+                      <table className="data">
+                        <thead>
+                          <tr>
+                            <th>Revision</th>
+                            <th className="num">Rent</th>
+                            <th className="num">Cheques</th>
+                            <th className="num">Deposit</th>
+                            <th>Move-in</th>
+                            <th className="num">Reservation</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {offers.map((e) => {
+                            const t = e.payload.terms as Terms | undefined;
+                            if (!t) return null;
+                            return (
+                              <tr
+                                key={e.id}
+                                data-current={a.offer?.revision === t.revision}
+                                className={a.offer?.revision === t.revision ? "bg-accent text-on-accent" : ""}
+                              >
+                                <td>
+                                  {t.revision}
+                                  <div className="text-xs opacity-75">
+                                    {t.fromCounter ? "from the applicant's counter" : actorLabel(e.actor)}
+                                  </div>
+                                </td>
+                                <td className="num">{aedShort(t.annualRentFils)}</td>
+                                <td className="num">{t.cheques}</td>
+                                <td className="num">{aedShort(t.depositFils)}</td>
+                                <td className="nowrap">{longDate(t.moveInOn)}</td>
+                                <td className="num">{aedShort(t.reservationFils)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </Section>
+            ) : undefined
+          }
         />
       )}
 
-      <Section id="who-h" title="Applicant">
+      <Section
+        id="overview-h"
+        title={
+          <span className="inline-flex items-center gap-2">
+            Overview <Status value={a.state} />
+          </span>
+        }
+        action={
+          leaseId ? (
+            <Link
+              href={`/work?kind=lease&id=${leaseId}`}
+              className="text-[13px] font-semibold text-primary! underline-offset-2 hover:underline"
+            >
+              Open the lease →
+            </Link>
+          ) : undefined
+        }
+      >
         <FactGrid>
-          <Fact label={a.applicant.kind === "company" ? "Company" : "Name"}>{a.applicant.fullNameEn}</Fact>
+          <Fact label={a.applicant.kind === "company" ? "Company" : "Applicant"}>{a.applicant.fullNameEn}</Fact>
           <Fact label="Contact">{[a.applicant.email, a.applicant.phone].filter(Boolean).join(", ") || "—"}</Fact>
           {a.applicant.emiratesIdNo && (
             <Fact label="Emirates ID" mono>
@@ -256,14 +322,22 @@ export async function ApplicationDetail({ id, draftId }: { id: string; draftId?:
             </Fact>
           )}
           {a.applicant.nationality && <Fact label="Nationality">{a.applicant.nationality}</Fact>}
-        </FactGrid>
-      </Section>
-
-      {a.viewingAt && (
-        <Section id="viewing-h" title="Site visit">
-          <FactGrid>
-            <Fact label="Booked for">{viewingTime(a.viewingAt)} (Dubai)</Fact>
-            <Fact label="Outcome">
+          <Fact label="Application" mono>
+            {a.ref}
+          </Fact>
+          <Fact label="Unit">
+            {!me || canSeeUnits(me.role as StaffRole) ? (
+              <Link href={`/units/${a.unit.id}`} className="text-primary! underline-offset-2 hover:underline">
+                {unitName}
+              </Link>
+            ) : (
+              unitName
+            )}
+          </Fact>
+          <Fact label="Created">{dateTime(a.createdAt)}</Fact>
+          {a.viewingAt && <Fact label="Site visit">{viewingTime(a.viewingAt)} (Dubai)</Fact>}
+          {a.viewingAt && (
+            <Fact label="Visit outcome">
               {a.viewingOutcome === "attended"
                 ? "Showed up"
                 : a.viewingOutcome === "no_show"
@@ -271,30 +345,28 @@ export async function ApplicationDetail({ id, draftId }: { id: string; draftId?:
                   : "Not recorded yet"}
               {a.viewingOutcomeAt && <Sub className="font-normal">recorded {dateTime(a.viewingOutcomeAt)}</Sub>}
             </Fact>
-          </FactGrid>
-        </Section>
-      )}
-
-      {a.offer && (
-        <Section id="terms-h" title="Current offer">
-          <FactGrid>
-            <Fact label="Annual rent">{formatAed(a.offer.annualRentFils)}</Fact>
-            <Fact label="Asking rent">{a.unit.askingRentFils ? formatAed(a.unit.askingRentFils) : "—"}</Fact>
-            <Fact label="Cheques">{a.offer.cheques}</Fact>
-            <Fact label="Deposit">{formatAed(a.offer.depositFils)}</Fact>
-            <Fact label="Term">
-              {longDate(a.offer.startOn)} to {longDate(a.offer.endOn)}
+          )}
+          {a.requestedMoveInOn && <Fact label="Wants to move in">{longDate(a.requestedMoveInOn)}</Fact>}
+          {(a.source === "copilot" || a.source === "telegram") && (
+            <Fact label="Source">
+              {a.source === "copilot" ? (
+                "Copilot, confirmed by staff"
+              ) : a.conversationId ? (
+                <Link
+                  href={`/conversations/${a.conversationId}`}
+                  className="text-primary! underline-offset-2 hover:underline"
+                >
+                  Telegram conversation
+                </Link>
+              ) : (
+                "Telegram"
+              )}
             </Fact>
-          </FactGrid>
-        </Section>
-      )}
+          )}
+        </FactGrid>
+      </Section>
 
-      <Section
-        id="docs-h"
-        title="Documents"
-        hint="only leasing staff can open them; each view is recorded"
-        action={<AskAi compact prompt={identityAsk.prompt} label={identityAsk.label} />}
-      >
+      <Section id="docs-h" title="Documents" hint="only leasing staff can open them; each view is recorded">
         {a.documents.length === 0 ? (
           <p className="m-0 text-sm text-muted">
             {a.state === "SCREENING" ? "Waiting for the applicant to upload their documents." : "No documents."}
@@ -352,7 +424,6 @@ export async function ApplicationDetail({ id, draftId }: { id: string; draftId?:
           id="kyc-h"
           title="Identity check"
           hint={`${kyc?.verdict === "verified" ? "everything checked out" : "needs a person"} · ${dateTime(a.kyc.at)}${a.kyc.latencyMs ? ` · ${Math.round(a.kyc.latencyMs / 1000)} s` : ""}`}
-          action={<AskAi compact prompt={identityAsk.prompt} label={identityAsk.label} />}
         >
           {kyc ? (
             <>
@@ -412,63 +483,6 @@ export async function ApplicationDetail({ id, draftId }: { id: string; draftId?:
         </Section>
       )}
 
-      {offers.length > 0 && (
-        <Section
-          id="offer-h"
-          title="Offer"
-          hint={
-            a.offerAcceptedAt
-              ? a.reservationPaidOn
-                ? `accepted, reservation paid ${longDate(a.reservationPaidOn)}`
-                : "accepted, waiting for the reservation"
-              : a.offer
-                ? `open until ${longDate(a.offer.expiresOn)}`
-                : ""
-          }
-          action={<AskAi compact prompt={offerAsk.prompt} label={offerAsk.label} />}
-        >
-          <div className="overflow-x-auto rounded-xl border border-line">
-            <table className="data">
-              <thead>
-                <tr>
-                  <th>Revision</th>
-                  <th className="num">Rent</th>
-                  <th className="num">Cheques</th>
-                  <th className="num">Deposit</th>
-                  <th>Move-in</th>
-                  <th className="num">Reservation</th>
-                </tr>
-              </thead>
-              <tbody>
-                {offers.map((e) => {
-                  const t = e.payload.terms as Terms | undefined;
-                  if (!t) return null;
-                  return (
-                    <tr
-                      key={e.id}
-                      data-current={a.offer?.revision === t.revision}
-                      className={a.offer?.revision === t.revision ? "bg-accent text-on-accent" : ""}
-                    >
-                      <td>
-                        {t.revision}
-                        <div className="text-xs opacity-75">
-                          {t.fromCounter ? "from the applicant's counter" : actorLabel(e.actor)}
-                        </div>
-                      </td>
-                      <td className="num">{aedShort(t.annualRentFils)}</td>
-                      <td className="num">{t.cheques}</td>
-                      <td className="num">{aedShort(t.depositFils)}</td>
-                      <td className="nowrap">{longDate(t.moveInOn)}</td>
-                      <td className="num">{aedShort(t.reservationFils)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </Section>
-      )}
-
       {a.inbound.length > 0 && (
         <Section id="replies-h" title="From the applicant">
           <ul className={LIST}>
@@ -500,20 +514,23 @@ export async function ApplicationDetail({ id, draftId }: { id: string; draftId?:
         </Section>
       )}
 
-      {(a.approvals.length > 0 || openTasks.length > 0) && (
+      {/* Only what is still open: decided approvals live in Activity. */}
+      {(a.approvals.some((x) => x.status === "pending") || openTasks.length > 0) && (
         <Section id="work-h" title="Open work">
           <ul className={LIST}>
-            {a.approvals.map((x) => (
-              <li key={x.id}>
-                <Link
-                  href={`/work?approval=${x.id}`}
-                  className={`${ROW_CARD} flex items-center justify-between gap-3 text-sm hover:border-ink`}
-                >
-                  <span className="font-semibold">{x.title}</span>
-                  <Status value={x.status} />
-                </Link>
-              </li>
-            ))}
+            {a.approvals
+              .filter((x) => x.status === "pending")
+              .map((x) => (
+                <li key={x.id}>
+                  <Link
+                    href={`/work?approval=${x.id}`}
+                    className={`${ROW_CARD} flex items-center justify-between gap-3 text-sm hover:border-ink`}
+                  >
+                    <span className="font-semibold">{x.title}</span>
+                    <Status value={x.status} />
+                  </Link>
+                </li>
+              ))}
             {openTasks.map((t) => (
               <li key={t.id} className={`${ROW_CARD} flex items-center justify-between gap-3 text-sm`}>
                 <span>{t.title}</span>
@@ -533,47 +550,7 @@ export async function ApplicationDetail({ id, draftId }: { id: string; draftId?:
         />
       )}
 
-      {a.outbound.length > 0 && (
-        <Section id="mail-h" title="Emails">
-          <ul className={LIST}>
-            {a.outbound.map((o) => (
-              <li key={o.id} className={`${ROW_CARD} flex items-center justify-between gap-3 text-sm`}>
-                <div>
-                  <div>{o.subject}</div>
-                  <Sub>
-                    {o.sentAt ? dateTime(o.sentAt) : o.status}
-                    {o.to !== o.intendedTo ? " · to the demo inbox" : ""}
-                  </Sub>
-                </div>
-                {o.previewUrl && (
-                  <a className="font-semibold text-ink! underline" href={o.previewUrl} target="_blank" rel="noreferrer">
-                    View
-                  </a>
-                )}
-              </li>
-            ))}
-          </ul>
-        </Section>
-      )}
-
-      <details className="group">
-        <summary className="cursor-pointer text-[15px] font-semibold tracking-tight">
-          Audit trail <span className="text-xs font-normal text-muted">append-only, every event</span>
-        </summary>
-        <ul className={`${LIST} mt-3`}>
-          {a.events.toReversed().map((e) => (
-            <li key={e.id} className="grid grid-cols-[88px_minmax(0,1fr)] gap-3 text-sm">
-              <time dateTime={e.at} className="font-mono text-xs text-muted">
-                {dateTime(e.at)}
-              </time>
-              <span>
-                <b className="font-semibold">{eventLabel(e.type)}</b>
-                <span className="text-muted">, {actorLabel(e.actor).toLowerCase()}</span>
-              </span>
-            </li>
-          ))}
-        </ul>
-      </details>
+      {activity}
     </div>
   );
 }

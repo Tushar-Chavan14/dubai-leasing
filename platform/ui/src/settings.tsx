@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { PageTitle } from "./page";
+import { type Crumb, PageTitle } from "./page";
 import { buttonClass } from "./button";
 import { FIELD, HINT, INPUT as BASE_INPUT, LABEL } from "./form";
 
@@ -55,7 +55,7 @@ export function SetPage({
   title: ReactNode;
   lede?: ReactNode;
   actions?: ReactNode;
-  back?: { href: string; label: string };
+  back?: Crumb | Crumb[];
   /** Tailwind max-width class; pass `max-w-none` for wide tables. */
   max?: string;
   children: ReactNode;

@@ -1,12 +1,10 @@
 import { EMIRATE_LABELS } from "@leasing/core";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { AskAiMenu } from "../../../../../components/ask-ai";
 import { Status } from "../../../../../components/ui";
 import { Banner } from "@platform/ui/form";
 import { FactList } from "@platform/ui/record";
 import { FormGrid, Panel, SetPage, TABLE, TD, TH } from "@platform/ui/settings";
-import { askPrompts } from "../../../../../lib/ask-ai/prompts";
 import { get } from "../../../../../lib/engine";
 import { dateTime, longDate } from "../../../../../lib/format";
 import type { Me } from "../../../../../lib/types";
@@ -28,7 +26,10 @@ export default async function RulebookPage({ params }: { params: Promise<{ versi
   const editable = me?.role === "admin" && r.status === "draft";
   return (
     <SetPage
-      back={{ href: "/settings/rulebook", label: "Rulebook" }}
+      back={[
+        { href: "/settings", label: "Settings" },
+        { href: "/settings/rulebook", label: "Rulebook" },
+      ]}
       title={
         <span className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
           <span className="font-mono">{r.version}</span>
@@ -46,7 +47,6 @@ export default async function RulebookPage({ params }: { params: Promise<{ versi
           ? `${EMIRATE_LABELS[r.emirate]}. Effective from ${longDate(r.effectiveFrom)}. Published by ${r.publishedBy ?? "—"}${r.publishedAt ? ` on ${dateTime(r.publishedAt)}` : ""}. A published version can't be changed.`
           : `${EMIRATE_LABELS[r.emirate]} draft based on ${r.basedOn ?? "—"}, created by ${r.createdBy ?? "—"}. Nothing uses it until it is published.`
       }
-      actions={<AskAiMenu label="Ask AI" prompts={askPrompts.settingsPage(`Rulebook ${r.version}`)} />}
     >
       {editable ? (
         <RuleEditor detail={r} />

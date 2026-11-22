@@ -4,10 +4,10 @@ const BASE =
   "inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-full border font-sans font-semibold " +
   "transition-[transform,background-color] duration-150 ease-out active:scale-[0.98] motion-reduce:transition-none " +
   "motion-reduce:active:scale-100 disabled:cursor-not-allowed disabled:opacity-50 " +
-  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink";
+  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary";
 const VARIANT = {
-  primary: "border-transparent bg-primary text-on-primary",
-  ghost: "border-line bg-transparent text-ink",
+  primary: "border-transparent bg-cta text-on-cta shadow-[0_6px_16px_-8px_rgb(11_16_32/0.55)] hover:opacity-90",
+  ghost: "border-line bg-page text-ink hover:border-line hover:bg-raised",
   quiet: "border-transparent bg-transparent text-muted",
   danger: "border-danger bg-transparent text-danger",
 } as const;
@@ -20,7 +20,7 @@ export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 
 // globals.css sets `a { color: inherit }` outside any layer, which beats utilities, so links need important colours.
 const LINK_COLOR = {
-  primary: "text-on-primary!",
+  primary: "text-on-cta!",
   ghost: "text-ink!",
   quiet: "text-muted!",
   danger: "text-danger!",
@@ -36,4 +36,4 @@ export function Button({ variant, size = "md", className = "", type = "button", 
 
 /** Square icon-only button (36px). Always give it an `aria-label` and a `title`. */
 export const iconButtonClass = (variant: "ghost" | "danger" = "ghost") =>
-  `${BASE} size-9 shrink-0 p-0 ${variant === "danger" ? "border-line bg-transparent text-danger hover:border-danger" : "border-line bg-transparent text-ink hover:border-ink"}`;
+  `${BASE} size-9 shrink-0 p-0 ${variant === "danger" ? "border-line bg-transparent text-danger hover:border-danger" : "border-line bg-page text-ink hover:bg-raised"}`;

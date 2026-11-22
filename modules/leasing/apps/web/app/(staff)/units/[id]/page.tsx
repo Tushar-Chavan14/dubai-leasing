@@ -1,12 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { Breadcrumbs } from "@platform/ui/page";
 import { notFound } from "next/navigation";
-import { AskAiMenu } from "../../../../components/ask-ai";
 import { buttonClass } from "@platform/ui/button";
 import { Pill } from "@platform/ui/pill";
 import { FactKey, FactList, FactVal, Section, Sub, ROW_CARD } from "@platform/ui/record";
 import { RecordStepper } from "@platform/ui/stepper";
-import { askPrompts } from "../../../../lib/ask-ai/prompts";
 import { canSeeUnits } from "../../../../lib/shell/nav";
 import { NotAllowed } from "../not-allowed";
 import { UnitActions } from "../../../../components/unit-actions";
@@ -14,11 +13,7 @@ import { UnitGallery } from "../../../../components/unit-gallery";
 import { Status } from "../../../../components/ui";
 import { get } from "../../../../lib/engine";
 import { actorLabel, aedShort, bedroomsLabel, dateTime, eventLabel, longDate, shortDate } from "../../../../lib/format";
-import {
-  ArrowLeftIcon as IconBack,
-  CheckIcon as IconCheck,
-  PencilSimpleIcon as IconEdit,
-} from "@phosphor-icons/react/dist/ssr";
+import { CheckIcon as IconCheck, PencilSimpleIcon as IconEdit } from "@phosphor-icons/react/dist/ssr";
 import { CATEGORIES, subtypeLabel } from "../../../../lib/portfolio";
 import type { StaffRole } from "@leasing/core";
 import type { Me, RecordRow, UnitDetail } from "../../../../lib/types";
@@ -79,13 +74,7 @@ export default async function UnitPage({ params }: { params: Promise<{ id: strin
 
   return (
     <div className="mx-auto grid w-full max-w-[1200px] gap-6 @container">
-      <Link
-        href="/units"
-        className="inline-flex h-9 w-fit items-center gap-1.5 rounded-full border border-line px-3.5 font-sans text-[13px] font-semibold text-ink! no-underline hover:border-ink"
-      >
-        <IconBack size={14} aria-hidden />
-        All units
-      </Link>
+      <Breadcrumbs trail={{ href: "/units", label: "Units" }} current={u.code} />
 
       <div className="grid items-start gap-x-[26px] gap-y-6 @[880px]:grid-cols-[minmax(0,1fr)_320px]">
         <div className="grid min-w-0 gap-6">
@@ -106,7 +95,6 @@ export default async function UnitPage({ params }: { params: Promise<{ id: strin
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <AskAiMenu label="Ask AI" prompts={askPrompts.unit(u.code)} page={{ kind: "unit", id: u.id }} />
                 {u.state === "LISTED" && (
                   <Link href={`/applications/new?unit=${u.id}`} className={buttonClass("primary", "sm")}>
                     New application

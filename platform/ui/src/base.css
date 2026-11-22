@@ -1,31 +1,32 @@
 /* @platform/ui base (shared by every module's web app, design.md §11): root variables, color-scheme and element
-   rules. Palette: gypsum ground, white surfaces, basalt ink, one accent; saffron for deadlines, brick for errors. */
+   rules. Palette: navy rail, white surfaces on a cool canvas, deep navy ink, one blue accent; green marks done and success,
+   amber is reserved for deadlines, red for errors. These legacy tokens mirror the --ds-* tokens in theme.css. */
 /* Theme: tokens are written once as light-dark(light, dark). Each app's root layout sets
    data-theme (system | light | dark) from its own theme cookie, which picks the
    color-scheme that light-dark() follows. Browsers without light-dark() keep the plain light values. "system" follows the OS. */
 :root {
   color-scheme: light dark;
-  --bg: #f2f3f1;
+  --bg: #f3f5fa;
   --surface: #ffffff;
-  --surface-2: #f7f8f6;
-  --surface-3: #eceeeb;
-  --ink: #1a1d1f;
-  --ink-2: #3b4145;
-  --muted: #687076;
-  --faint: #9aa19c;
-  --line: #e1e4e1;
-  --line-strong: #cdd2ce;
-  --accent: #2f5d50;
-  --accent-hover: #264d42;
-  --accent-soft: #e3ede8;
+  --surface-2: #f7f9fd;
+  --surface-3: #edf1f9;
+  --ink: #111a3a;
+  --ink-2: #333d5e;
+  --muted: #56607d;
+  --faint: #959fbd;
+  --line: #e2e7f1;
+  --line-strong: #cbd3e5;
+  --accent: #2f62e3;
+  --accent-hover: #2652c4;
+  --accent-soft: #e8eefd;
   --accent-ink: #ffffff;
-  --warn: #93590c;
-  --warn-soft: #f7ecd9;
-  --bad: #a23b2c;
-  --bad-soft: #f6e3df;
-  --info-soft: #e7ebee;
-  --shadow-lift: 0 1px 2px rgb(26 40 34 / 0.06), 0 10px 28px -14px rgb(26 40 34 / 0.18);
-  --focus: 0 0 0 2px var(--bg), 0 0 0 4px var(--ink);
+  --warn: #8a5200;
+  --warn-soft: #f8eedb;
+  --bad: #b42318;
+  --bad-soft: #fbe6e3;
+  --info-soft: #eaeef7;
+  --shadow-lift: 0 1px 2px rgb(16 28 77 / 0.05), 0 10px 28px -14px rgb(16 28 77 / 0.2);
+  --focus: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
   --r-s: 6px;
   --r-m: 10px;
   --r-l: 16px;
@@ -33,34 +34,34 @@
   --fast: 160ms;
   --slow: 260ms;
   --w-page: 1240px;
-  --font-ui: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
-  --font-display: var(--font-geist-sans), var(--font-ui);
-  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --font-ui: var(--font-jakarta, var(--font-geist-sans)), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-jakarta, var(--font-geist-sans)), var(--font-ui);
+  --font-mono: var(--font-jetbrains, var(--font-geist-mono)), ui-monospace, monospace;
 }
 @supports (color: light-dark(#000, #000)) {
   :root {
-    --bg: light-dark(#f2f3f1, #111413);
-    --surface: light-dark(#ffffff, #181c1a);
-    --surface-2: light-dark(#f7f8f6, #1d2220);
-    --surface-3: light-dark(#eceeeb, #252b28);
-    --ink: light-dark(#1a1d1f, #e7eae7);
-    --ink-2: light-dark(#3b4145, #c4cac6);
-    --muted: light-dark(#687076, #8f9792);
-    --faint: light-dark(#9aa19c, #69716c);
-    --line: light-dark(#e1e4e1, #2a302d);
-    --line-strong: light-dark(#cdd2ce, #39413d);
-    --accent: light-dark(#2f5d50, #8cc3ae);
-    --accent-hover: light-dark(#264d42, #a5d3c1);
-    --accent-soft: light-dark(#e3ede8, #1f3029);
-    --accent-ink: light-dark(#ffffff, #0f1a16);
-    --warn: light-dark(#93590c, #e3b061);
-    --warn-soft: light-dark(#f7ecd9, #332713);
-    --bad: light-dark(#a23b2c, #ee8f80);
-    --bad-soft: light-dark(#f6e3df, #3a1e19);
-    --info-soft: light-dark(#e7ebee, #222a2e);
+    --bg: light-dark(#f3f5fa, #0a1029);
+    --surface: light-dark(#ffffff, #111a3b);
+    --surface-2: light-dark(#f7f9fd, #16214a);
+    --surface-3: light-dark(#edf1f9, #1c2853);
+    --ink: light-dark(#111a3a, #e9edf8);
+    --ink-2: light-dark(#333d5e, #c7cfe6);
+    --muted: light-dark(#56607d, #9ba7c9);
+    --faint: light-dark(#959fbd, #6b779c);
+    --line: light-dark(#e2e7f1, #253262);
+    --line-strong: light-dark(#cbd3e5, #33427a);
+    --accent: light-dark(#2f62e3, #7aa0ff);
+    --accent-hover: light-dark(#2652c4, #97b5ff);
+    --accent-soft: light-dark(#e8eefd, #1d2c62);
+    --accent-ink: light-dark(#ffffff, #0a1029);
+    --warn: light-dark(#8a5200, #f5b942);
+    --warn-soft: light-dark(#f8eedb, #33280f);
+    --bad: light-dark(#b42318, #f97066);
+    --bad-soft: light-dark(#fbe6e3, #3a1c1d);
+    --info-soft: light-dark(#eaeef7, #1a2550);
     --shadow-lift:
-      0 1px 2px light-dark(rgb(26 40 34 / 0.06), rgb(0 0 0 / 0.4)),
-      0 10px 28px -14px light-dark(rgb(26 40 34 / 0.18), rgb(0 0 0 / 0.6));
+      0 1px 2px light-dark(rgb(16 28 77 / 0.05), rgb(0 0 0 / 0.4)),
+      0 10px 28px -14px light-dark(rgb(16 28 77 / 0.2), rgb(0 0 0 / 0.6));
   }
 }
 :root[data-theme="light"] {
@@ -109,7 +110,7 @@
     max-width: 100%;
   }
   :focus-visible {
-    outline: 2px solid var(--ink);
+    outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
   ::selection {
@@ -128,6 +129,18 @@
 }
 .num {
   font-variant-numeric: tabular-nums;
+}
+/* Every single-choice select gets the app's own chevron instead of the browser's, a mid grey that reads on
+   light and dark. Unlayered on purpose: it must beat the padding utilities so text never runs under it. */
+select:not([multiple]):not([size]) {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%238a93ad' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
+  background-position: right 12px center;
+  background-size: 14px 14px;
+  background-repeat: no-repeat;
+  padding-right: 2.25rem;
+  text-overflow: ellipsis;
 }
 .skip-link {
   position: absolute;

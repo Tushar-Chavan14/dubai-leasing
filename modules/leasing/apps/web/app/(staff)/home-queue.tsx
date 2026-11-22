@@ -2,13 +2,11 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { AskAi } from "../../components/ask-ai";
 import { Due, initials } from "../../components/ui";
 import { buttonClass } from "@platform/ui/button";
 import { EmptyState } from "@platform/ui/empty-state";
 import { Pill } from "@platform/ui/pill";
 import { Segmented } from "@platform/ui/segmented";
-import { askPrompts } from "../../lib/ask-ai/prompts";
 import { roleLabel, shortDate } from "../../lib/format";
 import type { RecordRow, TaskRow } from "../../lib/types";
 import { workHref } from "./work/url";
@@ -88,37 +86,26 @@ export function HomeQueue({
 
   return (
     <section aria-labelledby="queue-h" className="grid gap-3">
+      <h2 id="queue-h" className="m-0 text-base font-semibold tracking-tight text-ink">
+        Your queue
+      </h2>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 id="queue-h" className="m-0 text-base font-semibold tracking-tight text-ink">
-          Your queue
-        </h2>
-        <div className="flex items-center gap-3">
-          <Segmented<Filter>
-            label="Filter your queue"
-            value={filter}
-            onChange={setFilter}
-            options={[
-              { value: "all", label: `All ${count("all")}` },
-              { value: "approvals", label: `Approvals ${count("approvals")}` },
-              { value: "tasks", label: `Tasks ${count("tasks")}` },
-            ]}
-          />
-          <Link href="/tasks" className="font-sans text-sm text-ink underline underline-offset-2">
-            All tasks
-          </Link>
-        </div>
+        <Segmented<Filter>
+          label="Filter your queue"
+          value={filter}
+          onChange={setFilter}
+          options={[
+            { value: "all", label: `All ${count("all")}` },
+            { value: "approvals", label: `Approvals ${count("approvals")}` },
+            { value: "tasks", label: `Tasks ${count("tasks")}` },
+          ]}
+        />
+        <Link href="/tasks" className={buttonClass("primary", "sm")}>
+          All tasks
+        </Link>
       </div>
       {shown.length === 0 ? (
-        <EmptyState
-          title="Nothing waiting for you"
-          action={
-            <>
-              {askPrompts.homeEmpty().map((p) => (
-                <AskAi key={p.prompt} label={p.label} prompt={p.prompt} />
-              ))}
-            </>
-          }
-        />
+        <EmptyState title="Nothing waiting for you" />
       ) : (
         <ul className="m-0 grid list-none gap-2 p-0">
           {shown.map((i) => (
@@ -151,9 +138,6 @@ export function HomeQueue({
                 <Link href={i.href} className={buttonClass("ghost", "sm")}>
                   Open
                 </Link>
-                {askPrompts.queueRow(i.name, i.sub, i.ref).map((p) => (
-                  <AskAi key={p.prompt} label={p.label} prompt={p.prompt} {...(i.page ? { page: i.page } : {})} />
-                ))}
               </div>
             </li>
           ))}

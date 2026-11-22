@@ -1,9 +1,6 @@
 import type { Metadata } from "next";
-import { askPrompts } from "../../../../lib/ask-ai/prompts";
 import { CompanySplit, pickCompany } from "../../../../components/company-split";
-import { AskAiMenu } from "../../../../components/ask-ai";
 import { SetPage } from "@platform/ui/settings";
-import { possessive } from "../../../../lib/format";
 import { get } from "../../../../lib/engine";
 import type { CompanyRow, Me } from "../../../../lib/types";
 import { type KycConfigView, KycEditor } from "./kyc-editor";
@@ -29,7 +26,6 @@ export default async function KycSettingsPage({ searchParams }: { searchParams: 
   return (
     <SetPage
       title="Documents & KYC"
-      actions={<AskAiMenu label="Ask AI" prompts={askPrompts.settingsPage("Documents & KYC")} />}
       lede="What applicants fill in and upload on their document link, and the checks each document must pass. A warning sends the application to a person; a blocker can't be approved and can email the applicant a new upload link. Nothing rejects an applicant automatically."
     >
       <CompanySplit
@@ -50,40 +46,6 @@ export default async function KycSettingsPage({ searchParams }: { searchParams: 
                     ? "Starter form (not saved yet)"
                     : `Version ${config.version} live`}
               </span>
-              {isAdmin && (
-                <span className="ml-auto">
-                  <AskAiMenu
-                    label="Ask AI"
-                    prompts={[
-                      {
-                        label: "What does this company check?",
-                        prompt: `What KYC checks does ${company.name} run on each document?`,
-                      },
-                      {
-                        label: "Change how long a document must be valid",
-                        prompt: `For ${company.name}: the passport must be valid this many days after the lease starts: `,
-                      },
-                      {
-                        label: "Make a check a blocker",
-                        prompt: `For ${company.name}: make the passport "Read clearly?" check a blocker and email the applicant`,
-                      },
-                      {
-                        label: "Add a custom document",
-                        prompt: `For ${company.name}: add a required custom document "Salary certificate", described as a letter from the employer stating the monthly salary`,
-                      },
-                      {
-                        label: "Add a question",
-                        prompt: `For ${company.name}: add a required question "Employer name"`,
-                      },
-                      {
-                        label: "Add a minimum age check",
-                        prompt: `For ${company.name}: add a custom check that applicants must be at least 21 years old, as a blocker`,
-                      },
-                      { label: "Publish the draft", prompt: `Publish ${possessive(company.name)} KYC draft` },
-                    ]}
-                  />
-                </span>
-              )}
             </div>
             <KycEditor
               key={`${company.id}:${config.version}:${config.draft?.version ?? "live"}:${config.draft?.updatedBy ?? ""}`}
@@ -91,7 +53,6 @@ export default async function KycSettingsPage({ searchParams }: { searchParams: 
               initial={editing!}
               canEdit={isAdmin}
               hasDraft={!!config.draft}
-              companyName={company.name}
             />
           </>
         )}

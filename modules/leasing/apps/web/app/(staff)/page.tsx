@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import { HomeTiles } from "../../components/live/home-tiles";
 import { get, publicGet } from "../../lib/engine";
-import { clockTime, possessive, relativeTime, weekdayDate } from "../../lib/format";
+import { possessive, weekdayDate } from "../../lib/format";
 import type { HomeView, Me, RecordRow, TaskRow } from "../../lib/types";
+import { HomeActivity } from "./home-activity";
 import { HomeQueue } from "./home-queue";
 import { HomeStarters } from "./home-starters";
 
@@ -74,24 +75,7 @@ export default async function HomePage() {
         <h2 id="did-h" className="m-0 text-base font-semibold tracking-tight text-ink">
           Agent activity today
         </h2>
-        {h.agentToday.length === 0 ? (
-          <p className="m-0 mt-2 text-sm text-muted">Nothing yet today.</p>
-        ) : (
-          <ul className="m-0 mt-2 grid list-none p-0">
-            {h.agentToday.slice(0, 8).map((e) => (
-              <li key={`${e.source}:${e.refId}`} className="flex gap-2.5 py-[7px] text-[13px] text-ink">
-                <time
-                  dateTime={e.at}
-                  title={relativeTime(today, e.at)}
-                  className="w-[62px] flex-none font-mono text-muted"
-                >
-                  {clockTime(e.at)}
-                </time>
-                <span>{e.text}</span>
-              </li>
-            ))}
-          </ul>
-        )}
+        <HomeActivity entries={h.agentToday.slice(0, 8)} today={today} />
       </section>
     </div>
   );

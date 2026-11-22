@@ -33,19 +33,19 @@ describe("nextStepFor and stageFor (pure)", () => {
     for (const c of copy) expect(c).not.toMatch(/[–—]/);
   });
   test.each([
-    ["Enquiry", "Confirm a site visit time"],
-    ["Viewing", "record whether the applicant came"],
-    ["Documents", "checking the applicant's documents"],
-    ["Offer", "Waiting for the applicant"],
-    ["Reserved", "creating the lease"],
+    ["Enquiry", "Agree a site visit time"],
+    ["Viewing", "record whether the applicant attended"],
+    ["Documents", "verifying the applicant's identity documents"],
+    ["Offer", "awaiting their response"],
+    ["Reserved", "preparing the lease"],
     ["Contract", "Approve the final contract"],
     ["Ejari", "Ejari submission"],
-    ["Registered", "Nothing to do"],
+    ["Registered", "No action is needed"],
   ] as const)("%s", (stage, part) => expect(nextStepFor({ stage })).toContain(part));
   test("registration texts name the unit's own system, never Ejari outside Dubai", () => {
     expect(nextStepFor({ stage: "Ejari" })).toContain("Ejari submission");
     expect(nextStepFor({ stage: "Ejari", system: "Tawtheeq" })).toBe(
-      "Approve the Tawtheeq submission and wait for the registration.",
+      "Approve the Tawtheeq submission, then await the registration.",
     );
     expect(
       describeEntry({
@@ -67,13 +67,15 @@ describe("nextStepFor and stageFor (pure)", () => {
   });
 
   test("held offer and held contract prep", () => {
-    expect(nextStepFor({ stage: "Offer", offerHeld: true })).toBe("Send the offer to the applicant.");
-    expect(nextStepFor({ stage: "Contract", contractHeld: true })).toBe("Prepare the contract.");
-    expect(nextStepFor({ stage: "Contract", contractSent: true })).toBe("Waiting for the signers.");
+    expect(nextStepFor({ stage: "Offer", offerHeld: true })).toBe("Review the offer and send it to the applicant.");
+    expect(nextStepFor({ stage: "Contract", contractHeld: true })).toBe("Prepare the tenancy contract for signature.");
+    expect(nextStepFor({ stage: "Contract", contractSent: true })).toBe(
+      "Awaiting signatures from the tenant and the landlord.",
+    );
   });
   test("accepted offer: the reservation is the next step, not the applicant's answer", () => {
     expect(nextStepFor({ stage: "Offer", reservationDue: true })).toBe(
-      "The applicant accepted. Record the reservation payment once it is received.",
+      "The applicant has accepted the offer. Record the reservation payment once it is received.",
     );
   });
   test("stage mapping", () => {
@@ -351,7 +353,7 @@ describe.skipIf(noDb)("workspace API", () => {
     expect(byStage("Contract")).toEqual(["Cara Contract"]);
     expect(byStage("Registered")).toEqual(["Tina Tenant"]);
     const offer = rows.find((r) => r.id === ids.offer)!;
-    expect(offer.nextStep).toBe("Send the offer to the applicant.");
+    expect(offer.nextStep).toBe("Review the offer and send it to the applicant.");
     expect(offer.waitingForMe).toBe(true);
     expect(rows.find((r) => r.id === ids.screening)!.waitingForMe).toBe(false);
     // `copilot_proactive_drafts` shows "Draft a reply" only where an applicant has to answer next.
@@ -446,6 +448,10 @@ describe.skipIf(noDb)("workspace API", () => {
     expect(h.awaitingSignature).toBe(1);
     expect(h.agentToday.length).toBeLessThanOrEqual(8);
     expect(h.agentToday.every((e) => !e.pending)).toBe(true);
+    // Each entry carries its expanded facts, and those that belong to a record link to it.
+    const today = h.agentToday as (Entry & { details?: unknown[]; record?: { id: string } })[];
+    expect(today.every((e) => Array.isArray(e.details) && e.details.length > 0)).toBe(true);
+    expect(today.filter((e) => e.record).every((e) => typeof e.record!.id === "string")).toBe(true);
     const mgr = await json<{ waitingForYou: number }>(await call("leasing_manager", "/api/home"));
     expect(mgr.waitingForYou).toBeGreaterThan(h.waitingForYou); // adds the manager-only gate
     const fin = await json<{ waitingForYou: number }>(await call("finance", "/api/home"));

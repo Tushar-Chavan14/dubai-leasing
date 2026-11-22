@@ -439,6 +439,16 @@ export interface LogEntry {
   refId: string;
   pending: boolean;
   actions: LogAction[];
+  /** Labelled facts for the expanded entry. */
+  details?: LogDetail[];
+  /** On Home: the record the entry belongs to. */
+  record?: { kind: "application" | "lease"; id: string; ref: string; title: string; unitCode: string };
+}
+
+export interface LogDetail {
+  label: string;
+  value: string;
+  format?: "date" | "datetime" | "code" | "fils";
 }
 
 export interface HomeView {
