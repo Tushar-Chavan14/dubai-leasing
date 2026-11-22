@@ -10,6 +10,7 @@ import type { Theme } from "../../lib/theme";
 import type { Me } from "../../lib/types";
 import { logout } from "../../app/login/actions";
 import { AvatarMenu } from "./avatar-menu";
+import { PortalLink } from "./portal-link";
 import { Rail } from "./rail";
 import type { StaffRole } from "@leasing/core";
 
@@ -25,6 +26,7 @@ export function StaffShell({
   clock,
   theme,
   tenancyOps,
+  portalUrl,
   children,
 }: {
   me: Me | null;
@@ -32,6 +34,8 @@ export function StaffShell({
   clock: ShellClock | null;
   theme: Theme;
   tenancyOps: boolean;
+  /** `LEASING_PORTAL_URL`: the "Portal" link in the avatar menu. */
+  portalUrl: string;
   children: ReactNode;
 }) {
   // Without a user (engine down) show the safest set: no Units.
@@ -53,6 +57,7 @@ export function StaffShell({
         </div>
       )}
       <ThemeButtons current={theme} />
+      <PortalLink href={portalUrl} />
       {me && (
         <form action={logout}>
           <button

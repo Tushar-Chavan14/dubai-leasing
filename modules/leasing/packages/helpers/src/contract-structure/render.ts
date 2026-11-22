@@ -3,14 +3,26 @@ import { z } from "zod";
 import { feesBlocks, scheduleBlocks } from "../contract/schedule.ts";
 import { addendumBlocks, addendumParagraphs, requiredTerms } from "../contract/template.ts";
 import { hasValues } from "../contract-template/values.ts";
-import { compatible, inferBlankType, replacePlaceholders } from "./blanks.ts";
+import {
+  blankName,
+  effectiveStyle,
+  emptyLine,
+  fillPlaceholderText as platformFillPlaceholderText,
+  liveBlankIds,
+  mappingProblem as platformMappingProblem,
+  nextSectionNumber,
+  type RenderProfile,
+  type TemplateBlock,
+  TemplateRenderError,
+  unprintable,
+} from "@platform/readers/render/blocks";
 import { ADDITIONAL_TERMS_KEY, sheetKeyInfo } from "./datasheet.ts";
 import type { FieldType } from "./fields.ts";
 import { fixedValueKinds, isSampleOnlyText } from "./filled.ts";
-import { formatCalendarDate, formatMoneyFils } from "./format.ts";
-import { hasAuthorityMarks } from "./look.ts";
-import { matchPlaceholder } from "./mapping.ts";
-import type { NumberingStyle, TemplateBlank, TemplateSections, TemplateStyle } from "./schema.ts";
+import { formatCalendarDate, formatMoneyFils } from "@platform/readers/structure/format";
+import { hasAuthorityMarks } from "@platform/readers/structure/look";
+import { leasingTemplateProfile } from "./profile.ts";
+import type { TemplateBlank, TemplateSections, TemplateStyle } from "@platform/readers/structure/schema";
 
 /**
  * Review and rendering of a company contract template (slice 4, Task 3). Everything here is code:
@@ -44,23 +56,6 @@ export const TemplateReview = z
   .strict();
 export type TemplateReview = z.infer<typeof TemplateReview>;
 export const EMPTY_REVIEW: TemplateReview = TemplateReview.parse({});
-
-/** A block of the rendered contract (same shapes as the PDF renderer's styled blocks). */
-export type TemplateBlock =
-  | { kind: "title"; text: string }
-  | { kind: "heading"; text: string }
-  | { kind: "para"; text: string }
-  | { kind: "list"; items: string[] }
-  | { kind: "sigline"; label: string }
-  | { kind: "small"; text: string };
-
-/** The render cannot go ahead: each entry says what to fix. The engine turns it into a 422. */
-export class TemplateRenderError extends Error {
-  constructor(readonly problems: string[]) {
-    super(`The company template can't be filled: ${problems.join(" ")}`);
-    this.name = "TemplateRenderError";
-  }
-}
 
 /**
  * Legal and money fields that only come from the lease, the unit and the rulebook (rule 1). A blank mapped to one
@@ -97,30 +92,16 @@ export const CORE_FIELDS: ReadonlySet<string> = new Set<string>([
  */
 export const NEUTRAL_WHEN_ABSENT: Readonly<Record<string, string>> = { rentFreeDays: "0", reservationFils: "None" };
 
-/** What an empty blank prints: its own marker when it has one, else a plain line. */
-const emptyLine = (b: Pick<TemplateBlank, "marker" | "kind">): string =>
-  // A placeholder's marker is its name ("{tenant name}"): never printed.
-  b.marker.trim() && b.kind !== "placeholder" ? b.marker.trim() : "________";
+/** The generic render profile for leasing: its reader profile and its own value rules (core keys, neutral words, formatting). */
+export const leasingRenderProfile: RenderProfile = {
+  template: leasingTemplateProfile,
+  coreKeys: CORE_FIELDS,
+  neutralWhenAbsent: NEUTRAL_WHEN_ABSENT,
+  formatValue: (name, values) => formatField(name, values),
+};
 
-const blankName = (b: Pick<TemplateBlank, "id" | "label">) => `"${b.label}" (${b.id})`;
-
-/**
- * Why a mapping on a field blank can't be used, or null when it can. A blank left empty (or the legacy
- * "unmapped") is fine: it prints as an empty line. Mappings are chosen by code, so this is a safety net.
- */
-export function mappingProblem(b: TemplateBlank): string | null {
-  if (b.role !== "field") return null;
-  if (b.field === "leave_empty" || b.field === "unmapped") return null;
-  const info = sheetKeyInfo(b.field);
-  if (!info) return `Blank ${blankName(b)} is mapped to "${b.field}", which is not a data field.`;
-  // D74: a placeholder's name says what it is; the words around it don't.
-  if (b.kind === "placeholder") return null;
-  const inferred = inferBlankType(b.label, b.before, b.after);
-  if (!compatible(inferred, info.type)) {
-    return `Blank ${blankName(b)} is mapped to ${info.label} (${info.type}) but asks for ${inferred}.`;
-  }
-  return null;
-}
+/** See `mappingProblem` in `@platform/readers/render/blocks`; leasing's data sheet. */
+export const mappingProblem = (b: TemplateBlank): string | null => platformMappingProblem(b, leasingTemplateProfile);
 
 /** One heading, paragraph or the title of a template, with what code found in it (rules 1 and 9). */
 export interface TemplateParagraph {
@@ -141,6 +122,8 @@ export interface TemplateParagraph {
 }
 
 export { formatCalendarDate, formatMoneyFils };
+// The generic part lives in `@platform/readers` (S46); these names stay importable from here.
+export { effectiveStyle, liveBlankIds, nextSectionNumber, type TemplateBlock, TemplateRenderError, unprintable };
 
 export const LEGAL_TERMS_WARNING = "Check against the required terms; confirm with legal";
 const NUMBER_DAYS =
@@ -176,26 +159,6 @@ export function templateParagraphs(sections: TemplateSections | undefined): Temp
     s.paragraphs.forEach((p, i) => add(`${s.id}:${i}`, "paragraph", p));
   }
   return out;
-}
-
-/** Blank ids still used by wording the admin has not dropped (`undefined` when there are no sections to ask). */
-export function liveBlankIds(
-  sections: TemplateSections | undefined,
-  dropped: ReadonlySet<string>,
-): Set<string> | undefined {
-  if (!sections) return undefined;
-  const ids = new Set<string>();
-  const scan = (text: string | null | undefined) => {
-    for (const m of (text ?? "").matchAll(/\{\{(b\d+)\}\}/g)) ids.add(m[1]!);
-  };
-  if (!dropped.has("title")) scan(sections.title);
-  for (const s of sections.items) {
-    if (!dropped.has(`${s.id}:h`)) scan(s.heading);
-    s.paragraphs.forEach((p, i) => {
-      if (!dropped.has(`${s.id}:${i}`)) scan(p);
-    });
-  }
-  return ids;
 }
 
 /** Non-blocking notes for the review screen. */
@@ -297,37 +260,6 @@ export function approvalProblems(
   return out;
 }
 
-/**
- * The look actually used: dropped parts removed. A sample with authority marks never gives an
- * accent colour (the neutral one is used), and a dropped logo is gone.
- */
-export function effectiveStyle(
-  style: TemplateStyle,
-  review: TemplateReview,
-  logoDocumentId: string | null,
-): { style: TemplateStyle; logoDocumentId: string | null } {
-  return {
-    style: {
-      ...style,
-      header: review.dropHeader ? null : style.header,
-      footer: review.dropFooter ? null : style.footer,
-      accentColour: style.flags.authorityMarks ? null : style.accentColour,
-    },
-    logoDocumentId: review.dropLogo ? null : logoDocumentId,
-  };
-}
-
-/** Characters the standard PDF fonts (WinAnsi) can't draw: the PDF renderer would print "?" for them. */
-export function unprintable(s: string): boolean {
-  return /[^\x20-\x7e\xa0-\xff\n]/.test(
-    s
-      .replace(/[\u2212\u2013\u2014]/g, "-")
-      .replace(/[\u2018\u2019]/g, "'")
-      .replace(/[\u201C\u201D]/g, '"')
-      .replace(/\s/g, " "),
-  );
-}
-
 /** A data-sheet value as written in a blank, or null when it has none (or the key is unknown). */
 export function formatField(name: string, values: Record<string, unknown>): string | null {
   const v = values[name] as string | number | null | undefined;
@@ -347,47 +279,6 @@ export function formatField(name: string, values: Record<string, unknown>): stri
     }
     default:
       return String(v);
-  }
-}
-
-const toRoman = (n: number): string => {
-  const t: [number, string][] = [
-    [100, "C"],
-    [90, "XC"],
-    [50, "L"],
-    [40, "XL"],
-    [10, "X"],
-    [9, "IX"],
-    [5, "V"],
-    [4, "IV"],
-    [1, "I"],
-  ];
-  let r = "";
-  for (const [v, sym] of t) {
-    while (n >= v) {
-      r += sym;
-      n -= v;
-    }
-  }
-  return r;
-};
-
-/** The number the next section takes, in the template's own numbering style (null for "none"). */
-export function nextSectionNumber(style: NumberingStyle, lastNumber: string | null, count: number): string | null {
-  const n = count + 1;
-  switch (style) {
-    case "none":
-      return null;
-    case "article":
-      return `Article ${lastNumber && /[IVXLC]+$/.test(lastNumber) ? toRoman(n) : n}`;
-    case "clause":
-      return `${lastNumber?.toLowerCase().startsWith("section") ? "Section" : "Clause"} ${n}`;
-    case "roman":
-      return `${toRoman(n)}.`;
-    case "alpha":
-      return `${String.fromCharCode(64 + Math.min(n, 26))}.`;
-    default:
-      return `${n}.`;
   }
 }
 
@@ -707,19 +598,9 @@ export function templateContractBlocks(
   };
 }
 
-/**
- * D74: a header or footer with named placeholders (`{company name} | Tenancy Contract {contract no}`) filled from the same
- * values as the body (a name the sheet doesn't know prints as an empty line). Page markers stay for the PDF renderer.
- */
-export function fillPlaceholderText(text: string, values: Record<string, unknown>, preview = false): string {
-  return replacePlaceholders(text, (name) => {
-    const key = matchPlaceholder(name);
-    const info = key && key !== "leave_empty" ? sheetKeyInfo(key) : null;
-    if (!key || !info) return "________";
-    if (preview) return `\u00ab${info.label}\u00bb`;
-    return formatField(key, values) ?? "________";
-  });
-}
+/** D74: see `fillPlaceholderText` in `@platform/readers/render/blocks`; leasing's data sheet and formatting. */
+export const fillPlaceholderText = (text: string, values: Record<string, unknown>, preview = false): string =>
+  platformFillPlaceholderText(text, values, leasingRenderProfile, preview);
 
 /** Demo values for the "Preview contract" button (fictional; never stored on a contract). */
 export const SAMPLE_CONTRACT_FIELDS: ContractFields = {

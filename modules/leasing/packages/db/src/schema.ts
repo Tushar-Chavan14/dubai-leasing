@@ -843,7 +843,7 @@ export const companyKycConfigs = pgTable(
       .notNull()
       .references(() => companies.id),
     version: integer("version").notNull(),
-    /** `FormField[]` (packages/core kyc-config). */
+    /** `FormField[]` (modules/leasing/packages/core kyc-config). */
     form: jsonb("form").notNull(),
     /** `KycRules`. */
     rules: jsonb("rules").notNull(),
@@ -918,7 +918,7 @@ export const companyContractTemplates = pgTable(
       .notNull()
       .references(() => documents.id),
     status: text("status").$type<"proposed" | "approved" | "retired">().notNull().default("proposed"),
-    /** `TemplateSections` (packages/helpers contract-structure). */
+    /** `TemplateSections` (modules/leasing/packages/helpers contract-structure). */
     sections: jsonb("sections").notNull(),
     /** `TemplateBlank[]`, each with its proposed or confirmed contract-field mapping. */
     blanks: jsonb("blanks").notNull(),
@@ -1018,7 +1018,7 @@ export const outboundMessages = pgTable(
 
 /** Magic links for the tenant portal; only the SHA-256 of the token is stored. */
 /**
- * Rulebook versions (decision D23). The code base version (`packages/rulebook`) is upserted at
+ * Rulebook versions (decision D23). The code base version (`modules/leasing/packages/rulebook`) is upserted at
  * engine start; admins add versions as drafts and publish them. Published rows are immutable
  * (trigger in migration 0009) because leases and decisions pin their `rulesVersion`.
  */
@@ -1029,7 +1029,7 @@ export const rulebooks = pgTable("rulebooks", {
   status: text("status").$type<"draft" | "published">().notNull(),
   basedOn: text("based_on"),
   effectiveFrom: calDate("effective_from").notNull(),
-  /** `RulebookValues` (validated with Zod in `packages/rulebook`). */
+  /** `RulebookValues` (validated with Zod in `modules/leasing/packages/rulebook`). */
   values: jsonb("values").$type<Record<string, unknown>>().notNull(),
   referenceRules: jsonb("reference_rules").$type<{ id: string; title: string; text: string }[]>().notNull().default([]),
   createdBy: text("created_by").notNull(),
@@ -1404,4 +1404,13 @@ export const registrationSettings = pgTable("registration_settings", {
   values: jsonb("values").$type<RegistrationSettingsValues>().notNull(),
   updatedBy: text("updated_by").notNull(),
   updatedAt: ts("updated_at").notNull(),
+});
+
+/**
+ * Portal sign-in hand-offs already used (C38, S70): one row per `jti` of a portal token the exchange accepted, so a
+ * token works once. Append-only (trigger in migration 0047); the table holds no personal data.
+ */
+export const portalHandoffs = pgTable("portal_handoffs", {
+  jti: text("jti").primaryKey(),
+  usedAt: ts("used_at").notNull(),
 });

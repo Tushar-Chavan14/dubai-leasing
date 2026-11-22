@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /**
- * Helper contract (docs/architecture.md §5), shared by every module (S4). Helpers return data; only the module's
+ * Helper contract (docs/leasing/architecture.md §5), shared by every module (S4). Helpers return data; only the module's
  * Manager writes state. Each module names its own entity kinds (leasing: `EntityKind` in `@leasing/core`).
  */
 export interface EntityRef<K extends string = string> {

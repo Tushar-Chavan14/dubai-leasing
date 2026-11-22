@@ -8,9 +8,10 @@ import { seedDemo } from "./seed.ts";
  */
 export async function resetDemoData(database: Database, ejariMockUrl: string): Promise<{ mockReset: boolean }> {
   const { rows } = await database.pool.query<{ t: string }>(
-    "SELECT tablename AS t FROM pg_tables WHERE schemaname = 'public' AND tablename <> 'staff_users'",
+    "SELECT tablename AS t FROM pg_tables WHERE schemaname = 'public' AND tablename NOT IN ('staff_users', 'portal_handoffs')",
   );
   if (rows.length) {
+    // Used portal tokens (portal_handoffs, append-only, no personal data) are kept: a reset never makes a token usable again.
     // The audit log refuses TRUNCATE (migration 0002). A demo reset wipes it on purpose, like
     // `demo:reset` dropping the schema: the guard is lifted only inside this one transaction.
     const client = await database.pool.connect();

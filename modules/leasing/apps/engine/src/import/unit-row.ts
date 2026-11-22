@@ -23,7 +23,7 @@ const optInt = opt.pipe(
 const rowCategory = (r: { category: PropertyCategory | null; kind: PropertyCategory | null }): PropertyCategory =>
   r.category ?? r.kind ?? "residential";
 
-/** One row of the units import CSV. Column names are documented in docs/import.md. */
+/** One row of the units import CSV. Column names are documented in docs/leasing/import.md. */
 export const UnitImportRow = z
   .object({
     unit_code: z.string().trim().min(1),

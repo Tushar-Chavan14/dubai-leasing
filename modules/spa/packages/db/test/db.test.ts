@@ -21,11 +21,11 @@ describe.skipIf(!url)("spa database (S2)", () => {
   afterAll(async () => {
     await database?.close();
   });
-  test("the first migration creates only spa_users and spa_demo_settings", async () => {
+  test("the P2 tables exist (later phases add more)", async () => {
     const r = await database.pool.query<{ table_name: string }>(
       "select table_name from information_schema.tables where table_schema = 'public' order by table_name",
     );
-    expect(r.rows.map((x) => x.table_name)).toEqual(["spa_demo_settings", "spa_users"]);
+    expect(r.rows.map((x) => x.table_name)).toEqual(expect.arrayContaining(["spa_demo_settings", "spa_users"]));
   });
   test("a user role must be an SPA role; email is unique and lower case", async () => {
     const user = { id: crypto.randomUUID(), email: "a@example.test", name: "A", passwordHash: "h" };

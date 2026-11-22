@@ -1,0 +1,19 @@
+{
+  "name": "@platform/readers",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "@platform/kernel": "workspace:*",
+    "@platform/llm": "workspace:*",
+    "unpdf": "1.9.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "pdf-lib": "1.17.1"
+  }
+}

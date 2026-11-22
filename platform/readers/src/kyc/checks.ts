@@ -1,14 +1,9 @@
-import {
-  addDays,
-  type CalendarDate,
-  compareNames,
-  effectiveDocRules,
-  fieldRules,
-  type ReadDocKind,
-  isValidEmiratesId,
-  normaliseEmiratesId,
-  parseTd3,
-} from "@leasing/core";
+import { addDays, type CalendarDate } from "@platform/kernel/dates";
+import { isValidEmiratesId, normaliseEmiratesId } from "@platform/kernel/emirates-id";
+import { parseTd3 } from "@platform/kernel/mrz";
+import { compareNames } from "@platform/kernel/names";
+import { effectiveDocRules, fieldRules, type ReadDocKind } from "./config.ts";
+import type { PersonDocs } from "./profile.ts";
 import {
   customOf,
   type DocKind,
@@ -69,14 +64,21 @@ const EXPECTED_TYPE: Record<string, string> = {
   visa: "residence_visa",
   trade_licence: "trade_licence",
 };
-const LABEL: Record<Exclude<DocKind, "custom">, string> = {
+const LABEL: Record<Exclude<DocKind, "custom" | "extra">, string> = {
   emirates_id: "Emirates ID",
   passport: "passport",
   visa: "residence visa",
   trade_licence: "trade licence",
 };
 
-export function assessKyc(ctx: KycContext, reads: DocRead[]): KycData {
+export interface AssessOptions {
+  /** What completes a person's documents (profile; default leasing's). */
+  personDocs?: PersonDocs;
+  /** Whose documents they are, in messages (profile; default "applicant"). */
+  partyNoun?: string;
+}
+
+export function assessKyc(ctx: KycContext, reads: DocRead[], opts: AssessOptions = {}): KycData {
   const flags: KycFlag[] = [];
   const checks: KycData["checks"] = [];
   const identity: KycIdentity = {
@@ -133,19 +135,46 @@ export function assessKyc(ctx: KycContext, reads: DocRead[]): KycData {
 
   // Fixed order, so the identity always comes from the same document: the Emirates ID first,
   // then the passport, the visa and the trade licence (first value wins in `set`).
-  const PRIORITY = { emirates_id: 0, passport: 1, visa: 2, trade_licence: 3, custom: 4 } as const;
+  const PRIORITY = { emirates_id: 0, passport: 1, visa: 2, trade_licence: 3, custom: 4, extra: 5 } as const;
   const ordered = reads.toSorted((a, b) => PRIORITY[a.kind] - PRIORITY[b.kind] || a.side.localeCompare(b.side));
   for (const r of ordered) {
-    const key = r.kind === "emirates_id" ? (r.side === "back" ? "emirates_id_back" : "emirates_id_front") : r.kind;
+    const key =
+      r.kind === "extra"
+        ? (r.fieldKey ?? "")
+        : r.kind === "emirates_id"
+          ? r.side === "back"
+            ? "emirates_id_back"
+            : "emirates_id_front"
+          : r.kind;
     const custom = r.kind === "custom" ? customOf(ctx.form, r.fieldKey) : undefined;
     const what =
       r.kind === "emirates_id"
         ? `Emirates ID (${r.side})`
         : r.kind === "custom"
           ? (custom?.name ?? "document")
-          : LABEL[r.kind];
+          : r.kind === "extra"
+            ? key.replaceAll("_", " ")
+            : LABEL[r.kind];
     if (!r.read) {
       flag("unreadable", `The ${what} could not be read${r.error ? ` (${r.error})` : ""}.`, r.docId);
+      continue;
+    }
+    if (r.kind === "extra") {
+      // A kind only the profile knows (S49): the right document, a clear holder name, a name that is the person's.
+      const holder = val(r.read, "holderName");
+      if (r.read.documentType !== key)
+        flag("wrong_document", `The ${what} upload looks like a different document.`, r.docId);
+      if (!holder?.value || holder.confidence < ctx.minConfidence)
+        flag("low_confidence", `On the ${what}, these weren't read clearly: holderName.`, r.docId);
+      else {
+        pass("readable", r.docId);
+        if (compareNames(ctx.applicant.nameEn, holder.value) === "different")
+          flag(
+            "name_mismatch",
+            `The name on the ${what} differs from the ${opts.partyNoun ?? "applicant"}'s.`,
+            r.docId,
+          );
+      }
       continue;
     }
     if (r.kind === "custom") {
@@ -306,8 +335,15 @@ export function assessKyc(ctx: KycContext, reads: DocRead[]): KycData {
   const has = (kind: DocKind, side?: string) => reads.some((r) => r.kind === kind && (!side || r.side === side));
   const personDocs = (has("emirates_id", "front") && has("emirates_id", "back")) || (has("passport") && has("visa"));
   const signatoryDocs = (has("emirates_id", "front") && has("emirates_id", "back")) || has("passport");
-  if (ctx.applicant.kind === "individual" && !personDocs) {
-    flag("missing_document", "Needed: both sides of the Emirates ID, or the passport and residence visa.", null);
+  const anyId = opts.personDocs === "any_id";
+  if (ctx.applicant.kind === "individual" && !(anyId ? signatoryDocs : personDocs)) {
+    flag(
+      "missing_document",
+      anyId
+        ? "Needed: the passport, or both sides of the Emirates ID."
+        : "Needed: both sides of the Emirates ID, or the passport and residence visa.",
+      null,
+    );
   } else if (ctx.applicant.kind === "company" && (!has("trade_licence") || !signatoryDocs)) {
     flag(
       "missing_document",

@@ -1,19 +1,9 @@
 import type { ChatMessage } from "@platform/llm";
 import { CLAUSE_CATEGORIES } from "./schema.ts";
 
-/** Strips every `<<<…>>>` sequence, repeatedly, so nested pieces can't reassemble into a delimiter. */
-export function stripDelimiters(text: string): string {
-  let prev: string;
-  let cur = text;
-  do {
-    prev = cur;
-    cur = cur
-      .replace(/<<<[^]*?>>>/g, "")
-      .replaceAll("<<<", "")
-      .replaceAll(">>>", "");
-  } while (cur !== prev);
-  return cur;
-}
+import { stripDelimiters } from "@platform/readers/prompt-safety";
+
+export { stripDelimiters };
 
 /** The document is data. The model proposes clauses with exact quotes; code decides what is kept. */
 export function clauseMessages(text: string, nonce: string = crypto.randomUUID().replaceAll("-", "")): ChatMessage[] {

@@ -16,3 +16,23 @@ export function createSpaDatabase(url: string, opts: { max?: number } = {}): Spa
   const pool = new Pool({ connectionString: url, max: opts.max ?? 10 });
   return { pool, db: drizzle(pool, { schema }), close: () => pool.end() };
 }
+
+/** One transaction on one connection: every SpaManager write and its event commit or roll back together. */
+export interface SpaTx {
+  db: SpaDb;
+}
+
+export async function withSpaTx<T>(database: SpaDatabase, fn: (tx: SpaTx) => Promise<T>): Promise<T> {
+  const client = await database.pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn({ db: drizzle(client, { schema }) });
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}

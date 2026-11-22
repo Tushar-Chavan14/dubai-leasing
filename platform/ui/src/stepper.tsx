@@ -4,16 +4,19 @@ export function RecordStepper({
   stages,
   current,
   labels,
+  states,
 }: {
   stages: readonly string[];
   current: string;
   labels?: Partial<Record<string, string>>;
+  /** Says each stage's state outright, for a record that is finished or stopped part-way (no current stage). */
+  states?: Partial<Record<string, "done" | "now" | "todo">>;
 }) {
   const at = stages.indexOf(current);
   return (
     <ol aria-label="Stage" className="m-0 flex list-none gap-1 p-0">
       {stages.map((s, i) => {
-        const state = i < at ? "done" : i === at ? "now" : "todo";
+        const state = states?.[s] ?? (i < at ? "done" : i === at ? "now" : "todo");
         return (
           <li
             key={s}

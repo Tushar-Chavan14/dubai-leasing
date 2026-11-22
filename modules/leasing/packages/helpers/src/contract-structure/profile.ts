@@ -1,48 +1,54 @@
 import { isSheetKey, SHEET_KEY_NAMES, sheetForPrompt, sheetKeyInfo } from "./datasheet.ts";
-import type { FieldInfo } from "./fields.ts";
-import { matchAfter, matchLabel } from "./mapping.ts";
+import { matchAfter, matchLabel, numberChequeDateRuns } from "./mapping.ts";
 
-/**
- * The words and keys the shared contract-structure reader uses (S4, S5): the helper name, how the prompts name the
- * document, the parties a blank can belong to, the data sheet blanks map to, placeholder aliases and the label rules.
- * Leasing passes nothing and gets `leasingTemplateProfile`, so its prompts and mappings stay the same; SPA (P5) passes
- * its own (Seller / Purchaser / Broker). Every value is still copied by code at prepare time, never by a model.
- */
-export interface TemplateParty {
-  /** The party key prefix and the `party` the model sees ("landlord"). */
-  role: string;
-  /** Lower-case words that name the party in a contract ("landlord", "owner", "lessor"); a plural `s` also counts. */
-  words: readonly string[];
-}
+import type { TemplateParty, TemplateProfile, TemplateSheet } from "@platform/readers/structure/profile";
+import { detectFilledValues } from "./filled.ts";
 
-export interface TemplateSheet {
-  isKey(key: string): boolean;
-  keyNames: readonly string[];
-  keyInfo(key: string): FieldInfo | null;
-  /** The key list the model sees: key | type | description, never a value. */
-  forPrompt(): string;
-}
+export type { TemplateParty, TemplateProfile, TemplateSheet };
 
-export interface TemplateProfile {
-  helperName: string;
-  /** First line of the structure prompt. */
-  structureIntro: string;
-  /** Example labels in the structure prompt, e.g. `"Annual rent", "Landlord nationality"`. */
-  labelExamples: string;
-  /** First line of the mapping prompt. */
-  mappingIntro: string;
-  /** The mapping prompt's rule about parties' keys. */
-  partyKeyRule: string;
-  /** Parties in order; a text naming exactly one of them belongs to it. */
-  parties: readonly TemplateParty[];
-  sheet: TemplateSheet;
-  /** Compact placeholder name (lower case, no spaces or punctuation) to data-sheet key (D74). */
-  placeholderAliases: Readonly<Record<string, string>>;
-  /** Code label rules: a data-sheet key, "leave_empty", or null when the label says nothing certain. */
-  matchLabel(label: string, party: string | null): string | null;
-  /** Code rule on the words right after a blank ("____ cheques"): a data-sheet key, or null. */
-  matchAfter?(after: string): string | null;
-}
+/** Words a short "Label:" line of a tenancy contract uses (the reader makes it a blank). */
+export const LEASING_LABEL_WORDS: ReadonlySet<string> = new Set([
+  "name",
+  "nationality",
+  "email",
+  "mail",
+  "phone",
+  "mobile",
+  "tel",
+  "telephone",
+  "address",
+  "building",
+  "community",
+  "area",
+  "unit",
+  "flat",
+  "plot",
+  "makani",
+  "licence",
+  "license",
+  "passport",
+  "emirates",
+  "visa",
+  "rent",
+  "deposit",
+  "cheques",
+  "cheque",
+  "bedrooms",
+  "date",
+  "commencement",
+  "expiry",
+  "reference",
+  "tenant",
+  "landlord",
+  "lessor",
+  "lessee",
+  "property",
+  "usage",
+  "start",
+  "end",
+  "period",
+  "premises",
+]);
 
 /**
  * D74: names a template may give a placeholder, as the lower-case name without spaces or punctuation: the names the
@@ -171,4 +177,7 @@ export const leasingTemplateProfile: TemplateProfile = Object.freeze({
   placeholderAliases: LEASING_PLACEHOLDER_ALIASES,
   matchLabel: (label: string, party: string | null) => matchLabel(label, party as "landlord" | "tenant" | null),
   matchAfter,
+  labelWords: LEASING_LABEL_WORDS,
+  detectFilled: detectFilledValues,
+  afterMapping: numberChequeDateRuns,
 });

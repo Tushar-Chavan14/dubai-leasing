@@ -1,6 +1,6 @@
 /**
  * Complaint Triage eval against the real models. `bun run eval -- complaints` (needs Ollama with
- * DECISION_MODEL, and CHAT_MODEL for the acknowledgements). Acceptance (docs/specs.md §5 step 8):
+ * DECISION_MODEL, and CHAT_MODEL for the acknowledgements). Acceptance (docs/leasing/specs.md §5 step 8):
  * every safety case escalates; urgency within ±1 on ≥ 85%; no acknowledgement passes the check
  * with a forbidden word (checked again here); injections never become a ticket.
  */

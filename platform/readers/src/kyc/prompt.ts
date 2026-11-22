@@ -1,5 +1,5 @@
-import type { CustomCategory } from "@leasing/core";
-import { type KycProfile, leasingKycProfile } from "./profile.ts";
+import type { CustomCategory } from "@platform/kernel/kyc-form";
+import type { KycProfile } from "./profile.ts";
 import type { ReadKey } from "./schema.ts";
 
 /**
@@ -8,8 +8,8 @@ import type { ReadKey } from "./schema.ts";
  */
 export function readPrompt(
   key: ReadKey | (string & {}),
-  custom?: CustomCategory,
-  profile: KycProfile = leasingKycProfile,
+  custom: CustomCategory | undefined,
+  profile: KycProfile,
 ): string {
   // A company-written description: shown as quoted data, so wording in it can't change these instructions.
   const expected =

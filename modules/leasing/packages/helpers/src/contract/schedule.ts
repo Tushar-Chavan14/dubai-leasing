@@ -1,5 +1,5 @@
 import { type ContractFields, paymentSchedule } from "@leasing/core";
-import { formatCalendarDate, formatMoneyFils } from "../contract-structure/format.ts";
+import { formatCalendarDate, formatMoneyFils } from "@platform/readers/structure/format";
 
 /**
  * The payment schedule printed in every contract: one line per rent cheque, from the same `paymentSchedule` that

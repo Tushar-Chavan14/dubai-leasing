@@ -1,10 +1,6 @@
+import { esc, simulatedPage } from "@platform/adapters";
+import { REGISTRY_PROFILES } from "./certificate.ts";
 import type { registrations, submissions } from "./schema.ts";
-
-const esc = (s: unknown) =>
-  String(s ?? "").replace(
-    /[&<>"']/g,
-    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!,
-  );
 
 type Reg = typeof registrations.$inferSelect;
 type Sub = typeof submissions.$inferSelect;
@@ -15,7 +11,7 @@ type Sub = typeof submissions.$inferSelect;
  */
 export function page(regs: Reg[], subs: Sub[]): string {
   const prefix = (system: string) => (system === "tawtheeq" ? "/tawtheeq" : "");
-  const label = (system: string) => (system === "tawtheeq" ? "Tawtheeq (simulated)" : "Ejari (simulated)");
+  const label = (system: string) => REGISTRY_PROFILES[system === "tawtheeq" ? "tawtheeq" : "ejari"].systemLabel;
   const regRows = regs
     .map(
       (r) =>
@@ -32,30 +28,16 @@ export function page(regs: Reg[], subs: Sub[]): string {
         }</td></tr>`,
     )
     .join("");
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Simulated registries (demo)</title>
-<style>
-body{margin:0;font-family:system-ui,sans-serif;color:#222;background:#fafafa}
-header{padding:20px 24px;border-bottom:1px solid #ddd;background:#fff}
-h1{font-size:20px;margin:0 0 4px}
-.warn{margin:0;color:#555;font-size:14px}
-main{padding:16px 24px;max-width:1100px}
-h2{font-size:15px;margin:24px 0 8px}
-table{width:100%;border-collapse:collapse;background:#fff;font-size:13px}
-th,td{text-align:left;padding:7px 9px;border-bottom:1px solid #eee;vertical-align:top}
-th{color:#666;font-weight:600}
-.tag{display:inline-block;padding:1px 7px;border:1px solid #999;border-radius:4px;font-size:12px}
-.tag.rejected,.tag.unavailable{border-style:dashed}
-.empty{color:#777;padding:12px 0}
-a{color:#222}
-</style></head><body>
-<header><h1>Simulated registries (demo)</h1>
-<p class="warn"><b>Simulated Ejari (demo)</b> and <b>Simulated Tawtheeq (demo)</b>, side by side.</p>
-<p class="warn">A mock registry for demos and tests. The simulated Ejari is not connected to the Dubai Land Department, and the simulated Tawtheeq is not connected to any Abu Dhabi government system. Their certificates are not valid anywhere.</p></header>
-<main>
-<h2>Registrations</h2>
+  return simulatedPage({
+    title: "Simulated registries (demo)",
+    heading: "Simulated registries (demo)",
+    notices: [
+      "<b>Simulated Ejari (demo)</b> and <b>Simulated Tawtheeq (demo)</b>, side by side.",
+      "A mock registry for demos and tests. The simulated Ejari is not connected to the Dubai Land Department, and the simulated Tawtheeq is not connected to any Abu Dhabi government system. Their certificates are not valid anywhere.",
+    ],
+    main: `<h2>Registrations</h2>
 ${regs.length ? `<table><tr><th>System</th><th>Number</th><th>Property</th><th>Tenant</th><th>Period</th><th>Issued</th><th>State</th></tr>${regRows}</table>` : '<p class="empty">No registrations yet.</p>'}
 <h2>Latest requests</h2>
-${subs.length ? `<table><tr><th>System</th><th>Received (UTC)</th><th>Kind</th><th>Property</th><th>Tenant</th><th>Outcome</th><th>Detail</th></tr>${subRows}</table>` : '<p class="empty">No requests yet.</p>'}
-</main></body></html>`;
+${subs.length ? `<table><tr><th>System</th><th>Received (UTC)</th><th>Kind</th><th>Property</th><th>Tenant</th><th>Outcome</th><th>Detail</th></tr>${subRows}</table>` : '<p class="empty">No requests yet.</p>'}`,
+  });
 }

@@ -1,7 +1,9 @@
+import type { z } from "zod";
+
 /**
  * The words the shared KYC reader uses (S4): its helper name, who the documents belong to, who asked for them, and
- * what each document is. Leasing passes nothing and gets `leasingKycProfile`, so its prompts and results stay the same;
- * another module (SPA, P6) passes its own. A profile holds wording only: the code checks never come from it.
+ * what each document is. Leasing passes `leasingKycProfile` (its default, so its prompts and results stay the same);
+ * SPA passes its own (S49). A profile holds wording only: the code checks never come from it.
  */
 export interface KycProfile {
   /** Helper name in the run record and the activity log. */
@@ -16,24 +18,19 @@ export interface KycProfile {
   documentLabels: Readonly<Record<string, string>>;
   /** Read keys whose prompt asks for the two machine-readable lines, character for character. */
   mrzKeys: readonly string[];
+  /** Who set the plain-English rules, in the AI-check prompt ("You check one rule <subject>"). */
+  aiCheckSubject: string;
+  /**
+   * Document kinds beyond the built-in ones (S49): a Zod schema per read key, as the model must answer. Each answer has
+   * `documentType` (the read key when it is the right document, else `other`), `holderName` and `issueDate`, each a
+   * `ReadField`. Upload these as kind `extra` with the read key in `fieldKey`.
+   */
+  extraReads?: Readonly<Record<string, z.ZodType<Record<string, unknown>>>>;
+  /**
+   * What makes a person's document set complete when the form doesn't say. `resident_set` (default): both sides of the
+   * Emirates ID, or the passport and the residence visa. `any_id`: the passport, or both sides of the Emirates ID.
+   */
+  personDocs?: PersonDocs;
 }
 
-export const leasingKycProfile: KycProfile = Object.freeze({
-  helperName: "kyc",
-  orgNoun: "leasing company",
-  partyNoun: "applicant",
-  documents: Object.freeze({
-    emirates_id_front: "the front of an identity card",
-    emirates_id_back: "the back of an identity card",
-    passport: "a passport data page with a two-line machine-readable zone (MRZ) at the bottom",
-    visa: "a residence permit / visa",
-    trade_licence: "a commercial trade licence",
-  }),
-  documentLabels: Object.freeze({
-    emirates_id: "Emirates ID",
-    passport: "passport",
-    visa: "visa",
-    trade_licence: "trade licence",
-  }),
-  mrzKeys: Object.freeze(["passport"]),
-});
+export type PersonDocs = "resident_set" | "any_id";

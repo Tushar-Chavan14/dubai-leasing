@@ -43,7 +43,7 @@ Staff app → **Import** → **Units** (or **Import units** on the Units list), 
 unknown or inactive one is 404. Units are created under that company, and a code that
 already belongs to another company is a row error (`unit belongs to another company`; the
 same applies to the lease import). One row per unit, header row required. A sample file is
-at `apps/web/public/samples/units-sample.csv` (served as `/samples/units-sample.csv`).
+at `modules/leasing/apps/web/public/samples/units-sample.csv` (served as `/samples/units-sample.csv`).
 
 Each row runs in its own transaction and goes through the same path as the unit form: the
 `UnitFields` rules (code format, 10-digit Makani, ranges), state `PREP`, and a `UNIT_CREATED`
@@ -72,7 +72,7 @@ reported per row by CSV column name; a bad row doesn't block the others.
 Imported units start in Preparation. Add photos and a virtual tour link from each unit's edit
 page (`/units/{id}/edit`), complete the checklist and get the price approved before listing.
 
-The web upload goes through the route handler `apps/web/app/api/import/[kind]/route.ts`, not a
+The web upload goes through the route handler `modules/leasing/apps/web/app/api/import/[kind]/route.ts`, not a
 server action, so files over the 1 MB server-action body limit work; the engine accepts up to
 2 MB per request.
 
@@ -80,7 +80,7 @@ server action, so files over the 1 MB server-action body limit work; the engine 
 
 Staff app → **Import** → **Companies**, or `POST /api/import/companies` (**admin only**) with a CSV
 body or `{"csv": "..."}`. No `?company=` is used. A sample file is at
-`apps/web/public/samples/companies-sample.csv`. The company is the landlord (D44), so this loads
+`modules/leasing/apps/web/public/samples/companies-sample.csv`. The company is the landlord (D44), so this loads
 landlord details in bulk. Rows are matched by `slug`, else by name (case-insensitive):
 
 - **New company**: created with its party row (`COMPANY_CREATED`); `kind` is required.

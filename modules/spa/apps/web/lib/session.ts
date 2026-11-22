@@ -14,7 +14,7 @@ export const me = cache(async () => {
 /** A screen the role has no rail item for is not found (the engine refuses its actions anyway). */
 export async function requireScreen(screen: RailScreen) {
   const user = await me();
-  const item = railItems(user.role).find((i) => i.screen === screen);
+  const item = railItems(user.role, user.companyKind).find((i) => i.screen === screen);
   if (!item) notFound();
   return { user, item };
 }

@@ -1,6 +1,6 @@
 import { isCalendarDate, parseAed } from "@leasing/core";
 import { type Llm } from "@platform/llm";
-import { extractPdf, normalizeWs } from "../contract-template/extract.ts";
+import { extractPdf, normalizeWs } from "@platform/readers/pdf/extract";
 import { certificateMessages } from "./prompt.ts";
 import { type CertificateRead, type CertificateResult, ModelCertificate } from "./schema.ts";
 

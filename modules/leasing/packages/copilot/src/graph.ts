@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { maskPii, maskPiiText } from "@leasing/core";
 import { AIMessage, type BaseMessage, HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
+import type { AgentModel, ModelTurn, ToolSpec } from "@platform/llm/agent";
 import { z } from "zod";
 import { type PageContext, systemPrompt } from "./prompt.ts";
 import type { Choices, CopilotCard, ToolUi } from "./ui.ts";
@@ -12,26 +13,10 @@ import type { CopilotTool, ToolContext } from "./types.ts";
 /** At most this many tool calls per user turn (architecture §8b, safeguard 7). */
 export const MAX_TOOL_CALLS = 8;
 
-export interface ToolSpec {
-  type: "function";
-  function: { name: string; description: string; parameters: Record<string, unknown> };
-}
-
-export interface ModelTurn {
-  content: string;
-  toolCalls: { id: string; name: string; args: Record<string, unknown> }[];
-}
+export type { ModelTurn, ToolSpec } from "@platform/llm/agent";
 
 /** The chat model behind the loop. `tools: null` means "answer now, no more tool calls". */
-export interface CopilotModel {
-  name: string;
-  respond(
-    messages: BaseMessage[],
-    tools: ToolSpec[] | null,
-    onToken: (text: string) => void,
-    signal?: AbortSignal,
-  ): Promise<ModelTurn>;
-}
+export type CopilotModel = AgentModel;
 
 export type CopilotEvent =
   | { type: "tool"; id: string; name: string; args: Record<string, unknown> }

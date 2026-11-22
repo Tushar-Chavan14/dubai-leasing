@@ -1,0 +1,26 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Simulated registries (demo)</title>
+<style>
+body{margin:0;font-family:system-ui,sans-serif;color:#222;background:#fafafa}
+header{padding:20px 24px;border-bottom:1px solid #ddd;background:#fff}
+h1{font-size:20px;margin:0 0 4px}
+.warn{margin:0;color:#555;font-size:14px}
+main{padding:16px 24px;max-width:1100px}
+h2{font-size:15px;margin:24px 0 8px}
+table{width:100%;border-collapse:collapse;background:#fff;font-size:13px}
+th,td{text-align:left;padding:7px 9px;border-bottom:1px solid #eee;vertical-align:top}
+th{color:#666;font-weight:600}
+.tag{display:inline-block;padding:1px 7px;border:1px solid #999;border-radius:4px;font-size:12px}
+.tag.rejected,.tag.unavailable{border-style:dashed}
+.empty{color:#777;padding:12px 0}
+a{color:#222}
+</style></head><body>
+<header><h1>Simulated registries (demo)</h1>
+<p class="warn"><b>Simulated Ejari (demo)</b> and <b>Simulated Tawtheeq (demo)</b>, side by side.</p>
+<p class="warn">A mock registry for demos and tests. The simulated Ejari is not connected to the Dubai Land Department, and the simulated Tawtheeq is not connected to any Abu Dhabi government system. Their certificates are not valid anywhere.</p></header>
+<main>
+<h2>Registrations</h2>
+<table><tr><th>System</th><th>Number</th><th>Property</th><th>Tenant</th><th>Period</th><th>Issued</th><th>State</th></tr><tr><td>Tawtheeq (simulated)</td><td><a href="/tawtheeq/api/v1/registrations/SIM-TWQ-2026-0000001/certificate.pdf">SIM-TWQ-2026-0000001</a></td><td>DEMO-DLD-000412</td><td>Priya Example Rao</td><td>2026-12-01 → 2027-11-30</td><td>2026-11-01</td><td><span class="tag active">active</span></td></tr><tr><td>Ejari (simulated)</td><td><a href="/api/v1/registrations/DEMO-EJ-0001204/certificate.pdf">DEMO-EJ-0001204</a></td><td>DEMO-DLD-001204</td><td>Sara Example Khan</td><td>2000-01-01 → 2099-12-31</td><td>2000-01-01</td><td><span class="tag active">active</span></td></tr><tr><td>Ejari (simulated)</td><td><a href="/api/v1/registrations/DEMO-EJ-0000807/certificate.pdf">DEMO-EJ-0000807</a></td><td>DEMO-DLD-000807</td><td>Rami Sample Nasser</td><td>2000-01-01 → 2099-12-31</td><td>2000-01-01</td><td><span class="tag active">active</span></td></tr><tr><td>Ejari (simulated)</td><td><a href="/api/v1/registrations/DEMO-EJ-0000310/certificate.pdf">DEMO-EJ-0000310</a></td><td>DEMO-DLD-000310</td><td>Mina Test Varghese</td><td>2000-01-01 → 2099-12-31</td><td>2000-01-01</td><td><span class="tag active">active</span></td></tr><tr><td>Ejari (simulated)</td><td><a href="/api/v1/registrations/DEMO-EJ-0002205/certificate.pdf">DEMO-EJ-0002205</a></td><td>DEMO-DLD-002205</td><td>Noor Demo Haddad</td><td>2000-01-01 → 2099-12-31</td><td>2000-01-01</td><td><span class="tag active">active</span></td></tr></table>
+<h2>Latest requests</h2>
+<table><tr><th>System</th><th>Received (UTC)</th><th>Kind</th><th>Property</th><th>Tenant</th><th>Outcome</th><th>Detail</th></tr><tr><td>Tawtheeq (simulated)</td><td><time></td><td>register</td><td>DEMO-DLD-000412</td><td>Priya Example Rao</td><td><span class="tag unavailable">unavailable</span></td><td></td></tr><tr><td>Tawtheeq (simulated)</td><td><time></td><td>register</td><td>DEMO-DLD-000413</td><td>priya example rao</td><td><span class="tag rejected">rejected</span></td><td><div><b>PROPERTY_NOT_FOUND</b> No property is registered under this property number.</div></td></tr><tr><td>Tawtheeq (simulated)</td><td><time></td><td>register</td><td>DEMO-DLD-000412</td><td>Priya Example Rao</td><td><span class="tag issued">issued</span></td><td>SIM-TWQ-2026-0000001</td></tr></table>
+</main></body></html>

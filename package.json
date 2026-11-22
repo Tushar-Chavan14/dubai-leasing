@@ -2,21 +2,23 @@
   "name": "leasing-agents",
   "private": true,
   "workspaces": [
+    "apps/*",
     "modules/leasing/apps/*",
     "modules/leasing/packages/*",
-    "platform/*",
-    "spa/apps/*",
-    "spa/packages/*"
+    "modules/spa/apps/*",
+    "modules/spa/packages/*",
+    "platform/*"
   ],
   "type": "module",
   "scripts": {
     "dev": "bun run --filter './modules/leasing/apps/*' dev",
     "dev:leasing": "bun run --filter './modules/leasing/apps/*' dev",
-    "dev:spa": "bun run --parallel spa:engine spa:web",
+    "dev:spa": "bun run --filter './modules/spa/apps/*' dev",
     "spa:engine": "bun run --filter @spa/engine dev",
     "spa:web": "bun run --filter @spa/web dev",
+    "spa:oqood-mock": "bun run --filter @spa/oqood-mock dev",
     "test": "bun test",
-    "typecheck": "tsc -p tsconfig.json && tsc -p platform/ui/tsconfig.json && tsc -p modules/leasing/apps/web/tsconfig.json && tsc -p spa/apps/web/tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json && tsc -p platform/ui/tsconfig.json && tsc -p modules/leasing/apps/web/tsconfig.json && tsc -p modules/spa/apps/web/tsconfig.json && tsc -p apps/portal/tsconfig.json",
     "lint": "oxlint && oxfmt --check && bun scripts/check-domain-rules.ts",
     "lint:fix": "oxlint --fix && oxfmt",
     "format": "oxfmt",
@@ -33,7 +35,13 @@
     "spa:db:generate": "bun run --filter @spa/db generate",
     "spa:db:migrate": "bun run --filter @spa/db migrate",
     "spa:demo:seed": "bun run --filter @spa/engine seed",
-    "spa:demo:reset": "bun run --filter @spa/engine reset"
+    "spa:demo:reset": "bun run --filter @spa/engine reset",
+    "dev:portal": "bun run --filter './apps/*' dev",
+    "dev:all": "bun run --filter './modules/leasing/apps/*' --filter './modules/spa/apps/*' --filter './apps/*' dev",
+    "portal:db:migrate": "bun apps/portal/scripts/migrate.ts",
+    "portal:db:generate": "bun run --filter @portal/launcher db:generate",
+    "portal:create-account": "bun apps/portal/scripts/create-account.ts",
+    "portal:keygen": "bun apps/portal/scripts/keygen.ts"
   },
   "devDependencies": {
     "@types/bun": "1.4.3",

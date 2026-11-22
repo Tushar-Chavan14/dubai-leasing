@@ -12,8 +12,28 @@ export type StyledBlock =
   | { kind: "heading"; text: string }
   | { kind: "para"; text: string }
   | { kind: "list"; items: string[] }
-  | { kind: "sigline"; label: string }
+  /** A table in the template's font and accent; `widths` are relative weights. The head repeats on each page. */
+  | { kind: "table"; head: string[]; rows: string[][]; widths?: number[] }
+  /** `role` and `slot` say who signs (the anchor reports them for e-signing); absent: unknown. */
+  | { kind: "sigline"; label: string; role?: string | null; slot?: number | null }
   | { kind: "small"; text: string };
+
+/** Where a signature line was drawn: the line's left end and width, in PDF points (origin bottom-left), page 1-based. */
+export interface SignatureAnchor {
+  role: string | null;
+  slot: number | null;
+  page: number;
+  xPt: number;
+  yPt: number;
+  widthPt: number;
+}
+
+export interface StyledOptions {
+  logo?: PdfLogo | null;
+  watermark?: string | null;
+  /** Creation and modification date of the PDF (the caller passes its Clock, so the hash is stable). Default: the epoch. */
+  now?: Date;
+}
 
 export interface PdfLook {
   page: { widthPt: number; heightPt: number };
@@ -63,8 +83,19 @@ export async function renderStyledPdf(
   meta: { title: string; subject: string },
   blocks: StyledBlock[],
   look: PdfLook,
-  opts: { logo?: PdfLogo | null; watermark?: string | null } = {},
+  opts: StyledOptions = {},
 ): Promise<Uint8Array> {
+  return (await renderStyledPdfWithAnchors(meta, blocks, look, opts)).bytes;
+}
+
+/** The same PDF plus one anchor per signature line (in order), for placing e-sign fields. */
+export async function renderStyledPdfWithAnchors(
+  meta: { title: string; subject: string },
+  blocks: StyledBlock[],
+  look: PdfLook,
+  opts: StyledOptions = {},
+): Promise<{ bytes: Uint8Array; anchors: SignatureAnchor[] }> {
+  const anchors: SignatureAnchor[] = [];
   const doc = await PDFDocument.create();
   doc.setTitle(safe(meta.title));
   doc.setSubject(safe(meta.subject));
@@ -173,9 +204,61 @@ export async function renderStyledPdf(
         }
         y -= 6;
         break;
+      case "table": {
+        const weights = b.head.map((_, i) => Math.max(0.1, b.widths?.[i] ?? 1));
+        const total = weights.reduce((a, c) => a + c, 0);
+        const cols = weights.map((w) => (w / total) * width);
+        const pad = 4;
+        const row = (cells: string[], font: PDFFont, colour: ReturnType<typeof rgb>) => {
+          const wrapped = cols.map((c, i) => wrap(cells[i] ?? "", font, body, c - pad * 2));
+          const lines = Math.max(1, ...wrapped.map((w) => w.length));
+          const h = lines * body * 1.45 + 4;
+          return { wrapped, h, font, colour };
+        };
+        const draw = (r: ReturnType<typeof row>, ruleColour: ReturnType<typeof rgb>) => {
+          let x = left;
+          r.wrapped.forEach((ls, i) => {
+            ls.forEach((l, k) =>
+              page.drawText(l, {
+                x: x + pad,
+                y: y - body - k * body * 1.45,
+                size: body,
+                font: r.font,
+                color: r.colour,
+              }),
+            );
+            x += cols[i]!;
+          });
+          y -= r.h;
+          page.drawLine({ start: { x: left, y }, end: { x: W - right, y }, thickness: 0.5, color: ruleColour });
+        };
+        const head = row(b.head, bold, headingColour);
+        ensure(head.h + 4);
+        y -= 4;
+        draw(head, accent ?? LINE);
+        for (const cells of b.rows) {
+          const r = row(cells, regular, INK);
+          if (y - r.h < bottom) {
+            ensure(r.h + head.h + 8);
+            y -= 4;
+            draw(head, accent ?? LINE);
+          }
+          draw(r, LINE);
+        }
+        y -= 10;
+        break;
+      }
       case "sigline": {
         ensure(52);
         y -= 22;
+        anchors.push({
+          role: b.role ?? null,
+          slot: b.slot ?? null,
+          page: doc.getPages().indexOf(page) + 1,
+          xPt: left,
+          yPt: y,
+          widthPt: Math.min(240, width),
+        });
         page.drawLine({
           start: { x: left, y },
           end: { x: left + Math.min(240, width), y },
@@ -235,7 +318,7 @@ export async function renderStyledPdf(
       });
     }
   });
-  doc.setCreationDate(new Date(0));
-  doc.setModificationDate(new Date(0));
-  return doc.save({ useObjectStreams: false });
+  doc.setCreationDate(opts.now ?? new Date(0));
+  doc.setModificationDate(opts.now ?? new Date(0));
+  return { bytes: await doc.save({ useObjectStreams: false }), anchors };
 }

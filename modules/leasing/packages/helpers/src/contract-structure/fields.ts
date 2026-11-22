@@ -1,12 +1,8 @@
 import type { ContractFieldName } from "@leasing/core";
 
-/** How a contract field is written into a blank. `enum` fields print as their words. */
-export type FieldType = "text" | "money_fils" | "date" | "int" | "enum";
+import type { FieldInfo, FieldType } from "@platform/readers/structure/types";
 
-export interface FieldInfo {
-  type: FieldType;
-  label: string;
-}
+export type { FieldInfo, FieldType };
 
 /**
  * The only fields a blank may be mapped to (names, types and labels from code, never from the

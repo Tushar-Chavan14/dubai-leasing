@@ -1,8 +1,8 @@
 import type { ChatMessage } from "@platform/llm";
-import { stripDelimiters } from "../contract-template/prompt.ts";
+import { stripDelimiters } from "../prompt-safety.ts";
 import { MAX_PROMPT_CHARS } from "./schema.ts";
 import type { RawBlank } from "./blanks.ts";
-import { leasingTemplateProfile, type TemplateProfile } from "./profile.ts";
+import type { TemplateProfile } from "./profile.ts";
 
 /**
  * The sample is data. The model only proposes the section headings it can see (exact lines) and a
@@ -12,9 +12,10 @@ import { leasingTemplateProfile, type TemplateProfile } from "./profile.ts";
 export function structureMessages(
   lines: string[],
   blanks: RawBlank[],
-  nonce: string = crypto.randomUUID().replaceAll("-", ""),
-  profile: TemplateProfile = leasingTemplateProfile,
+  nonce: string | undefined,
+  profile: TemplateProfile,
 ): ChatMessage[] {
+  nonce ??= crypto.randomUUID().replaceAll("-", "");
   const DOC_START = `<<<DOC_${nonce}_START>>>`;
   const DOC_END = `<<<DOC_${nonce}_END>>>`;
   const text = stripDelimiters(lines.join("\n")).slice(0, MAX_PROMPT_CHARS);

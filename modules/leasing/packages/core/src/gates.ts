@@ -3,7 +3,7 @@ import { defineGates, type GateDefinition as KernelGateDefinition } from "@platf
 import type { StaffRole } from "./roles.ts";
 
 /**
- * Human gates (docs/specs.md §6). The Manager creates an `approvals` row and pauses; only a
+ * Human gates (docs/leasing/specs.md §6). The Manager creates an `approvals` row and pauses; only a
  * person in the inbox UI decides. Nothing — helper, job or copilot — can approve.
  */
 export const GateId = z.enum([

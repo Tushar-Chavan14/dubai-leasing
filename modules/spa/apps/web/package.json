@@ -12,7 +12,6 @@
     "@phosphor-icons/react": "2.1.10",
     "@platform/ui": "workspace:*",
     "@spa/core": "workspace:*",
-    "@spa/engine": "workspace:*",
     "@tailwindcss/postcss": "4.3.4",
     "geist": "1.9.1",
     "hono": "4.13.13",

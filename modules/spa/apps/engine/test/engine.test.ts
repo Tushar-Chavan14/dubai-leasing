@@ -6,9 +6,21 @@ import { freshSpaDatabase, spaTestDatabaseUrl } from "@spa/db/testing";
 import { createApp } from "../src/app.ts";
 import { checkPassword, hashPassword } from "../src/auth.ts";
 import { SpaDemoClock } from "../src/clock.ts";
-import { createBoss, HEARTBEAT_JOB, heartbeatKey, startJobs } from "../src/jobs.ts";
+import {
+  createBoss,
+  DEFAULT_CHECK_JOB,
+  defaultCheckKey,
+  HEARTBEAT_JOB,
+  heartbeatKey,
+  NOC_EXPIRY_JOB,
+  startJobs,
+} from "../src/jobs.ts";
 import { requireDemo, requireSpaDatabase, seedSpaDemo } from "../src/seed.ts";
 import { DEMO_USERS } from "../src/seed-data.ts";
+import { failClosedFacts } from "../src/manager/facts.ts";
+import { setCompany } from "../src/manager/parties.ts";
+import { deals, listings, units } from "@spa/db";
+import { eq } from "drizzle-orm";
 
 const SECRET = "s".repeat(40);
 const NOW = Date.parse("2026-11-18T08:00:00Z");
@@ -66,7 +78,7 @@ describe.skipIf(!url)("SPA engine on spa_test (S2)", () => {
     });
   beforeAll(async () => {
     database = await freshSpaDatabase(url!);
-    await seedSpaDemo(database);
+    await seedSpaDemo(database, undefined, { SPA_DEMO_MODE: true });
     // One user with a password, for the non-demo sign-in route.
     await database.pool.query("update spa_users set password_hash = $1 where email = $2", [
       await hashPassword("pass-word-1"),
@@ -77,6 +89,17 @@ describe.skipIf(!url)("SPA engine on spa_test (S2)", () => {
     await database?.close();
   });
 
+  test("the demo seed creates units, listings and a mix of deals (C30), idempotently", async () => {
+    await seedSpaDemo(database, undefined, { SPA_DEMO_MODE: true });
+    // five demo units (U-101 to U-105) and, from C32, the four available units of building B in the demo project
+    expect(await database.db.select().from(units)).toHaveLength(9);
+    expect(await database.db.select().from(listings)).toHaveLength(5);
+    expect(await database.db.select().from(deals)).toHaveLength(10);
+    const [u101] = await database.db.select().from(units).where(eq(units.code, "U-101"));
+    expect(u101?.state).toBe("HELD");
+    const [l] = await database.db.select().from(listings).where(eq(listings.permitNo, "[PERMIT NO.]"));
+    expect([l?.state, l?.permitNo]).toEqual(["UNDER_OFFER", "[PERMIT NO.]"]);
+  });
   test("every demo role signs in from the demo picker and gets its own profile", async () => {
     const app = appWith(true);
     for (const u of DEMO_USERS) {
@@ -86,6 +109,27 @@ describe.skipIf(!url)("SPA engine on spa_test (S2)", () => {
       const me = await call(app, "/api/me", { headers: { authorization: `Bearer ${token}` } });
       expect(((await me.json()) as { role: string }).role).toBe(u.role);
     }
+  });
+  test("C5: /api/me says the company kind, so the rail shows the right screens", async () => {
+    const app = appWith(true);
+    const sign = await call(app, "/api/auth/demo-sign-in", {
+      method: "POST",
+      body: JSON.stringify({ email: DEMO_USERS[0]!.email }),
+    });
+    const { token } = (await sign.json()) as { token: string };
+    const me = async () =>
+      (
+        (await (await call(app, "/api/me", { headers: { authorization: `Bearer ${token}` } })).json()) as {
+          companyKind: string;
+        }
+      ).companyKind;
+    expect(await me()).toBe("both");
+    await setCompany(
+      { database, clock: new FixedClock(new Date(NOW)), facts: failClosedFacts },
+      { name: "Fictional Brokers", kind: "brokerage" },
+      "system",
+    );
+    expect(await me()).toBe("brokerage");
   });
   test("a user without a password can't use the password sign-in", async () => {
     const r = await call(appWith(true), "/api/auth/sign-in", {
@@ -178,6 +222,48 @@ describe.skipIf(!url)("SPA engine on spa_test (S2)", () => {
         [HEARTBEAT_JOB, heartbeatKey(clock.today())],
       );
       expect(r.rows[0]!.n).toBe(1);
+    } finally {
+      await jobs.stop();
+    }
+  });
+  test("C15: the NOC sweep is scheduled daily in Dubai time and runs once at start-up", async () => {
+    const clock = new FixedClock(new Date(NOW));
+    const seen = { runs: 0 };
+    const jobs = await startJobs(createBoss(url!), clock, { nocSweep: async () => void seen.runs++ });
+    try {
+      for (let i = 0; i < 50 && seen.runs === 0; i++) await Bun.sleep(100);
+      expect(seen.runs).toBe(1);
+      const schedules = await jobs.boss.getSchedules();
+      const s = schedules.find((x) => x.name === NOC_EXPIRY_JOB);
+      expect([s?.cron, s?.timezone]).toEqual(["15 0 * * *", "Asia/Dubai"]);
+      const r = await database.pool.query<{ n: number }>(
+        "select count(*)::int as n from pgboss.job where name = $1 and singleton_key = $2",
+        [NOC_EXPIRY_JOB, `noc-expiry:${clock.today()}`],
+      );
+      expect(r.rows[0]!.n).toBeGreaterThanOrEqual(1);
+    } finally {
+      await jobs.stop();
+    }
+  });
+  test("C22: the default check runs at 00:20 Dubai time, once at start-up, and its key is per Dubai day", async () => {
+    expect(DEFAULT_CHECK_JOB).toBe("spa.default.check");
+    expect(defaultCheckKey("2026-11-19")).toBe("default-check:2026-11-19");
+    const clock = new FixedClock(new Date(NOW));
+    const seen = { runs: 0 };
+    const jobs = await startJobs(createBoss(url!), clock, { defaultCheck: async () => void seen.runs++ });
+    try {
+      for (let i = 0; i < 50 && seen.runs === 0; i++) await Bun.sleep(100);
+      expect(seen.runs).toBe(1);
+      const s = (await jobs.boss.getSchedules()).find((x) => x.name === DEFAULT_CHECK_JOB);
+      expect([s?.cron, s?.timezone]).toEqual(["20 0 * * *", "Asia/Dubai"]);
+      // Sent again for the same day: the exclusive queue keeps at most one waiting job per key.
+      await jobs.boss.send(DEFAULT_CHECK_JOB, {}, { singletonKey: defaultCheckKey(clock.today()) });
+      await jobs.boss.send(DEFAULT_CHECK_JOB, {}, { singletonKey: defaultCheckKey(clock.today()) });
+      const r = await database.pool.query<{ n: number }>(
+        "select count(*)::int n from pgboss.job where name = $1 and singleton_key = $2 and state in ('created', 'retry')",
+        [DEFAULT_CHECK_JOB, defaultCheckKey(clock.today())],
+      );
+      expect(r.rows[0]!.n).toBeLessThanOrEqual(1);
     } finally {
       await jobs.stop();
     }

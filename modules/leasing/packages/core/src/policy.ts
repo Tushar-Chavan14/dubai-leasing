@@ -279,7 +279,7 @@ const autopilotNumber = (k: AutopilotNumber) =>
 
 /**
  * Company limits (policy, not law). Stored versioned in `company_policy`, editable by Admin.
- * Defaults below are placeholders until the client confirms them (docs/specs.md §10).
+ * Defaults below are placeholders until the client confirms them (docs/leasing/specs.md §10).
  */
 export const CompanyPolicy = z.object({
   depositPercentUnfurnished: z.number().int().min(0).max(100),
@@ -297,7 +297,7 @@ export const CompanyPolicy = z.object({
   replyLegalThreatThreshold: z.number().min(0).max(1).default(0.5),
   /** Probability at which a comment counts as instructions aimed at the system (sent to a person). */
   replyInjectionThreshold: z.number().min(0).max(1).default(0.5),
-  // --- applicant offers and checks (policy placeholders; docs/specs.md §10) ---
+  // --- applicant offers and checks (policy placeholders; docs/leasing/specs.md §10) ---
   /** Cheques proposed when the applicant hasn't asked for a number. */
   offerDefaultCheques: z.number().int().min(1).max(12).default(4),
   /** Days an offer stays open. */
@@ -321,7 +321,7 @@ export const CompanyPolicy = z.object({
   registrationFeePaidBy: z.enum(["tenant", "landlord"]).default("tenant"),
   /** Below this decision-model confidence, an Ejari rejection is not mapped to a field (a person reads it). */
   ejariFieldMinConfidence: z.number().min(0).max(1).default(0.6),
-  // --- Telegram enquiries and viewings (policy placeholders; docs/specs.md §10) ---
+  // --- Telegram enquiries and viewings (policy placeholders; docs/leasing/specs.md §10) ---
   /** Days viewings are offered, 0 = Sunday … 6 = Saturday (Asia/Dubai). */
   viewingDays: z.array(z.number().int().min(0).max(6)).min(1).default([1, 2, 3, 4, 5, 6]),
   /** First viewing slot starts at this hour (Dubai time). */
@@ -339,7 +339,7 @@ export const CompanyPolicy = z.object({
   enquiryHandoffThreshold: z.number().min(0).max(1).default(0.5),
   /** Messages per conversation per hour before the bot stops answering. */
   enquiryMaxMessagesPerHour: z.number().int().min(1).max(1000).default(30),
-  // --- tenancy: move-in, links, collections, complaints (policy placeholders; docs/specs.md §10) ---
+  // --- tenancy: move-in, links, collections, complaints (policy placeholders; docs/leasing/specs.md §10) ---
   /** Days the tenant has to confirm the move-in report (single-use link). */
   moveInAckDays: z.number().int().min(1).max(60).default(7),
   /** Days a tenancy portal link in a lease email stays valid. */
@@ -369,7 +369,7 @@ export const CompanyPolicy = z.object({
       "3": z.number().int().positive(),
     })
     .default({ "0": 168, "1": 48, "2": 24, "3": 4 }),
-  // --- move-out and deposit (policy placeholders; docs/specs.md §10) ---
+  // --- move-out and deposit (policy placeholders; docs/leasing/specs.md §10) ---
   /**
    * The company's price list for damage beyond normal wear and tear (fils per unit). Deductions
    * are only ever an item from this list × a quantity; any other amount needs finance's approval.

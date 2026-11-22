@@ -1,26 +1,43 @@
-import { EmptyState } from "@platform/ui/empty-state";
 import { PageTitle } from "@platform/ui/page";
+import { ALERT } from "@platform/ui/settings";
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
+import { ProjectForm, ProjectTable } from "../../../components/projects";
+import { engineGet } from "../../../lib/engine";
+import { loadProjects } from "../../../lib/loaders";
 import { requireScreen } from "../../../lib/session";
+import { errorWords } from "./words";
+import { createProject } from "./actions";
 
 export const metadata: Metadata = { title: "Inventory" };
 
-export default async function Page() {
-  const { item } = await requireScreen("inventory");
+/**
+ * Inventory (design §4.6, S64): the developer's projects. Everyone with the screen reads; an admin also gets the form
+ * to add a project. The engine answers 403 to a role or a company kind that has no inventory, and the page is not there.
+ */
+export default async function Page({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
+  const { user } = await requireScreen("inventory");
+  const data = await loadProjects(engineGet);
+  if (!data) notFound();
+  const { error } = await searchParams;
+  const admin = user.role === "admin";
   return (
     <div className="grid gap-6">
       <PageTitle
         title="Inventory"
         lede={
-          item.readOnly
-            ? "Projects, buildings, units and price lists. You can view these settings; an admin changes them."
-            : "Projects, buildings, units and price lists."
+          admin
+            ? "Projects, buildings, units and price lists. You add and change them here."
+            : "Projects, buildings, units and price lists. You can look; an admin changes them."
         }
       />
-      <EmptyState
-        title="No projects yet."
-        body="Projects, their buildings and units, and price lists will appear here once a project is added."
-      />
+      {error && (
+        <p role="alert" className={ALERT.bad}>
+          {errorWords(error)}
+        </p>
+      )}
+      <ProjectTable projects={data.items} unplaced={data.unplacedUnits} />
+      {admin && <ProjectForm action={createProject} />}
     </div>
   );
 }

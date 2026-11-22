@@ -1,5 +1,6 @@
 import { loadSpaEnv } from "@spa/core/env";
 import { createSpaDatabase, runSpaMigrations } from "@spa/db";
+import { SpaDemoClock } from "./clock.ts";
 import { requireDemo, requireSpaDatabase, seedSpaDemo } from "./seed.ts";
 
 /**
@@ -14,6 +15,9 @@ await database.pool.query(
   "drop schema if exists public cascade; drop schema if exists drizzle cascade; drop schema if exists pgboss cascade; create schema public;",
 );
 await runSpaMigrations(database);
-await seedSpaDemo(database);
+// Dates follow the SPA demo clock (its offset in spa_demo_settings).
+const clock = new SpaDemoClock(database, true);
+await clock.refresh();
+await seedSpaDemo(database, clock, env);
 await database.close();
 console.log(`reset ${name}: migrated and seeded (pg-boss recreates its schema when the engine starts)`);

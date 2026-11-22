@@ -31,7 +31,7 @@ export const yesNo = z
   .pipe(z.enum(["yes", "no", "true", "false", "y", "n", "1", "0"]))
   .transform((v) => ["yes", "true", "y", "1"].includes(v));
 
-/** One row of the lease import CSV. Column names are documented in docs/import.md. */
+/** One row of the lease import CSV. Column names are documented in docs/leasing/import.md. */
 export const LeaseImportRow = z
   .object({
     unit_code: z.string().min(1),

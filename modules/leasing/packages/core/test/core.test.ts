@@ -195,6 +195,13 @@ describe("env", () => {
     expect(set.LEASING_ASSISTANT_MODEL).toBe("qwen3.5:9b");
     expect(set.CONTRACT_AI_MODEL).toBeUndefined();
   });
+  test("the portal public key is optional and one line of base64 (S70)", () => {
+    const key = "MCowBQYDK2VwAyEA".padEnd(44, "A");
+    expect(loadEnv(base).LEASING_PORTAL_PUBLIC_KEY).toBeUndefined();
+    expect(loadEnv({ ...base, LEASING_PORTAL_PUBLIC_KEY: "  # none" }).LEASING_PORTAL_PUBLIC_KEY).toBeUndefined();
+    expect(loadEnv({ ...base, LEASING_PORTAL_PUBLIC_KEY: key }).LEASING_PORTAL_PUBLIC_KEY).toBe(key);
+    expect(() => loadEnv({ ...base, LEASING_PORTAL_PUBLIC_KEY: "not a key!" })).toThrow(/LEASING_PORTAL_PUBLIC_KEY/);
+  });
   test("rejects a non-Dubai timezone", () => {
     expect(() => loadEnv({ ...base, TIMEZONE: "UTC" })).toThrow(/TIMEZONE/);
   });

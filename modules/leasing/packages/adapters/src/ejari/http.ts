@@ -7,7 +7,7 @@ const Rejected = z.object({ status: z.literal("rejected"), reasons: z.array(Ejar
 const Answer = z.discriminatedUnion("status", [Issued, Rejected]);
 
 /**
- * HTTP client for the simulated Ejari service (`apps/ejari-mock`). The DLD adapter will speak
+ * HTTP client for the simulated Ejari service (`modules/leasing/apps/ejari-mock`). The DLD adapter will speak
  * the same contract. Network errors, timeouts and 5xx answers are `EjariUnavailableError`
  * (retry later); a 422 with reasons is a rejection.
  */

@@ -1,0 +1,639 @@
+{
+  "final": {
+    "title": "Tenancy contract PREVIEW-0001 (v2)",
+    "blocks": [
+      {
+        "kind": "title",
+        "text": "RESIDENTIAL TENANCY AGREEMENT X1234567"
+      },
+      {
+        "kind": "heading",
+        "text": "Article I Rent"
+      },
+      {
+        "kind": "para",
+        "text": "The annual rent is AED 85,000."
+      },
+      {
+        "kind": "para",
+        "text": "The term starts on 1 January 2027, ends on 31 December 2027, rent-free days 0."
+      },
+      {
+        "kind": "para",
+        "text": "Linked rent AED 85,000 (company clause)."
+      },
+      {
+        "kind": "heading",
+        "text": "Article II Signing"
+      },
+      {
+        "kind": "sigline",
+        "label": "Landlord"
+      },
+      {
+        "kind": "sigline",
+        "label": "Tenant"
+      },
+      {
+        "kind": "heading",
+        "text": "Addendum"
+      },
+      {
+        "kind": "para",
+        "text": "Additional terms agreed by the parties:"
+      },
+      {
+        "kind": "para",
+        "text": "Pets need written consent."
+      },
+      {
+        "kind": "heading",
+        "text": "Payment schedule"
+      },
+      {
+        "kind": "list",
+        "items": [
+          "Cheque 1 – 1 January 2027 – AED 21,250",
+          "Cheque 2 – 1 April 2027 – AED 21,250",
+          "Cheque 3 – 1 July 2027 – AED 21,250",
+          "Cheque 4 – 1 October 2027 – AED 21,250"
+        ]
+      },
+      {
+        "kind": "para",
+        "text": "Payable to Sample Landlord LLC"
+      },
+      {
+        "kind": "heading",
+        "text": "Fees"
+      },
+      {
+        "kind": "list",
+        "items": ["Admin fee AED 500 (tenant)"]
+      },
+      {
+        "kind": "heading",
+        "text": "Article III Additional terms required by law"
+      },
+      {
+        "kind": "para",
+        "text": "The rent above is fixed for the whole term. It can only change at renewal, with written notice given in time under Dubai law."
+      },
+      {
+        "kind": "para",
+        "text": "This contract is registered in Ejari after both parties sign."
+      },
+      {
+        "kind": "para",
+        "text": "Each party signs this contract electronically through a personal link. The signature record is added as the last page of the signed copy."
+      },
+      {
+        "kind": "small",
+        "text": "Contract reference C-TEST, version 2. Company template v3."
+      }
+    ],
+    "leftEmpty": [],
+    "filled": [
+      {
+        "label": "Tenant passport",
+        "key": "tenantPassportNo"
+      },
+      {
+        "label": "Annual rent",
+        "key": "annualRentFils"
+      },
+      {
+        "label": "Start date",
+        "key": "startOn"
+      },
+      {
+        "label": "End date",
+        "key": "endOn"
+      },
+      {
+        "label": "Rent free",
+        "key": "rentFreeDays"
+      }
+    ],
+    "paragraphs": [
+      {
+        "key": "title",
+        "label": "Title",
+        "text": "RESIDENTIAL TENANCY AGREEMENT X1234567",
+        "values": [],
+        "rewritable": false,
+        "page": null
+      },
+      {
+        "key": "s1:h",
+        "label": "Article I Rent",
+        "text": "Rent",
+        "values": [],
+        "rewritable": false,
+        "page": null
+      },
+      {
+        "key": "s1:0",
+        "label": "Article I Rent",
+        "text": "The annual rent is AED 85,000.",
+        "values": ["AED 85,000"],
+        "rewritable": true,
+        "page": null
+      },
+      {
+        "key": "s1:1",
+        "label": "Article I Rent",
+        "text": "The term starts on 1 January 2027, ends on 31 December 2027, rent-free days 0.",
+        "values": ["1 January 2027", "31 December 2027", "0"],
+        "rewritable": true,
+        "page": null
+      },
+      {
+        "key": "s1:3",
+        "label": "Article I Rent",
+        "text": "Linked rent AED 85,000 (company clause).",
+        "values": ["AED 85,000"],
+        "rewritable": false,
+        "page": null
+      },
+      {
+        "key": "s2:h",
+        "label": "Article II Signing",
+        "text": "Signing",
+        "values": [],
+        "rewritable": false,
+        "page": null
+      },
+      {
+        "key": "free_text",
+        "label": "Additional terms agreed by the parties",
+        "text": "Pets need written consent.",
+        "values": [],
+        "rewritable": true,
+        "page": null
+      },
+      {
+        "key": "law:0",
+        "label": "Article III Additional terms required by law",
+        "text": "The rent above is fixed for the whole term. It can only change at renewal, with written notice given in time under Dubai law.",
+        "values": [],
+        "rewritable": false,
+        "page": null
+      },
+      {
+        "key": "law:1",
+        "label": "Article III Additional terms required by law",
+        "text": "This contract is registered in Ejari after both parties sign.",
+        "values": [],
+        "rewritable": false,
+        "page": null
+      },
+      {
+        "key": "law:2",
+        "label": "Article III Additional terms required by law",
+        "text": "Each party signs this contract electronically through a personal link. The signature record is added as the last page of the signed copy.",
+        "values": [],
+        "rewritable": false,
+        "page": null
+      }
+    ],
+    "pdfText": "RESIDENTIAL TENANCY AGREEMENT X1234567\nArticle I Rent\nThe annual rent is AED 85,000.\nThe term starts on 1 January 2027, ends on 31 December 2027, rent-free days 0.\nLinked rent AED 85,000 (company clause).\nArticle II Signing\nLandlord\nTenant\nAddendum\nAdditional terms agreed by the parties:\nPets need written consent.\nPayment schedule\n- Cheque 1 - 1 January 2027 - AED 21,250\n- Cheque 2 - 1 April 2027 - AED 21,250\n- Cheque 3 - 1 July 2027 - AED 21,250\n- Cheque 4 - 1 October 2027 - AED 21,250\nPayable to Sample Landlord LLC\nFees\n- Admin fee AED 500 (tenant)\nArticle III Additional terms required by law\nThe rent above is fixed for the whole term. It can only change at renewal, with written notice given in time\nunder Dubai law.\nThis contract is registered in Ejari after both parties sign.\nEach party signs this contract electronically through a personal link. The signature record is added as the last\npage of the signed copy.\nContract reference C-TEST, version 2. Company template v3.\nSample Co | Tenancy 1\nFooter 1 of 1",
+    "pdfSha256": "6e713a5669805a91f04c6d6f2eb0069ea6422a6c519c6feb9f71e0415e840e29"
+  },
+  "demo": {
+    "title": "Tenancy contract PREVIEW-0001 (v1)",
+    "blocks": [
+      {
+        "kind": "title",
+        "text": "RESIDENTIAL TENANCY AGREEMENT X0000000"
+      },
+      {
+        "kind": "para",
+        "text": "Made between Sample Landlord LLC (Landlord) and Sample Tenant (Tenant)."
+      },
+      {
+        "kind": "heading",
+        "text": "Article I Rent"
+      },
+      {
+        "kind": "para",
+        "text": "The annual rent is AED 85,000."
+      },
+      {
+        "kind": "para",
+        "text": "The term starts on 1 January 2027, ends on 31 December 2027, rent-free days 0."
+      },
+      {
+        "kind": "para",
+        "text": "Linked line AED 85,000."
+      },
+      {
+        "kind": "heading",
+        "text": "Article II Signing"
+      },
+      {
+        "kind": "sigline",
+        "label": "Landlord"
+      },
+      {
+        "kind": "sigline",
+        "label": "Tenant"
+      },
+      {
+        "kind": "heading",
+        "text": "Addendum"
+      },
+      {
+        "kind": "para",
+        "text": "Additional terms agreed by the parties:"
+      },
+      {
+        "kind": "para",
+        "text": "Pets need written consent."
+      },
+      {
+        "kind": "heading",
+        "text": "Payment schedule"
+      },
+      {
+        "kind": "list",
+        "items": [
+          "Cheque 1 – 1 January 2027 – AED 21,250",
+          "Cheque 2 – 1 April 2027 – AED 21,250",
+          "Cheque 3 – 1 July 2027 – AED 21,250",
+          "Cheque 4 – 1 October 2027 – AED 21,250"
+        ]
+      },
+      {
+        "kind": "para",
+        "text": "Payable to Sample Landlord LLC"
+      },
+      {
+        "kind": "heading",
+        "text": "Fees"
+      },
+      {
+        "kind": "list",
+        "items": ["Admin fee AED 500 (tenant)"]
+      },
+      {
+        "kind": "heading",
+        "text": "Article III Additional terms required by law"
+      },
+      {
+        "kind": "para",
+        "text": "The rent above is fixed for the whole term. It can only change at renewal, with written notice given in time under Dubai law."
+      },
+      {
+        "kind": "para",
+        "text": "This contract is registered in Ejari after both parties sign."
+      },
+      {
+        "kind": "para",
+        "text": "Each party signs this contract electronically through a personal link. The signature record is added as the last page of the signed copy."
+      },
+      {
+        "kind": "small",
+        "text": "Contract reference C-D, version 1. Company template v3. Demo contract: all people and numbers in the demo are fictional."
+      }
+    ],
+    "leftEmpty": [],
+    "filled": [
+      {
+        "label": "Tenant passport",
+        "key": "tenantPassportNo"
+      },
+      {
+        "label": "Landlord name",
+        "key": "landlordNameEn"
+      },
+      {
+        "label": "Tenant name",
+        "key": "tenantNameEn"
+      },
+      {
+        "label": "Annual rent",
+        "key": "annualRentFils"
+      },
+      {
+        "label": "Start date",
+        "key": "startOn"
+      },
+      {
+        "label": "End date",
+        "key": "endOn"
+      },
+      {
+        "label": "Rent free",
+        "key": "rentFreeDays"
+      }
+    ],
+    "paragraphs": [
+      {
+        "key": "title",
+        "label": "Title",
+        "text": "RESIDENTIAL TENANCY AGREEMENT X0000000",
+        "values": [],
+        "rewritable": false,
+        "page": null
+      },
+      {
+        "key": "s0:0",
+        "label": "Contract",
+        "text": "Made between Sample Landlord LLC (Landlord) and Sample Tenant (Tenant).",
+        "values": ["Sample Landlord LLC", "Sample Tenant"],
+        "rewritable": true,
+        "page": null
+      },
+      {
+        "key": "s1:h",
+        "label": "Article I Rent",
+        "text": "Rent",
+        "values": [],
+        "rewritable": false,
+        "page": null
+      },
+      {
+        "key": "s1:0",
+        "label": "Article I Rent",
+        "text": "The annual rent is AED 85,000.",
+        "values": ["AED 85,000"],
+        "rewritable": true,
+        "page": null
+      },
+      {
+        "key": "s1:1",
+        "label": "Article I Rent",
+        "text": "The term starts on 1 January 2027, ends on 31 December 2027, rent-free days 0.",
+        "values": ["1 January 2027", "31 December 2027", "0"],
+        "rewritable": true,
+        "page": null
+      },
+      {
+        "key": "s1:3",
+        "label": "Article I Rent",
+        "text": "Linked line AED 85,000.",
+        "values": ["AED 85,000"],
+        "rewritable": true,
+        "page": null
+      },
+      {
+        "key": "s2:h",
+        "label": "Article II Signing",
+        "text": "Signing",
+        "values": [],
+        "rewritable": false,
+        "page": null
+      },
+      {
+        "key": "free_text",
+        "label": "Additional terms agreed by the parties",
+        "text": "Pets need written consent.",
+        "values": [],
+        "rewritable": true,
+        "page": null
+      },
+      {
+        "key": "law:0",
+        "label": "Article III Additional terms required by law",
+        "text": "The rent above is fixed for the whole term. It can only change at renewal, with written notice given in time under Dubai law.",
+        "values": [],
+        "rewritable": false,
+        "page": null
+      },
+      {
+        "key": "law:1",
+        "label": "Article III Additional terms required by law",
+        "text": "This contract is registered in Ejari after both parties sign.",
+        "values": [],
+        "rewritable": false,
+        "page": null
+      },
+      {
+        "key": "law:2",
+        "label": "Article III Additional terms required by law",
+        "text": "Each party signs this contract electronically through a personal link. The signature record is added as the last page of the signed copy.",
+        "values": [],
+        "rewritable": false,
+        "page": null
+      }
+    ],
+    "pdfText": "RESIDENTIAL TENANCY AGREEMENT X0000000\nMade between Sample Landlord LLC (Landlord) and Sample Tenant (Tenant).\nArticle I Rent\nThe annual rent is AED 85,000.\nThe term starts on 1 January 2027, ends on 31 December 2027, rent-free days 0.\nLinked line AED 85,000.\nArticle II Signing\nLandlord\nTenant\nAddendum\nAdditional terms agreed by the parties:\nPets need written consent.\nPayment schedule\n- Cheque 1 - 1 January 2027 - AED 21,250\n- Cheque 2 - 1 April 2027 - AED 21,250\n- Cheque 3 - 1 July 2027 - AED 21,250\n- Cheque 4 - 1 October 2027 - AED 21,250\nPayable to Sample Landlord LLC\nFees\n- Admin fee AED 500 (tenant)\nArticle III Additional terms required by law\nThe rent above is fixed for the whole term. It can only change at renewal, with written notice given in time\nunder Dubai law.\nThis contract is registered in Ejari after both parties sign.\nEach party signs this contract electronically through a personal link. The signature record is added as the last\npage of the signed copy.\nContract reference C-D, version 1. Company template v3. Demo contract: all people and numbers in the demo are fictional.\nSample Co | Tenancy 1\nFooter 1 of 1",
+    "pdfSha256": "a47ca222ad86b040ceaae6c29696b6099044841fb74d0c59f65b0db90167b9a5"
+  },
+  "preview": {
+    "title": "Tenancy contract PREVIEW-0001 (v1)",
+    "blocks": [
+      {
+        "kind": "title",
+        "text": "RESIDENTIAL TENANCY AGREEMENT «Tenant passport number»"
+      },
+      {
+        "kind": "para",
+        "text": "Made between «Landlord name» (Landlord) and «Tenant name» (Tenant)."
+      },
+      {
+        "kind": "heading",
+        "text": "Article I Rent"
+      },
+      {
+        "kind": "para",
+        "text": "The annual rent is «Annual rent (AED)»."
+      },
+      {
+        "kind": "para",
+        "text": "The term starts on «Tenancy start date», ends on «Tenancy end date», rent-free days «Rent-free days»."
+      },
+      {
+        "kind": "para",
+        "text": "Linked line «Annual rent (AED)»."
+      },
+      {
+        "kind": "heading",
+        "text": "Article II Signing"
+      },
+      {
+        "kind": "sigline",
+        "label": "Landlord"
+      },
+      {
+        "kind": "sigline",
+        "label": "Tenant"
+      },
+      {
+        "kind": "heading",
+        "text": "Addendum"
+      },
+      {
+        "kind": "para",
+        "text": "Additional terms agreed by the parties:"
+      },
+      {
+        "kind": "para",
+        "text": "Pets need written consent."
+      },
+      {
+        "kind": "heading",
+        "text": "Payment schedule"
+      },
+      {
+        "kind": "list",
+        "items": ["Cheque 1 – «Cheque date» – «Cheque amount (AED)»"]
+      },
+      {
+        "kind": "heading",
+        "text": "Fees"
+      },
+      {
+        "kind": "list",
+        "items": ["«Fee name» «Amount (AED)» («payer»)"]
+      },
+      {
+        "kind": "heading",
+        "text": "Article III Additional terms required by law"
+      },
+      {
+        "kind": "para",
+        "text": "The rent above is fixed for the whole term. It can only change at renewal, with written notice given in time under Dubai law."
+      },
+      {
+        "kind": "para",
+        "text": "This contract is registered in Ejari after both parties sign."
+      },
+      {
+        "kind": "para",
+        "text": "Each party signs this contract electronically through a personal link. The signature record is added as the last page of the signed copy."
+      },
+      {
+        "kind": "small",
+        "text": "Contract reference C-P, version 1. Company template v3. Preview: placeholders, not a contract."
+      }
+    ],
+    "leftEmpty": [],
+    "filled": [],
+    "paragraphs": [
+      {
+        "key": "title",
+        "label": "Title",
+        "text": "RESIDENTIAL TENANCY AGREEMENT «Tenant passport number»",
+        "values": [],
+        "rewritable": false,
+        "page": null
+      },
+      {
+        "key": "s0:0",
+        "label": "Contract",
+        "text": "Made between «Landlord name» (Landlord) and «Tenant name» (Tenant).",
+        "values": ["«Landlord name»", "«Tenant name»"],
+        "rewritable": true,
+        "page": null
+      },
+      {
+        "key": "s1:h",
+        "label": "Article I Rent",
+        "text": "Rent",
+        "values": [],
+        "rewritable": false,
+        "page": null
+      },
+      {
+        "key": "s1:0",
+        "label": "Article I Rent",
+        "text": "The annual rent is «Annual rent (AED)».",
+        "values": ["«Annual rent (AED)»"],
+        "rewritable": true,
+        "page": null
+      },
+      {
+        "key": "s1:1",
+        "label": "Article I Rent",
+        "text": "The term starts on «Tenancy start date», ends on «Tenancy end date», rent-free days «Rent-free days».",
+        "values": ["«Tenancy start date»", "«Tenancy end date»", "«Rent-free days»"],
+        "rewritable": true,
+        "page": null
+      },
+      {
+        "key": "s1:3",
+        "label": "Article I Rent",
+        "text": "Linked line «Annual rent (AED)».",
+        "values": ["«Annual rent (AED)»"],
+        "rewritable": true,
+        "page": null
+      },
+      {
+        "key": "s2:h",
+        "label": "Article II Signing",
+        "text": "Signing",
+        "values": [],
+        "rewritable": false,
+        "page": null
+      },
+      {
+        "key": "free_text",
+        "label": "Additional terms agreed by the parties",
+        "text": "Pets need written consent.",
+        "values": [],
+        "rewritable": true,
+        "page": null
+      },
+      {
+        "key": "law:0",
+        "label": "Article III Additional terms required by law",
+        "text": "The rent above is fixed for the whole term. It can only change at renewal, with written notice given in time under Dubai law.",
+        "values": [],
+        "rewritable": false,
+        "page": null
+      },
+      {
+        "key": "law:1",
+        "label": "Article III Additional terms required by law",
+        "text": "This contract is registered in Ejari after both parties sign.",
+        "values": [],
+        "rewritable": false,
+        "page": null
+      },
+      {
+        "key": "law:2",
+        "label": "Article III Additional terms required by law",
+        "text": "Each party signs this contract electronically through a personal link. The signature record is added as the last page of the signed copy.",
+        "values": [],
+        "rewritable": false,
+        "page": null
+      }
+    ],
+    "pdfText": "RESIDENTIAL TENANCY AGREEMENT «Tenant passport\nnumber»\nMade between «Landlord name» (Landlord) and «Tenant name» (Tenant).\nArticle I Rent\nThe annual rent is «Annual rent (AED)».\nThe term starts on «Tenancy start date», ends on «Tenancy end date», rent-free days «Rent-free days».\nLinked line «Annual rent (AED)».\nArticle II Signing\nLandlord\nTenant\nAddendum\nAdditional terms agreed by the parties:\nPets need written consent.\nPayment schedule\n- Cheque 1 - «Cheque date» - «Cheque amount (AED)»\nFees\n- «Fee name» «Amount (AED)» («payer»)\nArticle III Additional terms required by law\nThe rent above is fixed for the whole term. It can only change at renewal, with written notice given in time\nunder Dubai law.\nThis contract is registered in Ejari after both parties sign.\nEach party signs this contract electronically through a personal link. The signature record is added as the last\npage of the signed copy.\nContract reference C-P, version 1. Company template v3. Preview: placeholders, not a contract.\nSample Co | Tenancy 1\nFooter 1 of 1\nPREVIEW",
+    "pdfSha256": "460135becb07431526ddb7a139ca39175e16a2d5fdc7e02e00947176dec1adcd"
+  },
+  "defaultStyle": {
+    "fromSample": false,
+    "page": {
+      "widthPt": 595,
+      "heightPt": 842
+    },
+    "margins": {
+      "topPt": 72,
+      "rightPt": 56,
+      "bottomPt": 72,
+      "leftPt": 56
+    },
+    "font": {
+      "family": "sans",
+      "regular": "Helvetica",
+      "bold": "Helvetica-Bold",
+      "observed": []
+    },
+    "sizes": {
+      "bodyPt": 10,
+      "headingPt": 12,
+      "titlePt": null
+    },
+    "headingBold": true,
+    "accentColour": null,
+    "header": null,
+    "footer": null,
+    "flags": {
+      "authorityMarks": false,
+      "areas": []
+    }
+  }
+}

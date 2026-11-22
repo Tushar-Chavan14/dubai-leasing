@@ -4,10 +4,17 @@ import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import { type Helper, maskPii, maskPiiText } from "@leasing/core";
 import { enquiryCopy, isStatusStandIn } from "../leasing-assistant/copy.ts";
 import { z } from "zod";
-import { systemPrompt, untrusted } from "./prompt.ts";
+import { systemPrompt } from "./prompt.ts";
 import type { AgentContext, AgentData, AgentEffects } from "./schema.ts";
 import { type AgentBackend, type ToolOutcome, toolsFor } from "./tools.ts";
-import { actionClaim, verifyAnswer } from "./verify.ts";
+import {
+  actionClaim,
+  type AgentModel,
+  type ModelTurn,
+  type ToolSpec,
+  untrusted,
+  verifyAnswer,
+} from "@platform/llm/agent";
 
 export * from "./schema.ts";
 export { AGENT_TOOLS, type AgentBackend, type ToolOutcome, toolsFor } from "./tools.ts";
@@ -19,24 +26,7 @@ export { actionClaim, asciiDigits, verifyAnswer } from "./verify.ts";
 export const MAX_AGENT_TOOL_CALLS = 6;
 const MAX_ANSWER_CHARS = 1200;
 
-export interface ToolSpec {
-  type: "function";
-  function: { name: string; description: string; parameters: Record<string, unknown> };
-}
-export interface ModelTurn {
-  content: string;
-  toolCalls: { id: string; name: string; args: Record<string, unknown> }[];
-}
-/** The chat model behind the loop (same shape as the staff copilot's). `tools: null` means "answer now". */
-export interface AgentModel {
-  name: string;
-  respond(
-    messages: BaseMessage[],
-    tools: ToolSpec[] | null,
-    onToken: (text: string) => void,
-    signal?: AbortSignal,
-  ): Promise<ModelTurn>;
-}
+export type { AgentModel, ModelTurn, ToolSpec } from "@platform/llm/agent";
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
@@ -293,22 +283,4 @@ export function customerAgent(
   };
 }
 
-/** Test double for the chat model: one scripted turn per model call; records what it was shown. */
-export class ScriptedAgentModel implements AgentModel {
-  name = "scripted-agent";
-  calls: { messages: BaseMessage[]; tools: ToolSpec[] | null }[] = [];
-  constructor(private readonly script: ((call: number, messages: BaseMessage[]) => ModelTurn)[]) {}
-  async respond(messages: BaseMessage[], tools: ToolSpec[] | null): Promise<ModelTurn> {
-    this.calls.push({ messages, tools });
-    const step = this.script[Math.min(this.calls.length - 1, this.script.length - 1)];
-    if (!step) throw new Error("script is empty");
-    return step(this.calls.length - 1, messages);
-  }
-}
-
-/** A scripted tool call, for tests. */
-export const callTool = (name: string, args: Record<string, unknown> = {}, id = `c-${name}`): ModelTurn => ({
-  content: "",
-  toolCalls: [{ id, name, args }],
-});
-export const say = (content: string): ModelTurn => ({ content, toolCalls: [] });
+export { callTool, say, ScriptedAgentModel } from "@platform/llm/agent";

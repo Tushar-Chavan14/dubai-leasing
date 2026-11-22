@@ -55,7 +55,7 @@ function Tile({ label, value, sub, filled = false }: { label: string; value: str
   );
 }
 
-/** The five KPIs from the leasing guide (docs/specs.md §8), from records only, with the rows behind each. */
+/** The five KPIs from the leasing guide (docs/leasing/specs.md §8), from records only, with the rows behind each. */
 export default async function MetricsPage() {
   const m = await get<Metrics>("/api/metrics");
   if (!m) return <EmptyState title="Metrics unavailable" />;

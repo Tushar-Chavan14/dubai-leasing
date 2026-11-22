@@ -1,5 +1,5 @@
 import { getDocumentProxy } from "unpdf";
-import { MAX_CHARS, MAX_PAGES } from "./schema.ts";
+import { MAX_CHARS, MAX_PAGES } from "./limits.ts";
 
 export const MAX_BYTES = 10 * 1024 * 1024;
 export const PARSE_TIMEOUT_MS = 30_000;

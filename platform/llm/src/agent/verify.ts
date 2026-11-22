@@ -1,4 +1,4 @@
-import { toDubaiDate } from "@leasing/core";
+import { toDubaiDate } from "@platform/kernel/dates";
 
 /**
  * Value post-check for agent answers (AGENTS rule 1, decision D36). Every AED amount and date in

@@ -10,6 +10,7 @@ export const metadata: Metadata = { title: "Sign in" };
 const ERRORS: Record<string, string> = {
   wrong: "That email and password don't match. Try again.",
   down: "The sales engine isn't answering. Try again in a moment.",
+  portal: "Your portal account has no access to Sales. Ask an administrator to add you, or sign in here directly.",
 };
 
 export default async function SignInPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {

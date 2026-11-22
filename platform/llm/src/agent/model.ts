@@ -1,6 +1,6 @@
 import type { AIMessageChunk, BaseMessage } from "@langchain/core/messages";
 import { ChatOllama } from "@langchain/ollama";
-import type { CopilotModel, ModelTurn, ToolSpec } from "./graph.ts";
+import type { AgentModel, ModelTurn, ToolSpec } from "./types.ts";
 
 const textOf = (content: AIMessageChunk["content"]) =>
   typeof content === "string"
@@ -9,9 +9,9 @@ const textOf = (content: AIMessageChunk["content"]) =>
 
 /**
  * Local chat model through Ollama (decision D5): temperature 0, thinking off (latency), kept
- * loaded between turns. `COPILOT_MODEL` must support tool calling.
+ * loaded between turns. The model must support tool calling.
  */
-export function ollamaCopilotModel(cfg: { url: string; model: string; numPredict?: number }): CopilotModel {
+export function ollamaChatModel(cfg: { url: string; model: string; numPredict?: number }): AgentModel {
   const chat = new ChatOllama({
     baseUrl: cfg.url,
     model: cfg.model,
@@ -48,7 +48,7 @@ export function ollamaCopilotModel(cfg: { url: string; model: string; numPredict
 }
 
 /** Test double: replies from a script, one entry per model call; records what it was shown. */
-export class ScriptedModel implements CopilotModel {
+export class ScriptedModel implements AgentModel {
   name = "scripted";
   calls: { messages: BaseMessage[]; tools: ToolSpec[] | null }[] = [];
   constructor(private readonly script: ((call: number, messages: BaseMessage[]) => ModelTurn)[]) {}
@@ -61,3 +61,23 @@ export class ScriptedModel implements CopilotModel {
     return turn;
   }
 }
+
+/** Test double for the customer agent's chat model: like `ScriptedModel`, but streams nothing. */
+export class ScriptedAgentModel implements AgentModel {
+  name = "scripted-agent";
+  calls: { messages: BaseMessage[]; tools: ToolSpec[] | null }[] = [];
+  constructor(private readonly script: ((call: number, messages: BaseMessage[]) => ModelTurn)[]) {}
+  async respond(messages: BaseMessage[], tools: ToolSpec[] | null): Promise<ModelTurn> {
+    this.calls.push({ messages, tools });
+    const step = this.script[Math.min(this.calls.length - 1, this.script.length - 1)];
+    if (!step) throw new Error("script is empty");
+    return step(this.calls.length - 1, messages);
+  }
+}
+
+/** A scripted tool call, for tests. */
+export const callTool = (name: string, args: Record<string, unknown> = {}, id = `c-${name}`): ModelTurn => ({
+  content: "",
+  toolCalls: [{ id, name, args }],
+});
+export const say = (content: string): ModelTurn => ({ content, toolCalls: [] });

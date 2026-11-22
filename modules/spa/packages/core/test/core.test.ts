@@ -21,6 +21,24 @@ describe("SPA env (S25)", () => {
     expect(e.SPA_PORTAL_URL).toBe("http://localhost:3100");
     expect(e.SPA_CHAT_MODEL).toBeUndefined();
   });
+  test("the launcher key is optional and needs 16 characters when set (S69)", () => {
+    expect(parseSpaEnv(good).PORTAL_SUMMARY_KEY).toBeUndefined();
+    expect(parseSpaEnv({ ...good, PORTAL_SUMMARY_KEY: "" }).PORTAL_SUMMARY_KEY).toBeUndefined();
+    expect(parseSpaEnv({ ...good, PORTAL_SUMMARY_KEY: "k".repeat(16) }).PORTAL_SUMMARY_KEY).toBe("k".repeat(16));
+    expect(() => parseSpaEnv({ ...good, PORTAL_SUMMARY_KEY: "short" })).toThrow("PORTAL_SUMMARY_KEY");
+  });
+  test("the portal public key is optional, one line of base64, and a bad value is never printed (S70)", () => {
+    const key = "MCowBQYDK2VwAyEA".padEnd(44, "A");
+    expect(parseSpaEnv(good).SPA_PORTAL_PUBLIC_KEY).toBeUndefined();
+    expect(parseSpaEnv({ ...good, SPA_PORTAL_PUBLIC_KEY: "" }).SPA_PORTAL_PUBLIC_KEY).toBeUndefined();
+    expect(parseSpaEnv({ ...good, SPA_PORTAL_PUBLIC_KEY: key }).SPA_PORTAL_PUBLIC_KEY).toBe(key);
+    expect(() => parseSpaEnv({ ...good, SPA_PORTAL_PUBLIC_KEY: "not a key!" })).toThrow("SPA_PORTAL_PUBLIC_KEY");
+    try {
+      parseSpaEnv({ ...good, SPA_PORTAL_PUBLIC_KEY: "not a key!" });
+    } catch (e) {
+      expect(String(e)).not.toContain("not a key!");
+    }
+  });
   test("missing or bad keys stop the app, naming every key and no value", () => {
     let msg = "";
     try {
@@ -96,7 +114,7 @@ describe("rail items (design.md §2–3, S33)", () => {
     expect(screens("sales_officer")).toEqual(["home", "work", "inventory", "listings"]);
     expect(screens("sales_manager")).toEqual(["home", "work", "inventory", "listings", "settings"]);
     expect(screens("sales_admin")).toEqual(["home", "work", "inventory", "listings"]);
-    expect(screens("legal")).toEqual(["home", "work"]);
+    expect(screens("legal")).toEqual(["home", "work", "settings"]);
     expect(screens("finance")).toEqual(["home", "work"]);
     expect(screens("compliance_officer")).toEqual(["home", "compliance"]);
     expect(screens("mlro")).toEqual(["home", "compliance"]);
@@ -111,7 +129,11 @@ describe("rail items (design.md §2–3, S33)", () => {
     for (const r of SpaRole.options)
       expect(screens(r).includes("compliance")).toBe(r === "compliance_officer" || r === "mlro");
     expect(railItems("sales_manager").find((i) => i.screen === "settings")?.readOnly).toBe(true);
+    expect(railItems("legal").find((i) => i.screen === "settings")?.readOnly).toBe(true);
     expect(railItems("admin").find((i) => i.screen === "settings")?.readOnly).toBeUndefined();
+    // C34 (S66): only these four see Settings; finance, the sales officer, sales admin and compliance never do
+    for (const r of SpaRole.options)
+      expect(screens(r).includes("settings")).toBe(["admin", "sales_manager", "legal"].includes(r));
   });
   test("every role sees Home; paths map back to screens", () => {
     for (const r of SpaRole.options) expect(screens(r)[0]).toBe("home");

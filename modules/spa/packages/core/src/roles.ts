@@ -35,7 +35,7 @@ export interface RailItem {
   screen: RailScreen;
   label: string;
   href: string;
-  /** Settings for a sales manager: can look, can't change (enforced by the engine, not the rail). */
+  /** Settings for a sales manager or legal: can look, can't change (enforced by the engine, not the rail). */
   readOnly?: boolean;
 }
 
@@ -54,7 +54,8 @@ export function railItems(role: SpaRole, kind: CompanyKind = DEFAULT_COMPANY_KIN
   if (role === "compliance_officer" || role === "mlro")
     items.push({ screen: "compliance", label: "Compliance", href: "/compliance" });
   if (role === "admin") items.push({ screen: "settings", label: "Settings", href: "/settings" });
-  if (role === "sales_manager")
+  // A sales manager looks at the settings; legal looks at Templates only (the Settings page lists what the role may read, S66).
+  if (role === "sales_manager" || role === "legal")
     items.push({ screen: "settings", label: "Settings", href: "/settings", readOnly: true });
   return items;
 }

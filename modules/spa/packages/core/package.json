@@ -9,6 +9,7 @@
     "./roles": "./src/roles.ts"
   },
   "dependencies": {
+    "@platform/kernel": "workspace:*",
     "zod": "^4.6.7"
   }
 }

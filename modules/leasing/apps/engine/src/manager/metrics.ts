@@ -15,7 +15,7 @@ import {
 import { and, eq, inArray, isNotNull, like } from "drizzle-orm";
 
 /**
- * The five KPIs from the guide (docs/specs.md §8), computed from records only. Each metric
+ * The five KPIs from the guide (docs/leasing/specs.md §8), computed from records only. Each metric
  * returns its headline figure, how many cases it covers, and the rows behind it so a person can
  * check the number.
  */

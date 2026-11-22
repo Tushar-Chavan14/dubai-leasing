@@ -3,7 +3,7 @@ import { createEjariMock } from "./app.ts";
 import { bootstrap, createMockDatabase, seed } from "./db.ts";
 
 /**
- * Simulated Ejari (demo), docs/architecture.md §9. Its registry lives in the `ejari_mock`
+ * Simulated Ejari (demo), docs/leasing/architecture.md §9. Its registry lives in the `ejari_mock`
  * schema of the local database (migrated on start). Never use DLD logos, colours or screen copies.
  */
 const env = loadEnv();

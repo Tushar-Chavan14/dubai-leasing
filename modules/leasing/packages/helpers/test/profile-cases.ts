@@ -2,7 +2,7 @@
  * Outputs of the shared helpers (KYC reader, contract-structure reader) on fixed fictional inputs, called the way
  * leasing calls them (no profile argument). `profile-default.test.ts` compares them with the golden file recorded
  * before profiles existed (S4, P1): the leasing default profile must give byte-identical prompts and results.
- * Regenerate only on purpose: `bun packages/helpers/test/profile-cases.ts --write`.
+ * Regenerate only on purpose: `bun modules/leasing/packages/helpers/test/profile-cases.ts --write`.
  */
 import { type CalendarDate, type FormField, makeTd3 } from "@leasing/core";
 import { type ChatMessage, FakeLlm } from "@platform/llm";
@@ -128,7 +128,11 @@ async function kycCases() {
       (images) => {
         const d = keyOf.get(new TextDecoder().decode(images[0]))!;
         const key: ReadKey =
-          d.kind === "emirates_id" ? (d.side === "back" ? "emirates_id_back" : "emirates_id_front") : d.kind;
+          d.kind === "emirates_id"
+            ? d.side === "back"
+              ? "emirates_id_back"
+              : "emirates_id_front"
+            : (d.kind as ReadKey);
         return READS[key];
       },
     );

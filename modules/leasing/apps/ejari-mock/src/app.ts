@@ -1,4 +1,5 @@
-import { type Clock, EjariPayload, type EjariRejection, formatAed } from "@leasing/core";
+import { maybeUnavailable, type RegistryAnswer, replayByRequestId, replyWithAnswer } from "@platform/adapters";
+import { type Clock, EjariPayload, formatAed } from "@leasing/core";
 import { and, desc, eq, gte, lte, ne, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -19,25 +20,7 @@ export interface MockOptions {
 
 const Submit = z.object({ requestId: z.string().min(8).max(100), contract: EjariPayload });
 
-type Answer =
-  | { http: 201; body: { status: "issued"; ejariNo: string; issuedOn: string } }
-  | { http: 422; body: { status: "rejected"; reasons: EjariRejection[] } };
-
-/** A submission's answer as HTTP: 201 issued, 422 rejected, 503 unavailable, 400 invalid. */
-const reply = async (
-  c: { json: (b: unknown, s: 201 | 400 | 422 | 503) => Response },
-  run: () => Promise<Answer | null>,
-) => {
-  try {
-    const a = await run();
-    if (!a) return c.json({ error: "The service is temporarily unavailable. Try again later." }, 503);
-    return c.json(a.body, a.http);
-  } catch (e) {
-    if (e instanceof z.ZodError)
-      return c.json({ error: "invalid request", issues: e.issues.map((i) => i.message) }, 400);
-    throw e;
-  }
-};
+type Answer = RegistryAnswer;
 
 /**
  * Simulated Ejari (demo). Register, renew, cancel, status and a certificate, over HTTP, with the
@@ -75,28 +58,33 @@ export function createEjariMock(o: MockOptions): Hono {
 
     async function submit(kind: "register" | "renew", body: unknown, renewOf: string | null): Promise<Answer | null> {
       const { requestId, contract: p } = Submit.parse(body);
-      if (random() < failureRate) {
+      if (maybeUnavailable({ failureRate, random })) {
         await o.db.insert(submissions).values({ requestId: null, system, kind, outcome: "unavailable", payload: p });
         return null;
       }
       return o.db.transaction(async (tx) => {
         // One registration decision per property at a time, so two requests can't both pass the overlap check.
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`${system}:${p.dldPropertyNo}`}))`);
-        const [replay] = await tx
-          .select({
-            outcome: submissions.outcome,
-            ejariNo: submissions.ejariNo,
-            reasons: submissions.reasons,
-            issuedOn: registrations.issuedOn,
-          })
-          .from(submissions)
-          .leftJoin(registrations, eq(registrations.ejariNo, submissions.ejariNo))
-          .where(and(eq(submissions.requestId, requestId), eq(submissions.system, system)));
-        if (replay) {
-          return replay.outcome === "issued"
-            ? { http: 201, body: { status: "issued", ejariNo: replay.ejariNo!, issuedOn: replay.issuedOn! } }
-            : { http: 422, body: { status: "rejected", reasons: replay.reasons } };
-        }
+        const replayed = await replayByRequestId(
+          async () =>
+            (
+              await tx
+                .select({
+                  outcome: submissions.outcome,
+                  ejariNo: submissions.ejariNo,
+                  reasons: submissions.reasons,
+                  issuedOn: registrations.issuedOn,
+                })
+                .from(submissions)
+                .leftJoin(registrations, eq(registrations.ejariNo, submissions.ejariNo))
+                .where(and(eq(submissions.requestId, requestId), eq(submissions.system, system)))
+            )[0],
+          (replay): Answer =>
+            replay.outcome === "issued"
+              ? { http: 201, body: { status: "issued", ejariNo: replay.ejariNo!, issuedOn: replay.issuedOn! } }
+              : { http: 422, body: { status: "rejected", reasons: replay.reasons } },
+        );
+        if (replayed) return replayed;
         const [property] = await tx.select().from(properties).where(eq(properties.dldPropertyNo, p.dldPropertyNo));
         const [person] = await tx.select().from(icpPeople).where(eq(icpPeople.idNo, p.tenantIdNo));
         const [overlap] = await tx
@@ -172,7 +160,9 @@ export function createEjariMock(o: MockOptions): Hono {
       });
     }
 
-    app.post("/api/v1/registrations", (c) => reply(c, async () => submit("register", await c.req.json(), null)));
+    app.post("/api/v1/registrations", (c) =>
+      replyWithAnswer(c, async () => submit("register", await c.req.json(), null)),
+    );
 
     app.post("/api/v1/registrations/:no/renew", async (c) => {
       const no = c.req.param("no");
@@ -181,7 +171,7 @@ export function createEjariMock(o: MockOptions): Hono {
         .from(registrations)
         .where(and(eq(registrations.ejariNo, no), eq(registrations.system, system)));
       if (r?.state !== "active") return c.json({ error: "no active registration with this number" }, 404);
-      return reply(c, async () => submit("renew", await c.req.json(), no));
+      return replyWithAnswer(c, async () => submit("renew", await c.req.json(), no));
     });
 
     app.post("/api/v1/registrations/:no/cancel", async (c) => {

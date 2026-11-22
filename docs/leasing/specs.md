@@ -1,6 +1,6 @@
 # Product spec: Dubai leasing agents
 
-Status: MVP / pitch build. Source: `docs/source/leasing-guide.txt`.
+Status: MVP / pitch build. Source: `docs/leasing/source/leasing-guide.txt`.
 
 ## 1. Problem
 
@@ -192,7 +192,7 @@ gets a reference number, and resubmitting the same single-use form creates no se
 ## 5b. Staff copilot
 
 A chat assistant for leasing officers, managers and finance. It sits alongside the engine and
-is not part of the lifecycle flow (decision D15, design in `docs/architecture.md` §8b).
+is not part of the lifecycle flow (decision D15, design in `docs/leasing/architecture.md` §8b).
 Tenants never use it.
 
 **What staff can do with it**
@@ -279,4 +279,4 @@ All people and IDs in demo data are fictional.
 - tev1 weights licence must be confirmed before shipping to clients (kev is Apache-2.0 but its published tags target Apple Silicon).
 - Source of SRI values for production (manual entry vs DLD data).
 - Viewing slot policy (days, hours, slot length, lead time, horizon) and the enquiry handoff thresholds are placeholders; set them with the client and from the `leasing-assistant` evals.
-- Arabic bot copy (`packages/helpers/src/leasing-assistant/copy.ts`) needs a native speaker's review.
+- Arabic bot copy (`modules/leasing/packages/helpers/src/leasing-assistant/copy.ts`) needs a native speaker's review.

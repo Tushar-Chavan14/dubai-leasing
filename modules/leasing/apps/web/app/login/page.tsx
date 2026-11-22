@@ -41,7 +41,9 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
                 role="alert"
               >
                 <IconWarning size={16} />
-                Sign-in failed. Check that the engine is running and try again.
+                {error === "portal"
+                  ? "Your portal account has no access to Leasing. Ask an administrator to add you."
+                  : "Sign-in failed. Check that the engine is running and try again."}
               </div>
             )}
             {users === null ? (

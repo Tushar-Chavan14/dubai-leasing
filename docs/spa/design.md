@@ -12,7 +12,7 @@ Read with `docs/spa/specs.md` (what each step does) and `docs/spa/decisions.md`.
 ## 1. Foundations: same as the leasing app
 
 SPA uses the leasing staff app's design tokens and components unchanged, so both products feel like one
-family. Source of truth (since P2): the shared, domain-free package `@leasing/ui` (§11): `tokens.ts`, `theme.css`
+family. Source of truth (since P2): the shared, domain-free package `@platform/ui` (§11): `tokens.ts`, `theme.css`
 (palette variables, dark variant, Tailwind `@theme`) and `base.css` (root variables and element rules), which both
 web apps import. SPA never copies and edits them.
 
@@ -240,7 +240,7 @@ Staff screens say "Deal"; parties see "your purchase" (buyer) or "your sale" (se
 
 - Path: `/b/<token>/<page>` for parties and brokers; `/listings/<ref>` for the public page.
 - A token is signed and scoped to **one deal (or listing), one person, one purpose**. It never grants anything else.
-- Expiry per purpose (Settings → Signing and reminders; defaults: documents 14 days, offer answer = offer validity, signing 14 days, payments and transfer info for the life of the deal).
+- Expiry per purpose (Settings → Signing and reminders; defaults: documents 14 days (`documentLinkDays`, S67), offer answer = offer validity, signing 14 days, payments and transfer info for the life of the deal).
 - Resending a link invalidates the old one. An expired or used link shows "This link has expired" and "Ask {agent} for a new link" with the agent's email as text.
 - Every open, upload, answer and signature is an event with the token id (never the token).
 - Links arrive only by email (shared mail adapter, S23 templates). No link is ever sent in chat or SMS in the MVP.
@@ -250,7 +250,7 @@ Staff screens say "Deal"; parties see "your purchase" (buyer) or "your sale" (se
 1. Company name and logo; "Your purchase" / "Your sale"; the property; **no** internal refs other than the deal ref.
 2. Status card from §6.2 in one sentence.
 3. The one thing to do now (upload, accept or reject, sign) as the main card with one primary button.
-4. Then: documents list, people who still need to sign (first names only), payments or transfer-day card.
+4. Then: documents list, "you sign 2 of 3" (the person's place in the order; **no names** of other signers, S67), payments or transfer-day card.
 5. "Ask a question" (party assistant, S24) and "Contact {agent}".
 - Never shown: AML, screening, risk, flags, other parties' ID numbers or documents, internal notes, staff names beyond the agent.
 - Uploads: one document per field, with what we need in plain words, accepted file types, size limit, and the reason when a blocker check fails ("Passport expired. Please upload a valid one.").
@@ -258,7 +258,7 @@ Staff screens say "Deal"; parties see "your purchase" (buyer) or "your sale" (se
 
 ### 7.4 Signing order shown to everyone
 
-Default resale: buyers → sellers → agents. Primary: purchasers → broker → developer signatory. The page shows the order and where the person is in it.
+Every deal type: buyers → broker → the seller (a company signs through its signatory), in the order of the policy's `signingOrder` (S54). The page shows the order and where the person is in it.
 
 ### 7.5 Public listing page
 
@@ -309,11 +309,17 @@ Photos, title ("2-bed apartment, Marina Vista"), asking price, size, bedrooms, c
 
 ## 11. Implementation notes
 
-- **Shared UI package (P2):** move the domain-free tokens and components from `apps/web` (`lib/design/tokens.ts`,
+- **Shared UI package (P2):** move the domain-free tokens and components from `modules/leasing/apps/web` (`lib/design/tokens.ts`,
   `contrast.ts`, `components/ui/*`: Button, Pill, PageTitle, TabLinks, TableFrame, Section, FactGrid/Fact/FactList,
-  RecordStepper, EmptyState, Modal, Sheet, settings blocks, form fields) into `packages/ui` (`@leasing/ui`). Leasing
+  RecordStepper, EmptyState, Modal, Sheet, settings blocks, form fields) into `platform/ui` (`@platform/ui`). Leasing
   re-imports them unchanged; SPA imports them (allowed by the S1 boundary). Shell pieces (rail, avatar menu, dock)
   are composed per app from these parts.
-- New SPA-only components live in `spa/apps/web/components`: DecisionCard, FieldWithSource, SettlementTables,
+- New SPA-only components live in `modules/spa/apps/web/components`: DecisionCard, FieldWithSource, SettlementTables,
   SignerList, PartyCard, LinkStatus, AgentTrace.
 - Tailwind v4 with the same `@theme` tokens as leasing; no hard-coded colours in SPA components.
+- **C24 (S59):** Settings → AI helpers (`/settings/helpers`) is a list of helper rows, each with a Auto / Review / Off segmented control (submit buttons, no JavaScript needed), the model as plain text and "No model: code does this step" where none; the document reader has one row per document kind. A sales manager sees the same rows with no controls. Held results appear as ordinary `helper_review` cards in the inbox ("Check the result: ..."); an off helper's step is an ordinary task.
+- **C31 (S63):** the Inbox is the first tab of Work (a count of the gates the role decides) and, for the compliance roles who have no Work, the section "Waiting for your decision" on Compliance. Each gate is a decision card (§4.4) with a Note field and its own buttons; a button is drawn only where the engine says the user may decide.
+- **C30 (S58):** the Work list shows the Deals and Tasks tabs only (Inbox, Listings and Done arrive with their screens; the Inbox tab came with C31); "Read, not confirmed"
+  shows once the engine marks an amount unconfirmed. `RecordStepper` takes an optional `states` map so a finished or cancelled deal draws
+  correctly. A record shows only the sections the engine sent; `SignerList` waits for a signing section.
+

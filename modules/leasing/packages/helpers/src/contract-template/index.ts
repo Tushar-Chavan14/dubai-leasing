@@ -1,7 +1,7 @@
 import type { Helper } from "@leasing/core";
 import type { Llm } from "@platform/llm";
 import { z } from "zod";
-import { extractPdf, normalizeWs, type ReadPageImage, type RenderPage } from "./extract.ts";
+import { extractPdf, normalizeWs, type ReadPageImage, type RenderPage } from "@platform/readers/pdf/extract";
 import { clauseMessages } from "./prompt.ts";
 import {
   ContractTemplateContext,
@@ -12,8 +12,17 @@ import {
 } from "./schema.ts";
 import { hasValues, inventedValues } from "./values.ts";
 
-export { extractPdf, isPdf, normalizeWs, NOT_PDF, SCAN, TOO_BIG, TOO_LONG, TIMEOUT } from "./extract.ts";
-export type { Extracted, ReadPageImage, RenderPage } from "./extract.ts";
+export {
+  extractPdf,
+  isPdf,
+  normalizeWs,
+  NOT_PDF,
+  SCAN,
+  TOO_BIG,
+  TOO_LONG,
+  TIMEOUT,
+} from "@platform/readers/pdf/extract";
+export type { Extracted, ReadPageImage, RenderPage } from "@platform/readers/pdf/extract";
 export { clauseMessages, stripDelimiters } from "./prompt.ts";
 export * from "./schema.ts";
 export { hasValues, inventedValues } from "./values.ts";

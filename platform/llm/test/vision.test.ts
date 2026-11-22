@@ -28,6 +28,22 @@ describe("chat", () => {
     await expect(new OllamaLlm({ url: "http://localhost:11434" }).chat([])).rejects.toThrow("CHAT_MODEL");
   });
 
+  test("an allowHost predicate admits a named LAN host, and the default stays loopback-only", async () => {
+    const lan = (h: string) => h === "192.168.1.20";
+    expect(() => assertLocalModel("http://192.168.1.20:11434", "qwen3.5:9b", "Text", lan)).not.toThrow();
+    expect(() => assertLocalModel("http://192.168.1.21:11434", "qwen3.5:9b", "Text", lan)).toThrow("local model");
+    expect(() => assertLocalModel("http://192.168.1.20:11434", "qwen3.5:9b", "Text")).toThrow("local model");
+    expect(() => assertLocalModel("http://192.168.1.20:11434", "x:cloud", "Text", lan)).toThrow("cloud model");
+    // OllamaLlm: default refuses the LAN host (leasing behaviour), a predicate admits it past the host check.
+    const url = "http://192.168.1.20:11434";
+    await expect(new OllamaLlm({ url, chatModel: "qwen3.5:9b" }).chat([])).rejects.toThrow("local model");
+    await expect(new OllamaLlm({ url, decisionModel: "m" }).decide("s", {})).rejects.toThrow("local model");
+    const allowed = new OllamaLlm({ url, chatModel: "x:cloud", decisionModel: "x:cloud", allowHost: lan });
+    await expect(allowed.chat([])).rejects.toThrow("cloud model");
+    await expect(allowed.decide("s", {})).rejects.toThrow("cloud model");
+    await expect(allowed.vision([], "p", z.object({}))).rejects.toThrow("cloud model");
+  });
+
   test("FakeLlm scripts chat answers and records the calls", async () => {
     const llm = new FakeLlm(
       () => new Error("unused"),

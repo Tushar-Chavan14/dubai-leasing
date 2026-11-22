@@ -5,5 +5,17 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@platform/adapters": "workspace:*",
+    "@platform/kernel": "workspace:*",
+    "@platform/llm": "workspace:*",
+    "@platform/readers": "workspace:*",
+    "@spa/core": "workspace:*",
+    "@spa/rulebook": "workspace:*",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "2.6.2"
   }
 }

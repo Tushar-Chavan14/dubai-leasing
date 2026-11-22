@@ -2,7 +2,7 @@ import { Ollama } from "ollama";
 import { z } from "zod";
 
 /**
- * Model adapter (docs/architecture.md §6). Helpers get models only through this interface.
+ * Model adapter (docs/leasing/architecture.md §6). Helpers get models only through this interface.
  * Decisions use `ollama.systemone()` (ollama npm ≥ 0.6.4); `chat` and `vision` use `ollama.chat`.
  */
 
@@ -107,6 +107,11 @@ export interface OllamaConfig {
   priority?: ModelPriority | undefined;
   /** Limit for a call that sets none of its own (the contract jobs use this). */
   defaultTimeoutMs?: number | undefined;
+  /**
+   * Extra hosts allowed besides loopback (a module that may use a private-network model passes its own check).
+   * Default: loopback only, so leasing is unchanged. The cloud-model tag refusal always applies.
+   */
+  allowHost?: ((host: string) => boolean) | undefined;
 }
 
 /** Local models through Ollama (decision D5). Tenant text never leaves the machine. */
@@ -146,7 +151,7 @@ export class OllamaLlm implements Llm {
 
   async decide(state: string, questions: Record<string, SystemOneQuestion>): Promise<SystemOneResponse> {
     if (!this.cfg.decisionModel) throw new Error("DECISION_MODEL is not set");
-    assertLocalModel(this.cfg.url, this.cfg.decisionModel, "Tenant and registry text");
+    assertLocalModel(this.cfg.url, this.cfg.decisionModel, "Tenant and registry text", this.cfg.allowHost);
     const decisionModel = this.cfg.decisionModel;
     const r = await this.call(undefined, (c) =>
       c.systemone({ model: decisionModel, state, questions, keep_alive: "10m" }),
@@ -166,7 +171,7 @@ export class OllamaLlm implements Llm {
   async chat(messages: ChatMessage[], opts: { schema?: z.ZodTypeAny } & CallOpts = {}): Promise<ChatResult> {
     const model = this.cfg.chatModel;
     if (!model) throw new Error("CHAT_MODEL is not set");
-    assertLocalModel(this.cfg.url, model, "Contract and tenant text");
+    assertLocalModel(this.cfg.url, model, "Contract and tenant text", this.cfg.allowHost);
     const r = await this.call(opts.timeoutMs, (c) =>
       c.chat({
         model,
@@ -203,7 +208,7 @@ export class OllamaLlm implements Llm {
   async vision(images: Uint8Array[], prompt: string, schema: z.ZodTypeAny, opts: CallOpts = {}): Promise<unknown> {
     const model = this.cfg.visionModel || this.cfg.chatModel;
     if (!model) throw new Error("VISION_MODEL (or CHAT_MODEL) is not set");
-    assertLocalVision(this.cfg.url, model);
+    assertLocalVision(this.cfg.url, model, this.cfg.allowHost);
     const r = await this.call(opts.timeoutMs, (c) =>
       c.chat({
         model,
@@ -227,18 +232,25 @@ export class OllamaLlm implements Llm {
  * ID images must not leave the machine (AGENTS rule 8): the vision model has to be a local
  * Ollama model on a loopback address, never an Ollama cloud model or a remote host.
  */
-export function assertLocalVision(url: string, model: string): void {
-  assertLocalModel(url, model, "ID images");
+export function assertLocalVision(url: string, model: string, allowHost?: (host: string) => boolean): void {
+  assertLocalModel(url, model, "ID images", allowHost);
 }
 
 /** Personal data stays on this machine (AGENTS rule 8): loopback Ollama only, no cloud model tags. */
-export function assertLocalModel(url: string, model: string, what: string): void {
+export function assertLocalModel(
+  url: string,
+  model: string,
+  what: string,
+  /** Optional extra host check (a private-network model); absent means loopback only. */
+  allowHost?: (host: string) => boolean,
+): void {
   const host = new URL(url).hostname;
   // Loopback only: `localhost`, `::1`, or a literal 127.0.0.0/8 address (a name like 127.evil.com is not one).
   const octets = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host)?.slice(1).map(Number);
   const local =
     host === "localhost" || host === "::1" || host === "[::1]" || (!!octets && octets.every((o) => o >= 0 && o <= 255));
-  if (!local) throw new Error(`${what} can only go to a local model; OLLAMA_URL points at ${host}`);
+  if (!local && !allowHost?.(host))
+    throw new Error(`${what} can only go to a local model; OLLAMA_URL points at ${host}`);
   if (/(^|[-:])cloud$/i.test(model)) throw new Error(`${what} can't go to a cloud model (${model})`);
 }
 

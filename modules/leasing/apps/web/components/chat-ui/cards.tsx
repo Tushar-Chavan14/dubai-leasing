@@ -5,7 +5,7 @@ import { DecisionCardView, type DecisionCardData } from "./decision-card";
 import { RecordCardView, type RecordCardData } from "./record-card";
 import { CARD_RAIL, UnitCardView } from "./unit-card";
 
-/** The cards under a staff copilot answer (the engine streams them; see packages/copilot ui.ts). */
+/** The cards under a staff copilot answer (the engine streams them; see modules/leasing/packages/copilot ui.ts). */
 export type CopilotCardData =
   | ({ kind: "record" } & RecordCardData)
   | { kind: "unit"; card: UnitCard; href: string }

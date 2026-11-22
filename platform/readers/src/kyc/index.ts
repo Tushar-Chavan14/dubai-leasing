@@ -1,15 +1,16 @@
 import type { Helper } from "@platform/kernel/helper";
 import { type Llm, ModelTimeoutError } from "@platform/llm";
 import { assessKyc } from "./checks.ts";
-import { type KycProfile, leasingKycProfile } from "./profile.ts";
+import type { KycProfile } from "./profile.ts";
 import { readPrompt } from "./prompt.ts";
 import { applyKycRules, kycAiChecks } from "./rules.ts";
-import { customOf, type DocRead, KycContext, KycData, readKeyOf, VisionRead } from "./schema.ts";
+import type { z } from "zod";
+import { customOf, type DocRead, KycContext, KycData, type ReadKey, readKeyOf, VisionRead } from "./schema.ts";
 
 export { assessKyc, parseDocDate } from "./checks.ts";
 export { applyKycRules, kycAiChecks } from "./rules.ts";
 export { readPrompt } from "./prompt.ts";
-export { type KycProfile, leasingKycProfile } from "./profile.ts";
+export type { KycProfile } from "./profile.ts";
 export * from "./schema.ts";
 
 /** One thing the check did, for the record's activity log. No document content, no ID numbers. */
@@ -33,14 +34,14 @@ export interface KycOptions {
   /** Cancel one reading after this long (default 120 s). Each document gets one retry. */
   timeoutMs?: number;
   onStep?: (step: KycStep) => void | Promise<void>;
-  /** Names, document wording and prompt nouns (S4). Default: leasing's. */
-  profile?: KycProfile;
 }
 
 export const KYC_DEFAULT_TIMEOUT_MS = 120_000;
 
-const docLabel = (profile: KycProfile, d: { kind: string; side: string }) =>
-  `${profile.documentLabels[d.kind] ?? d.kind}${d.side === "page" ? "" : ` (${d.side})`}`;
+const docLabel = (profile: KycProfile, d: { kind: string; side: string; fieldKey?: string | undefined }) => {
+  const kind = d.kind === "extra" ? (d.fieldKey ?? "extra") : d.kind;
+  return `${profile.documentLabels[kind] ?? kind}${d.side === "page" ? "" : ` (${d.side})`}`;
+};
 
 /**
  * KYC helper (architecture §5): the vision model reads each uploaded document (one call per
@@ -55,10 +56,10 @@ const docLabel = (profile: KycProfile, d: { kind: string; side: string }) =>
 export function kycHelper(
   llm: Llm,
   readImage: (docId: string) => Promise<Uint8Array>,
+  profile: KycProfile,
   opts: KycOptions = {},
 ): Helper<KycContext, KycData> {
   const timeoutMs = opts.timeoutMs ?? KYC_DEFAULT_TIMEOUT_MS;
-  const profile = opts.profile ?? leasingKycProfile;
   const step = async (s: KycStep) => {
     try {
       await opts.onStep?.(s);
@@ -75,8 +76,9 @@ export function kycHelper(
       let index = 0;
       for (const d of ctx.documents) {
         index++;
-        const key = readKeyOf(d.kind, d.side);
-        const schema = VisionRead[key];
+        const key = d.kind === "extra" ? (d.fieldKey ?? "") : readKeyOf(d.kind, d.side);
+        const schema: z.ZodType | undefined =
+          d.kind === "extra" ? profile.extraReads?.[key] : VisionRead[key as ReadKey];
         const custom = d.kind === "custom" ? customOf(ctx.form, d.fieldKey) : undefined;
         const label = custom?.name ?? docLabel(profile, d);
         const began = performance.now();
@@ -85,6 +87,12 @@ export function kycHelper(
         let error: string | undefined;
         let why: "timeout" | "model_error" | "unreadable" | undefined;
         let image: Uint8Array;
+        if (!schema) {
+          // A kind this profile doesn't read: nothing goes to the model; a person looks at the document.
+          reads.push({ ...d, read: null, error: "this kind of document is not read automatically" });
+          await step({ kind: "doc", ...at, ok: false, ms: 0, why: "unreadable" });
+          continue;
+        }
         try {
           image = await readImage(d.docId);
         } catch {
@@ -130,8 +138,15 @@ export function kycHelper(
         reads.push({ ...d, read, ...(read || !error ? {} : { error }) });
       }
       await step({ kind: "assess" });
-      let data = applyKycRules(ctx, reads, assessKyc(ctx, reads), profile.partyNoun);
-      const ai = ctx.rules ? await kycAiChecks(llm, ctx.rules.company, data.identity, ctx.answers ?? {}) : [];
+      let data = applyKycRules(
+        ctx,
+        reads,
+        assessKyc(ctx, reads, { personDocs: profile.personDocs ?? "resident_set", partyNoun: profile.partyNoun }),
+        profile.partyNoun,
+      );
+      const ai = ctx.rules
+        ? await kycAiChecks(llm, ctx.rules.company, data.identity, ctx.answers ?? {}, profile.aiCheckSubject)
+        : [];
       if (ai.length) {
         data = {
           ...data,

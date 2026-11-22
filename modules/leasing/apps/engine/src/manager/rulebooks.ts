@@ -2,7 +2,7 @@
  * Rulebook versions stored in the database (decision D23). The code version is the base and is
  * kept as a published row; admins edit drafts and publish them with an effective-from date.
  * Published rows are immutable (DB trigger) and are loaded into the in-memory registry of
- * `packages/rulebook`, so every rule lookup stays synchronous and by version.
+ * `modules/leasing/packages/rulebook`, so every rule lookup stays synchronous and by version.
  */
 import { type Actor, type CalendarDate, EMIRATE_LABELS, isCalendarDate, newId } from "@leasing/core";
 import { type Database, rulebooks, type Tx, withTx } from "@leasing/db";
@@ -69,7 +69,7 @@ export async function syncRulebooks(database: Database): Promise<void> {
     const row = rows.find((r) => r.version === base.version);
     if (!row || row.status !== "published" || !deepEqual(rulebookFromRow(row), base))
       throw new Error(
-        `rulebook ${base.version} in the database differs from packages/rulebook; a published version must never change (D23)`,
+        `rulebook ${base.version} in the database differs from modules/leasing/packages/rulebook; a published version must never change (D23)`,
       );
   }
   for (const row of rows) registerRulebook(rulebookFromRow(row));

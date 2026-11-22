@@ -1,18 +1,11 @@
 import type { Helper } from "@platform/kernel/helper";
 import type { Llm } from "@platform/llm";
-import { extractPdf } from "../contract-template/extract.ts";
+import { extractPdf } from "../pdf/extract.ts";
 import { detectBlanks, guessLabel, isSignatureBlank, placeholderLabel, placeholderName } from "./blanks.ts";
-import { detectFilledValues } from "./filled.ts";
-import {
-  contextParty,
-  numberChequeDateRuns,
-  partyIn,
-  type ProposeItem,
-  proposeMappings,
-  unknownPlaceholderNote,
-} from "./mapping.ts";
+import { contextParty, partyIn, type ProposeItem, proposeMappings, unknownPlaceholderNote } from "./mapping.ts";
 import { DEFAULT_STYLE, extractLook, hasAuthorityMarks, lineKey } from "./look.ts";
-import { leasingTemplateProfile, type TemplateProfile } from "./profile.ts";
+import type { FilledBlank, TemplateProfile } from "./profile.ts";
+import { sweepValuePatterns } from "./values.ts";
 import { structureMessages } from "./prompt.ts";
 import {
   ContractStructureContext,
@@ -23,66 +16,11 @@ import {
 } from "./schema.ts";
 import { buildSections, sectionOfLines, withBlankHeadings } from "./structure.ts";
 
-export {
-  catalogueForPrompt,
-  FIELD_CATALOGUE,
-  FIELD_NAMES,
-  type FieldInfo,
-  type FieldType,
-  fieldType,
-  isFieldName,
-} from "./fields.ts";
-export {
-  ADDITIONAL_TERMS_KEY,
-  isSheetKey,
-  SHEET_KEY_NAMES,
-  SHEET_KEYS,
-  type SheetRecords,
-  sheetExtras,
-  sheetForPrompt,
-  sheetKeyInfo,
-} from "./datasheet.ts";
-export { detectFilledValues, fixedValueKinds, isSampleOnlyText } from "./filled.ts";
-export {
-  askModel,
-  contextParty,
-  mappingMessages,
-  matchAfter,
-  matchBlank,
-  matchLabel,
-  matchPlaceholder,
-  partyIn,
-  type Party,
-  type Proposal,
-  numberChequeDateRuns,
-  proposeMappings,
-  redactValues,
-  resuggestBlanks,
-} from "./mapping.ts";
-export {
-  compatible,
-  detectBlanks,
-  guessLabel,
-  inferBlankType,
-  placeholderLabel,
-  placeholderName,
-  type RawBlank,
-  validateMapping,
-} from "./blanks.ts";
-export { DEFAULT_STYLE, extractLook, hasAuthorityMarks, type Look, LOOK_MAX_PAGES } from "./look.ts";
-export { encodePng } from "./png.ts";
-export { structureMessages } from "./prompt.ts";
-export { leasingTemplateProfile, type TemplateParty, type TemplateProfile, type TemplateSheet } from "./profile.ts";
-export * from "./render.ts";
-export { remapForData, type Remapped } from "./remap.ts";
-export * from "./schema.ts";
-export { buildSections, detectNumbering, splitNumber, toParagraphs, withBlankHeadings } from "./structure.ts";
-
 export interface ContractStructureDeps {
   /** Returns the uploaded file's bytes. The helper never touches disk. */
   readFile: (docId: string) => Promise<Uint8Array>;
-  /** Party roles, data sheet, aliases and prompt wording (S4). Default: leasing's. */
-  profile?: TemplateProfile;
+  /** Party roles, data sheet, aliases, label words, prompt wording and hooks (S4, S43). */
+  profile: TemplateProfile;
 }
 
 const cleanLabel = (s: string): string =>
@@ -105,7 +43,7 @@ export function contractStructureHelper(
   llm: Llm,
   deps: ContractStructureDeps,
 ): Helper<ContractStructureContext, ContractStructureData> {
-  const profile = deps.profile ?? leasingTemplateProfile;
+  const { profile } = deps;
   return {
     name: profile.helperName,
     async run(input) {
@@ -132,16 +70,15 @@ export function contractStructureHelper(
       // Repeated header and footer lines are not contract wording: drop them from the body.
       const repeated = look.ok ? look.repeated : new Set<string>();
       const kept = ex.text.split("\n").filter((l) => !repeated.has(lineKey(l)));
-      const det0 = detectBlanks(kept.join("\n"), MAX_BLANKS + 1);
+      const det0 = detectBlanks(kept.join("\n"), MAX_BLANKS + 1, profile.labelWords);
       // A filled sample: its people, numbers and dates become blanks here, by code, before any model sees the text.
       const maxId = det0.blanks.reduce((m, b) => Math.max(m, Number(b.id.slice(1))), 0);
       // D74: named placeholders say what each blank is, so a template that uses them is not read as a filled sample.
       const placeholders = det0.blanks.some((b) => b.kind === "placeholder");
-      const filled = detectFilledValues(
-        det0.lines,
-        maxId,
-        new Set(det0.blanks.filter((b) => b.kind === "placeholder").map((b) => b.id)),
-      );
+      const placeholderIds = new Set(det0.blanks.filter((b) => b.kind === "placeholder").map((b) => b.id));
+      const filled: { lines: string[]; blanks: FilledBlank[] } = profile.detectFilled
+        ? profile.detectFilled(det0.lines, maxId, placeholderIds)
+        : sweepValuePatterns(det0.lines, maxId);
       const det = { lines: filled.lines, blanks: [...det0.blanks, ...filled.blanks] };
       const fixed = new Map(filled.blanks.map((b) => [b.id, b]));
       if (!det.blanks.length) {
@@ -248,10 +185,8 @@ export function contractStructureHelper(
             : {}),
         };
       });
-      const blanks = numberChequeDateRuns(
-        [built.sections.title, ...built.sections.items.flatMap((i) => [i.heading, ...i.paragraphs])],
-        mapped,
-      );
+      const texts = [built.sections.title, ...built.sections.items.flatMap((i) => [i.heading, ...i.paragraphs])];
+      const blanks = profile.afterMapping ? profile.afterMapping(texts, mapped) : mapped;
       const empty = blanks.filter((b) => b.role === "field" && b.field === "leave_empty").length;
       // An unreadable look can't say where the words sit.
       // Without positions, the first four and last two lines of the text stand in for letterhead and footer.

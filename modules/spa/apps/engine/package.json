@@ -13,9 +13,15 @@
     "reset": "bun src/reset.ts"
   },
   "dependencies": {
+    "@platform/adapters": "workspace:*",
     "@platform/kernel": "workspace:*",
+    "@platform/llm": "workspace:*",
+    "@platform/readers": "workspace:*",
+    "@spa/copilot": "workspace:*",
     "@spa/core": "workspace:*",
     "@spa/db": "workspace:*",
+    "@spa/helpers": "workspace:*",
+    "@spa/rulebook": "workspace:*",
     "drizzle-orm": "0.45.4",
     "hono": "4.13.13",
     "pg-boss": "12.38.0",

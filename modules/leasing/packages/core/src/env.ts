@@ -60,6 +60,18 @@ export const EnvSchema = z.object({
   EJARI_MOCK_URL: z.preprocess((v) => clean(v) ?? "http://localhost:4100", z.string().url()),
   MOCK_EJARI_FAILURE_RATE: z.preprocess((v) => clean(v) ?? 0, z.coerce.number().min(0).max(1)),
 
+  /** Shared with the launcher (S69): `GET /summary` answers only when `x-portal-key` equals it (≥ 16 chars). Unset: the route is off (404). */
+  PORTAL_SUMMARY_KEY: z.preprocess(clean, z.string().min(16).optional()),
+
+  /** The portal's public key (one line of base64, S70). Unset: portal sign-in is off; demo login stays. */
+  LEASING_PORTAL_PUBLIC_KEY: z.preprocess(
+    clean,
+    z
+      .string()
+      .regex(/^[A-Za-z0-9+/=]{40,200}$/)
+      .optional(),
+  ),
+
   ENGINE_PORT: int(4000),
   ENGINE_URL: z.preprocess((v) => clean(v) ?? "http://localhost:4000", z.string().url()),
   WEB_URL: z.preprocess((v) => clean(v) ?? "http://localhost:3000", z.string().url()),

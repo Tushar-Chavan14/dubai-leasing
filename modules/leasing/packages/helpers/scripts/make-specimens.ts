@@ -1,7 +1,7 @@
 /**
  * Generates fictional ID document specimens for the KYC helper's tests, evals and demo:
- * `bun packages/helpers/scripts/make-specimens.ts`. Writes PNGs and `cases.jsonl` into
- * `packages/helpers/src/kyc/evals/specimens/` (see the README there to add your own samples).
+ * `bun modules/leasing/packages/helpers/scripts/make-specimens.ts`. Writes PNGs and `cases.jsonl` into
+ * `modules/leasing/packages/helpers/src/kyc/evals/specimens/` (see the README there to add your own samples).
  * Only generated files are replaced; the README stays.
  *
  * Every person, number and document is invented. Layouts are plain and marked SPECIMEN: no

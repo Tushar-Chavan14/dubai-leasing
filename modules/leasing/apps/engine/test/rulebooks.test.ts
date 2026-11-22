@@ -81,7 +81,7 @@ describe.skipIf(noDb)("rulebook versions (Postgres)", () => {
       await database.pool.query(
         "UPDATE rulebooks SET values = jsonb_set(values, '{renewalNoticeDays}', '60') WHERE version = 'dubai-2025-01'",
       );
-      await expect(syncRulebooks(database)).rejects.toThrow("differs from packages/rulebook");
+      await expect(syncRulebooks(database)).rejects.toThrow("differs from modules/leasing/packages/rulebook");
       await database.pool.query(
         "UPDATE rulebooks SET values = jsonb_set(values, '{renewalNoticeDays}', '90') WHERE version = 'dubai-2025-01'",
       );

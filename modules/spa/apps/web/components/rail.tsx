@@ -28,7 +28,16 @@ const ICONS: Record<RailScreen, IconType> = {
 const openCopilot = () => document.getElementById("copilot-dock")?.focus();
 
 /** The 72px rail (design.md §2): brand mark, one icon-over-label item per screen, ⌘K, then the avatar menu. */
-export function Rail({ items, footer }: { items: RailItem[]; footer: ReactNode }) {
+export function Rail({
+  items,
+  footer,
+  badges = {},
+}: {
+  items: RailItem[];
+  footer: ReactNode;
+  /** "Waiting for you" counts only (design §2): shown on the item when above zero. */
+  badges?: Partial<Record<RailScreen, number>>;
+}) {
   const current = screenOf(usePathname());
   return (
     <aside
@@ -59,6 +68,17 @@ export function Rail({ items, footer }: { items: RailItem[]; footer: ReactNode }
                 >
                   <Icon size={20} aria-hidden />
                   <span>{i.label}</span>
+                  {(badges[i.screen] ?? 0) > 0 && (
+                    <>
+                      <span
+                        aria-hidden="true"
+                        className="absolute right-1 top-0.5 grid min-w-4 place-items-center rounded-full bg-primary px-1 text-[10px] font-semibold leading-4 text-on-primary"
+                      >
+                        {badges[i.screen]}
+                      </span>
+                      <span className="sr-only">, {badges[i.screen]} waiting for you</span>
+                    </>
+                  )}
                 </Link>
               </li>
             );

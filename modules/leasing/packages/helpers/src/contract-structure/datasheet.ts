@@ -10,7 +10,7 @@ import {
   registrationFeeFor,
 } from "@leasing/core";
 import { FIELD_CATALOGUE, type FieldInfo, type FieldType } from "./fields.ts";
-import { formatCalendarDate, formatMoneyFils } from "./format.ts";
+import { formatCalendarDate, formatMoneyFils } from "@platform/readers/structure/format";
 
 /**
  * The data sheet: every value the system holds for a contract, as `key -> description + type`. The keys are

@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { cookies } from "next/headers";
 import { StaffShell } from "../../components/shell/staff-shell";
 import { engine } from "../../lib/engine";
-import { TENANCY_OPS } from "../../lib/env";
+import { portalUrl, TENANCY_OPS } from "../../lib/env";
 import { THEME_COOKIE, themeOf } from "../../lib/theme";
 import type { Me } from "../../lib/types";
 
@@ -26,6 +26,7 @@ export default async function StaffLayout({ children }: { children: ReactNode })
         clock={clock.ok ? clock.data : null}
         theme={theme}
         tenancyOps={TENANCY_OPS}
+        portalUrl={portalUrl()}
       >
         {children}
       </StaffShell>

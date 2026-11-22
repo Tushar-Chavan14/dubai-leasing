@@ -55,6 +55,12 @@ export const SpaEnv = z
     SPA_DEMO_MODE: bool(false),
     /** Where "Portal" in the avatar menu goes (the module chooser, S10). */
     SPA_PORTAL_URL: str().url().default("http://localhost:3100"),
+    /**
+     * `true` when a reverse proxy you run sits in front of the web app and appends the real visitor address to
+     * `x-forwarded-for`: the last hop is then the visitor's bucket for the listing chat's rate limit (S61). Otherwise the
+     * header is visitor-supplied, ignored, and every visitor of a listing shares one bucket.
+     */
+    SPA_TRUSTED_PROXY: bool(false),
     OLLAMA_URL: opt(),
     // Models are fixed here (S25); required once helpers exist (P6).
     SPA_CHAT_MODEL: opt(),
@@ -62,8 +68,46 @@ export const SpaEnv = z
     SPA_DECISION_MODEL: opt(),
     SPA_COPILOT_MODEL: opt(),
     SPA_ASSISTANT_MODEL: opt(),
+    /** The simulated Oqood and trustee registry (S53). Only demo and test use it; a real registry's adapter comes later. */
+    REGISTRY_MOCK_URL: str().url().default("http://localhost:4101"),
+    /** 0..1: share of requests the mock answers "temporarily unavailable" (503), to show retries in demos. */
+    REGISTRY_MOCK_FAILURE_RATE: z.coerce.number().min(0).max(1).default(0),
+    /** Outbound mail (rule 10, S54). `ethereal` is a throwaway dev inbox; `smtp` needs SMTP_HOST. */
+    MAIL_TRANSPORT: z.enum(["ethereal", "smtp"]).default("ethereal"),
+    SMTP_HOST: opt(),
+    SMTP_PORT: port(465),
+    SMTP_SECURE: bool(true),
+    SMTP_USER: opt(),
+    SMTP_PASS: opt(),
+    SPA_MAIL_FROM: str().default("SPA Sales <no-reply@spa.example.test>"),
+    /** Demo mode with real SMTP: every message goes to this inbox instead of its recipient (fictional people). */
+    SPA_MAIL_DEMO_RECIPIENT: opt(),
+    /** Where the buyer pages live (links in mail are `<SPA_WEB_URL>/b/<token>/...`). Default: the SPA web port. */
+    SPA_WEB_URL: opt(),
+    /** Shared with the launcher (S69): `GET /summary` answers only when `x-portal-key` equals it. Unset: the route is off (404). */
+    PORTAL_SUMMARY_KEY: z
+      .string()
+      .trim()
+      .min(16, "must be at least 16 characters")
+      .optional()
+      .or(z.literal("").transform(() => undefined)),
+    /** The portal's public key (one line of base64, S70). Unset: portal sign-in is off; the app's own sign-in stays. */
+    SPA_PORTAL_PUBLIC_KEY: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9+/=]{40,200}$/, "must be the one-line base64 public key from portal:keygen")
+      .optional()
+      .or(z.literal("").transform(() => undefined)),
   })
   .superRefine((e, c) => {
+    if (e.MAIL_TRANSPORT === "smtp" && !e.SMTP_HOST)
+      c.addIssue({ code: "custom", path: ["SMTP_HOST"], message: "required when MAIL_TRANSPORT is smtp" });
+    if (e.SPA_DEMO_MODE && e.MAIL_TRANSPORT === "smtp" && !e.SPA_MAIL_DEMO_RECIPIENT)
+      c.addIssue({
+        code: "custom",
+        path: ["SPA_MAIL_DEMO_RECIPIENT"],
+        message: "required with SPA_DEMO_MODE=true and real SMTP (demo people are fictional)",
+      });
     if (e.SPA_TEST_DATABASE_URL && !/test/.test(databaseName(e.SPA_TEST_DATABASE_URL) ?? ""))
       c.addIssue({ code: "custom", path: ["SPA_TEST_DATABASE_URL"], message: 'database name must contain "test"' });
     if (e.SPA_TEST_DATABASE_URL && e.SPA_TEST_DATABASE_URL === e.SPA_DATABASE_URL)

@@ -6,7 +6,7 @@ import {
   type KeyedProblem,
   sampleValueProblems,
 } from "../contract-structure/legal-wording.ts";
-import { formatCalendarDate, formatMoneyFils } from "../contract-structure/format.ts";
+import { formatCalendarDate, formatMoneyFils } from "@platform/readers/structure/format";
 import { unprintable } from "../contract-structure/render.ts";
 import type { BlankFill, ContractAgentContext, TermCheck, ContractUnitFacts } from "./schema.ts";
 

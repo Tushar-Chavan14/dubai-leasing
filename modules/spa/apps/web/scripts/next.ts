@@ -7,7 +7,7 @@ import { loadSpaEnv } from "@spa/core/env";
  */
 const stray = readdirSync(`${import.meta.dir}/..`).filter((f) => f.startsWith(".env"));
 if (stray.length)
-  throw new Error(`remove ${stray.join(", ")} from spa/apps/web: SPA settings live only in .env.spa.local`);
+  throw new Error(`remove ${stray.join(", ")} from modules/spa/apps/web: SPA settings live only in .env.spa.local`);
 const mode = process.argv[2] === "start" ? "start" : "dev";
 const env = loadSpaEnv();
 const child = Bun.spawn(["bun", "x", "next", mode, "-p", String(env.SPA_WEB_PORT), "-H", "127.0.0.1"], {

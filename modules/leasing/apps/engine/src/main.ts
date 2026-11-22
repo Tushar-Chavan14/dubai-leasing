@@ -1,7 +1,6 @@
 import { loadEnv } from "@leasing/core";
 import { repoRoot } from "./repo-root.ts";
 import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { HttpEjariClient, LocalDiskStore, NodemailerMailer, TelegramSender } from "@leasing/adapters";
 import { ollamaCopilotModel } from "@leasing/copilot";
 import { ModelGate, OllamaLlm } from "@platform/llm";
@@ -62,7 +61,7 @@ const mailer = new NodemailerMailer({
 if (env.EJARI_MODE !== "mock") throw new Error("EJARI_MODE=live is not available yet; use mock");
 
 const sessionSecret = env.SESSION_SECRET ?? "demo-only-session-secret";
-// One GPU: interactive model calls go before background ones (decision in docs/architecture.md §5).
+// One GPU: interactive model calls go before background ones (decision in docs/leasing/architecture.md §5).
 const modelGate = new ModelGate(1);
 const ctx: EngineContext = {
   database,
@@ -170,6 +169,8 @@ const app = createApi(ctx, {
   sessionSecret,
   mediaStore,
   channelSecret: env.CHANNEL_SECRET,
+  portalSummaryKey: env.PORTAL_SUMMARY_KEY,
+  portalPublicKey: env.LEASING_PORTAL_PUBLIC_KEY,
   ejariMockUrl: env.EJARI_MOCK_URL,
   ...(demoClock ? { demoClock } : {}),
 });

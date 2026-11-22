@@ -1,8 +1,13 @@
-import { CustomCategory, FormField, isCalendarDate, KycRules } from "@leasing/core";
+import { isCalendarDate } from "@platform/kernel/dates";
+import { type CustomCategory } from "@platform/kernel/kyc-form";
+import { FormField, KycRules } from "./config.ts";
 import { z } from "zod";
 
-/** `custom`: a company-named document read against its description (D50). */
-export const DocKind = z.enum(["emirates_id", "passport", "visa", "trade_licence", "custom"]);
+/**
+ * `custom`: a company-named document read against its description (D50). `extra`: a kind only the caller's profile
+ * knows (S49); its read key is the upload's `fieldKey`.
+ */
+export const DocKind = z.enum(["emirates_id", "passport", "visa", "trade_licence", "custom", "extra"]);
 export type DocKind = z.infer<typeof DocKind>;
 
 const calDate = z.string().refine(isCalendarDate, "expected YYYY-MM-DD");
@@ -149,7 +154,7 @@ export type DocRead = {
   error?: string;
 };
 
-export const readKeyOf = (kind: DocKind, side: string): ReadKey =>
+export const readKeyOf = (kind: Exclude<DocKind, "extra">, side: string): ReadKey =>
   kind === "emirates_id" ? (side === "back" ? "emirates_id_back" : "emirates_id_front") : kind;
 
 /** A custom document's category, from the form field it was uploaded for. */

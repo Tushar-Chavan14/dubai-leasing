@@ -28,7 +28,7 @@ routing stays deterministic. `kev` optional; its tags target Apple Silicon (MLX)
 ## D7 — Telegram for enquiries only; email (Nodemailer SMTP) for everything outbound
 No WhatsApp API keys yet and it is paid; the Telegram Bot API is free. Telegram handles step 2
 (enquiries, viewing booking). All notices, reminders and links go by email with stored evidence.
-Tenant actions use signed links to `apps/web`. WhatsApp can later replace or join Telegram via the
+Tenant actions use signed links to `modules/leasing/apps/web`. WhatsApp can later replace or join Telegram via the
 same `EnquiryChannel` interface. The 12-month repossession notice goes by notary or registered mail.
 
 ## D8 — Unit, Application and Lease are separate state machines
@@ -53,7 +53,7 @@ Simpler on the dev machine. Containers stay optional for hosted deployments late
 must not depend on them.
 
 ## D14 — Tenant portal + inbound events instead of email replies
-Tenants act through forms in `apps/web` (`/t/<token>`, magic-link access). Each submit is stored
+Tenants act through forms in `modules/leasing/apps/web` (`/t/<token>`, magic-link access). Each submit is stored
 in `inbound_events` and processed by the Manager through a pg-boss job, so forms return
 instantly and model calls retry safely. Staff can submit the same forms on a tenant's behalf.
 
@@ -69,7 +69,7 @@ system only through engine API tools and acts with the logged-in user's permissi
 read, draft and propose. It can never approve a gate, send outbound messages, change state or
 produce a legal or money value itself; those values come from rulebook tools. The MCP server
 (phase 5) exposes the same tool registry, so there is one set of tools and one set of
-safeguards. See `docs/architecture.md` §8b.
+safeguards. See `docs/leasing/architecture.md` §8b.
 
 ## D16 — oxlint + oxfmt instead of Biome (supersedes the lint part of D10)
 Chosen at the start of Phase 0. oxlint (lint) and oxfmt (Prettier-compatible formatter) are
@@ -88,7 +88,7 @@ domain code and on code that references `data/uploads`. TypeScript stays on 5.x.
   Approvals may carry `on_approve_event`, applied as the approver when a person approves.
 - **No self-approval:** the person (or their copilot) who proposed an approval can't decide it.
 - **Edits are re-checked:** each gate declares its editable fields and a rulebook check
-  (`apps/engine/src/manager/gate-rules.ts`); without an SRI value only same-rent renewal passes.
+  (`modules/leasing/apps/engine/src/manager/gate-rules.ts`); without an SRI value only same-rent renewal passes.
 - **Parties:** `parties.kind` is `individual | company`; a party's role comes from
   `lease_parties.role` (tenant, landlord, occupant).
 - **Staff auth:** Phase 0 has demo login only (HMAC session token, 12 h). Real staff login is
@@ -98,7 +98,7 @@ domain code and on code that references `data/uploads`. TypeScript stays on 5.x.
   needs an approved 12-month repossession notice and takes effect at lease end.
 
 ## D18 — Staff app design and unit media
-- The staff app ("Dubai Leasing") uses vanilla CSS design tokens in `apps/web/app/globals.css`
+- The staff app ("Dubai Leasing") uses vanilla CSS design tokens in `modules/leasing/apps/web/app/globals.css`
   (light and dark), Instrument Sans for the interface, Bricolage Grotesque for display and Geist Mono
   only for reference numbers. One accent (leaf green); saffron only for deadlines, brick only
   for errors. No component library.
@@ -136,7 +136,7 @@ domain code and on code that references `data/uploads`. TypeScript stays on 5.x.
 
 ## D21 — Applicant KYC: the model reads, code decides
 - **The vision model only reads documents** (one call per image, JSON schema, temperature 0); the
-  verdict is pure code (`packages/helpers/src/kyc/checks.ts`): Emirates ID format and Luhn,
+  verdict is pure code (`modules/leasing/packages/helpers/src/kyc/checks.ts`): Emirates ID format and Luhn,
   passport MRZ check digits, expiry against the planned lease start, and names across documents.
   "Verified" only when nothing is flagged; everything else goes to a leasing officer.
 - **The MRZ wins over the printed page.** Fields read from a valid MRZ are used; a printed value
@@ -144,7 +144,7 @@ domain code and on code that references `data/uploads`. TypeScript stays on 5.x.
 - **No expired document passes**, ever: it is a blocking flag that the gate rule refuses to approve.
 - **Identity is copied, never typed:** `KYC_VERIFIED` copies the verified fields onto the party
   (the name exactly as on the ID), which is what Ejari will match in phase 2b.
-- **Fictional specimens only** for tests, evals and the demo (`packages/helpers/src/kyc/evals/specimens/`,
+- **Fictional specimens only** for tests, evals and the demo (`modules/leasing/packages/helpers/src/kyc/evals/specimens/`,
   generated, plain layouts marked SPECIMEN). Real documents live only in `UPLOADS_DIR`.
 - **Documents are private:** served to leasing officers and managers only, never cached, each view
   recorded (`DOCUMENT_VIEWED`); the copilot can't reach them. ID numbers are masked in every view.
@@ -184,7 +184,7 @@ domain code and on code that references `data/uploads`. TypeScript stays on 5.x.
 ## D23 — Rulebook versions stored in the database; drafts published by admin
 Supersedes the storage part of D4 (versioning and "models never compute legal or money values"
 stay as they are).
-- **The code version is the base.** `packages/rulebook` still defines `dubai-2025-01`. At startup
+- **The code version is the base.** `modules/leasing/packages/rulebook` still defines `dubai-2025-01`. At startup
   the engine stores it as a published row in `rulebooks` (`created_by = system`) and refuses to
   start if a stored base row differs from code.
 - **Drafts, then publish.** An admin copies a published version into a draft
@@ -211,7 +211,7 @@ stay as they are).
 
 ## D24 — Telegram enquiries: the engine owns the conversation; code drives, models read
 Phase 3. Refines D7 and the Leasing Assistant row of architecture §5.
-- **The bot is a stateless relay.** `apps/telegram-bot` posts each private-chat update to the
+- **The bot is a stateless relay.** `modules/leasing/apps/telegram-bot` posts each private-chat update to the
   engine (`POST /channel/telegram/updates`, shared `CHANNEL_SECRET`) and sends the reply back to
   the chat that update came from. Conversations, flow state, helper runs and bookings live in the
   engine, so the Manager stays the only writer and one customer's state can't reach another.
@@ -364,7 +364,7 @@ Product owner's choice.
   through the mail adapter (template `login_code`, entity kind `customer_account`). The adapter
   already stores only a body hash; the email subject never contains the code, so staff reading
   `outbound_messages` can't see a live code. Code requests are also limited per IP (20 an hour,
-  in memory, from `x-real-ip`, else the rightmost `x-forwarded-for` hop (the one our proxy adds), forwarded by `apps/web` server actions:
+  in memory, from `x-real-ip`, else the rightmost `x-forwarded-for` hop (the one our proxy adds), forwarded by `modules/leasing/apps/web` server actions:
   the engine must not be exposed directly, or the per-IP limit can be spoofed; the per-email
   limit still holds). Deployment requirement: the web app must sit behind a reverse proxy that
   overwrites `X-Forwarded-For`, and the engine must not be publicly reachable. Documented, not
@@ -439,7 +439,7 @@ web chat is public and works like the Telegram bot.
   `channel "web"`, `external_chat_id` = visitor id. Limits per forwarded client IP (in memory,
   per hour): 200 updates, 3000 history reads.
 - **Public pages.** `/properties` (bookable units only: the same rule as the chat) and
-  `/properties/[id]` in `apps/web`, with a floating chat launcher and `/chat` as a full page.
+  `/properties/[id]` in `modules/leasing/apps/web`, with a floating chat launcher and `/chat` as a full page.
   Engine routes `GET /public/units`, `/public/units/:id`, `/public/units/:id/photos/:photoId`,
   `/public/units/:id/slots` and `POST /public/enquiries`, all secret-gated. Rent is formatted by
   code from the asking rent.
@@ -459,7 +459,7 @@ web chat is public and works like the Telegram bot.
 - **Known limits.** Plus-address aliases (`name+1@...`) bypass the per-email cap. All caps are
   per process and in memory: they reset on restart and aren't shared between engine instances.
 - **Ejari mock.** Its registry derives from the shared demo unit list in
-  `packages/core/src/demo-units.ts` (`DEMO_PROPERTIES`), which the seed also builds its units
+  `modules/leasing/packages/core/src/demo-units.ts` (`DEMO_PROPERTIES`), which the seed also builds its units
   from, so every seeded unit registers (including MRN-1502). The name-case rejection stays.
 - **Rule 10 amendment (AGENTS.md):** the public web chat, like Telegram, takes enquiries and
   books viewings only. Tenants act through emailed portal links. Everything outbound still goes
@@ -478,7 +478,7 @@ companies, each with its own units and its own pricing and contract limits.
   commercial and retail units. Category is locked with the other identity fields.
 - **Rent rules replace the per-bedroom range.** `rent_rules` hold a band in basis points around the
   Smart Rental Index average (for example -500 to +1000) and optional AED floor and ceiling.
-  `allowedAskingRange` in `packages/core` returns the intersection of the band and the AED bounds.
+  `allowedAskingRange` in `modules/leasing/packages/core` returns the intersection of the band and the AED bounds.
   This is company policy, not law, so it is not in the rulebook.
 - **Choosing a rule.** The most specific active rule for the unit's company, category, emirate and
   usage wins: community, then subtype, then category. No rule, or a rule that gives no bounds,
@@ -688,7 +688,7 @@ accounts.
 Product owner's choice (slice 3). A company uploads a sample contract, a helper proposes clauses, an
 admin approves them, and a contract can include the approved wording.
 Slice 3 (Task 5 and 6) completes the decision.
-- **Helper `contract_template`** (`packages/helpers/src/contract-template`) reads a sample contract
+- **Helper `contract_template`** (`modules/leasing/packages/helpers/src/contract-template`) reads a sample contract
   (PDF or pasted text) and proposes clauses (title, text, category, verbatim quote). It touches no
   disk (the engine passes `readFile`) and writes nothing. PDF text comes from `unpdf@1.9.1` (MIT,
   new dependency; `pdf-lib@1.17.1` is a dev dependency for the test fixture). Caps: 10 MB, 60
@@ -744,7 +744,7 @@ goes to an agent that can search, book, apply and check status, instead of a cla
 fixed replies. Telegram is unchanged (D24).
 - **Routing.** Buttons, callbacks, contact steps, a typed code, and a short typed answer at a
   step that expects one (name, company, email) stay in code. Any other free text goes to a
-  LangGraph tool loop (`packages/helpers/src/customer-agent`, engine side in
+  LangGraph tool loop (`modules/leasing/packages/helpers/src/customer-agent`, engine side in
   `manager/customer-agent.ts`). With no model configured the old assistant path runs. Fixed
   classifier replies remain only as the agent's error fallback and the `handoff` tool text.
 - **Tools.** `search_units`, `unit_details`, `viewing_slots`, `book_viewing`, `apply_now`
@@ -826,7 +826,7 @@ fixed replies. Telegram is unchanged (D24).
 
 ## D38 — Company contract templates (slice 4)
 - **Extraction.** An admin uploads a sample contract PDF. The `contract_structure` helper
-  (`packages/helpers/src/contract-structure`) reads it: code copies the wording verbatim into
+  (`modules/leasing/packages/helpers/src/contract-structure`) reads it: code copies the wording verbatim into
   sections, finds the blanks, and reads the look (page, margins, fonts, sizes, header, footer,
   logo, accent colour) from the PDF. The model only proposes headings and which contract field
   each blank means; code checks every id, heading and field name and the field's type.
@@ -901,7 +901,7 @@ fixed replies. Telegram is unchanged (D24).
   without tenancy fields.
 - **Rich replies.** Tools return `ui` (record and unit cards, one choice card) that the model never
   sees; the stream carries it to the chat. Both chats now use one card and choice implementation
-  (`apps/web/components/chat-ui/`). Cards are not stored with the thread (no schema change).
+  (`modules/leasing/apps/web/components/chat-ui/`). Cards are not stored with the thread (no schema change).
 - **Guardrails unchanged (rule 11).** No new confirmed actions. A choice value must be an id a tool
   returned in the same turn; tenant and applicant text never becomes a choice; a tap sends a normal
   message or opens a page.
@@ -1005,7 +1005,7 @@ not a landlord.
 
 The leasing assistant automates the work up to the contract. Staff should approve a contract, not drive it.
 
-- **Contract agent.** `packages/helpers/src/contract-agent`: a LangGraph tool loop on the existing
+- **Contract agent.** `modules/leasing/packages/helpers/src/contract-agent`: a LangGraph tool loop on the existing
   `contract.prepare` job (after `OFFER_ACCEPTED → RESERVED → lease in CONTRACT`). Its tools are code:
   contract fields with sources, the matching contract rule, the company's approved clauses, the approved
   template's paragraphs, `fill_blanks` (template blanks filled from the records) and `check_terms` (tenure,
@@ -1189,7 +1189,7 @@ The leasing assistant automates the work up to the contract. Staff should approv
 - **Context.** Scope ended at Ejari in Dubai. Clients may lease in any of the seven emirates. Phase 1 makes the core
   choose the rulebook, registration system, registration fee and rent index by the unit's emirate. Dubai behaves
   exactly as before.
-- **Emirates.** `packages/core/src/emirates.ts` holds the seven-value `Emirate` enum, English labels,
+- **Emirates.** `modules/leasing/packages/core/src/emirates.ts` holds the seven-value `Emirate` enum, English labels,
   `registrationSystemName(emirate)` and `rentIndexName(emirate)` ("Smart Rental Index" in Dubai, "Rent index"
   elsewhere). Units, rent rules, the unit CSV import and the web unit and rent-rule forms accept any emirate.
   Migration `0031_emirates` adds `sri_averages.emirate` and puts it in the unique key.
@@ -1198,7 +1198,7 @@ The leasing assistant automates the work up to the contract. Staff should approv
   emirate.
 - **Fees stay outside the rulebook.** Registration fees are government tariffs that apply on the registration date.
   Adding a field to a published rulebook would break D23 (the engine refuses to start if a published version
-  changes). `packages/rulebook/src/fees.ts` holds code-versioned schedules per emirate: `flat`, `percent` (basis
+  changes). `modules/leasing/packages/rulebook/src/fees.ts` holds code-versioned schedules per emirate: `flat`, `percent` (basis
   points, optional minimum and plus amount) or `tiered`. `registrationFeeFils` returns integer fils, round half up.
   Values are marked "From the general data available". No model computes a fee (rule 1).
 - **Who pays.** Company policy `registrationFeePaidBy` (`tenant` by default). No settings UI yet. The fee shows on the
@@ -1218,7 +1218,7 @@ The leasing assistant automates the work up to the contract. Staff should approv
   pays). `find_available_units`, `get_unit` and `list_records` filter and show the emirate; `contract_status` shows the
   registration system; `save_rent_rule` and `save_sri_value` take an emirate. The prompt says fees and system names
   come only from `get_emirate_setup`.
-- **Deferred.** Phase 2: Tawtheeq mock routes in `apps/ejari-mock` and manual registration (pack and officer task,
+- **Deferred.** Phase 2: Tawtheeq mock routes in `modules/leasing/apps/ejari-mock` and manual registration (pack and officer task,
   copilot decision card). Phase 3: seed data per emirate (two units, rules, rulebooks, templates, researched values).
   Phase 4: client rollout and legal confirmation of values. Also not yet: chat and Telegram stay "coming soon" for
   other emirates, per-emirate contract templates, and a policy UI select for who pays.
@@ -1227,14 +1227,14 @@ The leasing assistant automates the work up to the contract. Staff should approv
 
 - **Context.** After D52 a lease in a non-Dubai emirate stopped at a `registration_unsupported` task. Phase 2 gives
   Abu Dhabi a simulated registry and gives every other emirate a manual registration mode.
-- **Tawtheeq mock.** Same app as the Ejari mock (`apps/ejari-mock`), not a new service. Registrations and
+- **Tawtheeq mock.** Same app as the Ejari mock (`modules/leasing/apps/ejari-mock`), not a new service. Registrations and
   submissions have a `system` column (`ejari` | `tawtheeq`, default `ejari`). Routes are `/tawtheeq/api/v1/...`,
   numbers are `SIM-TWQ-YYYY-NNNNNNN`, each system has its own sequence, overlap check and reject-next switch. The
   certificate says "SIMULATED - NOT ISSUED BY ANY ABU DHABI AUTHORITY", with no government logos or colours. The
   property registry check is skipped for Tawtheeq until Phase 3 seeds Abu Dhabi properties. The engine registers
   `abu_dhabi` with `HttpEjariClient({ pathPrefix: "/tawtheeq" })` on the same `EJARI_MOCK_URL`. The demo console has a
   Tawtheeq reject-next button.
-- **Registration settings per emirate.** `packages/core/src/registration-settings.ts`:
+- **Registration settings per emirate.** `modules/leasing/packages/core/src/registration-settings.ts`:
   `DEFAULT_REGISTRATION_SETTINGS` (mode, portal name and URL, instructions, required-document checklist, reference
   example and pattern). Values are marked "From the general data available"; portal URLs still need checking. An admin
   can override them in `registration_settings` (one row per emirate, audited as `REGISTRATION_SETTINGS_UPDATED` on an
@@ -1277,7 +1277,7 @@ The leasing assistant automates the work up to the contract. Staff should approv
 
 ## D55 — Multi-emirate Phase 3: demo rulebooks, units and chat for all seven emirates
 
-- **Demo rulebooks.** `apps/engine/src/demo/emirate-rulebooks.ts` holds rulebooks for six emirates. The demo seed
+- **Demo rulebooks.** `modules/leasing/apps/engine/src/demo/emirate-rulebooks.ts` holds rulebooks for six emirates. The demo seed
   inserts them as published rows (`created_by` demo-seed). Every source reads "From the general data available: ...".
   The rent cap is one flat band. Values: Abu Dhabi notices 60/70 days, 0% freeze from 2 Jun 2026; Sharjah (Law 5/2024)
   90/100 days, lock 3/5, late rent 15, 0%; Ajman 0%; RAK 5%; Fujairah 5%; UAQ 10%. `baseFor` falls back to the
@@ -1316,7 +1316,7 @@ The leasing assistant automates the work up to the contract. Staff should approv
 - **Finder.** The community dropdown is scoped by the chosen emirate.
 - **Copilot.** The direct registration-settings change accepts a portal address typed without `https://` or `www.`
   (`bareUrl` in the quote check); the stored value is still a full https URL.
-- **Legal checklist.** `docs/legal-review-emirates.md` lists every non-Dubai value, where it lives, its source and
+- **Legal checklist.** `docs/leasing/legal-review-emirates.md` lists every non-Dubai value, where it lives, its source and
   the lawyer's sign-off. Phase 4 legal confirmation works from it.
 
 ## D57 — Suggested contract clauses, and "add it"

@@ -330,6 +330,13 @@
       "when": 1794571595486,
       "tag": "0046_change_marks",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1795166433334,
+      "tag": "0047_portal_handoffs",
+      "breakpoints": true
     }
   ]
 }

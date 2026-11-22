@@ -1,9 +1,7 @@
 import type { AgentContext } from "./schema.ts";
 
-/** Wraps outsider text (visitor messages, unit descriptions) so the prompt can call it data. A closing tag inside can't end the block. */
-export function untrusted(text: string): string {
-  return `<untrusted>${text.replace(/<\/?\s*untrusted\s*>/gi, "[tag removed]")}</untrusted>`;
-}
+/** Wraps outsider text (visitor messages, unit descriptions) so the prompt can call it data. Shared with the SPA assistants (C26, S61). */
+export { untrusted } from "@platform/llm/agent";
 
 const STEP_NOTES: Partial<Record<AgentContext["step"], string>> = {
   asking_name: "The system just asked the visitor for their full name to finish a booking or application.",

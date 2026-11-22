@@ -11,8 +11,7 @@ export const CLAUSE_CATEGORIES = [
   "other",
 ] as const;
 
-export const MAX_PAGES = 60;
-export const MAX_CHARS = 120_000;
+export { MAX_CHARS, MAX_PAGES } from "@platform/readers/pdf/limits";
 
 /** Where the sample contract comes from: pasted/typed text, or an uploaded PDF read through `readFile`. */
 export const ContractTemplateContext = z.object({

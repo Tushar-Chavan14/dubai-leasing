@@ -1,4 +1,4 @@
-import { normalizeWs } from "../contract-template/extract.ts";
+import { normalizeWs } from "../pdf/extract.ts";
 import type { NumberingStyle, TemplateSection, TemplateSections } from "./schema.ts";
 import { MAX_SECTIONS } from "./schema.ts";
 

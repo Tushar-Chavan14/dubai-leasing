@@ -37,6 +37,7 @@ const salesKyc: KycProfile = {
   documents: { passport: "a passport data page", title_deed: "a property title deed" },
   documentLabels: { passport: "passport", title_deed: "title deed" },
   mrzKeys: [],
+  aiCheckSubject: "a sales company set for client documents",
 };
 const sheet = new Map([
   ["purchaserNameEn", { type: "text" as const, label: "Purchaser full name" }],
@@ -60,6 +61,7 @@ const salesTemplate: TemplateProfile = {
     forPrompt: () => [...sheet].map(([k, v]) => `${k} | ${v.type} | ${v.label}`).join("\n"),
   },
   placeholderAliases: { buyername: "purchaserNameEn", price: "priceFils" },
+  labelWords: new Set(["seller", "purchaser", "price", "name"]),
   matchLabel: (label, party) =>
     /\bname\b/i.test(label) && party ? `${party}NameEn` : /\bprice\b/i.test(label) ? "priceFils" : null,
 };

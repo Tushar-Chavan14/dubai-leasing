@@ -1,7 +1,7 @@
 import type { Emirate } from "@leasing/core";
 import type { ReferenceRule } from "./schema.ts";
 
-/** A versioned set of legal rules for one emirate (docs/architecture.md §4). */
+/** A versioned set of legal rules for one emirate (docs/leasing/architecture.md §4). */
 export interface Rulebook {
   /** e.g. "dubai-2025-01" */
   version: string;

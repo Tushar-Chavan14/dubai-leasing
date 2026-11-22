@@ -1,9 +1,9 @@
 import type { Llm } from "@platform/llm";
-import { placeholderName } from "./blanks.ts";
+import { placeholderName } from "@platform/readers/structure/blanks";
 import { sheetKeyInfo } from "./datasheet.ts";
 import { contextParty, partyIn, proposeMappings, templateLines } from "./mapping.ts";
 import { formatField, NEUTRAL_WHEN_ABSENT } from "./render.ts";
-import type { TemplateBlank } from "./schema.ts";
+import type { TemplateBlank } from "@platform/readers/structure/schema";
 
 export interface Remapped {
   blanks: TemplateBlank[];

@@ -20,6 +20,8 @@ import { z } from "zod";
 import { unprocessable } from "../errors.ts";
 import type { EngineDemoClock } from "../clock.ts";
 import type { EngineContext } from "../context.ts";
+import { registerLauncherSummary } from "./launcher-summary.ts";
+import { registerPortalSignIn } from "./portal-sign-in.ts";
 import { DomainError, notFound } from "../errors.ts";
 import { decideApproval } from "../manager/approvals.ts";
 import { appendEvent, getCompanyPolicy, getCompanyPolicyVersion } from "../manager/events.ts";
@@ -135,6 +137,12 @@ export interface ApiOptions {
   demoClock?: EngineDemoClock;
   /** Shared secret for the Telegram bot's route; unset turns the route off. */
   channelSecret?: string | undefined;
+  /** The launcher's key (`PORTAL_SUMMARY_KEY`, S69); unset: `GET /summary` answers 404. */
+  portalSummaryKey?: string | undefined;
+  /** The portal's public key (`LEASING_PORTAL_PUBLIC_KEY`, S70). Unset: portal sign-in is off and its route answers 404. */
+  portalPublicKey?: string | undefined;
+  /** Wall-clock milliseconds for portal token expiry (not a legal date). Default: the system clock. */
+  nowMs?: () => number;
   /** The simulated registry (demo console: reject the next submission, reset). */
   ejariMockUrl?: string | undefined;
 }
@@ -169,6 +177,8 @@ export function createApi(ctx: EngineContext, opts: ApiOptions) {
     }),
   );
 
+  registerLauncherSummary(app, ctx, opts.portalSummaryKey);
+
   // --- auth (demo login only in phase 0) ---
   if (ctx.demoMode) {
     app.get("/api/auth/demo-users", async (c) =>
@@ -190,6 +200,12 @@ export function createApi(ctx: EngineContext, opts: ApiOptions) {
       });
     });
   }
+
+  registerPortalSignIn(app, ctx, {
+    sessionSecret: opts.sessionSecret,
+    publicKey: opts.portalPublicKey,
+    nowMs: opts.nowMs ?? (() => Date.now()),
+  });
 
   // Tenant portal: token-authenticated, outside the staff session.
   registerPortalRoutes(app, ctx, opts.mediaStore);
@@ -219,7 +235,7 @@ export function createApi(ctx: EngineContext, opts: ApiOptions) {
   });
 
   api.get("/leases", async (c) => c.json(await q.listLeases(db)));
-  // The five KPIs (docs/specs.md §8), any staff role.
+  // The five KPIs (docs/leasing/specs.md §8), any staff role.
   api.get("/metrics", async (c) => c.json(await withTx(ctx.database, (tx) => leasingMetrics(tx, ctx.clock.today()))));
   api.get("/leases/:id", async (c) => {
     const id = z.uuid().safeParse(c.req.param("id"));

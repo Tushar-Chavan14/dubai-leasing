@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@leasing/core": "workspace:*",
+    "@platform/adapters": "workspace:*",
     "drizzle-orm": "0.45.4",
     "hono": "4.13.13",
     "pdf-lib": "1.17.1",

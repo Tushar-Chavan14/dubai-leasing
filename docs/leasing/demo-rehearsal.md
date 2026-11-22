@@ -1,4 +1,4 @@
-# Demo rehearsal (docs/specs.md §9)
+# Demo rehearsal (docs/leasing/specs.md §9)
 
 Run before a pitch. Setup: `bun run dev`, Ollama running with the `.env` models, the simulated
 Ejari running, `DEMO_MODE=true`. Start clean with **Demo clock → Reset demo data** (admin, type
@@ -8,7 +8,7 @@ are fictional. Tick each step; note anything slow or wrong.
 | # | Step | Where / what to click | Expect |
 |---|---|---|---|
 | 1 | Telegram enquiry | Message the bot: "1-bed in Dubai Marina under 90k", give an email, pick a unit, book a slot | Intent tagged on **Enquiries**; units offered at asking rent only; viewing on **Applicants** |
-| 2 | KYC | On the applicant: record attended → upload a specimen from `packages/helpers/src/kyc/evals/specimens/` | Fields read; checks shown; verified or a `kyc_review` approval |
+| 2 | KYC | On the applicant: record attended → upload a specimen from `modules/leasing/packages/helpers/src/kyc/evals/specimens/` | Fields read; checks shown; verified or a `kyc_review` approval |
 | 3 | Offer → contract | Offer link → Accept; record the reservation; **Lease → Prepare contract** → approve in **Approvals** → sign both links | Signed PDF with signature page |
 | 4 | Ejari | Optional: **Demo clock → Reject the next Ejari submission** first; approve the submission | Name-typo rejection → one auto-fix → issued (or the review approval) |
 | 5 | Move-in | Lease page: tick DEWA / keys / cards, a photo per room → Complete move-in | ACTIVE; instalments and milestones listed |

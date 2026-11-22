@@ -1,0 +1,25 @@
+# Platform: shared, domain-free packages
+
+`platform/` holds code every module uses and no module owns (decision S34). It has no leasing or sales words in its
+logic: no tenants, deals, Ejari or Oqood. A module passes its own names in (types, profiles, document kinds).
+
+| Package | Holds |
+|---|---|
+| `@platform/kernel` | `Clock` (System, Demo, Fixed), Asia/Dubai calendar dates, money in fils, UUIDv7 ids, `maskPii`, the helper contract (`Helper`, `HelperInput`, `HelperResult`, `HelperOutput`) and `runHelper`, `defineMachine`, `defineGates`, `Actor<Extra>`, the KYC form model (`defineKycForm`), the pure document checks the KYC reader uses (`parseTd3`/`makeTd3` in `mrz`, `isValidEmiratesId`, `compareNames`), HMAC session tokens |
+| `@platform/ui` | Design tokens and contrast check, `theme.css` (palette, dark variant, Tailwind `@theme`, `@source`), `base.css` (root variables, element rules), shared React components (Button, Pill, PageTitle, TabLinks, TableFrame, Section, Fact*, RecordStepper, EmptyState, Modal, Sheet, form fields, settings blocks) |
+| `@platform/llm` | The model adapter: `chat()`, `vision()`, `decide()` against the local Ollama server, `FakeLlm` for tests. `@platform/llm/agent` (C26, S61): the shared chat-agent code — `checkScope` with an `AgentProfile` (criteria, off-topic reply), `verifyAnswer` and `actionClaim` (the value post-check), `untrusted`, the local tool-calling model (`ollamaChatModel`, `ScriptedModel`, `ScriptedAgentModel`) and the bounded tool loop `runAgentTurn` |
+| `@platform/adapters` | The shell of a simulated registry (`registry-mock`, S53: `simulatedPage`, `simulatedCertificate`, `replayByRequestId`, `maybeUnavailable`, `replyWithAnswer`, a `RegistryMockProfile` for the module's wording; leasing's `ejari-mock` and SPA's `oqood-mock` both use it), sending mail (SMTP or fake), PDF rendering (`renderStyledPdf`; `renderStyledPdfWithAnchors` also returns one e-sign anchor per signature line; `table` blocks; `now` sets the PDF dates) and signature pages (`appendSignatureRecord` takes an optional `roleLabels` profile, leasing's words stay the default; `stampSignatures` writes each typed name at its anchor; S54), mail evidence (`mailEvidence`: body hash, attachment hashes, the mail server's answer; S54), local disk storage with image checks, e-sign types |
+| `@platform/readers` | Reading an uploaded agreement for any module (S43): PDF text and limits, look, sections, blanks, placeholders, filled-sample values, model-proposed labels and data-sheet mappings, `stripDelimiters`. Everything module-specific comes in through a `TemplateProfile` (parties, data sheet, label words, prompt wording, `detectFilled`, `afterMapping`). Printing (S46, `render/blocks`): `TemplateBlock`, `RenderProfile` (core keys, neutral words, `formatValue`), `nextSectionNumber`, `effectiveStyle`, `fillPlaceholderText`, `mappingProblem`, `liveBlankIds`, `unprintable`, `TemplateRenderError`. Reading identity documents (S49, `kyc/`): the vision-model reader (`kycHelper`), the code checks (`assessKyc`, `applyKycRules`, `kycAiChecks`) and the document-form and rule model they apply (`kyc/config`), with a `KycProfile` (helper name, nouns, document wording, `extraReads`, `personDocs`, AI-check subject) passed in by the module |
+
+## Rules
+
+- **Imports (checked by `scripts/check-domain-rules.ts`):** a module (`modules/leasing`, `modules/spa`) imports its
+  own packages and `@platform/*`; `platform/` imports only `@platform/*` and npm packages; the portal (`apps/portal`,
+  P10) imports only `@platform/*`; a relative import never leaves its owner.
+- **Adding something here:** only code with no domain in it. If it needs a module's words, it takes them as a
+  parameter or a profile (S4), and the leasing default stays in leasing.
+- **Time:** only `platform/kernel/src/clock.ts` and `dates.ts` may read the system clock.
+- **Moved here (S53):** the shared shell of the registry mocks (page, certificate, replay by request id, simulated outage). Leasing's `ejari-mock` passes its own wording as a profile; a golden test (`modules/leasing/apps/ejari-mock/test/golden.test.ts`, recorded before the move) pins its console page, certificate PDFs and 201, 422, 400 and 503 bodies byte for byte.
+- **Moved here (S34):** the contract-structure reader (S43) and the KYC document reader (S49). Leasing keeps thin wrappers
+  that pass `leasingTemplateProfile` and `leasingKycProfile`, so its prompts and results are byte-identical (golden tests).
+- **Moved here (S61):** the shared chat-agent pieces (scope gate with a profile, value post-check, `untrusted`, the Ollama tool-calling model and its test doubles) came from leasing's customer agent and copilot, which import them back from their old paths. Golden tests recorded before the move (`modules/leasing/packages/helpers/test/agent-golden.test.ts`, `modules/leasing/packages/copilot/test/agent-golden.test.ts`) pin the customer agent's transcripts, value check, scope question and fence, and the copilot's value check and fence, unchanged. The leasing loops themselves stayed where they are; `runAgentTurn` is new and used by the SPA assistants only.

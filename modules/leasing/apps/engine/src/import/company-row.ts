@@ -17,7 +17,7 @@ const splitList = (v: string | null): string[] =>
       ]
     : [];
 
-/** One row of the companies import CSV. Column names are documented in docs/import.md. */
+/** One row of the companies import CSV. Column names are documented in docs/leasing/import.md. */
 export const CompanyImportRow = z.object({
   name: z.string().trim().min(2).max(200),
   slug: opt.pipe(

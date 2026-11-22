@@ -1,5 +1,5 @@
-import { sheetKeyInfo } from "./datasheet.ts";
-import type { FieldType } from "./fields.ts";
+import type { TemplateSheet } from "./profile.ts";
+import type { FieldType } from "./types.ts";
 import type { TemplateBlank } from "./schema.ts";
 
 export type BlankKind = TemplateBlank["kind"];
@@ -55,57 +55,15 @@ export function placeholderLabel(name: string): string {
 /** A table-of-contents leader: dots then a page number at the end of the line. */
 const TOC_LEADER = /^\s*\S.*\.{4,}\s*\d+\s*$/;
 const LABEL_LINE = /^\s*([^:\n]{2,60}):\s*$/;
-const KNOWN_WORDS = new Set([
-  "name",
-  "nationality",
-  "email",
-  "mail",
-  "phone",
-  "mobile",
-  "tel",
-  "telephone",
-  "address",
-  "building",
-  "community",
-  "area",
-  "unit",
-  "flat",
-  "plot",
-  "makani",
-  "licence",
-  "license",
-  "passport",
-  "emirates",
-  "visa",
-  "rent",
-  "deposit",
-  "cheques",
-  "cheque",
-  "bedrooms",
-  "date",
-  "commencement",
-  "expiry",
-  "reference",
-  "tenant",
-  "landlord",
-  "lessor",
-  "lessee",
-  "property",
-  "usage",
-  "start",
-  "end",
-  "period",
-  "premises",
-]);
 const SIGNATURE = /\b(signature|signed|sign here|signatory|witness|stamp|initials?)\b|توقيع|ختم/i;
 
-/** A "Label:" line counts only when the label is short and uses a word of the contract fields. */
-const isKnownLabel = (label: string): boolean => {
+/** A "Label:" line counts only when the label is short and uses one of the profile's label words. */
+const isKnownLabel = (label: string, labelWords: ReadonlySet<string>): boolean => {
   const words = label
     .toLowerCase()
     .split(/[^a-z؀-ۿ]+/)
     .filter(Boolean);
-  return words.length >= 1 && words.length <= 5 && words.some((w) => KNOWN_WORDS.has(w));
+  return words.length >= 1 && words.length <= 5 && words.some((w) => labelWords.has(w));
 };
 
 const tail = (s: string, n: number) => (s.length > n ? s.slice(s.length - n) : s);
@@ -115,7 +73,11 @@ const tail = (s: string, n: number) => (s.length > n ? s.slice(s.length - n) : s
  * with each blank replaced by `{{bN}}`, and the blanks in reading order. `{{` and `}}` already in
  * the source are spaced apart first so a token can't be forged.
  */
-export function detectBlanks(text: string, max = 400): { lines: string[]; blanks: RawBlank[]; truncated: boolean } {
+export function detectBlanks(
+  text: string,
+  max: number,
+  labelWords: ReadonlySet<string>,
+): { lines: string[]; blanks: RawBlank[]; truncated: boolean } {
   const src = joinSplitPlaceholders(text.replaceAll("{{", "{ {").replaceAll("}}", "} }").split("\n"));
   const blanks: RawBlank[] = [];
   const lines: string[] = [];
@@ -144,7 +106,7 @@ export function detectBlanks(text: string, max = 400): { lines: string[]; blanks
     }
     if (!found.length) {
       const lm = LABEL_LINE.exec(line);
-      if (lm && isKnownLabel(lm[1]!)) {
+      if (lm && isKnownLabel(lm[1]!, labelWords)) {
         // The next text line must not continue the sentence ("Tenant to pay:" then a list).
         const next = src.slice(i + 1).find((l) => l.trim()) ?? "";
         if (!/^\s*(?:[-•*(]|\d+[.)]|[a-z]\s*[.)]|[a-z])/.test(next)) {
@@ -253,6 +215,13 @@ export function inferBlankType(label: string, before: string, after: string): Fi
     )
   )
     return "date";
+  // S44: one numbered instalment's amount or due date ("Instalment 3 amount", "2nd instalment due date"), not a count.
+  const inst =
+    /\binstal+ments?\s*(?:no\.?\s*)?\d{1,2}\b|\b\d{1,2}(?:st|nd|rd|th)?\s+instal+ments?\b|\b(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\s+instal+ments?\b/;
+  if (inst.test(own)) {
+    if (/\b(due|date)\b/.test(own)) return "date";
+    if (/\b(amount|aed|value|sum)\b/.test(own)) return "money_fils";
+  }
   // Cheque blanks: a date, a list of dates or an amount, not a count (checked before the "cheques" count rule).
   if (/\b(cheques?|checks?)\s*(no\.?\s*|number\s*)?dates\b/.test(s)) return "text";
   if (/\b(cheques?|checks?)\s*(no\.?\s*|number\s*)?date\b|\bdates? of (the )?(\w+ )?(cheques?|checks?)\b/.test(s))
@@ -300,11 +269,16 @@ export interface Mapping {
  * Checks a proposed field against the catalogue and the blank's inferred type. Anything invalid
  * (unknown name, "none", wrong type) becomes `unmapped`; an unmapped blank blocks approval. `leave_empty` is a valid choice.
  */
-export function validateMapping(proposed: string | undefined, label: string, b: RawBlank): Mapping {
+export function validateMapping(
+  proposed: string | undefined,
+  label: string,
+  b: RawBlank,
+  sheet: TemplateSheet,
+): Mapping {
   const p = (proposed ?? "").trim();
   if (p === "leave_empty") return { field: "leave_empty", fieldType: null };
   if (!p || p === "none" || p === "unmapped") return { field: "unmapped", fieldType: null };
-  const info = sheetKeyInfo(p);
+  const info = sheet.keyInfo(p);
   if (!info) return { field: "unmapped", fieldType: null, note: "Proposed field is not a data field." };
   const type = info.type;
   const inferred = b.kind === "placeholder" ? null : inferBlankType(label, b.before, b.after);

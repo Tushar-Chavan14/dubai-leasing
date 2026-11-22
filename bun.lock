@@ -11,11 +11,38 @@
         "typescript": "^5",
       },
     },
+    "apps/portal": {
+      "name": "@portal/launcher",
+      "version": "0.0.0",
+      "dependencies": {
+        "@phosphor-icons/react": "2.1.10",
+        "@platform/kernel": "workspace:*",
+        "@platform/ui": "workspace:*",
+        "@tailwindcss/postcss": "4.3.4",
+        "drizzle-orm": "0.45.4",
+        "geist": "1.9.1",
+        "motion": "14.9.1",
+        "next": "16.4.6",
+        "pg": "8.23.1",
+        "react": "19.3.1",
+        "react-dom": "19.3.1",
+        "tailwindcss": "4.3.4",
+        "zod": "^4.6.7",
+      },
+      "devDependencies": {
+        "@types/node": "^24",
+        "@types/pg": "8.23.1",
+        "@types/react": "19.3.0",
+        "@types/react-dom": "19.3.0",
+        "drizzle-kit": "0.31.11",
+      },
+    },
     "modules/leasing/apps/ejari-mock": {
       "name": "@leasing/ejari-mock",
       "version": "0.0.0",
       "dependencies": {
         "@leasing/core": "workspace:*",
+        "@platform/adapters": "workspace:*",
         "drizzle-orm": "0.45.4",
         "hono": "4.13.13",
         "pdf-lib": "1.17.1",
@@ -110,6 +137,7 @@
         "@langchain/langgraph": "1.4.19",
         "@langchain/ollama": "1.3.0",
         "@leasing/core": "workspace:*",
+        "@platform/llm": "workspace:*",
         "zod": "^4.6.7",
       },
     },
@@ -118,6 +146,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@platform/kernel": "workspace:*",
+        "@platform/readers": "workspace:*",
         "uuidv7": "1.2.1",
         "zod": "^4.6.7",
       },
@@ -146,10 +175,12 @@
         "@leasing/rulebook": "workspace:*",
         "@platform/kernel": "workspace:*",
         "@platform/llm": "workspace:*",
+        "@platform/readers": "workspace:*",
         "unpdf": "1.9.1",
         "zod": "^4.6.7",
       },
       "devDependencies": {
+        "@platform/adapters": "workspace:*",
         "@resvg/resvg-js": "2.6.2",
         "pdf-lib": "1.17.1",
       },
@@ -159,6 +190,123 @@
       "version": "0.0.0",
       "dependencies": {
         "@leasing/core": "workspace:*",
+        "zod": "^4.6.7",
+      },
+    },
+    "modules/spa/apps/engine": {
+      "name": "@spa/engine",
+      "version": "0.0.0",
+      "dependencies": {
+        "@platform/adapters": "workspace:*",
+        "@platform/kernel": "workspace:*",
+        "@platform/llm": "workspace:*",
+        "@platform/readers": "workspace:*",
+        "@spa/copilot": "workspace:*",
+        "@spa/core": "workspace:*",
+        "@spa/db": "workspace:*",
+        "@spa/helpers": "workspace:*",
+        "@spa/rulebook": "workspace:*",
+        "drizzle-orm": "0.45.4",
+        "hono": "4.13.13",
+        "pg-boss": "12.38.0",
+        "zod": "^4.6.7",
+      },
+    },
+    "modules/spa/apps/oqood-mock": {
+      "name": "@spa/oqood-mock",
+      "version": "0.0.0",
+      "dependencies": {
+        "@platform/adapters": "workspace:*",
+        "@platform/kernel": "workspace:*",
+        "@spa/core": "workspace:*",
+        "drizzle-orm": "0.45.4",
+        "hono": "4.13.13",
+        "pdf-lib": "1.17.1",
+        "pg": "8.23.1",
+        "zod": "^4.6.7",
+      },
+      "devDependencies": {
+        "@spa/helpers": "workspace:*",
+        "@types/pg": "8.23.1",
+        "drizzle-kit": "0.31.11",
+      },
+    },
+    "modules/spa/apps/web": {
+      "name": "@spa/web",
+      "version": "0.0.0",
+      "dependencies": {
+        "@phosphor-icons/react": "2.1.10",
+        "@platform/ui": "workspace:*",
+        "@spa/core": "workspace:*",
+        "@tailwindcss/postcss": "4.3.4",
+        "geist": "1.9.1",
+        "hono": "4.13.13",
+        "motion": "14.9.1",
+        "next": "16.4.6",
+        "react": "19.3.1",
+        "react-dom": "19.3.1",
+        "tailwindcss": "4.3.4",
+        "zod": "^4.6.7",
+      },
+      "devDependencies": {
+        "@types/node": "^24",
+        "@types/react": "19.3.0",
+        "@types/react-dom": "19.3.0",
+      },
+    },
+    "modules/spa/packages/copilot": {
+      "name": "@spa/copilot",
+      "version": "0.0.0",
+      "dependencies": {
+        "@platform/kernel": "workspace:*",
+        "@platform/llm": "workspace:*",
+        "@spa/core": "workspace:*",
+        "zod": "^4.6.7",
+      },
+    },
+    "modules/spa/packages/core": {
+      "name": "@spa/core",
+      "version": "0.0.0",
+      "dependencies": {
+        "@platform/kernel": "workspace:*",
+        "zod": "^4.6.7",
+      },
+    },
+    "modules/spa/packages/db": {
+      "name": "@spa/db",
+      "version": "0.0.0",
+      "dependencies": {
+        "@spa/core": "workspace:*",
+        "drizzle-orm": "0.45.4",
+        "pg": "8.23.1",
+      },
+      "devDependencies": {
+        "@types/pg": "8.23.1",
+        "drizzle-kit": "0.31.11",
+      },
+    },
+    "modules/spa/packages/helpers": {
+      "name": "@spa/helpers",
+      "version": "0.0.0",
+      "dependencies": {
+        "@platform/adapters": "workspace:*",
+        "@platform/kernel": "workspace:*",
+        "@platform/llm": "workspace:*",
+        "@platform/readers": "workspace:*",
+        "@spa/core": "workspace:*",
+        "@spa/rulebook": "workspace:*",
+        "zod": "^4.6.7",
+      },
+      "devDependencies": {
+        "@resvg/resvg-js": "2.6.2",
+      },
+    },
+    "modules/spa/packages/rulebook": {
+      "name": "@spa/rulebook",
+      "version": "0.0.0",
+      "dependencies": {
+        "@platform/kernel": "workspace:*",
+        "@spa/core": "workspace:*",
         "zod": "^4.6.7",
       },
     },
@@ -185,8 +333,24 @@
       "name": "@platform/llm",
       "version": "0.0.0",
       "dependencies": {
+        "@langchain/core": "1.2.14",
+        "@langchain/ollama": "1.3.0",
+        "@platform/kernel": "workspace:*",
         "ollama": "0.6.4",
         "zod": "^4.6.7",
+      },
+    },
+    "platform/readers": {
+      "name": "@platform/readers",
+      "version": "0.0.0",
+      "dependencies": {
+        "@platform/kernel": "workspace:*",
+        "@platform/llm": "workspace:*",
+        "unpdf": "1.9.1",
+        "zod": "^4.6.7",
+      },
+      "devDependencies": {
+        "pdf-lib": "1.17.1",
       },
     },
     "platform/ui": {
@@ -202,71 +366,6 @@
         "react": "19.3.1",
         "zod": "^4.6.7",
       },
-    },
-    "spa/apps/engine": {
-      "name": "@spa/engine",
-      "version": "0.0.0",
-      "dependencies": {
-        "@platform/kernel": "workspace:*",
-        "@spa/core": "workspace:*",
-        "@spa/db": "workspace:*",
-        "drizzle-orm": "0.45.4",
-        "hono": "4.13.13",
-        "pg-boss": "12.38.0",
-        "zod": "^4.6.7",
-      },
-    },
-    "spa/apps/web": {
-      "name": "@spa/web",
-      "version": "0.0.0",
-      "dependencies": {
-        "@phosphor-icons/react": "2.1.10",
-        "@platform/ui": "workspace:*",
-        "@spa/core": "workspace:*",
-        "@spa/engine": "workspace:*",
-        "@tailwindcss/postcss": "4.3.4",
-        "geist": "1.9.1",
-        "hono": "4.13.13",
-        "motion": "14.9.1",
-        "next": "16.4.6",
-        "react": "19.3.1",
-        "react-dom": "19.3.1",
-        "tailwindcss": "4.3.4",
-        "zod": "^4.6.7",
-      },
-      "devDependencies": {
-        "@types/node": "^24",
-        "@types/react": "19.3.0",
-        "@types/react-dom": "19.3.0",
-      },
-    },
-    "spa/packages/core": {
-      "name": "@spa/core",
-      "version": "0.0.0",
-      "dependencies": {
-        "zod": "^4.6.7",
-      },
-    },
-    "spa/packages/db": {
-      "name": "@spa/db",
-      "version": "0.0.0",
-      "dependencies": {
-        "@spa/core": "workspace:*",
-        "drizzle-orm": "0.45.4",
-        "pg": "8.23.1",
-      },
-      "devDependencies": {
-        "@types/pg": "8.23.1",
-        "drizzle-kit": "0.31.11",
-      },
-    },
-    "spa/packages/helpers": {
-      "name": "@spa/helpers",
-      "version": "0.0.0",
-    },
-    "spa/packages/rulebook": {
-      "name": "@spa/rulebook",
-      "version": "0.0.0",
     },
   },
   "packages": {
@@ -566,7 +665,11 @@
 
     "@platform/llm": ["@platform/llm@workspace:platform/llm"],
 
+    "@platform/readers": ["@platform/readers@workspace:platform/readers"],
+
     "@platform/ui": ["@platform/ui@workspace:platform/ui"],
+
+    "@portal/launcher": ["@portal/launcher@workspace:apps/portal"],
 
     "@resvg/resvg-js": ["@resvg/resvg-js@2.6.2", "", { "optionalDependencies": { "@resvg/resvg-js-android-arm-eabi": "2.6.2", "@resvg/resvg-js-android-arm64": "2.6.2", "@resvg/resvg-js-darwin-arm64": "2.6.2", "@resvg/resvg-js-darwin-x64": "2.6.2", "@resvg/resvg-js-linux-arm-gnueabihf": "2.6.2", "@resvg/resvg-js-linux-arm64-gnu": "2.6.2", "@resvg/resvg-js-linux-arm64-musl": "2.6.2", "@resvg/resvg-js-linux-x64-gnu": "2.6.2", "@resvg/resvg-js-linux-x64-musl": "2.6.2", "@resvg/resvg-js-win32-arm64-msvc": "2.6.2", "@resvg/resvg-js-win32-ia32-msvc": "2.6.2", "@resvg/resvg-js-win32-x64-msvc": "2.6.2" } }, "sha512-xBaJish5OeGmniDj9cW5PRa/PtmuVU3ziqrbr5xJj901ZDN4TosrVaNZpEiLZAxdfnhAe7uQ7QFWfjPe9d9K2Q=="],
 
@@ -594,17 +697,21 @@
 
     "@resvg/resvg-js-win32-x64-msvc": ["@resvg/resvg-js-win32-x64-msvc@2.6.2", "", { "os": "win32", "cpu": "x64" }, "sha512-ZXtYhtUr5SSaBrUDq7DiyjOFJqBVL/dOBN7N/qmi/pO0IgiWW/f/ue3nbvu9joWE5aAKDoIzy/CxsY0suwGosQ=="],
 
-    "@spa/core": ["@spa/core@workspace:spa/packages/core"],
+    "@spa/copilot": ["@spa/copilot@workspace:modules/spa/packages/copilot"],
 
-    "@spa/db": ["@spa/db@workspace:spa/packages/db"],
+    "@spa/core": ["@spa/core@workspace:modules/spa/packages/core"],
 
-    "@spa/engine": ["@spa/engine@workspace:spa/apps/engine"],
+    "@spa/db": ["@spa/db@workspace:modules/spa/packages/db"],
 
-    "@spa/helpers": ["@spa/helpers@workspace:spa/packages/helpers"],
+    "@spa/engine": ["@spa/engine@workspace:modules/spa/apps/engine"],
 
-    "@spa/rulebook": ["@spa/rulebook@workspace:spa/packages/rulebook"],
+    "@spa/helpers": ["@spa/helpers@workspace:modules/spa/packages/helpers"],
 
-    "@spa/web": ["@spa/web@workspace:spa/apps/web"],
+    "@spa/oqood-mock": ["@spa/oqood-mock@workspace:modules/spa/apps/oqood-mock"],
+
+    "@spa/rulebook": ["@spa/rulebook@workspace:modules/spa/packages/rulebook"],
+
+    "@spa/web": ["@spa/web@workspace:modules/spa/apps/web"],
 
     "@standard-schema/spec": ["@standard-schema/spec@1.1.0", "", {}, "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="],
 

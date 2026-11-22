@@ -1,6 +1,6 @@
 import { getDocumentProxy, getResolvedPDFJS } from "unpdf";
-import { isPdf, MAX_BYTES, normalizeWs, type ParseState, raceTimeout } from "../contract-template/extract.ts";
-import { MAX_PAGES } from "../contract-template/schema.ts";
+import { isPdf, MAX_BYTES, normalizeWs, type ParseState, raceTimeout } from "../pdf/extract.ts";
+import { MAX_PAGES } from "../pdf/limits.ts";
 import { encodePng } from "./png.ts";
 import { MAX_LOGO_BYTES, MAX_LOGO_PIXELS, type TemplateLogo, type TemplateStyle } from "./schema.ts";
 

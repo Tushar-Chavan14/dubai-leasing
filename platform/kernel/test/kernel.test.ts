@@ -236,3 +236,15 @@ describe("helper runner", () => {
     expect(r.attempts).toBe(1);
   });
 });
+
+describe("portalKeyOk (S69)", () => {
+  test("true only for the same configured key", async () => {
+    const { portalKeyOk } = await import("../src/portal-key.ts");
+    expect(portalKeyOk("k".repeat(32), "k".repeat(32))).toBe(true);
+    expect(portalKeyOk("k".repeat(31), "k".repeat(32))).toBe(false);
+    expect(portalKeyOk("x", "k".repeat(32))).toBe(false);
+    expect(portalKeyOk(undefined, "k".repeat(32))).toBe(false);
+    expect(portalKeyOk("", "")).toBe(false);
+    expect(portalKeyOk("anything", undefined)).toBe(false);
+  });
+});

@@ -2,7 +2,7 @@ import { degrees, PDFDocument, type PDFFont, rgb, StandardFonts } from "pdf-lib"
 
 /**
  * Renders a simple structured document to an A4 PDF: plain typography, no logos or government
- * branding. Content comes from the notice templates in `packages/helpers`.
+ * branding. Content comes from the notice templates in `modules/leasing/packages/helpers`.
  */
 export type PdfBlock =
   | { kind: "title"; text: string }

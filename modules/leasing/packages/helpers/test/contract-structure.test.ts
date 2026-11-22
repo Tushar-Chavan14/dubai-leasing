@@ -31,7 +31,7 @@ import {
   leasingTemplateProfile,
   type TemplateProfile,
 } from "../src/index.ts";
-import { raceTimeout } from "../src/contract-template/extract.ts";
+import { raceTimeout } from "@platform/readers/pdf/extract";
 import { generatePdf, SAMPLES } from "../src/contract-structure/evals/fixtures.ts";
 
 const raw = (over: Partial<RawBlank> = {}): RawBlank => ({

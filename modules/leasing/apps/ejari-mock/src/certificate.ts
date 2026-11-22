@@ -1,4 +1,4 @@
-import { degrees, PDFDocument, rgb, StandardFonts } from "pdf-lib";
+import { type RegistryMockProfile, simulatedCertificate } from "@platform/adapters";
 
 export interface CertificateData {
   system?: "ejari" | "tawtheeq";
@@ -30,53 +30,32 @@ export const CERTIFICATE_WORDING = {
   },
 } as const;
 
-const safe = (s: string) => s.replace(/[^\x20-\x7e\xa0-\xff]/g, "?");
+/** The two simulated registries' wording as shell profiles (the shell itself lives in `@platform/adapters`). */
+export const REGISTRY_PROFILES: Record<"ejari" | "tawtheeq", RegistryMockProfile> = {
+  ejari: { systemLabel: "Ejari (simulated)", wording: CERTIFICATE_WORDING.ejari },
+  tawtheeq: { systemLabel: "Tawtheeq (simulated)", wording: CERTIFICATE_WORDING.tawtheeq },
+};
 
 /**
  * A plain demo certificate, watermarked SIMULATED on the page. Grey type only: no DLD logo,
  * colours, layout or wording (AGENTS rule 9).
  */
-export async function certificatePdf(d: CertificateData): Promise<Uint8Array> {
-  const doc = await PDFDocument.create();
+export function certificatePdf(d: CertificateData): Promise<Uint8Array> {
   const twq = d.system === "tawtheeq";
-  const w = CERTIFICATE_WORDING[twq ? "tawtheeq" : "ejari"];
-  doc.setTitle(`Simulated tenancy registration ${d.ejariNo}`);
-  doc.setProducer(w.producer);
-  const font = await doc.embedFont(StandardFonts.Helvetica);
-  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
-  const page = doc.addPage([595.28, 841.89]);
-  const ink = rgb(0.15, 0.15, 0.15);
-  page.drawText(w.watermark, {
-    x: 70,
-    y: 250,
-    size: twq ? 22 : 26,
-    font: bold,
-    color: rgb(0.6, 0.6, 0.6),
-    opacity: 0.35,
-    rotate: degrees(40),
+  return simulatedCertificate({
+    profile: REGISTRY_PROFILES[twq ? "tawtheeq" : "ejari"],
+    documentTitle: `Simulated tenancy registration ${d.ejariNo}`,
+    watermarkSize: twq ? 22 : 26,
+    rows: [
+      ["Registration no.", d.ejariNo],
+      ["Issued on", d.issuedOn],
+      ["Property no.", d.dldPropertyNo],
+      ["Unit no.", d.unitNo],
+      ["Makani no.", d.makaniNo],
+      ["Tenant", d.tenantName],
+      ["Landlord", d.landlordName],
+      ["Period", `${d.startOn} to ${d.endOn}`],
+      ["Annual rent", d.annualRent],
+    ],
   });
-  let y = 780;
-  const text = (s: string, size = 11, f = font) => {
-    page.drawText(safe(s), { x: 56, y, size, font: f, color: ink });
-    y -= size * 1.7;
-  };
-  text(w.title, 18, bold);
-  text(w.subline, 9);
-  y -= 14;
-  for (const [k, v] of [
-    ["Registration no.", d.ejariNo],
-    ["Issued on", d.issuedOn],
-    ["Property no.", d.dldPropertyNo],
-    ["Unit no.", d.unitNo],
-    ["Makani no.", d.makaniNo],
-    ["Tenant", d.tenantName],
-    ["Landlord", d.landlordName],
-    ["Period", `${d.startOn} to ${d.endOn}`],
-    ["Annual rent", d.annualRent],
-  ] as const) {
-    page.drawText(safe(k), { x: 56, y, size: 10, font, color: rgb(0.4, 0.4, 0.4) });
-    page.drawText(safe(v), { x: 190, y, size: 11, font: bold, color: ink });
-    y -= 22;
-  }
-  return doc.save();
 }
