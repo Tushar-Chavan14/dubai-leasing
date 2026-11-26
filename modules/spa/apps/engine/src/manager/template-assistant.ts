@@ -2,7 +2,7 @@ import { newId } from "@platform/kernel/ids";
 import { maskPiiText } from "@platform/kernel/pii";
 import { untrusted } from "@platform/llm/agent";
 import type { ContractStructureData, TemplateBlank } from "@platform/readers/structure/schema";
-import { type SpaRole, spaDataSheet } from "@spa/core";
+import { type SpaRole, spaDataSheet, hasAnyRole, hasRole } from "@spa/core";
 import { assistantProposals, spaTemplates, spaTemplateVersions, withSpaTx } from "@spa/db";
 import { type TemplateBackend, type TemplateCheck, type TemplateProposal, templateAssistantTurn } from "@spa/helpers";
 import { and, eq } from "drizzle-orm";
@@ -11,7 +11,7 @@ import type { SpaContext } from "./context.ts";
 import { conflict, forbidden, notFound } from "./errors.ts";
 import { BlankLabel, checkRemap, relabelBlank, remapBlank } from "./templates.ts";
 
-type Person = { id: string; role: SpaRole };
+type Person = { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined };
 /** Who may talk to the template assistant: the people who manage and approve templates. */
 const ASSISTANT_ROLES: readonly SpaRole[] = ["admin", "legal"];
 
@@ -183,7 +183,7 @@ export async function runTemplateAssistant(
   rt: AssistantRuntime,
   input: { versionId: string; text: string; user: Person },
 ): Promise<TemplateAssistantReply> {
-  if (!ASSISTANT_ROLES.includes(input.user.role)) throw forbidden("only admin and legal use the template assistant");
+  if (!hasAnyRole(input.user, ASSISTANT_ROLES)) throw forbidden("only admin and legal use the template assistant");
   await asVersion(ctx, input.versionId);
   const threadId = await threadFor(ctx, { kind: "template", subjectId: input.versionId, principal: input.user.id });
   const history = await threadHistory(ctx, threadId);
@@ -222,7 +222,7 @@ export async function applyTemplateProposal(
   id: string,
   user: Person,
 ): Promise<{ checks: TemplateCheck[] }> {
-  if (user.role !== "admin") throw forbidden("only an admin applies a proposal");
+  if (!hasRole(user, "admin")) throw forbidden("only an admin applies a proposal");
   // One transaction: the proposal row is locked, the blank is changed and the proposal is marked applied, or none of it
   // happens. Two clicks at once: the second waits for the lock, then finds the proposal applied and is refused.
   return withSpaTx(ctx.database, async (tx) => {
@@ -249,7 +249,7 @@ export async function applyTemplateProposal(
 
 /** An admin sets a proposal aside. */
 export async function dismissTemplateProposal(ctx: SpaContext, id: string, user: Person): Promise<void> {
-  if (user.role !== "admin") throw forbidden("only an admin dismisses a proposal");
+  if (!hasRole(user, "admin")) throw forbidden("only an admin dismisses a proposal");
   await loadProposal(ctx, id);
   const done = await ctx.database.db
     .update(assistantProposals)

@@ -6,7 +6,7 @@ import { loadSpaEnv, sessionSecret } from "@spa/core/env";
 import { createSpaDatabase } from "@spa/db";
 import { createApp } from "./app.ts";
 import { SpaDemoClock } from "./clock.ts";
-import { createBoss, startJobs } from "./jobs.ts";
+import { createBoss, startJobs, VIEWING_MAIL_JOB, viewingMailKey } from "./jobs.ts";
 import { failClosedFacts } from "./manager/facts.ts";
 import { expirePermits } from "./manager/listings.ts";
 import { enqueueOnDealEntered, screenDeal } from "./manager/aml-screening.ts";
@@ -32,6 +32,7 @@ import { queueAgreementReview, runAgreementReview } from "./manager/agreement-re
 import { chaseDeal, chaseSweep } from "./manager/chase.ts";
 import { enqueueSigningOnEntered, finishSigning, inviteSigners, remindSigner } from "./manager/signing.ts";
 import { runAlerts } from "./manager/alerts.ts";
+import { sendViewingMail } from "./manager/viewings.ts";
 import { generateMonthlyReport } from "./manager/compliance-report.ts";
 import { runRetentionReview } from "./manager/retention.ts";
 
@@ -42,6 +43,8 @@ const clock = new SpaDemoClock(database, env.SPA_DEMO_MODE);
 await clock.refresh();
 // Content-addressed files under data/ (ignored by git); never leasing's data/uploads.
 const documents = new LocalDiskStore(resolve(import.meta.dir, "../../../../data/spa-uploads"));
+// Marketing photos of projects, units and listings (S75): not personal data, so never in the document store.
+const media = new LocalDiskStore(resolve(import.meta.dir, "../../../../data/spa-media"));
 // KYC reads documents with a local vision model only (S25, rule 8); without one configured the jobs wait.
 // The URL must name a local or private-network host: a public one is refused and the handlers don't start.
 const ollamaCheck = env.OLLAMA_URL ? checkOllamaUrl(env.OLLAMA_URL) : null;
@@ -84,6 +87,17 @@ const context = (): SpaContext => ({
   facts: failClosedFacts,
   amlListVersion: screening?.listVersion ?? null,
   mail,
+  viewingLinkSecret: sessionSecret(env),
+  queueViewingMail: async (e) => {
+    await jobs.boss.send(
+      VIEWING_MAIL_JOB,
+      { viewingId: e.viewingId, milestone: e.milestone },
+      {
+        singletonKey: viewingMailKey(e.viewingId, e.milestone),
+        ...(e.delaySeconds ? { startAfter: e.delaySeconds } : {}),
+      },
+    );
+  },
   onDealEntered: async (e, tx) => {
     await enqueueOnDealEntered(context(), jobs.boss, e);
     await proposeOnDealEntered(context(), e, tx);
@@ -192,6 +206,8 @@ const jobs = await startJobs(createBoss(env.SPA_DATABASE_URL), clock, {
       );
     return r;
   },
+  // Viewing emails (S79): fixed wording written by code; each is claimed once per milestone, so a rerun sends nothing new.
+  viewingMail: (data) => sendViewingMail(context(), data.viewingId, data.milestone),
   // Chasing (S60): fixed admin-approved templates filled by code, sent by email; no model.
   chaseSweep: () => chaseSweep(context(), jobs.boss),
   chase: (data: { dealId: string }) => chaseDeal(context(), data.dealId),
@@ -229,6 +245,7 @@ const app = createApp({
   sessionSecret: sessionSecret(env),
   demoMode: env.SPA_DEMO_MODE,
   documents,
+  media,
   mail,
   portalSummaryKey: env.PORTAL_SUMMARY_KEY,
   portalPublicKey: env.SPA_PORTAL_PUBLIC_KEY,

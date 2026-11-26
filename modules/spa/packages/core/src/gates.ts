@@ -1,6 +1,6 @@
 import { defineGates, type GateDefinition } from "@platform/kernel/gates";
 import { z } from "zod";
-import type { SpaRole } from "./roles.ts";
+import { rolesOf, type SpaRole } from "./roles.ts";
 
 /**
  * SPA human gates (architecture §5, S3, S13, S20, S22). The manager creates a `spa_approvals` row and pauses; only a
@@ -91,13 +91,17 @@ export function parseDecisionFor(g: SpaGateId, input: unknown): SpaApprovalDecis
   return d;
 }
 
-/** Whether this user may decide this approval: right role, not admin, not their own proposal. */
+/**
+ * Whether this user may decide this approval: any of their roles is the gate's approver (an admin alone decides
+ * nothing), and it is not their own proposal. A user may hold several roles (S83), each checked on its own.
+ */
 export function mayDecide(
   approval: { gate: SpaGateId; proposedBy: string },
-  user: { id: string; role: SpaRole },
+  user: { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined },
 ): { ok: true } | { ok: false; reason: string } {
-  if (user.role === "admin") return { ok: false, reason: "admin approves nothing" };
-  if (!canDecideSpaGate(approval.gate, user.role))
+  const roles = rolesOf(user);
+  if (roles.every((r) => r === "admin")) return { ok: false, reason: "admin approves nothing" };
+  if (!roles.some((r) => canDecideSpaGate(approval.gate, r)))
     return { ok: false, reason: `only ${spaGates[approval.gate].approver} decides ${approval.gate}` };
   if (approval.proposedBy === `user:${user.id}` || approval.proposedBy === `copilot:${user.id}`)
     return { ok: false, reason: "you can't approve your own proposal" };

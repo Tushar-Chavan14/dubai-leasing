@@ -65,3 +65,51 @@ describe("SPA gates (architecture §5)", () => {
     });
   });
 });
+
+describe("combined roles (M5c, S83)", () => {
+  const karim = { id: "k", role: "sales_manager", roles: ["sales_manager", "compliance_officer", "mlro"] } as const;
+  const omar = { id: "o", role: "legal", roles: ["legal", "finance"] } as const;
+  const adam = { id: "a", role: "admin", roles: ["admin", "sales_admin"] } as const;
+  const rania = { id: "r", role: "sales_officer", roles: ["sales_officer"] } as const;
+  const by = "user:someone-else";
+  const decides = (gate: SpaGateId, u: Parameters<typeof mayDecide>[1]) => mayDecide({ gate, proposedBy: by }, u).ok;
+
+  test("a user decides a gate through any one of their roles", () => {
+    expect(decides("aml_flag", karim)).toBe(true);
+    expect(decides("aml_report", karim)).toBe(true);
+    expect(decides("kyc_review", karim)).toBe(true);
+    expect(decides("agreement_approval", omar)).toBe(true);
+    expect(decides("settlement_approval", omar)).toBe(true);
+    expect(decides("noc_review", adam)).toBe(true);
+    expect(decides("oqood_submission", adam)).toBe(true);
+    expect(decides("transfer_submission", adam)).toBe(true);
+  });
+  test("a gate keeps its one approver role: other roles still refuse", () => {
+    expect(decides("settlement_approval", karim)).toBe(false);
+    expect(decides("cancellation", omar)).toBe(false);
+    expect(decides("kyc_review", adam)).toBe(false);
+    expect(decides("agreement_approval", rania)).toBe(false);
+  });
+  test("admin alone approves nothing; with sales_admin only sales_admin gates", () => {
+    const only = { id: "x", role: "admin" } as const;
+    for (const g of SpaGateId.options) expect(decides(g, only)).toBe(false);
+    expect(decides("settlement_approval", adam)).toBe(false);
+  });
+  test("maker-checker holds for combined roles", () => {
+    expect(mayDecide({ gate: "settlement_approval", proposedBy: "user:o" }, omar)).toEqual({
+      ok: false,
+      reason: "you can't approve your own proposal",
+    });
+    expect(mayDecide({ gate: "cancellation", proposedBy: "copilot:k" }, karim).ok).toBe(false);
+  });
+  test("gates by the four demo users", () => {
+    const expected: Record<string, SpaGateId[]> = {
+      r: ["helper_review"],
+      k: ["seller_verification", "price_out_of_range", "kyc_review", "aml_flag", "aml_report", "cancellation", "deposit_release", "edd_signoff", "helper_review"],
+      o: ["template_approval", "agreement_approval", "settlement_approval", "refund"],
+      a: ["noc_review", "oqood_submission", "transfer_submission"],
+    };
+    for (const u of [rania, karim, omar, adam])
+      expect(SpaGateId.options.filter((g) => decides(g, u)).toSorted()).toEqual(expected[u.id]!.toSorted());
+  });
+});

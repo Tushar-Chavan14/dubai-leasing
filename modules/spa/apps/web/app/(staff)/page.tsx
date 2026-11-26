@@ -1,5 +1,4 @@
 import { EmptyState } from "@platform/ui/empty-state";
-import { PageTitle } from "@platform/ui/page";
 import { railItems } from "@spa/core/roles";
 import { HomeView } from "../../components/home-view";
 import { engine, engineGet, read } from "../../lib/engine";
@@ -20,11 +19,11 @@ export default async function Home() {
     inventory: rail.some((i) => i.screen === "inventory"),
   };
   return (
-    <div className="grid gap-6">
-      <PageTitle
-        title={`Good morning, ${first}`}
-        lede={clock ? `${weekdayDate(clock.today)} · ${user.roleLabel}` : user.roleLabel}
-      />
+    <div className="mx-auto grid max-w-[820px] gap-6 px-1.5 pb-6 pt-5 font-sans text-ink">
+      <header>
+        <h1 className="m-0 text-[26px] font-semibold tracking-[-0.025em] text-ink">Hello, {first}</h1>
+        <p className="m-0 mt-1 text-sm text-muted">{clock ? `${weekdayDate(clock.today)} UAE time` : user.roleLabel}</p>
+      </header>
       {home ? (
         <HomeView
           summary={home.summary}

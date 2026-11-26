@@ -1,16 +1,4 @@
-import {
-  type HelperMode,
-  HELPER_LABELS,
-  HELPER_MODES,
-  isSwitchableHelper,
-  READER_SCOPES,
-  REVIEWABLE_READER_SCOPES,
-  reviewAllowed,
-  scopeAllowed,
-  type SpaRole,
-  SWITCHABLE_HELPERS,
-  type SwitchableHelper,
-} from "@spa/core";
+import { type HelperMode, HELPER_LABELS, HELPER_MODES, isSwitchableHelper, READER_SCOPES, REVIEWABLE_READER_SCOPES, reviewAllowed, scopeAllowed, type SpaRole, SWITCHABLE_HELPERS, type SwitchableHelper, hasRole } from "@spa/core";
 import {
   deals,
   documentReads,
@@ -73,10 +61,10 @@ export interface HelperSettingResult {
  */
 export async function setHelperMode(
   ctx: SpaContext,
-  user: { id: string; role: SpaRole },
+  user: { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined },
   input: unknown,
 ): Promise<HelperSettingResult> {
-  if (user.role !== "admin") throw forbidden("only an admin changes how the helpers run");
+  if (!hasRole(user, "admin")) throw forbidden("only an admin changes how the helpers run");
   if (input && typeof input === "object" && Object.keys(input).some((k) => MODEL_KEY.test(k)))
     throw unprocessable("model_read_only", "models are set in the engine's environment, not here");
   const body = SettingBody.safeParse(input);
@@ -134,15 +122,15 @@ const MODEL_OF: Record<SwitchableHelper, keyof ModelTags | null> = {
 };
 
 /** What Settings → AI helpers shows (S59). An admin edits; a sales manager reads; nobody else. */
-export async function getHelperSettings(ctx: SpaContext, user: { id: string; role: SpaRole }, models: ModelTags) {
-  if (user.role !== "admin" && user.role !== "sales_manager")
+export async function getHelperSettings(ctx: SpaContext, user: { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined }, models: ModelTags) {
+  if (!hasRole(user, "admin") && !hasRole(user, "sales_manager"))
     throw forbidden("only an admin or a sales manager sees how the helpers run");
   const rows = await ctx.database.db.select().from(spaHelperSettings).orderBy(desc(spaHelperSettings.version));
   const names = new Map(
     (await ctx.database.db.select({ id: spaUsers.id, name: spaUsers.name }).from(spaUsers)).map((u) => [u.id, u.name]),
   );
   return {
-    canEdit: user.role === "admin",
+    canEdit: hasRole(user, "admin"),
     helpers: SWITCHABLE_HELPERS.map((helper) => {
       const mine = rows.filter((r) => r.helper === helper);
       const latest = new Map<string, (typeof mine)[number]>();

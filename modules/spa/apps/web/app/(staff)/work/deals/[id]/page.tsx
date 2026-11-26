@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { z } from "zod";
+import { webEnv } from "../../../../../lib/env";
 import { DealRecord } from "../../../../../components/deal-record";
 import { engineGet } from "../../../../../lib/engine";
 import { loadRecordPage } from "../../../../../lib/loaders";
@@ -35,6 +36,7 @@ export default async function Page({
           : null
       }
       viewer={user.role}
+      demo={webEnv().SPA_DEMO_MODE}
     />
   );
 }

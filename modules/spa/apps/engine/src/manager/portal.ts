@@ -54,7 +54,8 @@ const VIEW_CLOSED = new Set(["CANCELLED", "COMPLETED"]);
 const PAGE = { documents: "documents", view: "status" } as const;
 const addDaysTs = (at: Date, days: number): Date => new Date(at.getTime() + days * 86_400_000);
 
-export const hashPortalToken = hashLinkToken;
+// A wrapper, not an alias: `signing.ts` and this file import each other, and an alias read at load time can be too early.
+export const hashPortalToken = (token: string): string => hashLinkToken(token);
 export { PORTAL_PURPOSES };
 
 // ---- issuing ------------------------------------------------------------------------------------------------------

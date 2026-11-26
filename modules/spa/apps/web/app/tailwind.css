@@ -4,3 +4,61 @@
 @import "tailwindcss/theme.css" layer(theme);
 @import "tailwindcss/utilities.css" layer(utilities);
 @import "@platform/ui/theme.css";
+
+/* ---------- record cards (the listing record, as leasing's Workspace) ----------
+   Inside a `.record-cards` pane the outermost sections become cards with a chevron that folds them; a section inside
+   one (Ownership inside Documents) is a bordered sub-card, also foldable. Same rules as leasing's globals.css. */
+.section-toggle {
+  display: none;
+}
+.record-cards [data-section]:not([data-section] [data-section]) {
+  background: var(--ds-page);
+  border: 1px solid var(--ds-line);
+  border-radius: 16px;
+  padding: 18px 20px 20px;
+  box-shadow: var(--ds-shadow);
+}
+.record-cards [data-section]:not([data-section] [data-section]) > :first-child {
+  padding-bottom: 12px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--ds-line);
+}
+.record-cards [data-section][data-highlight]:not([data-section] [data-section]) {
+  border-color: var(--ds-primary);
+  box-shadow:
+    0 0 0 1px var(--ds-primary),
+    var(--ds-shadow);
+}
+.record-cards [data-section][data-highlight]:not([data-section] [data-section]) > :first-child h2::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 999px;
+  background: var(--ds-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ds-primary) 20%, transparent);
+  vertical-align: 1px;
+}
+.record-cards [data-section] > :first-child .section-toggle {
+  display: grid;
+}
+.record-cards [data-section][data-collapsed] > :not(:first-child) {
+  display: none;
+}
+.record-cards [data-section][data-collapsed] > :first-child {
+  padding-bottom: 0;
+  margin-bottom: 0;
+  border-bottom: 0;
+}
+.record-cards [data-section] [data-section] {
+  border: 1px solid var(--ds-line);
+  border-radius: 12px;
+  padding: 12px 14px 14px;
+  background: color-mix(in srgb, var(--ds-accent) 45%, var(--ds-page));
+  border-color: color-mix(in srgb, var(--ds-primary) 18%, var(--ds-line));
+}
+.record-cards [data-section] [data-section]:not([data-collapsed]) > :first-child {
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--ds-line);
+}

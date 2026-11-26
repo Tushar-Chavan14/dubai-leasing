@@ -44,13 +44,25 @@ export const ContractAgentContext = z.object({
   /**
    * The approved company template the rule pins: its paragraphs with `{{bN}}` blanks. Null: standard contract.
    * `rewritable` (D64): a body paragraph the agent may reword from the unit's records (not a heading, title or a
-   * paragraph that prints a company clause). Missing means no.
+   * paragraph that prints a company clause). Missing means no. `particulars` (D77): see `unitParticulars`.
    */
   template: z
     .object({
       id: z.string(),
       version: z.number().int(),
-      paragraphs: z.array(z.object({ key: z.string(), text: z.string(), rewritable: z.boolean().optional() })),
+      paragraphs: z.array(
+        z.object({
+          key: z.string(),
+          text: z.string(),
+          rewritable: z.boolean().optional(),
+          /** The unit's particulars (type, rooms, use; no obligation and not a clause): code copies type and use in. */
+          particulars: z.boolean().optional(),
+          /** D79: the title or a heading that states the use ("RESIDENTIAL LEASE CONTRACT"); only its use word may change. */
+          heading: z.boolean().optional(),
+        }),
+      ),
+      /** D79: blank tokens (`{{b30}}`) that print the unit's type: a type word right after one is a leftover sample value. */
+      typeBlanks: z.array(z.string()).optional(),
     })
     .nullable(),
   /**

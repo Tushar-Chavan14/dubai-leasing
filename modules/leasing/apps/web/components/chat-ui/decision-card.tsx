@@ -2,13 +2,11 @@
 
 import { ActionForm } from "@platform/ui/action-form";
 import Link from "next/link";
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { recordReservation, recordViewingOutcome } from "../../app/(staff)/applications/actions";
 import { CheckIcon as IconCheck, WarningIcon as IconWarning } from "@phosphor-icons/react";
-import {
-  recordRegistrationNoCertificate,
-  recordRegistrationRejected,
-} from "../../app/(staff)/leases/[id]/registration-actions";
+import { recordRegistrationRejected } from "../../app/(staff)/leases/[id]/registration-actions";
+import { RecordRegistrationForm } from "../manual-registration";
 import { DecisionForm } from "../decision-form";
 import { CardError, CardNote, CardShell, Facts } from "./card-shell";
 import { Button } from "@platform/ui/button";
@@ -167,51 +165,25 @@ function Reservation({ card }: { card: Extract<DecisionCardData, { decision: "re
 
 type RegState = { ok?: boolean; message?: string };
 
-/** The lease page's record-registration form without the file; the copilot only prefills what the user typed. */
+/** The lease page's record-registration form, certificate upload included; the copilot only prefills what the user typed. */
 function RegistrationRecord({ card }: { card: Extract<DecisionCardData, { decision: "registration" }> }) {
-  const [state, action, pending] = useActionState<RegState, FormData>(recordRegistrationNoCertificate, {});
-  if (state.ok) return <Recorded text={state.message ?? "Registration recorded."} />;
+  const [done, setDone] = useState(false);
+  if (done) return <Recorded text="Registration recorded." />;
   const spec = registrationRecordSpec(card);
   return (
-    <form action={action} className="grid gap-2.5">
-      <input type="hidden" name="leaseId" value={spec.hidden.leaseId} />
-      <input type="hidden" name="submissionId" value={spec.hidden.submissionId} />
-      {state.message && <CardError>{state.message}</CardError>}
-      <label className={FIELD}>
-        <span className={LABEL}>{spec.reference.label}</span>
-        <input
-          className={INPUT}
-          name="reference"
-          required={spec.reference.required}
-          maxLength={spec.reference.maxLength}
-          defaultValue={spec.reference.defaultValue}
-          placeholder="As shown in the portal"
-        />
-      </label>
-      <label className={FIELD}>
-        <span className={LABEL}>Registered on</span>
-        <input
-          className={INPUT}
-          name="issuedOn"
-          type="date"
-          required={spec.issuedOn.required}
-          max={spec.issuedOn.max}
-          defaultValue={spec.issuedOn.defaultValue}
-        />
-      </label>
-      <label className={FIELD}>
-        <span className={LABEL}>{spec.fee.label}</span>
-        <input className={INPUT} name="feePaidAed" inputMode="decimal" defaultValue={spec.fee.defaultValue} />
-      </label>
-      <div>
-        <Button type="submit" variant="primary" size="sm" disabled={pending}>
-          {pending ? "Recording…" : "Record registration"}
-        </Button>
-      </div>
-      <span className="text-xs text-muted">
-        Check the reference against the portal. Upload the certificate on the lease page.
-      </span>
-    </form>
+    <RecordRegistrationForm
+      bare
+      leaseId={spec.hidden.leaseId}
+      submissionId={spec.hidden.submissionId}
+      today={spec.issuedOn.max}
+      referenceLabel={spec.reference.label}
+      initial={{
+        reference: spec.reference.defaultValue,
+        issuedOn: spec.issuedOn.defaultValue,
+        fee: spec.fee.defaultValue,
+      }}
+      onRecorded={() => setDone(true)}
+    />
   );
 }
 
@@ -316,7 +288,7 @@ export function DecisionCardView({ card }: { card: DecisionCardData }) {
           {card.decision === "approval"
             ? "Open the full approval"
             : card.decision === "registration" || card.decision === "registration_rejected"
-              ? "Open the lease (upload the certificate there)"
+              ? "Open the lease"
               : "Open the application"}
         </Link>
       </CardNote>

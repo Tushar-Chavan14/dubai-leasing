@@ -5,8 +5,17 @@ import {
   type DealState,
   HELPER_MODES,
   type HelperMode,
+  LEAD_SOURCES,
+  LEAD_STATUSES,
+  type LeadSource,
+  type LeadStatus,
+  VIEWING_STATUSES,
+  type ViewingStatus,
   SWITCHABLE_HELPERS,
   type DealType,
+  FURNISHED,
+  MEDIA_OWNER_KINDS,
+  UNIT_TYPES,
   type ListingState,
   REGISTRY_KINDS,
   type RegistryKind,
@@ -64,12 +73,20 @@ export const spaUsers = pgTable(
     email: text("email").notNull().unique(),
     name: text("name").notNull(),
     role: text("role").$type<SpaRole>().notNull(),
+    /** M5c (S83): roles held besides the main one. Never contains `role`; every value is a known role. */
+    extraRoles: text("extra_roles").array().$type<SpaRole[]>().notNull().default(sql`'{}'::text[]`),
     passwordHash: text("password_hash"),
     active: boolean("active").notNull().default(true),
     createdAt: ts("created_at").notNull().defaultNow(),
   },
   (t) => [
     check("spa_users_role", sql.raw(`${t.role.name} in (${ROLES.map((r) => `'${r}'`).join(", ")})`)),
+    check(
+      "spa_users_extra_roles",
+      sql.raw(
+        `${t.extraRoles.name} <@ ARRAY[${ROLES.map((r) => `'${r}'`).join(", ")}]::text[] and not (${t.role.name} = any(${t.extraRoles.name}))`,
+      ),
+    ),
     // Stored lower case, so the unique email is unique whatever case it is typed in.
     check("spa_users_email_lower", sql`${t.email} = lower(${t.email})`),
   ],
@@ -105,6 +122,10 @@ const LISTING_STATES: readonly ListingState[] = [
 ];
 const calDate = (name: string) => date(name, { mode: "string" });
 
+export { FURNISHED, MEDIA_OWNER_KINDS, UNIT_TYPES };
+const rangeOrNull = (col: { name: string }, lo: number, hi: number) =>
+  sql.raw(`"${col.name}" is null or ("${col.name}" >= ${lo} and "${col.name}" <= ${hi})`);
+
 /**
  * A developer's unit. `building_id` is null only for a unit made before projects existed; it is set once and never
  * moved (trigger, S64). The project and price list are reached through the building.
@@ -116,9 +137,33 @@ export const units = pgTable(
     code: text("code").notNull().unique(),
     state: text("state").$type<UnitState>().notNull().default("AVAILABLE"),
     buildingId: uuid("building_id").references(() => buildings.id),
+    // S75: all nullable, so a unit made before the details existed stays valid.
+    type: text("type").$type<(typeof UNIT_TYPES)[number]>(),
+    bedrooms: smallint("bedrooms"),
+    bathrooms: smallint("bathrooms"),
+    internalSqft: integer("internal_sqft"),
+    balconySqft: integer("balcony_sqft"),
+    floor: smallint("floor"),
+    view: text("view"),
+    parkingSpaces: smallint("parking_spaces"),
+    description: text("description"),
     createdAt: ts("created_at").notNull().defaultNow(),
   },
-  (t) => [check("units_state", oneOf(t.state, UNIT_STATES))],
+  (t) => [
+    check("units_state", oneOf(t.state, UNIT_STATES)),
+    check(
+      "units_type",
+      sql`${t.type} is null or ${t.type} in (${sql.raw(UNIT_TYPES.map((v) => `'${v}'`).join(", "))})`,
+    ),
+    check("units_bedrooms", rangeOrNull(t.bedrooms, 0, 10)),
+    check("units_bathrooms", rangeOrNull(t.bathrooms, 0, 10)),
+    check("units_internal_sqft", sql`${t.internalSqft} is null or ${t.internalSqft} > 0`),
+    check("units_balcony_sqft", sql`${t.balconySqft} is null or ${t.balconySqft} >= 0`),
+    check("units_floor", rangeOrNull(t.floor, -5, 200)),
+    check("units_parking_spaces", rangeOrNull(t.parkingSpaces, 0, 10)),
+    check("units_view_len", sql`${t.view} is null or char_length(${t.view}) <= 60`),
+    check("units_description_len", sql`${t.description} is null or char_length(${t.description}) <= 2000`),
+  ],
 );
 
 /** A brokerage listing; seller parties, documents and offers come in P4b/P4c. */
@@ -148,10 +193,28 @@ export const listings = pgTable(
     ownershipRef: text("ownership_ref"),
     /** Code matched the owners on the document to the sellers (else `seller_verification`). */
     ownershipMatched: boolean("ownership_matched").notNull().default(false),
+    // S75: the same detail columns as a unit (the existing bedrooms, size_sqft, community stay).
+    unitType: text("unit_type").$type<(typeof UNIT_TYPES)[number]>(),
+    bathrooms: smallint("bathrooms"),
+    floor: smallint("floor"),
+    view: text("view"),
+    parkingSpaces: smallint("parking_spaces"),
+    furnished: text("furnished").$type<(typeof FURNISHED)[number]>(),
     createdAt: ts("created_at").notNull().defaultNow(),
   },
   (t) => [
     check("listings_state", oneOf(t.state, LISTING_STATES)),
+    check(
+      "listings_unit_type",
+      sql`${t.unitType} is null or ${t.unitType} in (${sql.raw(UNIT_TYPES.map((v) => `'${v}'`).join(", "))})`,
+    ),
+    check(
+      "listings_furnished",
+      sql`${t.furnished} is null or ${t.furnished} in (${sql.raw(FURNISHED.map((v) => `'${v}'`).join(", "))})`,
+    ),
+    check("listings_bathrooms", rangeOrNull(t.bathrooms, 0, 10)),
+    check("listings_floor", rangeOrNull(t.floor, -5, 200)),
+    check("listings_parking_spaces", rangeOrNull(t.parkingSpaces, 0, 10)),
     check("listings_ownership_kind", sql`${t.ownershipKind} is null or ${t.ownershipKind} in ('title_deed', 'oqood')`),
   ],
 );
@@ -217,7 +280,16 @@ export const deals = pgTable(
   ],
 );
 
-export type SpaEntityKind = "deal" | "unit" | "listing" | "settings" | "party" | "template";
+export type SpaEntityKind =
+  | "deal"
+  | "unit"
+  | "listing"
+  | "project"
+  | "settings"
+  | "party"
+  | "template"
+  | "lead"
+  | "viewing";
 /** The records a gate can open on. */
 export type GateEntityKind = "deal" | "unit" | "listing" | "template";
 
@@ -436,10 +508,39 @@ export const listingSignatures = pgTable(
   (t) => [primaryKey({ columns: [t.listingId, t.partyId] })],
 );
 
+export const LISTING_DOCUMENT_KINDS = ["title_deed", "oqood", "listing_agreement", "permit"] as const;
+export type ListingDocumentKind = (typeof LISTING_DOCUMENT_KINDS)[number];
+
+/** M3 (S77): a listing's files (ownership document, signed listing agreement, permit). Append-only (trigger); one row per file. */
+export const listingDocuments = pgTable(
+  "listing_documents",
+  {
+    id: uuid("id").primaryKey(),
+    listingId: uuid("listing_id")
+      .notNull()
+      .references(() => listings.id),
+    kind: text("kind").$type<ListingDocumentKind>().notNull(),
+    fileName: text("file_name").notNull(),
+    mime: text("mime").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    sha256: text("sha256").notNull(),
+    storageKey: text("storage_key").notNull(),
+    uploadedBy: text("uploaded_by").notNull(),
+    uploadedAt: ts("uploaded_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("listing_documents_file_uq").on(t.listingId, t.kind, t.sha256),
+    index("listing_documents_listing_idx").on(t.listingId, t.kind),
+    check("listing_documents_kind", oneOf(t.kind, LISTING_DOCUMENT_KINDS)),
+    check("listing_documents_size", sql`${t.sizeBytes} > 0`),
+    check("listing_documents_sha256", sql`${t.sha256} ~ '^[0-9a-f]{64}$'`),
+  ],
+);
+
 // ---------------------------------------------------------------------------------------------
 // C7: offers (S18). One open offer per listing; every seller answers through a single-use link.
 
-export type OfferStatus = "SENT" | "ACCEPTED" | "REJECTED" | "EXPIRED";
+export type OfferStatus = "SENT" | "ACCEPTED" | "REJECTED" | "EXPIRED" | "WITHDRAWN";
 
 export const offers = pgTable(
   "offers",
@@ -461,11 +562,13 @@ export const offers = pgTable(
     validUntil: calDate("valid_until").notNull(),
     /** The deal created when every seller accepted. */
     dealId: uuid("deal_id").references(() => deals.id),
+    /** M6 (S81): the lead this offer was made for; it converts only when the offer is accepted. */
+    leadId: uuid("lead_id").references(() => spaLeads.id),
     createdBy: text("created_by").notNull(),
     createdAt: ts("created_at").notNull(),
   },
   (t) => [
-    check("offers_status", oneOf(t.status, ["SENT", "ACCEPTED", "REJECTED", "EXPIRED"])),
+    check("offers_status", oneOf(t.status, ["SENT", "ACCEPTED", "REJECTED", "EXPIRED", "WITHDRAWN"])),
     check("offers_price_positive", sql`${t.priceFils} > 0`),
     uniqueIndex("offers_one_open_uq")
       .on(t.listingId)
@@ -2225,6 +2328,12 @@ export const projects = pgTable(
       .references(() => companies.id),
     /** Calendar date in Asia/Dubai. */
     anticipatedCompletionOn: calDate("anticipated_completion_on"),
+    // S75: free text, no map.
+    community: text("community"),
+    location: text("location"),
+    description: text("description"),
+    /** S79: the agent who gets the leads and viewings for this project's units; null = they wait unassigned for the sales manager. */
+    salesAgentUserId: uuid("sales_agent_user_id").references(() => spaUsers.id),
     /** Which document kind's template this project's agreements use; null reads as the SPA. */
     templateKind: text("template_kind").$type<(typeof SPA_TEMPLATE_KINDS)[number]>(),
     createdAt: ts("created_at").notNull().defaultNow(),
@@ -2234,6 +2343,36 @@ export const projects = pgTable(
       "projects_template_kind",
       sql`${t.templateKind} is null or ${t.templateKind} in ('spa', 'mou', 'assignment', 'listing_agreement')`,
     ),
+    check("projects_community_len", sql`${t.community} is null or char_length(${t.community}) <= 80`),
+    check("projects_location_len", sql`${t.location} is null or char_length(${t.location}) <= 120`),
+    check("projects_description_len", sql`${t.description} is null or char_length(${t.description}) <= 2000`),
+  ],
+);
+
+/**
+ * S75: marketing photos of a project, unit or listing. Not personal data, never mixed with party documents, and kept in
+ * their own store (`data/spa-media`). One column can't reference three tables, so the owner's existence is checked in code.
+ */
+export const spaMedia = pgTable(
+  "spa_media",
+  {
+    id: uuid("id").primaryKey(),
+    ownerKind: text("owner_kind").$type<(typeof MEDIA_OWNER_KINDS)[number]>().notNull(),
+    ownerId: uuid("owner_id").notNull(),
+    sha256: text("sha256").notNull(),
+    path: text("path").notNull(),
+    mime: text("mime").notNull(),
+    bytes: integer("bytes").notNull(),
+    caption: text("caption"),
+    sort: smallint("sort").notNull(),
+    uploadedBy: text("uploaded_by").notNull(),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    check("spa_media_owner_kind", oneOf(t.ownerKind, MEDIA_OWNER_KINDS)),
+    check("spa_media_caption_len", sql`${t.caption} is null or char_length(${t.caption}) <= 200`),
+    uniqueIndex("spa_media_owner_sha_uq").on(t.ownerKind, t.ownerId, t.sha256),
+    index("spa_media_owner_sort_idx").on(t.ownerKind, t.ownerId, t.sort),
   ],
 );
 
@@ -2335,3 +2474,117 @@ export const portalHandoffs = pgTable("portal_handoffs", {
   jti: text("jti").primaryKey(),
   usedAt: ts("used_at").notNull(),
 });
+
+// ---------------------------------------------------------------------------------------------
+// M5 (S79): leads and viewings.
+
+export const leadRefSeq = pgSequence("spa_lead_ref_seq");
+
+/**
+ * A visitor's interest in one public home (a listing or a developer unit). One open lead per (email, home): a second
+ * enquiry adds a message to it. Written only by SpaManager. Stored only with the visitor's consent (rule 8).
+ */
+export const spaLeads = pgTable(
+  "spa_leads",
+  {
+    id: uuid("id").primaryKey(),
+    ref: text("ref")
+      .notNull()
+      .unique()
+      .default(sql`'LD-' || lpad(nextval('spa_lead_ref_seq')::text, 4, '0')`),
+    propertyKind: text("property_kind").$type<"listing" | "unit">().notNull(),
+    listingId: uuid("listing_id").references(() => listings.id),
+    unitId: uuid("unit_id").references(() => units.id),
+    name: text("name").notNull(),
+    /** Lower case. */
+    email: text("email").notNull(),
+    phone: text("phone"),
+    source: text("source").$type<LeadSource>().notNull(),
+    status: text("status").$type<LeadStatus>().notNull().default("new"),
+    agentUserId: uuid("agent_user_id").references(() => spaUsers.id),
+    /** Set by M6 when a deal is started from the lead. */
+    dealId: uuid("deal_id").references(() => deals.id),
+    consentAt: ts("consent_at").notNull(),
+    createdAt: ts("created_at").notNull(),
+    updatedAt: ts("updated_at").notNull(),
+  },
+  (t) => [
+    check("spa_leads_property_kind", oneOf(t.propertyKind, ["listing", "unit"])),
+    check(
+      "spa_leads_one_property",
+      sql`(${t.listingId} is not null and ${t.unitId} is null and ${t.propertyKind} = 'listing') or (${t.unitId} is not null and ${t.listingId} is null and ${t.propertyKind} = 'unit')`,
+    ),
+    check("spa_leads_source", oneOf(t.source, LEAD_SOURCES)),
+    check("spa_leads_status", oneOf(t.status, LEAD_STATUSES)),
+    check("spa_leads_email_lower", sql`${t.email} = lower(${t.email})`),
+    uniqueIndex("spa_leads_open_listing_uq")
+      .on(t.email, t.listingId)
+      .where(sql`${t.status} not in ('converted', 'closed') and ${t.listingId} is not null`),
+    uniqueIndex("spa_leads_open_unit_uq")
+      .on(t.email, t.unitId)
+      .where(sql`${t.status} not in ('converted', 'closed') and ${t.unitId} is not null`),
+    index("spa_leads_agent_idx").on(t.agentUserId, t.status),
+    index("spa_leads_created_idx").on(t.createdAt),
+  ],
+);
+
+/** What the visitor wrote, one row per enquiry (append-only, trigger). */
+export const spaLeadMessages = pgTable(
+  "spa_lead_messages",
+  {
+    leadId: uuid("lead_id")
+      .notNull()
+      .references(() => spaLeads.id),
+    seq: integer("seq").notNull(),
+    body: text("body").notNull(),
+    createdAt: ts("created_at").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.leadId, t.seq] }),
+    check("spa_lead_messages_body", sql`char_length(${t.body}) <= 2000`),
+  ],
+);
+
+/**
+ * A booked visit to a home. `starts_at` is an instant, not a legal date. The cancel token is stored only as a hash.
+ * One viewing per agent per slot (partial unique index); a home with no agent is guarded by its own row.
+ */
+export const spaViewings = pgTable(
+  "spa_viewings",
+  {
+    id: uuid("id").primaryKey(),
+    leadId: uuid("lead_id")
+      .notNull()
+      .references(() => spaLeads.id),
+    listingId: uuid("listing_id").references(() => listings.id),
+    unitId: uuid("unit_id").references(() => units.id),
+    agentUserId: uuid("agent_user_id").references(() => spaUsers.id),
+    startsAt: ts("starts_at").notNull(),
+    endsAt: ts("ends_at").notNull(),
+    status: text("status").$type<ViewingStatus>().notNull().default("booked"),
+    outcomeNote: text("outcome_note"),
+    cancelReason: text("cancel_reason"),
+    cancelTokenHash: text("cancel_token_hash").notNull(),
+    createdAt: ts("created_at").notNull(),
+  },
+  (t) => [
+    check("spa_viewings_status", oneOf(t.status, VIEWING_STATUSES)),
+    check(
+      "spa_viewings_one_property",
+      sql`(${t.listingId} is not null and ${t.unitId} is null) or (${t.unitId} is not null and ${t.listingId} is null)`,
+    ),
+    check("spa_viewings_end_after_start", sql`${t.endsAt} > ${t.startsAt}`),
+    uniqueIndex("spa_viewings_agent_slot_uq")
+      .on(t.agentUserId, t.startsAt)
+      .where(sql`${t.status} = 'booked' and ${t.agentUserId} is not null`),
+    uniqueIndex("spa_viewings_listing_slot_uq")
+      .on(t.listingId, t.startsAt)
+      .where(sql`${t.status} = 'booked' and ${t.agentUserId} is null and ${t.listingId} is not null`),
+    uniqueIndex("spa_viewings_unit_slot_uq")
+      .on(t.unitId, t.startsAt)
+      .where(sql`${t.status} = 'booked' and ${t.agentUserId} is null and ${t.unitId} is not null`),
+    uniqueIndex("spa_viewings_token_uq").on(t.cancelTokenHash),
+    index("spa_viewings_lead_idx").on(t.leadId),
+    index("spa_viewings_starts_idx").on(t.status, t.startsAt),
+  ],
+);

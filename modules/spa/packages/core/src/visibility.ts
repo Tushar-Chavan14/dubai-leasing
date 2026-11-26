@@ -1,6 +1,10 @@
 import { dealMachine, type DealState, listingMachine, unitMachine } from "./state/index.ts";
 import type { SpaGateId } from "./gates.ts";
 import type { SpaRole } from "./roles.ts";
+
+/** One role, or every role a user holds (M5c, S83): read-side rules take either and apply to any of them. */
+export type RoleSet = SpaRole | readonly SpaRole[];
+const listOf = (r: RoleSet): readonly SpaRole[] => (typeof r === "string" ? [r] : r);
 import { type StepKey, stepsFor } from "./steps.ts";
 
 /**
@@ -8,7 +12,7 @@ import { type StepKey, stepsFor } from "./steps.ts";
  * never reads a case, a screening or a risk detail. Everyone else sees only a neutral "Compliance review".
  */
 export const COMPLIANCE_ROLES: readonly SpaRole[] = Object.freeze(["compliance_officer", "mlro"] as SpaRole[]);
-export const isComplianceRole = (role: SpaRole): boolean => COMPLIANCE_ROLES.includes(role);
+export const isComplianceRole = (role: RoleSet): boolean => listOf(role).some((r) => COMPLIANCE_ROLES.includes(r));
 
 /** Gates whose existence stays off every other role's screens (S42, tipping-off). */
 export const COMPLIANCE_GATES: ReadonlySet<SpaGateId> = new Set<SpaGateId>(["edd_signoff", "aml_flag", "aml_report"]);
@@ -26,6 +30,23 @@ const machineEvents = [...dealMachine.events, ...unitMachine.events, ...listingM
  * every non-compliance role (fail closed).
  */
 export const STAFF_EVENTS: ReadonlySet<string> = new Set([
+  // Unit, project and listing records (M2, M3) and leads and viewings (M5, S79): none carries a compliance fact.
+  "APPROVAL_WITHDRAWN",
+  "LEAD_CREATED",
+  "LEAD_MESSAGE",
+  "LEAD_STATUS",
+  "LISTING_DOCUMENT_UPLOADED",
+  "LISTING_UPDATED",
+  "MEDIA_ADDED",
+  "MEDIA_CAPTIONED",
+  "MEDIA_REMOVED",
+  "MEDIA_REORDERED",
+  "PROJECT_UPDATED",
+  "UNIT_UPDATED",
+  "VIEWING_ATTENDED",
+  "VIEWING_BOOKED",
+  "VIEWING_CANCELLED",
+  "VIEWING_NO_SHOW",
   "AGREEMENT_PREPARED",
   "ALERT_SETTINGS_SET",
   "AGREEMENT_REVIEWED",
@@ -77,6 +98,7 @@ export const STAFF_EVENTS: ReadonlySet<string> = new Set([
   "OFFER_EXPIRED",
   "OFFER_REJECTED",
   "OFFER_SENT",
+  "OFFER_WITHDRAWN",
   "OWNERSHIP_CHECKED",
   "OWNERSHIP_RECORDED",
   "PARTY_CREATED",
@@ -130,7 +152,7 @@ export const COMPLIANCE_EVENTS: ReadonlySet<string> = new Set([
 ]);
 
 /** Whether a role may see an event of this type. A compliance role sees everything, including a type nobody classified. */
-export function eventVisibleTo(type: string, role: SpaRole): boolean {
+export function eventVisibleTo(type: string, role: RoleSet): boolean {
   if (isComplianceRole(role)) return true;
   return STAFF_EVENTS.has(type);
 }
@@ -139,9 +161,9 @@ export function eventVisibleTo(type: string, role: SpaRole): boolean {
  * Whose tasks a role sees (S55): its own and, for a sales manager, everyone's (who may finish any). A task for a
  * compliance role is seen by the compliance roles only, so a task list never hints at a review.
  */
-export function taskVisibleTo(taskRole: SpaRole, viewer: SpaRole): boolean {
+export function taskVisibleTo(taskRole: SpaRole, viewer: RoleSet): boolean {
   if (isComplianceRole(taskRole)) return isComplianceRole(viewer);
-  return viewer === taskRole || viewer === "sales_manager";
+  return listOf(viewer).some((r) => r === taskRole || r === "sales_manager");
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -150,7 +172,7 @@ export function taskVisibleTo(taskRole: SpaRole, viewer: SpaRole): boolean {
 export type StageKey = DealState | "ON_HOLD";
 
 /** The stage a role is told: a hold reads `ON_HOLD` for everyone but the compliance roles. */
-export const stageKey = (state: DealState, role: SpaRole): StageKey =>
+export const stageKey = (state: DealState, role: RoleSet): StageKey =>
   state === "AML_HOLD" && !isComplianceRole(role) ? "ON_HOLD" : state;
 
 const STAGE_LABELS: Readonly<Record<StageKey, string>> = Object.freeze({

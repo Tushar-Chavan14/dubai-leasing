@@ -38,6 +38,7 @@ import type { SpaContext } from "./context.ts";
 import { conflict, forbidden, notFound, unprocessable } from "./errors.ts";
 import { appendDealEvent } from "./events.ts";
 import { AML_SCREEN_JOB } from "../jobs.ts";
+import { hasAnyRole } from "@spa/core";
 
 export { AML_SCREEN_JOB };
 /**
@@ -51,7 +52,7 @@ const CLOSED = new Set(["HANDED_OVER", "COMPLETED", "CANCELLED"]);
 /** States a flag puts on hold (S50): the check itself, and the re-screen before the agreement. */
 const HOLDABLE = new Set(["PARTY_CHECK", "AGREEMENT_DRAFT", "LEGAL_REVIEW"]);
 
-type Person = { id: string; role: SpaRole };
+type Person = { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined };
 const STARTERS: readonly SpaRole[] = [
   "sales_officer",
   "sales_manager",
@@ -353,7 +354,7 @@ export async function enqueueAmlScreening(
   input: { dealId: string; trigger: ScreeningTrigger; subject?: string },
   user?: Person,
 ): Promise<{ key: string; jobId: string | null; queued: boolean }> {
-  if (user && !STARTERS.includes(user.role)) throw forbidden("you can't start a screening");
+  if (user && !hasAnyRole(user, STARTERS)) throw forbidden("you can't start a screening");
   if (!SCREENING_TRIGGERS.includes(input.trigger)) throw unprocessable("invalid_trigger", "unknown screening trigger");
   const [d] = await ctx.database.db.select({ id: deals.id }).from(deals).where(eq(deals.id, input.dealId));
   if (!d) throw notFound("deal");
@@ -371,7 +372,7 @@ export async function enqueueAmlScreening(
  * 403 and no data (S6, tipping-off).
  */
 export async function listAmlCases(ctx: SpaContext, dealId: string, user: Person) {
-  if (!READERS.includes(user.role)) throw forbidden("only compliance roles can read this");
+  if (!hasAnyRole(user, READERS)) throw forbidden("only compliance roles can read this");
   const [d] = await ctx.database.db.select({ id: deals.id }).from(deals).where(eq(deals.id, dealId));
   if (!d) throw notFound("deal");
   return amlCasesView(ctx, dealId);

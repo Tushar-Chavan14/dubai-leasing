@@ -1,14 +1,29 @@
 import { createHash, randomBytes } from "node:crypto";
 import { addDays } from "@platform/kernel/dates";
 import { newId } from "@platform/kernel/ids";
-import type { SpaActor } from "@spa/core";
-import { listingParties, listings, offerLinks, offerParties, offers, parties, type SpaTx, withSpaTx } from "@spa/db";
-import { and, eq, inArray, lt } from "drizzle-orm";
+import { LEAD_CLOSED_STATUSES, MakeOfferInput, type SpaActor, type SpaRole, hasAnyRole } from "@spa/core";
+import {
+  deals,
+  deposits,
+  listingParties,
+  listings,
+  offerLinks,
+  offerParties,
+  offers,
+  parties,
+  spaLeads,
+  type SpaTx,
+  withSpaTx,
+} from "@spa/db";
+import { and, asc, desc, eq, inArray, lt } from "drizzle-orm";
 import { offerAnswerLinkMail } from "@spa/helpers";
 import { z } from "zod";
 import { moveProperty } from "./advance.ts";
 import type { SpaContext } from "./context.ts";
+import { RECORDABLE } from "./deposit-states.ts";
 import { createDeal } from "./deals.ts";
+import { requireListings } from "./listing-access.ts";
+import { SALES_ROLES } from "./leads.ts";
 import { conflict, notFound, SpaDomainError, unavailable, unprocessable } from "./errors.ts";
 import { appendDealEvent } from "./events.ts";
 import { sendSpaMail } from "./mail.ts";
@@ -16,8 +31,19 @@ import { normaliseName } from "./names.ts";
 import { currentPolicy } from "./policy.ts";
 
 const calDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
-const OfferInput = z.object({
+const BuyerRefs = z
+  .array(
+    z.object({
+      partyId: z.uuid(),
+      order: z.number().int().min(1),
+      shareBps: z.number().int().min(1).max(10_000).optional(),
+    }),
+  )
+  .min(1);
+const OfferBase = z.object({
   listingId: z.uuid(),
+  /** The lead the offer is made for (M6): it converts only when the offer is accepted. */
+  leadId: z.uuid().optional(),
   priceFils: z.number().int().positive(),
   buyerMortgage: z.boolean(),
   /** Required for an off-plan resale; a ready resale defaults both to false (S39 amendment). */
@@ -27,16 +53,8 @@ const OfferInput = z.object({
   conditions: z.string().trim().max(1000).optional(),
   /** The last day the sellers can answer; default today + policy `offerValidityDays`. */
   validUntil: calDate.optional(),
-  buyers: z
-    .array(
-      z.object({
-        partyId: z.uuid(),
-        order: z.number().int().min(1),
-        shareBps: z.number().int().min(1).max(10_000).optional(),
-      }),
-    )
-    .min(1),
 });
+const OfferInput = OfferBase.extend({ buyers: BuyerRefs });
 
 const gone = (code: string, message: string) => new SpaDomainError(410, code, message);
 export const hashToken = (token: string): string => createHash("sha256").update(token).digest("hex");
@@ -50,19 +68,25 @@ export async function sendOffer(
   ctx: SpaContext,
   input: unknown,
   actor: SpaActor,
+  /** Internal (M6): the buyers are created inside the offer's own transaction, so a refusal leaves no orphan party. */
+  opts: {
+    createBuyers?: (tx: SpaTx) => Promise<z.infer<typeof BuyerRefs>>;
+    /** Checked inside the transaction with the listing locked, before anything is written. */
+    beforeSend?: (tx: SpaTx) => Promise<void>;
+  } = {},
 ): Promise<{ offerId: string; validUntil: string; emailed: { sellerPartyId: string; status: "sent" | "failed" }[] }> {
   if (!ctx.mail) throw unavailable("mail_unavailable", "email isn't configured, so an offer can't be sent");
   const mail = ctx.mail;
-  const parsed = OfferInput.safeParse(input);
+  const parsed = (opts.createBuyers ? OfferBase : OfferInput).safeParse(input);
   if (!parsed.success)
     throw unprocessable(
       "invalid_offer",
       "the offer isn't valid",
       parsed.error.issues.map((i) => i.message),
     );
-  const o = parsed.data;
+  const base = parsed.data as z.infer<typeof OfferBase> & { buyers?: z.infer<typeof BuyerRefs> };
   const made = await withSpaTx(ctx.database, async (tx) => {
-    const [l] = await tx.db.select().from(listings).where(eq(listings.id, o.listingId)).for("update");
+    const [l] = await tx.db.select().from(listings).where(eq(listings.id, base.listingId)).for("update");
     if (!l) throw notFound("listing");
     const [open] = await tx.db
       .select({ id: offers.id })
@@ -71,10 +95,13 @@ export async function sendOffer(
     if (open || l.state === "UNDER_OFFER")
       throw conflict("open_offer_exists", "this listing already has an open offer or deal");
     const offplan = l.ownershipKind === "oqood";
-    if (offplan && (o.sellerMortgage === undefined || o.planTakenOver === undefined))
+    if (offplan && (base.sellerMortgage === undefined || base.planTakenOver === undefined))
       throw unprocessable("invalid_offer", "an off-plan resale offer states sellerMortgage and planTakenOver");
-    if (!offplan && o.planTakenOver)
+    if (!offplan && base.planTakenOver)
       throw unprocessable("invalid_offer", "a plan can be taken over only on an off-plan resale");
+    await opts.beforeSend?.(tx);
+    const buyers = opts.createBuyers ? await opts.createBuyers(tx) : base.buyers!;
+    const o = { ...base, buyers };
     const buyerIds = o.buyers.map((b) => b.partyId);
     const known = await tx.db.select({ id: parties.id }).from(parties).where(inArray(parties.id, buyerIds));
     if (known.length !== new Set(buyerIds).size) throw unprocessable("unknown_party", "a buyer doesn't exist");
@@ -103,6 +130,7 @@ export async function sendOffer(
       planTakenOver: o.planTakenOver ?? false,
       targetTransferOn: o.targetTransferOn ?? null,
       conditions: o.conditions ?? null,
+      leadId: o.leadId ?? null,
       validUntil,
       createdBy: actor,
       createdAt: ctx.clock.now(),
@@ -159,7 +187,7 @@ export async function sendOffer(
         to: k.email,
         parts: offerAnswerLinkMail({
           property: made.title,
-          priceFils: o.priceFils,
+          priceFils: base.priceFils,
           validUntil: made.validUntil,
           link: `${mail.webBaseUrl}/b/${k.token}/offer`,
         }),
@@ -175,8 +203,9 @@ async function closeOffer(
   tx: SpaTx,
   offerId: string,
   listingId: string,
-  status: "REJECTED" | "EXPIRED",
+  status: "REJECTED" | "EXPIRED" | "WITHDRAWN",
   actor: SpaActor,
+  note?: string,
 ) {
   await tx.db.update(offers).set({ status }).where(eq(offers.id, offerId));
   await moveProperty(ctx, tx, { kind: "listing", id: listingId }, "OFFER_CLOSED", { actor, payload: { offerId } });
@@ -184,7 +213,7 @@ async function closeOffer(
     entity: { kind: "listing", id: listingId },
     type: `OFFER_${status}`,
     actor,
-    payload: { offerId },
+    payload: { offerId, ...(note ? { reason: note } : {}) },
   });
 }
 
@@ -257,6 +286,24 @@ export async function answerOffer(
       { tx, fromOfferId: offer.id },
     );
     await tx.db.update(offers).set({ status: "ACCEPTED", dealId: deal.id }).where(eq(offers.id, offer.id));
+    // M6 (S81): the lead the offer was made for converts only now, when every seller accepted.
+    if (offer.leadId) {
+      const [lead] = await tx.db.select().from(spaLeads).where(eq(spaLeads.id, offer.leadId)).for("update");
+      if (lead && !LEAD_CLOSED_STATUSES.includes(lead.status)) {
+        await tx.db
+          .update(spaLeads)
+          .set({ status: "converted", dealId: deal.id, updatedAt: ctx.clock.now() })
+          .where(eq(spaLeads.id, lead.id));
+        await appendDealEvent(tx, ctx, {
+          entity: { kind: "lead", id: lead.id },
+          type: "LEAD_STATUS",
+          fromState: lead.status,
+          toState: "converted",
+          actor,
+          payload: { dealId: deal.id, offerId: offer.id },
+        });
+      }
+    }
     await appendDealEvent(tx, ctx, {
       entity: { kind: "listing", id: offer.listingId },
       type: "OFFER_ACCEPTED",
@@ -304,4 +351,158 @@ export async function expireOffers(ctx: SpaContext): Promise<{ expired: string[]
     }).catch((e) => console.error(`offer sweep: offer ${id}:`, e instanceof Error ? e.message : e));
   }
   return { expired };
+}
+
+type Person = { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined };
+
+/**
+ * Makes an offer on a resale listing from the staff screen (M6, S81): the buyers are created in the offer's own
+ * transaction, then the normal `sendOffer` runs (one open offer, every seller gets a single-use emailed link). The
+ * deposit is the pinned policy's % when the cheque is recorded; it is not typed here. A lead is linked and converts only
+ * when every seller accepts.
+ */
+export async function makeOffer(ctx: SpaContext, input: unknown, user: Person) {
+  // The sales roles, in a company that keeps listings: a developer-only company has no resale.
+  await requireListings(ctx.database.db, user, "write");
+  const parsed = MakeOfferInput.safeParse(input);
+  if (!parsed.success)
+    throw unprocessable(
+      "invalid_offer",
+      "the offer isn't valid",
+      parsed.error.issues.map((i) => (i.path.length ? `${i.path.join(".")}: ${i.message}` : i.message)),
+    );
+  // Loaded here, not at the top: these modules reach the listing screens, and offers.ts is read by an older chain of
+  // imports (party-assistant) that a static import would turn into a cycle.
+  const [{ resolveBuyers }, { readLead }] = await Promise.all([import("./buyers.ts"), import("./deal-start.ts")]);
+  const { buyers, validDays, ...rest } = parsed.data;
+  const actor: SpaActor = `user:${user.id}`;
+  const validUntil = validDays === undefined ? undefined : addDays(ctx.clock.today(), validDays);
+  return sendOffer(ctx, { ...rest, ...(validUntil ? { validUntil } : {}) }, actor, {
+    createBuyers: (tx) => resolveBuyers(tx, ctx, buyers, actor),
+    beforeSend: async (tx) => {
+      if (rest.leadId) await readLead(tx, rest.leadId, user, { kind: "listing", id: rest.listingId });
+    },
+  });
+}
+
+/**
+ * Withdraws a sent offer (M6, S81): the reason is kept in the event, the listing goes back to where it was and every
+ * link stops working (an answer finds the offer closed). Only a SENT offer withdraws; nobody's answer is erased.
+ */
+export async function withdrawOffer(
+  ctx: SpaContext,
+  offerId: string,
+  reason: unknown,
+  user: Person,
+  opts: { tx?: SpaTx; actor?: SpaActor } = {},
+): Promise<void> {
+  await requireListings(ctx.database.db, user, "write");
+  const why = z.string().trim().min(3).max(500).safeParse(reason);
+  if (!why.success) throw unprocessable("reason_required", "say why (3 to 500 characters)");
+  const run = async (tx: SpaTx) => {
+    const [o] = await tx.db.select().from(offers).where(eq(offers.id, offerId)).for("update");
+    if (!o) throw notFound("offer");
+    if (o.status !== "SENT") throw conflict("offer_closed", `this offer is ${o.status.toLowerCase()}`);
+    await closeOffer(ctx, tx, o.id, o.listingId, "WITHDRAWN", opts.actor ?? `user:${user.id}`, why.data);
+  };
+  if (opts.tx) await run(opts.tx);
+  else await withSpaTx(ctx.database, run);
+}
+
+/** A listing withdrawn while an offer is out withdraws that offer by code, in the same transaction (S81). */
+export async function withdrawSentOfferFor(
+  ctx: SpaContext,
+  tx: SpaTx,
+  listingId: string,
+  actor: SpaActor,
+): Promise<string | null> {
+  const [o] = await tx.db
+    .select({ id: offers.id })
+    .from(offers)
+    .where(and(eq(offers.listingId, listingId), eq(offers.status, "SENT")))
+    .for("update");
+  if (!o) return null;
+  await closeOffer(ctx, tx, o.id, listingId, "WITHDRAWN", actor, "The listing was withdrawn.");
+  return o.id;
+}
+
+const ANSWER_LABEL = { accept: "Accepted", reject: "Rejected" } as const;
+const OFFER_LABEL: Record<string, string> = {
+  SENT: "Waiting for the sellers",
+  ACCEPTED: "Accepted",
+  REJECTED: "Rejected",
+  EXPIRED: "Expired",
+  WITHDRAWN: "Withdrawn",
+};
+
+/**
+ * A listing's offers, newest first (M6): terms, each seller's answer and, once accepted, the deal. The buyers' names and
+ * emails go to the sales roles only; every other role gets the offers without them. Never a link or token.
+ */
+export async function listOffers(ctx: SpaContext, user: Person, listingId: string) {
+  const db = ctx.database.db;
+  await requireListings(db, user, "read");
+  const [l] = await db.select({ id: listings.id }).from(listings).where(eq(listings.id, listingId));
+  if (!l) throw notFound("listing");
+  const sales = hasAnyRole(user, SALES_ROLES);
+  const rows = await db
+    .select()
+    .from(offers)
+    .where(eq(offers.listingId, listingId))
+    .orderBy(desc(offers.createdAt), desc(offers.id));
+  const out = [];
+  for (const o of rows) {
+    const links = await db
+      .select({ sellerPartyId: offerLinks.sellerPartyId, answer: offerLinks.answer, name: parties.fullNameEn })
+      .from(offerLinks)
+      .innerJoin(parties, eq(parties.id, offerLinks.sellerPartyId))
+      .where(eq(offerLinks.offerId, o.id))
+      .orderBy(asc(parties.fullNameEn));
+    const buyers = sales
+      ? await db
+          .select({ name: parties.fullNameEn, email: parties.email, shareBps: offerParties.shareBps })
+          .from(offerParties)
+          .innerJoin(parties, eq(parties.id, offerParties.partyId))
+          .where(eq(offerParties.offerId, o.id))
+          .orderBy(asc(offerParties.order))
+      : null;
+    const [deal] = o.dealId
+      ? await db.select({ id: deals.id, ref: deals.ref, state: deals.state }).from(deals).where(eq(deals.id, o.dealId))
+      : [];
+    // The security deposit the policy set for this deal: recorded (the amount, never the cheque number) or still to record.
+    const [dep] = deal
+      ? await db
+          .select({ amountFils: deposits.amountFils, bank: deposits.bank, chequeOn: deposits.chequeOn })
+          .from(deposits)
+          .where(eq(deposits.dealId, deal.id))
+      : [];
+    out.push({
+      id: o.id,
+      status: o.status,
+      statusLabel: OFFER_LABEL[o.status] ?? o.status,
+      priceFils: o.priceFils,
+      buyerMortgage: o.buyerMortgage,
+      sellerMortgage: o.sellerMortgage,
+      targetTransferOn: o.targetTransferOn,
+      conditions: o.conditions,
+      validUntil: o.validUntil,
+      createdAt: o.createdAt.toISOString(),
+      sellers: links.map((k) => ({
+        name: sales ? k.name : "A seller",
+        answer: k.answer ?? null,
+        answerLabel: k.answer ? ANSWER_LABEL[k.answer] : "Waiting",
+      })),
+      buyers,
+      deal: deal ? { id: deal.id, ref: deal.ref } : null,
+      // The cheque details go to the sales roles only; every other reader gets neither the bank nor the date.
+      deposit: sales ? (dep ?? null) : null,
+      canRecordDeposit: sales && !!deal && !dep && RECORDABLE.has(deal.state),
+      canWithdraw: sales && o.status === "SENT",
+    });
+  }
+  const policy = (await currentPolicy(db)).values;
+  return {
+    offers: out,
+    terms: { depositBps: policy.depositBps, validityDays: policy.offerValidityDays, validityMaxDays: 30 },
+  };
 }

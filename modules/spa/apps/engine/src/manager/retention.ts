@@ -73,7 +73,7 @@ export async function runRetentionReview(
 export async function approveRetentionReview(
   ctx: SpaContext,
   reviewId: string,
-  user: { id: string; role: SpaRole },
+  user: { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined },
 ): Promise<{ id: string; period: string; status: "approved"; count: number }> {
   requireCompliance(user);
   return withSpaTx(ctx.database, async (tx) => {
@@ -102,7 +102,7 @@ export async function approveRetentionReview(
 }
 
 /** The lists, newest first, each with its deals (ref and end day only) for a compliance role. */
-export async function listRetentionReviews(ctx: SpaContext, user: { id: string; role: SpaRole }) {
+export async function listRetentionReviews(ctx: SpaContext, user: { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined }) {
   requireCompliance(user);
   const db = ctx.database.db;
   const reviews = await db.select().from(retentionReviews).orderBy(desc(retentionReviews.period));

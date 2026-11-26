@@ -9,6 +9,7 @@
   "dependencies": {
     "@leasing/core": "workspace:*",
     "@platform/adapters": "workspace:*",
+    "@platform/ui": "workspace:*",
     "grammy": "1.46.0",
     "zod": "^4.6.7"
   },

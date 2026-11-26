@@ -1,8 +1,9 @@
 import { createExchangeLimiter, issueToken, portalExchange, portalKeyOk } from "@platform/kernel";
-import { SPA_ROLE_LABELS } from "@spa/core";
+import { castHint, DEMO_CAST, DEMO_SHORT_ROLE, isCastEmail, rolesOf, SPA_ROLE_LABELS, SpaRole } from "@spa/core";
 import { type SpaDatabase, spaUsers } from "@spa/db";
 import { and, asc, eq } from "drizzle-orm";
 import { Hono } from "hono";
+import type { LocalDiskStore } from "@platform/adapters";
 import { bodyLimit } from "hono/body-limit";
 import { maskPii, maskPiiText } from "@platform/kernel/pii";
 import { z } from "zod";
@@ -25,9 +26,20 @@ import {
   listTasks,
   TasksQuery,
 } from "./manager/reads.ts";
-import type { Jobs } from "./jobs.ts";
+import { type Jobs, VIEWING_MAIL_JOB, viewingMailKey } from "./jobs.ts";
 import { companyKind } from "./manager/parties.ts";
 import { SpaDomainError } from "./manager/errors.ts";
+import { getLead, listLeads, listViewings } from "./manager/lead-reads.ts";
+import { recordStaffLead } from "./manager/leads.ts";
+import { updateLeadStatus } from "./manager/lead-status.ts";
+import { publicBook, publicCancel, publicEnquiry, publicSlots } from "./manager/public-leads.ts";
+import {
+  bookViewingForLead,
+  cancelViewingAs,
+  freeSlotsForLead,
+  recordViewingOutcome,
+  rescheduleViewing,
+} from "./manager/viewings.ts";
 import { failClosedFacts } from "./manager/facts.ts";
 import {
   confirmBankAmount,
@@ -48,7 +60,11 @@ import { enqueueOwnershipCheck } from "./manager/ownership-check.ts";
 import { enqueueDocumentRead, PROFILE_OF_KIND } from "./manager/readers.ts";
 import { getSettlement, requestSettlementRefresh } from "./manager/settlement.ts";
 import { launcherSummary } from "./manager/launcher.ts";
-import { answerOffer, offerLinkSummary } from "./manager/offers.ts";
+import { answerOffer, listOffers, makeOffer, offerLinkSummary, withdrawOffer } from "./manager/offers.ts";
+import { quoteDeal, startDeal } from "./manager/deal-start.ts";
+import { setBroker } from "./manager/brokers.ts";
+import { recordDeposit } from "./manager/deposits.ts";
+import { requireSales } from "./manager/leads.ts";
 import { enqueuePrepare } from "./manager/prepare.ts";
 import { pauseChasing, resumeChasing } from "./manager/chase.ts";
 import { approveChaseTemplate, createChaseTemplate } from "./manager/chase-templates.ts";
@@ -99,7 +115,15 @@ import {
 } from "./manager/copilot.ts";
 import { nocStatus } from "./manager/noc-status.ts";
 import type { Transport } from "@spa/copilot";
-import { createListingDraft, findPublicListing } from "./manager/listings.ts";
+import {
+  createListingDraft,
+  readListingDocument,
+  recordOwnershipAs,
+  recordSignatureAs,
+  stepListing,
+  updateListing,
+  uploadListingDocument,
+} from "./manager/listings.ts";
 import { getAlertSettings, listAlerts, markAlertRead, setAlertSettings } from "./manager/alerts.ts";
 import { exportCasePack, listExports } from "./manager/case-export.ts";
 import { downloadReport, listReports } from "./manager/compliance-report.ts";
@@ -114,8 +138,24 @@ import {
   getProject,
   listProjects,
   publishPriceList,
+  updateProject,
+  updateUnit,
 } from "./manager/inventory.ts";
-import { getListing, listListings, ListingsQuery } from "./manager/listing-reads.ts";
+import { getUnit, listUnits } from "./manager/inventory-reads.ts";
+import {
+  addMedia,
+  captionMedia,
+  listMediaFor,
+  readMedia,
+  removeMedia,
+  readPublicMedia,
+  reorderMedia,
+  MAX_MEDIA_BYTES,
+} from "./manager/media.ts";
+import { CatalogueQuery, MEDIA_OWNER_KINDS } from "@spa/core";
+import { getCatalogueItem, listCatalogue } from "./manager/public-catalogue.ts";
+import { createPublicLimiter } from "./manager/public-limit.ts";
+import { getListing, listAgents, listListings, ListingsQuery } from "./manager/listing-reads.ts";
 import { getTemplate, getTemplateVersion, listTemplates, previewTemplateVersion } from "./manager/template-reads.ts";
 import { needTemplateAdmin, uploadTemplateSample } from "./manager/template-uploads.ts";
 import { createTemplate, remapBlank } from "./manager/templates.ts";
@@ -151,6 +191,8 @@ export interface AppDeps {
   nowMs: () => number;
   /** Where uploaded documents are stored (C15). Without it the upload route answers 503. */
   documents?: DocumentStore;
+  /** Where marketing photos are stored (S75). Without it the photo routes answer 503. */
+  media?: LocalDiskStore;
   /** Rulebook lookup for the settlement statement (default: the registry). Tests pass a confirmed copy. */
   rulebook?: SpaContext["rulebook"];
   /** The registered screening adapter's list version (S50); absent when none is registered. */
@@ -182,6 +224,8 @@ const reply = (c: { json: (b: unknown, s: 200) => Response }, data: unknown) => 
 const badQuery = (c: { json: (b: unknown, s: 400) => Response }) =>
   c.json({ error: "that query isn't valid", code: "invalid_request" }, 400);
 const idParam = z.uuid();
+const MediaOwnerQuery = z.object({ kind: z.enum(MEDIA_OWNER_KINDS), id: z.uuid() });
+const MediaOrderBody = MediaOwnerQuery.extend({ ids: z.array(z.uuid()).max(100) });
 const badBody = (c: { json: (b: unknown, s: 400) => Response }) =>
   c.json({ error: "write a message of up to 2,000 characters", code: "invalid_request" }, 400);
 /** A KYC run may carry the answers typed on the role's form (S49 amendment); a body is optional. */
@@ -227,6 +271,18 @@ export function createApp(deps: AppDeps) {
     onHelperReleased: (e) => onRegistryFixReleased(ctx, deps.jobs.boss, e),
     ...(deps.rulebook ? { rulebook: deps.rulebook } : {}),
     ...(deps.mail ? { mail: deps.mail } : {}),
+    viewingLinkSecret: deps.sessionSecret,
+    // Viewing emails go through the queue (S79); a down queue falls back to sending at once.
+    queueViewingMail: async (e) => {
+      await deps.jobs.boss.send(
+        VIEWING_MAIL_JOB,
+        { viewingId: e.viewingId, milestone: e.milestone },
+        {
+          singletonKey: viewingMailKey(e.viewingId, e.milestone),
+          ...(e.delaySeconds ? { startAfter: e.delaySeconds } : {}),
+        },
+      );
+    },
   };
   const signingStore = () => {
     const d = deps.documents;
@@ -241,9 +297,23 @@ export function createApp(deps: AppDeps) {
   };
   const auth = requireUser(database, deps.sessionSecret, deps.nowMs);
   const exchangeLimiter = createExchangeLimiter();
-  const session = (u: { id: string; name: string; email: string; role: (typeof spaUsers.$inferSelect)["role"] }) => ({
+  // The public catalogue reads are open to anyone: a generous limit per client (the page loads a photo per card).
+  const publicLimiter = createPublicLimiter(600);
+  // The public writes (enquiry, booking, cancel) are far fewer: a small limit per client, on top of the per-home and per-email caps.
+  const writeLimiter = createPublicLimiter(20);
+  const clientOf = (c: { req: { header(n: string): string | undefined } }) =>
+    c.req.header("x-forwarded-for")?.split(",").at(-1)?.trim().slice(0, 64) || "unknown";
+  const tooMany = (c: { json: (b: unknown, s: 429) => Response }) =>
+    c.json({ error: "too many requests, try again in a moment", code: "rate_limited" }, 429);
+  const session = (u: {
+    id: string;
+    name: string;
+    email: string;
+    role: (typeof spaUsers.$inferSelect)["role"];
+    extraRoles: (typeof spaUsers.$inferSelect)["extraRoles"];
+  }) => ({
     token: issueToken(deps.sessionSecret, u.id, deps.nowMs()),
-    user: { id: u.id, name: u.name, email: u.email, role: u.role },
+    user: { id: u.id, name: u.name, email: u.email, role: u.role, roles: rolesOf({ role: u.role, roles: u.extraRoles }) },
   });
 
   const app = new Hono<AuthEnv>()
@@ -302,31 +372,57 @@ export function createApp(deps: AppDeps) {
       if ("body" in r) return c.json(r.body, r.status);
       return r.kind === "check" ? c.json({ active: r.active }, 200) : c.json(session(r.user), 200);
     })
-    // Public listing page (S17, design.md §7.5): no sign-in, published listings only, a fixed list of safe fields.
+    // The public catalogue (S78): resale listings and developer units on sale, one allow-listed shape, no sign-in. A
+    // listing's page reads the same shape (S17); the permit rule is checked on every read, not only by the daily sweep.
+    .get("/public/catalogue", async (c) => {
+      if (!publicLimiter.allow(`c:${clientOf(c)}`, deps.nowMs())) return tooMany(c);
+      const q = CatalogueQuery.safeParse(c.req.query());
+      if (!q.success) return badQuery(c);
+      return c.json(await listCatalogue(ctx, q.data), 200);
+    })
+    .get("/public/catalogue/:ref", async (c) => {
+      if (!publicLimiter.allow(`c:${clientOf(c)}`, deps.nowMs())) return tooMany(c);
+      const p = await getCatalogueItem(ctx, c.req.param("ref"));
+      return p ? c.json(p, 200) : c.json({ error: "not found", code: "not_found" }, 404);
+    })
+    // Free viewing times, enquiries and bookings for one public home (S79). A reference that isn't on the public site is one 404.
+    .get("/public/catalogue/:ref/slots", async (c) => {
+      if (!publicLimiter.allow(`c:${clientOf(c)}`, deps.nowMs())) return tooMany(c);
+      return c.json(await publicSlots(ctx, c.req.param("ref")), 200);
+    })
+    .post("/public/catalogue/:ref/enquiries", bodyLimit({ maxSize: 8192 }), async (c) => {
+      if (!writeLimiter.allow(`w:${clientOf(c)}`, deps.nowMs())) return tooMany(c);
+      return c.json(await publicEnquiry(ctx, c.req.param("ref"), await jsonBody(c)), 201);
+    })
+    .post("/public/catalogue/:ref/viewings", bodyLimit({ maxSize: 8192 }), async (c) => {
+      if (!writeLimiter.allow(`w:${clientOf(c)}`, deps.nowMs())) return tooMany(c);
+      return c.json(await publicBook(ctx, c.req.param("ref"), await jsonBody(c)), 201);
+    })
+    // The visitor's emailed cancel link: the token is the only credential. The page asks first; this is the click.
+    .post("/public/viewings/cancel", bodyLimit({ maxSize: 1024 }), async (c) => {
+      if (!writeLimiter.allow(`w:${clientOf(c)}`, deps.nowMs())) return tooMany(c);
+      const body = z.object({ token: z.string().min(1).max(200) }).safeParse(await jsonBody(c));
+      if (!body.success) return c.json({ status: "not_found" }, 200);
+      return c.json(await publicCancel(ctx, body.data.token), 200);
+    })
     .get("/public/listings/:ref", async (c) => {
-      // The permit is checked here too, not only by the daily sweep (review #3); the listing chat uses the same check.
-      const l = await findPublicListing(ctx, c.req.param("ref"));
-      if (!l) return c.json({ error: "not found", code: "not_found" }, 404);
-      const [agent] = l.agentUserId
-        ? await database.db
-            .select({ name: spaUsers.name, email: spaUsers.email })
-            .from(spaUsers)
-            .where(and(eq(spaUsers.id, l.agentUserId), eq(spaUsers.active, true)))
-        : [];
-      return c.json(
-        {
-          ref: l.ref,
-          title: l.title,
-          description: l.description,
-          community: l.community,
-          bedrooms: l.bedrooms,
-          sizeSqft: l.sizeSqft,
-          askingPriceFils: l.askingPriceFils,
-          permitNo: l.permitNo,
-          agent: agent ?? null,
-        },
-        200,
-      );
+      if (!publicLimiter.allow(`c:${clientOf(c)}`, deps.nowMs())) return tooMany(c);
+      const ref = c.req.param("ref");
+      const p = ref.startsWith("U-") ? null : await getCatalogueItem(ctx, ref);
+      return p ? c.json(p, 200) : c.json({ error: "not found", code: "not_found" }, 404);
+    })
+    // A photo of something public right now; any other id is a 404 (a withdrawn listing's photos stop at once).
+    .get("/public/media/:id/file", async (c) => {
+      if (!publicLimiter.allow(`m:${clientOf(c)}`, deps.nowMs())) return tooMany(c);
+      const id = idParam.safeParse(c.req.param("id"));
+      if (!deps.media || !id.success) return c.json({ error: "not found", code: "not_found" }, 404);
+      const f = await readPublicMedia(ctx, deps.media, id.data);
+      if (!f) return c.json({ error: "not found", code: "not_found" }, 404);
+      return c.body(f.bytes, 200, {
+        "content-type": f.mime,
+        "cache-control": "public, max-age=300",
+        "x-content-type-options": "nosniff",
+      });
     })
     // A seller's single-use offer link (S18, S39): the terms only, no names; the answer goes through SpaManager.
     .get("/public/offer-links/:token", async (c) => {
@@ -430,10 +526,35 @@ export function createApp(deps: AppDeps) {
         .from(spaUsers)
         .where(eq(spaUsers.active, true))
         .orderBy(asc(spaUsers.role));
+      // M5b (S80): the cast shows up front; everyone else sits in the sign-in page's back-office disclosure.
+      const users = rows.map((r) => ({
+        ...r,
+        roleLabel: SPA_ROLE_LABELS[r.role],
+        shortRole: DEMO_SHORT_ROLE[r.role],
+        cast: isCastEmail(r.email),
+        hint: castHint(r.role),
+      }));
+      const order = (u: { email: string; cast: boolean }) => {
+        const i = DEMO_CAST.findIndex((m) => m.email === u.email);
+        return u.cast ? i : DEMO_CAST.length;
+      };
       return c.json(
-        rows.map((r) => ({ ...r, roleLabel: SPA_ROLE_LABELS[r.role] })),
+        users.toSorted((a, b) => order(a) - order(b)),
         200,
       );
+    })
+    // M5b (S80): who a demo presenter switches to for a step that waits on a role. Demo mode only; no gate or role changes.
+    .get("/api/demo/handoff", async (c) => {
+      if (!deps.demoMode) return c.json({ error: "not found", code: "not_found" }, 404);
+      const role = SpaRole.safeParse(c.req.query("role"));
+      if (!role.success) return c.json({ error: "choose a role", code: "invalid_request" }, 400);
+      const rows = await database.db
+        .select({ email: spaUsers.email, name: spaUsers.name })
+        .from(spaUsers)
+        .where(and(eq(spaUsers.role, role.data), eq(spaUsers.active, true)))
+        .orderBy(asc(spaUsers.name), asc(spaUsers.email));
+      const pick = rows.find((r) => isCastEmail(r.email)) ?? rows[0];
+      return c.json(pick ? { name: pick.name, email: pick.email, roleLabel: DEMO_SHORT_ROLE[role.data] } : null, 200);
     })
     .post("/api/auth/demo-sign-in", async (c) => {
       if (!deps.demoMode) return c.json({ error: "not found", code: "not_found" }, 404);
@@ -977,6 +1098,12 @@ export function createApp(deps: AppDeps) {
     .get("/api/summary", auth, async (c) => reply(c, await homeSummary(ctx, c.get("user"))))
     // C32 (S64): inventory (developer and both companies) and listings (brokerage and both). The manager checks the
     // role and the company kind on every route; a hidden rail item is only a convenience.
+    .get("/api/units", auth, async (c) => reply(c, await listUnits(ctx, c.get("user"), c.req.query())))
+    .get("/api/units/:id", auth, async (c) => {
+      const id = idParam.safeParse(c.req.param("id"));
+      if (!id.success) return c.json({ error: "not found", code: "not_found" }, 404);
+      return reply(c, await getUnit(ctx, c.get("user"), id.data));
+    })
     .get("/api/projects", auth, async (c) => reply(c, await listProjects(ctx, c.get("user"))))
     .get("/api/projects/:id", auth, async (c) => {
       const id = idParam.safeParse(c.req.param("id"));
@@ -994,6 +1121,16 @@ export function createApp(deps: AppDeps) {
       if (!id.success) return c.json({ error: "not found", code: "not_found" }, 404);
       return c.json(await addUnit(ctx, id.data, await jsonBody(c), c.get("user")), 201);
     })
+    .put("/api/projects/:id", auth, async (c) => {
+      const id = idParam.safeParse(c.req.param("id"));
+      if (!id.success) return c.json({ error: "not found", code: "not_found" }, 404);
+      return c.json(await updateProject(ctx, id.data, await jsonBody(c), c.get("user")), 200);
+    })
+    .put("/api/units/:id", auth, async (c) => {
+      const id = idParam.safeParse(c.req.param("id"));
+      if (!id.success) return c.json({ error: "not found", code: "not_found" }, 404);
+      return c.json(await updateUnit(ctx, id.data, await jsonBody(c), c.get("user")), 200);
+    })
     .post("/api/projects/:id/price-lists", auth, async (c) => {
       const id = idParam.safeParse(c.req.param("id"));
       if (!id.success) return c.json({ error: "not found", code: "not_found" }, 404);
@@ -1004,11 +1141,76 @@ export function createApp(deps: AppDeps) {
       if (!id.success) return c.json({ error: "not found", code: "not_found" }, 404);
       return c.json(await publishPriceList(ctx, id.data, c.get("user")), 200);
     })
+    // S75: marketing photos of a project, unit or listing. The manager checks the role of the owner's kind.
+    .get("/api/media", auth, async (c) => {
+      const owner = MediaOwnerQuery.safeParse(c.req.query());
+      if (!owner.success) return badQuery(c);
+      return reply(c, { items: await listMediaFor(ctx, owner.data, c.get("user")) });
+    })
+    .post(
+      "/api/media",
+      auth,
+      bodyLimit({
+        maxSize: MAX_MEDIA_BYTES + 100_000,
+        onError: (c) => c.json({ error: "the photo is too large", code: "too_large" }, 413),
+      }),
+      async (c) => {
+        if (!deps.media) return c.json({ error: "photo storage is not configured", code: "unavailable" }, 503);
+        const form = await c.req.formData().catch(() => null);
+        const file = form?.get("file");
+        const owner = MediaOwnerQuery.safeParse({ kind: form?.get("kind"), id: form?.get("id") });
+        const caption = form?.get("caption");
+        if (!owner.success || !(file instanceof File) || (caption !== null && typeof caption !== "string"))
+          return c.json({ error: "send a photo, its kind and its id", code: "invalid_request" }, 400);
+        const r = await addMedia(
+          ctx,
+          deps.media,
+          owner.data,
+          new Uint8Array(await file.arrayBuffer()),
+          caption || null,
+          c.get("user"),
+        );
+        return c.json(
+          { ...r, media: { id: r.media.id, caption: r.media.caption, sort: r.media.sort } },
+          r.duplicate ? 200 : 201,
+        );
+      },
+    )
+    .put("/api/media/order", auth, async (c) => {
+      const body = MediaOrderBody.safeParse(await jsonBody(c));
+      if (!body.success)
+        return c.json({ error: "send the kind, the id and every photo id", code: "invalid_request" }, 400);
+      await reorderMedia(ctx, { kind: body.data.kind, id: body.data.id }, body.data.ids, c.get("user"));
+      return c.json({ ok: true }, 200);
+    })
+    .patch("/api/media/:id", auth, async (c) => {
+      const id = idParam.safeParse(c.req.param("id"));
+      const body = z.object({ caption: z.string().nullable() }).safeParse(await jsonBody(c));
+      if (!id.success) return c.json({ error: "not found", code: "not_found" }, 404);
+      if (!body.success) return c.json({ error: "send a caption", code: "invalid_request" }, 400);
+      await captionMedia(ctx, id.data, body.data.caption, c.get("user"));
+      return c.json({ ok: true }, 200);
+    })
+    .delete("/api/media/:id", auth, async (c) => {
+      if (!deps.media) return c.json({ error: "photo storage is not configured", code: "unavailable" }, 503);
+      const id = idParam.safeParse(c.req.param("id"));
+      if (!id.success) return c.json({ error: "not found", code: "not_found" }, 404);
+      await removeMedia(ctx, deps.media, id.data, c.get("user"));
+      return c.body(null, 204);
+    })
+    .get("/api/media/:id/file", auth, async (c) => {
+      if (!deps.media) return c.json({ error: "photo storage is not configured", code: "unavailable" }, 503);
+      const id = idParam.safeParse(c.req.param("id"));
+      if (!id.success) return c.json({ error: "not found", code: "not_found" }, 404);
+      const f = await readMedia(ctx, deps.media, id.data, c.get("user"));
+      return c.body(f.bytes, 200, { "content-type": f.mime, "cache-control": "private, max-age=300" });
+    })
     .get("/api/listings", auth, async (c) => {
       const q = ListingsQuery.safeParse(c.req.query());
       if (!q.success) return badQuery(c);
       return reply(c, await listListings(ctx, c.get("user"), q.data));
     })
+    .get("/api/listings/agents", auth, async (c) => reply(c, await listAgents(ctx, c.get("user"))))
     .get("/api/listings/:id", auth, async (c) => {
       const id = idParam.safeParse(c.req.param("id"));
       if (!id.success) return c.json({ error: "not found", code: "not_found" }, 404);
@@ -1017,10 +1219,163 @@ export function createApp(deps: AppDeps) {
     .post("/api/listings", auth, async (c) =>
       c.json(await createListingDraft(ctx, await jsonBody(c), c.get("user")), 201),
     )
+    .post("/api/listings/:id/steps", auth, async (c) => {
+      const id = idParam.safeParse(c.req.param("id"));
+      if (!id.success) return c.json({ error: "not found", code: "not_found" }, 404);
+      return c.json(await stepListing(ctx, id.data, await jsonBody(c), c.get("user")), 200);
+    })
+    .post("/api/listings/:id/ownership", auth, async (c) => {
+      const id = idParam.safeParse(c.req.param("id"));
+      if (!id.success) return c.json({ error: "not found", code: "not_found" }, 404);
+      return c.json(await recordOwnershipAs(ctx, id.data, await jsonBody(c), c.get("user")), 200);
+    })
+    .post("/api/listings/:id/signatures", auth, async (c) => {
+      const id = idParam.safeParse(c.req.param("id"));
+      if (!id.success) return c.json({ error: "not found", code: "not_found" }, 404);
+      const body = (await jsonBody(c)) as { partyId?: unknown } | null;
+      await recordSignatureAs(ctx, id.data, body?.partyId, c.get("user"));
+      return c.json({ ok: true }, 200);
+    })
+    .post(
+      "/api/listings/:id/documents",
+      auth,
+      bodyLimit({
+        maxSize: 10 * 1024 * 1024 + 100_000,
+        onError: (c) => c.json({ error: "the file is too large", code: "too_large" }, 413),
+      }),
+      async (c) => {
+        const id = idParam.safeParse(c.req.param("id"));
+        if (!id.success) return c.json({ error: "not found", code: "not_found" }, 404);
+        if (!deps.documents) return c.json({ error: "uploads are not configured", code: "unavailable" }, 503);
+        const form = await c.req.formData().catch(() => null);
+        const file = form?.get("file");
+        if (!(file instanceof File)) return c.json({ error: "send a file and its kind", code: "invalid_request" }, 400);
+        const r = await uploadListingDocument(
+          ctx,
+          deps.documents,
+          id.data,
+          form?.get("kind"),
+          { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) },
+          c.get("user"),
+        );
+        return c.json(r, r.duplicate ? 200 : 201);
+      },
+    )
+    .get("/api/listings/:id/documents/:docId/file", auth, async (c) => {
+      const id = idParam.safeParse(c.req.param("id"));
+      const docId = idParam.safeParse(c.req.param("docId"));
+      if (!id.success || !docId.success) return c.json({ error: "not found", code: "not_found" }, 404);
+      if (!deps.documents) return c.json({ error: "uploads are not configured", code: "unavailable" }, 503);
+      const f = await readListingDocument(ctx, deps.documents, id.data, docId.data, c.get("user"));
+      return c.body(new Uint8Array(f.bytes), 200, {
+        "content-type": f.mime,
+        "cache-control": "private, no-store",
+        "x-content-type-options": "nosniff",
+        "content-disposition": "inline",
+      });
+    })
+    .put("/api/listings/:id", auth, async (c) => {
+      const id = idParam.safeParse(c.req.param("id"));
+      if (!id.success) return c.json({ error: "not found", code: "not_found" }, 404);
+      await updateListing(ctx, id.data, await jsonBody(c), c.get("user"));
+      return c.json({ ok: true }, 200);
+    })
+    // Leads and viewings (S79): the sales roles only; an officer sees their own, a manager everyone's.
+    .get("/api/leads", auth, async (c) => reply(c, await listLeads(ctx, c.get("user"), c.req.query())))
+    // The record carries the visitor's contact details for the assigned staff, so it is not run through the PII mask.
+    .get("/api/leads/:id", auth, async (c) => {
+      const id = idParam.safeParse(c.req.param("id"));
+      if (!id.success) return c.json({ error: "not found", code: "not_found" }, 404);
+      return c.json(await getLead(ctx, c.get("user"), id.data), 200);
+    })
+    .post("/api/leads", auth, bodyLimit({ maxSize: 8192 }), async (c) =>
+      c.json(await recordStaffLead(ctx, await jsonBody(c), c.get("user")), 201),
+    )
+    .put("/api/leads/:id/status", auth, async (c) => {
+      const id = idParam.safeParse(c.req.param("id"));
+      if (!id.success) return c.json({ error: "not found", code: "not_found" }, 404);
+      const b = z.object({ status: z.string(), note: z.string().max(600).optional() }).safeParse(await jsonBody(c));
+      if (!b.success) return c.json({ error: "send the new status", code: "invalid_request" }, 400);
+      await updateLeadStatus(ctx, id.data, b.data.status, c.get("user"), b.data.note);
+      return c.json({ ok: true }, 200);
+    })
+    .get("/api/leads/:id/slots", auth, async (c) => {
+      const id = idParam.safeParse(c.req.param("id"));
+      if (!id.success) return c.json({ error: "not found", code: "not_found" }, 404);
+      return c.json({ slots: await freeSlotsForLead(ctx, id.data, c.get("user")) }, 200);
+    })
+    .get("/api/viewings", auth, async (c) => reply(c, await listViewings(ctx, c.get("user"), c.req.query())))
+    .post("/api/viewings", auth, async (c) => {
+      const b = z.object({ leadId: z.uuid(), slot: z.string().max(40) }).safeParse(await jsonBody(c));
+      if (!b.success) return c.json({ error: "send the lead and a time", code: "invalid_request" }, 400);
+      return c.json(await bookViewingForLead(ctx, b.data.leadId, b.data.slot, c.get("user")), 201);
+    })
+    .post("/api/viewings/:id/outcome", auth, async (c) => {
+      const id = idParam.safeParse(c.req.param("id"));
+      if (!id.success) return c.json({ error: "not found", code: "not_found" }, 404);
+      const b = z.object({ outcome: z.string(), note: z.string().max(1200).optional() }).safeParse(await jsonBody(c));
+      if (!b.success) return c.json({ error: "send the outcome", code: "invalid_request" }, 400);
+      await recordViewingOutcome(ctx, id.data, b.data.outcome, b.data.note, c.get("user"));
+      return c.json({ ok: true }, 200);
+    })
+    .post("/api/viewings/:id/cancel", auth, async (c) => {
+      const id = idParam.safeParse(c.req.param("id"));
+      if (!id.success) return c.json({ error: "not found", code: "not_found" }, 404);
+      const b = z.object({ reason: z.string().max(600) }).safeParse(await jsonBody(c));
+      if (!b.success) return c.json({ error: "say why", code: "invalid_request" }, 400);
+      await cancelViewingAs(ctx, id.data, b.data.reason, c.get("user"));
+      return c.json({ ok: true }, 200);
+    })
+    .post("/api/viewings/:id/reschedule", auth, async (c) => {
+      const id = idParam.safeParse(c.req.param("id"));
+      if (!id.success) return c.json({ error: "not found", code: "not_found" }, 404);
+      const b = z.object({ slot: z.string().max(40) }).safeParse(await jsonBody(c));
+      if (!b.success) return c.json({ error: "pick a time", code: "invalid_request" }, 400);
+      return c.json(await rescheduleViewing(ctx, id.data, b.data.slot, c.get("user")), 200);
+    })
     .get("/api/deals", auth, async (c) => {
       const q = DealsQuery.safeParse(c.req.query());
       if (!q.success) return badQuery(c);
       return reply(c, await listDeals(ctx, c.get("user"), q.data));
+    })
+    // M6 (S81): start a primary deal from a unit, with the figures the form shows computed here, never in the browser.
+    .get("/api/deals/quote", auth, async (c) => reply(c, await quoteDeal(ctx, c.get("user"), c.req.query())))
+    .post("/api/deals", auth, async (c) => c.json(await startDeal(ctx, await jsonBody(c), c.get("user")), 201))
+    .put("/api/deals/:id/broker", auth, async (c) => {
+      const id = idParam.safeParse(c.req.param("id"));
+      if (!id.success) return c.json({ error: "not found", code: "not_found" }, 404);
+      const user = c.get("user");
+      requireSales(user);
+      await setBroker(ctx, id.data, await jsonBody(c), `user:${user.id}`);
+      return c.json({ ok: true }, 200);
+    })
+    .post("/api/deals/:id/deposit", auth, async (c) => {
+      const id = idParam.safeParse(c.req.param("id"));
+      if (!id.success) return c.json({ error: "not found", code: "not_found" }, 404);
+      const user = c.get("user");
+      requireSales(user);
+      return c.json(
+        await recordDeposit(ctx, id.data, await jsonBody(c), `user:${user.id}`, { boss: deps.jobs.boss }),
+        201,
+      );
+    })
+    .get("/api/listings/:id/offers", auth, async (c) => {
+      const id = idParam.safeParse(c.req.param("id"));
+      if (!id.success) return c.json({ error: "not found", code: "not_found" }, 404);
+      return reply(c, await listOffers(ctx, c.get("user"), id.data));
+    })
+    .post("/api/listings/:id/offers", auth, async (c) => {
+      const id = idParam.safeParse(c.req.param("id"));
+      if (!id.success) return c.json({ error: "not found", code: "not_found" }, 404);
+      const body = (await jsonBody(c)) as Record<string, unknown> | null;
+      return c.json(await makeOffer(ctx, { ...body, listingId: id.data }, c.get("user")), 201);
+    })
+    .post("/api/offers/:id/withdraw", auth, async (c) => {
+      const id = idParam.safeParse(c.req.param("id"));
+      if (!id.success) return c.json({ error: "not found", code: "not_found" }, 404);
+      const body = (await jsonBody(c)) as { reason?: unknown } | null;
+      await withdrawOffer(ctx, id.data, body?.reason, c.get("user"));
+      return c.json({ ok: true }, 200);
     })
     .get("/api/deals/:id", auth, async (c) => {
       const id = idParam.safeParse(c.req.param("id"));

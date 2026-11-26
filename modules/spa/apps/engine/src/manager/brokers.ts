@@ -1,6 +1,6 @@
 import { dealMachine, type SpaActor } from "@spa/core";
 import { bpsOfFloor } from "@spa/rulebook";
-import { dealBrokers, deals, parties, type SpaDb, spaApprovals, withSpaTx } from "@spa/db";
+import { dealBrokers, deals, parties, type SpaDb, spaApprovals, type SpaTx, withSpaTx } from "@spa/db";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import type { SpaContext } from "./context.ts";
@@ -22,11 +22,18 @@ const Broker = z.object({
 });
 
 /** One broker per side (S18, confirm). The commission defaults to the deal's pinned policy; the side pays it. */
-export async function setBroker(ctx: SpaContext, dealId: string, input: unknown, actor: SpaActor): Promise<void> {
+export async function setBroker(
+  ctx: SpaContext,
+  dealId: string,
+  input: unknown,
+  actor: SpaActor,
+  /** Internal: starting a deal sets its broker inside the same transaction (M6). */
+  opts: { tx?: SpaTx } = {},
+): Promise<void> {
   const parsed = Broker.safeParse(input);
   if (!parsed.success) throw unprocessable("invalid_broker", "the broker details aren't valid");
   const b = parsed.data;
-  await withSpaTx(ctx.database, async (tx) => {
+  const run = async (tx: SpaTx) => {
     const [d] = await tx.db.select().from(deals).where(eq(deals.id, dealId)).for("update");
     if (!d) throw notFound("deal");
     if ((dealMachine.terminal as readonly string[]).includes(d.state))
@@ -82,7 +89,8 @@ export async function setBroker(ctx: SpaContext, dealId: string, input: unknown,
     });
     // S48: a new commission line changes the statement, so a live one goes stale and is rebuilt.
     await refreshSettlement(ctx, tx, dealId, actor);
-  });
+  };
+  await (opts.tx ? run(opts.tx) : withSpaTx(ctx.database, run));
 }
 
 /** Commission lines for the settlement statement (C16): amount by code from the price and the broker's %. */

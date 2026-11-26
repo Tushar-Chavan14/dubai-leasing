@@ -24,6 +24,18 @@ export const SPA_ROLE_LABELS: Readonly<Record<SpaRole, string>> = Object.freeze(
   admin: "Admin",
 });
 
+/** Anyone with a main role and, optionally, extra roles (M5c, S83). `roles` is absent on plain `{ role }` values. */
+export interface RoleHolder {
+  role: SpaRole;
+  roles?: readonly SpaRole[] | undefined;
+}
+/** The roles a user holds: the main role first, then the extras, without repeats. */
+export function rolesOf(user: RoleHolder): SpaRole[] {
+  return [...new Set<SpaRole>([user.role, ...(user.roles ?? [])])];
+}
+export const hasRole = (user: RoleHolder, role: SpaRole): boolean => rolesOf(user).includes(role);
+export const hasAnyRole = (user: RoleHolder, list: readonly SpaRole[]): boolean => rolesOf(user).some((r) => list.includes(r));
+
 /** What the company does (S12): `developer` has inventory, `brokerage` has listings, `both` has both. */
 export const CompanyKind = z.enum(["developer", "brokerage", "both"]);
 export type CompanyKind = z.infer<typeof CompanyKind>;
@@ -45,17 +57,21 @@ const SALES: readonly SpaRole[] = ["sales_officer", "sales_manager", "sales_admi
  * The rail items a role sees (design.md §2–3, S33). A hidden item is only a convenience: the engine still refuses
  * what a role may not do.
  */
-export function railItems(role: SpaRole, kind: CompanyKind = DEFAULT_COMPANY_KIND): RailItem[] {
+export function railItems(
+  who: SpaRole | readonly SpaRole[],
+  kind: CompanyKind = DEFAULT_COMPANY_KIND,
+): RailItem[] {
+  const roles: readonly SpaRole[] = typeof who === "string" ? [who] : who;
+  const any = (list: readonly SpaRole[]) => roles.some((r) => list.includes(r));
   const items: RailItem[] = [{ screen: "home", label: "Home", href: "/" }];
-  if ([...SALES, "legal", "finance"].includes(role)) items.push({ screen: "work", label: "Work", href: "/work" });
-  const sellsOrAdmin = [...SALES, "admin"].includes(role);
+  if (any([...SALES, "legal", "finance"])) items.push({ screen: "work", label: "Work", href: "/work" });
+  const sellsOrAdmin = any([...SALES, "admin"]);
   if (sellsOrAdmin && kind !== "brokerage") items.push({ screen: "inventory", label: "Inventory", href: "/inventory" });
   if (sellsOrAdmin && kind !== "developer") items.push({ screen: "listings", label: "Listings", href: "/listings" });
-  if (role === "compliance_officer" || role === "mlro")
-    items.push({ screen: "compliance", label: "Compliance", href: "/compliance" });
-  if (role === "admin") items.push({ screen: "settings", label: "Settings", href: "/settings" });
+  if (any(["compliance_officer", "mlro"])) items.push({ screen: "compliance", label: "Compliance", href: "/compliance" });
+  if (roles.includes("admin")) items.push({ screen: "settings", label: "Settings", href: "/settings" });
   // A sales manager looks at the settings; legal looks at Templates only (the Settings page lists what the role may read, S66).
-  if (role === "sales_manager" || role === "legal")
+  else if (any(["sales_manager", "legal"]))
     items.push({ screen: "settings", label: "Settings", href: "/settings", readOnly: true });
   return items;
 }
@@ -63,6 +79,8 @@ export function railItems(role: SpaRole, kind: CompanyKind = DEFAULT_COMPANY_KIN
 /** The rail screen a path belongs to. */
 export function screenOf(path: string): RailScreen {
   const first = path.split("/")[1] ?? "";
+  // A lead's record (S79) is part of Work.
+  if (first === "leads") return "work";
   const known: RailScreen[] = ["work", "inventory", "listings", "compliance", "settings"];
   return (known as string[]).includes(first) ? (first as RailScreen) : "home";
 }

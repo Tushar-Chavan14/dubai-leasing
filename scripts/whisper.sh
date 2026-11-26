@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Local speech to text for voice input (D46): whisper.cpp's whisper-server with the ggml base model.
-#   bun run voice:setup   clone and build whisper.cpp, download ggml-base.bin (once)
+# Local speech to text for voice input (D46): whisper.cpp's whisper-server with the ggml small model (multilingual, ~466 MB).
+#   bun run voice:setup   clone and build whisper.cpp, download ggml-small.bin (once)
 #   bun run voice         start whisper-server on the host/port in VOICE_URL (default 127.0.0.1:8178)
 # Audio is personal data: the server only listens on loopback, and temporary files go to RAM (/dev/shm).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DIR="${WHISPER_DIR:-$ROOT/data/whisper.cpp}"
-MODEL="${WHISPER_MODEL:-base}"
+MODEL="${WHISPER_MODEL:-small}"
 BIN="$DIR/build/bin/whisper-server"
 MODEL_FILE="$DIR/models/ggml-$MODEL.bin"
 

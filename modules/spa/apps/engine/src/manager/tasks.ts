@@ -1,12 +1,12 @@
 import { newId } from "@platform/kernel/ids";
-import { type SpaRole, taskVisibleTo } from "@spa/core";
+import { type SpaRole, taskVisibleTo, hasRole, rolesOf } from "@spa/core";
 import { spaTasks, type SpaTx, type TaskKind, withSpaTx } from "@spa/db";
 import { and, eq } from "drizzle-orm";
 import type { SpaContext } from "./context.ts";
 import { conflict, forbidden, notFound } from "./errors.ts";
 import { appendDealEvent } from "./events.ts";
 
-type Person = { id: string; role: SpaRole };
+type Person = { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined };
 
 export interface TaskInput {
   dealId: string | null;
@@ -70,8 +70,8 @@ export async function completeTask(ctx: SpaContext, taskId: string, user: Person
     const [t] = await tx.db.select().from(spaTasks).where(eq(spaTasks.id, taskId)).for("update");
     if (!t) throw notFound("task");
     // A task its viewer can't see doesn't exist for them, and no error names the task's role (S55 amendment).
-    if (!taskVisibleTo(t.role, user.role)) throw notFound("task");
-    if (user.role !== t.role && user.role !== "sales_manager") throw forbidden("you can't finish this task");
+    if (!taskVisibleTo(t.role, rolesOf(user))) throw notFound("task");
+    if (!hasRole(user, t.role) && !hasRole(user, "sales_manager")) throw forbidden("you can't finish this task");
     if (t.status !== "open") throw conflict("task_closed", "this task is already finished");
     await tx.db
       .update(spaTasks)

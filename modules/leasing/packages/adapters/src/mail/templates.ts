@@ -2,8 +2,14 @@
  * Email templates (English). Plain, readable HTML with a text twin. Values are escaped; links
  * are the only calls to action. Legal notices are always attached as PDF as well.
  */
+import { TOKENS } from "@platform/ui/tokens";
+
 const esc = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+
+/** Light palette of the design system (emails don't follow the reader's dark mode reliably). */
+const C = TOKENS.light;
+const EMAIL_FONT = "'Plus Jakarta Sans',Arial,Helvetica,sans-serif";
 
 interface Rendered {
   subject: string;
@@ -17,18 +23,18 @@ function layout(
   actions: { label: string; url: string }[],
   footer: string,
 ): string {
-  const body = paragraphs.map((p) => `<p style="margin:0 0 14px">${esc(p)}</p>`).join("");
+  const body = paragraphs.map((p) => `<p style="margin:0 0 14px;line-height:1.55">${esc(p)}</p>`).join("");
   const buttons = actions
     .map(
       (a, i) =>
-        `<a href="${esc(a.url)}" style="display:inline-block;margin:0 8px 8px 0;padding:10px 16px;border-radius:8px;text-decoration:none;font-weight:600;${i === 0 ? "background:#2f5d50;color:#ffffff" : "border:1px solid #cdd2ce;color:#1a1d1f"}">${esc(a.label)}</a>`,
+        `<a href="${esc(a.url)}" style="display:inline-block;margin:0 8px 8px 0;padding:11px 18px;border-radius:10px;text-decoration:none;font-weight:600;font-size:14px;${i === 0 ? `background:${C.cta};color:${C.onCta}` : `background:${C.page};border:1px solid ${C.line};color:${C.ink}`}">${esc(a.label)}</a>`,
     )
     .join("");
-  return `<!doctype html><html><body style="margin:0;background:#f2f3f1;font-family:Arial,Helvetica,sans-serif;color:#1a1d1f">
+  return `<!doctype html><html><body style="margin:0;background:${C.canvas};font-family:${EMAIL_FONT};color:${C.ink};font-size:15px">
 <div style="max-width:560px;margin:0 auto;padding:28px 20px">
-<div style="background:#ffffff;border-radius:10px;padding:24px;border:1px solid #e1e4e1">
-<h1 style="font-size:20px;margin:0 0 16px">${esc(title)}</h1>${body}<div style="margin-top:8px">${buttons}</div></div>
-<p style="font-size:12px;color:#687076;margin:16px 4px">${esc(footer)}</p></div></body></html>`;
+<div style="background:${C.page};border-radius:16px;padding:28px 24px;border:1px solid ${C.line};border-top:4px solid ${C.primary}">
+<h1 style="font-size:20px;line-height:1.3;margin:0 0 16px;color:${C.ink}">${esc(title)}</h1>${body}<div style="margin-top:8px">${buttons}</div></div>
+<p style="font-size:12px;line-height:1.5;color:${C.muted};margin:16px 4px">${esc(footer)}</p></div></body></html>`;
 }
 
 const footer = (demo: boolean) =>

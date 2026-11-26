@@ -82,7 +82,8 @@ export function ApplicationActions(p: {
     ) : null;
   return (
     <Section id="next-h" title="Next step" highlight>
-      {p.pendingAction}
+      {/* An accepted offer has its own reservation form below; the waiting task's to-do would repeat it. */}
+      {!(p.state === "OFFER" && p.accepted) && p.pendingAction}
       {p.state === "ENQUIRY" && (
         <ActionForm state={bookS} action={book} className="grid gap-3">
           <input type="hidden" name="id" value={p.id} />

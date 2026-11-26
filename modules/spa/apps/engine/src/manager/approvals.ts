@@ -4,7 +4,9 @@ import {
   isComplianceRole,
   mayDecide,
   neutralGate,
+  rolesOf,
   parseDecisionFor,
+  hasRole,
   type SpaActor,
   type SpaGateId,
   spaGates,
@@ -60,6 +62,9 @@ async function rulesVersionOf(t: SpaTx, entity: { kind: GateEntityKind; id: stri
 
 /** Gates whose existence stays off the deal timeline: the event says only "compliance_review" (S42, tipping-off; the sets are in @spa/core's visibility). */
 const visibleGate = neutralGate;
+
+/** The note on an `aml_report` that the deciding compliance officer, who is also the MLRO, recorded in the same step. */
+export const COMBINED_MLRO_NOTE = "The compliance officer is also the MLRO";
 
 /** Opens a gate (S3): a pending `spa_approvals` row for the gate's role, and an `APPROVAL_PROPOSED` event. */
 export async function proposeApproval(
@@ -117,13 +122,46 @@ export async function proposeApproval(
 }
 
 /**
+ * Withdraws the pending approvals of one gate on one entity because code found them stale (S77: the owners on the
+ * ownership document now match, or the document changed). Only `pending` rows move; a decided one is never touched.
+ * Each withdrawal is `cancelled` with the reason as its note, and appends an `APPROVAL_WITHDRAWN` event.
+ */
+export async function withdrawPendingApprovals(
+  tx: SpaTx,
+  ctx: SpaContext,
+  input: { gate: SpaGateId; entity: { kind: GateEntityKind; id: string }; reason: string; actor: SpaActor },
+): Promise<number> {
+  const rows = await tx.db
+    .update(spaApprovals)
+    .set({ status: "cancelled", decidedAt: ctx.clock.now(), decisionNote: input.reason })
+    .where(
+      and(
+        eq(spaApprovals.gate, input.gate),
+        eq(spaApprovals.entityKind, input.entity.kind),
+        eq(spaApprovals.entityId, input.entity.id),
+        eq(spaApprovals.status, "pending"),
+      ),
+    )
+    .returning({ id: spaApprovals.id });
+  for (const a of rows)
+    await appendDealEvent(tx, ctx, {
+      entity: input.entity,
+      type: "APPROVAL_WITHDRAWN",
+      rulesVersion: await rulesVersionOf(tx, input.entity),
+      actor: input.actor,
+      payload: { approvalId: a.id, gate: visibleGate(input.gate), reason: input.reason },
+    });
+  return rows.length;
+}
+
+/**
  * A person decides a pending gate: right role, not admin, not their own proposal (S3). `aml_flag` takes an outcome;
  * "stop and report" also opens `aml_report` for the MLRO.
  */
 export async function decideApproval(
   ctx: SpaContext,
   approvalId: string,
-  user: { id: string; role: SpaRole },
+  user: { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined },
   input: unknown,
 ): Promise<{ status: string; outcome?: string }> {
   // S53: set when this decision approved a registry submission gate; the job is queued after the commit.
@@ -157,6 +195,14 @@ export async function decideApproval(
     // S59: a helper result is "looks right" or "doesn't"; the result itself is code's, so there is nothing to edit.
     if (a.gate === "helper_review" && d.decision === "edit")
       throw unprocessable("edit_not_allowed", "a helper result is approved or rejected, not edited");
+    // M6 (S81): a price or booking approval is approved or rejected. Nothing applies an edited value, so an edit could
+    // only be ignored (or lower a limit more than the manager meant): a different price is a new deal.
+    if (
+      a.gate === "price_out_of_range" &&
+      d.decision === "edit" &&
+      (a.proposal.kind === "price" || a.proposal.kind === "booking")
+    )
+      throw unprocessable("edit_not_allowed", "a price or booking is approved or rejected, not edited");
     // S48: finance approves only a statement that still holds (checked now, before anything is written).
     if (a.gate === "settlement_approval" && d.decision !== "aml") await checkSettlementDecision(tx, a, d.decision);
     // S51: legal approves only an agreement whose deal hasn't moved since it was prepared.
@@ -215,7 +261,7 @@ export async function decideApproval(
     // S50: the decision reaches the case and the deal (clear returns it, stop cancels it, more_info keeps the hold).
     if (a.gate === "aml_flag" && d.decision === "aml") await applyAmlDecision(tx, ctx, a, d.outcome, actor);
     if (outcome === "stop_and_report") {
-      await proposeApproval(
+      const report = await proposeApproval(
         ctx,
         {
           gate: "aml_report",
@@ -227,6 +273,27 @@ export async function decideApproval(
         },
         tx,
       );
+      // M5c (S83): one person who is both the compliance officer and the MLRO. The report is still recorded, for the
+      // audit trail and the report record, but it is decided in this same step by that user: left pending it could
+      // never be decided, because nobody decides their own proposal. With two people nothing changes: it waits for the MLRO.
+      if (report.created && hasRole(user, "mlro")) {
+        await tx.db
+          .update(spaApprovals)
+          .set({
+            status: "approved",
+            decidedBy: user.id,
+            decidedAt: ctx.clock.now(),
+            decisionNote: COMBINED_MLRO_NOTE,
+          })
+          .where(eq(spaApprovals.id, report.id));
+        await appendDealEvent(tx, ctx, {
+          entity,
+          type: "APPROVAL_DECIDED",
+          rulesVersion: await rulesVersionOf(tx, entity),
+          actor,
+          payload: { approvalId: report.id, gate: visibleGate("aml_report") },
+        });
+      }
     }
     // S59: "looks right" releases the held result; a rejection closes it and opens the agent's task.
     if (a.gate === "helper_review" && (d.decision === "approve" || d.decision === "reject"))
@@ -272,7 +339,7 @@ export const isDecisionBody = (b: unknown): b is Record<string, unknown> =>
 export async function decideForSession(
   ctx: SpaContext,
   approvalId: string,
-  user: { id: string; role: SpaRole },
+  user: { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined },
   body: Record<string, unknown>,
 ) {
   const [a] = await ctx.database.db
@@ -280,6 +347,6 @@ export async function decideForSession(
     .from(spaApprovals)
     .where(eq(spaApprovals.id, approvalId));
   if (!a) throw notFound("approval");
-  if (isComplianceGate(a.gate) && !isComplianceRole(user.role)) throw forbidden("you can't decide this");
+  if (isComplianceGate(a.gate) && !isComplianceRole(rolesOf(user))) throw forbidden("you can't decide this");
   return decideApproval(ctx, approvalId, user, body);
 }

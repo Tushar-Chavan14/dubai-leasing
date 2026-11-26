@@ -37,12 +37,44 @@ export function projectRequest(f: FormData): CatalogueRequest | null {
     if (!DAY.test(day)) return null;
     body.anticipatedCompletionOn = day;
   }
+  for (const [k, max] of [
+    ["community", 80],
+    ["location", 120],
+    ["description", 2000],
+  ] as const) {
+    const v = text(f, k, max);
+    if (v) body[k] = v;
+  }
   const kind = text(f, "templateKind", 30);
   if (kind) {
     if (!(SPA_TEMPLATE_KIND_LIST as readonly string[]).includes(kind)) return null;
     body.templateKind = kind;
   }
   return { path: "/api/projects", body };
+}
+
+/** Edits a project (S75): a field left empty clears it. The code and the template don't change here. */
+export function projectUpdateRequest(f: FormData): (CatalogueRequest & { id: string }) | null {
+  const id = text(f, "id", 40);
+  const name = text(f, "name", 120);
+  if (!ID.test(id) || !name) return null;
+  const day = text(f, "anticipatedCompletionOn", 10);
+  if (day && !DAY.test(day)) return null;
+  // S79: the sales agent for new units, sent only when the form carries the select (empty clears it).
+  const agent = f.has("salesAgentUserId") ? text(f, "salesAgentUserId", 40) : null;
+  if (agent && !ID.test(agent)) return null;
+  return {
+    id,
+    path: `/api/projects/${id}`,
+    body: {
+      name,
+      anticipatedCompletionOn: day || null,
+      community: text(f, "community", 80) || null,
+      location: text(f, "location", 120) || null,
+      description: text(f, "description", 2000) || null,
+      ...(agent !== null ? { salesAgentUserId: agent || null } : {}),
+    },
+  };
 }
 
 const projectId = (f: FormData): string | null => {

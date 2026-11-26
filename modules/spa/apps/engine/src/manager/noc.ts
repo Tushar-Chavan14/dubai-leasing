@@ -27,6 +27,7 @@ import { checkNoc, currentNoc, nocOkFact } from "./noc-facts.ts";
 import { mailDealParties } from "./portal.ts";
 import { transferBookedMail } from "@spa/helpers";
 import { advanceSettled, refreshSettlement, STATEMENT_FIXED_STATES } from "./settlement.ts";
+import { hasAnyRole } from "@spa/core";
 
 /** Where uploaded files go (C15): a content-addressed store such as `LocalDiskStore`. */
 export interface DocumentStore {
@@ -36,7 +37,7 @@ export interface DocumentStore {
 }
 export const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024;
 
-type Person = { id: string; role: SpaRole };
+type Person = { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined };
 /** Who enters NOC and bank-letter records and confirms amounts. */
 const ENTER_ROLES: readonly SpaRole[] = ["sales_officer", "sales_manager", "sales_admin", "admin"];
 /** Who sets the target transfer date (ruling on S47). */
@@ -45,7 +46,7 @@ const CHECKER: SpaActor = "system:noc-check";
 const WARN_DAYS = 7;
 
 const need = (u: Person, roles: readonly SpaRole[], what: string) => {
-  if (!roles.includes(u.role)) throw forbidden(`only ${roles.join(", ")} can ${what}`);
+  if (!hasAnyRole(u, roles)) throw forbidden(`only ${roles.join(", ")} can ${what}`);
 };
 const actorOf = (u: Person): SpaActor => `user:${u.id}`;
 const calDate = z.string().refine(isCalendarDate, "a date as YYYY-MM-DD");

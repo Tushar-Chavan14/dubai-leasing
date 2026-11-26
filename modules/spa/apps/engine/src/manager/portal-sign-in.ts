@@ -8,6 +8,7 @@ export interface ExchangeUser {
   name: string;
   email: string;
   role: (typeof spaUsers.$inferSelect)["role"];
+  extraRoles: (typeof spaUsers.$inferSelect)["extraRoles"];
 }
 
 /** True the first time a portal token's `jti` is seen. The row is written with the engine Clock. */
@@ -23,7 +24,7 @@ export async function takeHandoff(ctx: Pick<SpaContext, "database" | "clock">, j
 /** The active SPA user for a lower-case email. Never creates, activates or changes a user or a role. */
 export async function findActiveUser(database: SpaDatabase, email: string): Promise<ExchangeUser | null> {
   const [u] = await database.db
-    .select({ id: spaUsers.id, name: spaUsers.name, email: spaUsers.email, role: spaUsers.role })
+    .select({ id: spaUsers.id, name: spaUsers.name, email: spaUsers.email, role: spaUsers.role, extraRoles: spaUsers.extraRoles })
     .from(spaUsers)
     .where(and(eq(spaUsers.email, email.toLowerCase()), eq(spaUsers.active, true)));
   return u ?? null;

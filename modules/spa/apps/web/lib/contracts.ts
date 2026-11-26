@@ -1,4 +1,15 @@
-import { DEAL_STATES, DealType, SpaAmlPolicy, SpaKycConfig, SpaRole } from "@spa/core";
+import {
+  DEAL_STATES,
+  DealType,
+  FURNISHED,
+  LEAD_SOURCES,
+  LEAD_STATUSES,
+  SpaAmlPolicy,
+  SpaKycConfig,
+  SpaRole,
+  UNIT_TYPES,
+  VIEWING_STATUSES,
+} from "@spa/core";
 import { z } from "zod";
 
 /**
@@ -366,6 +377,8 @@ export const EventsPage = z.object({ items: z.array(EventItem), nextCursor: z.st
 
 export const Summary = z.object({
   role: SpaRole,
+  /** M5 (S79): today's viewings and new leads, for the Work badge. */
+  leads: z.object({ viewings: z.number().int(), newLeads: z.number().int() }).optional(),
   inbox: z.object({ open: z.number().int() }),
   tasks: z.object({ open: z.number().int() }),
   deals: z.object({
@@ -494,12 +507,90 @@ export const ExportLogView = z.object({ items: z.array(ExportItem) });
 const UnitStateKey = z.enum(["AVAILABLE", "HELD", "SOLD", "REGISTERED", "HANDED_OVER"]);
 export type UnitStateKey = z.infer<typeof UnitStateKey>;
 
+/** One marketing photo of a project, unit or listing (S75). Its bytes come through `/media/<id>`, never a path. */
+export const MediaItem = z.object({ id: z.string(), caption: z.string().nullable(), sort: z.number().int() });
+export type MediaItem = z.infer<typeof MediaItem>;
+export const ActivityItem = z.object({
+  id: z.string(),
+  label: z.string(),
+  at: z.string(),
+  actor: z.string(),
+  changed: z.array(z.string()),
+  note: z.string().nullable().default(null),
+});
+export type ActivityItem = z.infer<typeof ActivityItem>;
+
+const UnitType = z.enum(UNIT_TYPES);
+const OpenDealRef = z.object({
+  id: z.string(),
+  ref: z.string(),
+  state: z.string(),
+  stageLabel: z.string().default(""),
+});
+
+export const UnitRow = z.object({
+  id: z.string(),
+  code: z.string(),
+  state: UnitStateKey,
+  type: UnitType.nullable(),
+  bedrooms: z.number().int().nullable(),
+  internalSqft: z.number().int().nullable(),
+  view: z.string().nullable(),
+  floor: z.number().int().nullable(),
+  project: z.object({ id: z.string(), name: z.string() }).nullable(),
+  building: z.object({ id: z.string(), name: z.string() }).nullable(),
+  priceFils: z.number().nullable(),
+  coverMediaId: z.string().nullable(),
+  openDeal: OpenDealRef.nullable(),
+});
+export type UnitRow = z.infer<typeof UnitRow>;
+export const UnitsPage = z.object({
+  items: z.array(UnitRow),
+  next: z.string().nullable(),
+  facets: z.object({
+    projects: z.array(z.object({ id: z.string(), name: z.string() })),
+    types: z.array(UnitType),
+    beds: z.array(z.number().int()),
+    /** Units per status under the other filters (the status chips' counts). */
+    states: z.partialRecord(UnitStateKey, z.number().int()).default({}),
+  }),
+});
+export type UnitsPage = z.infer<typeof UnitsPage>;
+
+export const UnitRecord = z.object({
+  id: z.string(),
+  code: z.string(),
+  state: UnitStateKey,
+  type: UnitType.nullable(),
+  bedrooms: z.number().int().nullable(),
+  bathrooms: z.number().int().nullable(),
+  internalSqft: z.number().int().nullable(),
+  balconySqft: z.number().int().nullable(),
+  floor: z.number().int().nullable(),
+  view: z.string().nullable(),
+  parkingSpaces: z.number().int().nullable(),
+  description: z.string().nullable(),
+  project: z
+    .object({ id: z.string(), code: z.string(), name: z.string(), community: z.string().nullable() })
+    .nullable(),
+  building: z.object({ id: z.string(), code: z.string(), name: z.string() }).nullable(),
+  media: z.array(MediaItem),
+  priceHistory: z.array(z.object({ version: z.number().int(), publishedAt: z.string(), priceFils: z.number() })),
+  currentPriceFils: z.number().nullable(),
+  openDeal: OpenDealRef.nullable(),
+  pastDeals: z.array(OpenDealRef),
+  activity: z.array(ActivityItem),
+});
+export type UnitRecord = z.infer<typeof UnitRecord>;
+
 export const ProjectRow = z.object({
   id: z.string(),
   code: z.string(),
   name: z.string(),
   emirate: z.string(),
   anticipatedCompletionOn: z.string().nullable(),
+  community: z.string().nullable().default(null),
+  coverMediaId: z.string().nullable().default(null),
   buildings: z.number().int(),
   units: z.number().int(),
   byState: z.record(UnitStateKey, z.number().int()),
@@ -515,6 +606,14 @@ export const ProjectRecord = z.object({
   name: z.string(),
   emirate: z.string(),
   anticipatedCompletionOn: z.string().nullable(),
+  community: z.string().nullable().default(null),
+  location: z.string().nullable().default(null),
+  description: z.string().nullable().default(null),
+  /** M5 (S79): who gets this project's leads and viewings; the choices come only for an admin. */
+  salesAgent: z.object({ id: z.string(), name: z.string() }).nullable().default(null),
+  salesAgentOptions: z.array(z.object({ id: z.string(), name: z.string() })).default([]),
+  media: z.array(MediaItem).default([]),
+  activity: z.array(ActivityItem).default([]),
   templateKind: z.string().nullable(),
   template: z.object({ name: z.string(), version: z.number().int() }).nullable(),
   /** The last four characters only (the engine masks it; there is no other field). */
@@ -556,11 +655,21 @@ export const PermitView = z.object({
 export type PermitView = z.infer<typeof PermitView>;
 const PageState = z.object({ state: z.enum(["live", "hidden", "off"]), label: z.string() });
 
+const ListingStateKey = z.enum(["DRAFT", "VERIFIED", "ACTIVE", "PUBLISHED", "UNDER_OFFER", "SOLD", "WITHDRAWN"]);
+export type ListingStateKey = z.infer<typeof ListingStateKey>;
+
 export const ListingRowView = z.object({
   id: z.string(),
   ref: z.string(),
   title: z.string(),
   community: z.string().nullable(),
+  bedrooms: z.number().int().nullable().default(null),
+  bathrooms: z.number().int().nullable().default(null),
+  sizeSqft: z.number().int().nullable().default(null),
+  unitType: UnitType.nullable().default(null),
+  view: z.string().nullable().default(null),
+  agent: z.string().nullable().default(null),
+  coverMediaId: z.string().nullable().default(null),
   sellerKind: z.string(),
   askingPriceFils: z.number().int().nullable(),
   state: z.string(),
@@ -570,8 +679,25 @@ export const ListingRowView = z.object({
   offer: z.object({ state: z.string(), label: z.string(), validUntil: z.string() }).nullable(),
 });
 export type ListingRowView = z.infer<typeof ListingRowView>;
-export const ListingsPage = z.object({ items: z.array(ListingRowView), nextCursor: z.string().nullable() });
+export const ListingsPage = z.object({
+  items: z.array(ListingRowView),
+  nextCursor: z.string().nullable(),
+  facets: z
+    .object({
+      communities: z.array(z.string()),
+      types: z.array(UnitType),
+      beds: z.array(z.number().int()),
+      agents: z.array(z.object({ id: z.string(), name: z.string() })),
+      /** Listings per status under the other filters (the status chips' counts). */
+      states: z.partialRecord(ListingStateKey, z.number().int()).default({}),
+    })
+    .default({ communities: [], types: [], beds: [], agents: [], states: {} }),
+});
 export type ListingsPage = z.infer<typeof ListingsPage>;
+
+export const LISTING_STEP_EVENTS = ["VERIFY", "ACTIVATE", "PUBLISH", "UNPUBLISH", "WITHDRAW"] as const;
+export type ListingStepEvent = (typeof LISTING_STEP_EVENTS)[number];
+const OwnershipKind = z.enum(["title_deed", "oqood"]);
 
 export const ListingRecord = z.object({
   id: z.string(),
@@ -580,16 +706,24 @@ export const ListingRecord = z.object({
   community: z.string().nullable(),
   description: z.string().nullable(),
   bedrooms: z.number().int().nullable(),
+  bathrooms: z.number().int().nullable().default(null),
   sizeSqft: z.number().int().nullable(),
+  unitType: UnitType.nullable().default(null),
+  floor: z.number().int().nullable().default(null),
+  view: z.string().nullable().default(null),
+  parkingSpaces: z.number().int().nullable().default(null),
+  furnished: z.enum(FURNISHED).nullable().default(null),
   askingPriceFils: z.number().int().nullable(),
   state: z.string(),
   stateLabel: z.string(),
   agent: z.string().nullable(),
+  agentUserId: z.string().nullable().default(null),
   sellerKind: z.string(),
   /** Null for a role that doesn't see sellers (admin). */
   sellers: z
     .array(
       z.object({
+        partyId: z.string().default(""),
         name: z.string(),
         kind: z.enum(["person", "company"]),
         shareBps: z.number().int().nullable(),
@@ -597,7 +731,16 @@ export const ListingRecord = z.object({
       }),
     )
     .nullable(),
-  ownership: z.object({ kind: z.enum(["title_deed", "oqood"]), matched: z.boolean() }).nullable(),
+  ownership: z
+    .object({
+      kind: OwnershipKind,
+      matched: z.boolean(),
+      /** The document's number and owners, for the sales roles only. */
+      ref: z.string().nullable().optional(),
+      owners: z.array(z.string()).nullable().optional(),
+      waitingForManager: z.boolean().optional(),
+    })
+    .nullable(),
   permit: PermitView,
   page: PageState,
   offer: z
@@ -609,6 +752,27 @@ export const ListingRecord = z.object({
       createdAt: z.string(),
     })
     .nullable(),
+  media: z.array(MediaItem).default([]),
+  documents: z
+    .array(
+      z.object({
+        id: z.string(),
+        kind: z.enum(["title_deed", "oqood", "listing_agreement", "permit"]),
+        kindLabel: z.string(),
+        fileName: z.string(),
+        uploadedAt: z.string(),
+      }),
+    )
+    .nullable()
+    .default(null),
+  next: z
+    .object({ event: z.enum(LISTING_STEP_EVENTS), label: z.string(), reasons: z.array(z.string()) })
+    .nullable()
+    .default(null),
+  actions: z.array(z.enum(["UNPUBLISH", "WITHDRAW"])).default([]),
+  lastUnpublish: z.object({ on: z.string(), reason: z.string() }).nullable().default(null),
+  openDeal: OpenDealRef.omit({ state: true }).nullable().default(null),
+  activity: z.array(ActivityItem).default([]),
 });
 export type ListingRecord = z.infer<typeof ListingRecord>;
 
@@ -958,3 +1122,156 @@ export const IntegrationsView = z.object({
 });
 export const DemoClockView = z.object({ today: z.string(), offsetDays: z.number().int(), demo: z.boolean() });
 export type DemoClockView = z.infer<typeof DemoClockView>;
+
+/** Settings -> Viewings (S79): the days, hours, slot length, lead time, horizon and the per-email cap. */
+export const ViewingsPolicyView = z.object({
+  page: z.literal("viewings"),
+  version: z.number().int(),
+  values: z.object({
+    viewings: z.object({
+      viewingDays: z.array(z.number().int()),
+      viewingStartHour: z.number().int(),
+      viewingEndHour: z.number().int(),
+      viewingSlotMinutes: z.number().int(),
+      viewingLeadHours: z.number().int(),
+      viewingHorizonDays: z.number().int(),
+    }),
+    leads: z.object({ perEmailPerDay: z.number().int() }),
+  }),
+});
+export type ViewingsPolicyView = z.infer<typeof ViewingsPolicyView>;
+
+// ---------------------------------------------------------------------------------------------
+// M5 (S79): leads and viewings, as the engine's staff routes answer them. Codes are for logic, labels for the page.
+
+const LeadStatusKey = z.enum(LEAD_STATUSES);
+const LeadSourceKey = z.enum(LEAD_SOURCES);
+export const LeadRow = z.object({
+  id: z.string(),
+  ref: z.string(),
+  name: z.string(),
+  email: z.string(),
+  status: LeadStatusKey,
+  statusLabel: z.string(),
+  source: LeadSourceKey,
+  sourceLabel: z.string(),
+  propertyRef: z.string(),
+  propertyTitle: z.string(),
+  lastMessage: z.string(),
+  agentName: z.string().nullable(),
+  createdAt: iso,
+});
+export type LeadRow = z.infer<typeof LeadRow>;
+export const LeadsPage = z.object({ items: z.array(LeadRow), mineOnly: z.boolean(), canSeeAll: z.boolean() });
+export type LeadsPage = z.infer<typeof LeadsPage>;
+
+export const ViewingRow = z.object({
+  id: z.string(),
+  leadId: z.string(),
+  leadRef: z.string(),
+  visitorName: z.string(),
+  startsAt: iso,
+  endsAt: iso,
+  status: z.enum(VIEWING_STATUSES),
+  statusLabel: z.string(),
+  outcomeNote: z.string().nullable(),
+  cancelReason: z.string().nullable(),
+  propertyRef: z.string(),
+  propertyTitle: z.string(),
+  propertyKind: z.enum(["listing", "unit"]),
+  propertyId: z.string(),
+  agentName: z.string().nullable(),
+  needsOutcome: z.boolean(),
+  canChange: z.boolean(),
+});
+export type ViewingRow = z.infer<typeof ViewingRow>;
+export const ViewingsPage = z.object({
+  when: z.enum(["today", "upcoming", "past"]),
+  mineOnly: z.boolean(),
+  canSeeAll: z.boolean(),
+  items: z.array(ViewingRow),
+});
+export type ViewingsPage = z.infer<typeof ViewingsPage>;
+
+export const LeadRecord = z.object({
+  id: z.string(),
+  ref: z.string(),
+  name: z.string(),
+  email: z.string(),
+  phone: z.string().nullable(),
+  status: LeadStatusKey,
+  statusLabel: z.string(),
+  source: LeadSourceKey,
+  sourceLabel: z.string(),
+  consentAt: iso,
+  createdAt: iso,
+  dealId: z.string().nullable(),
+  property: z
+    .object({ kind: z.enum(["listing", "unit"]), ref: z.string(), title: z.string(), id: z.string() })
+    .nullable(),
+  agent: z.object({ id: z.string(), name: z.string() }).nullable(),
+  messages: z.array(z.object({ seq: z.number().int(), body: z.string(), createdAt: iso })),
+  viewings: z.array(
+    z.object({
+      id: z.string(),
+      startsAt: iso,
+      endsAt: iso,
+      status: z.enum(VIEWING_STATUSES),
+      statusLabel: z.string(),
+      outcomeNote: z.string().nullable(),
+      cancelReason: z.string().nullable(),
+      needsOutcome: z.boolean(),
+    }),
+  ),
+  activity: z.array(
+    z.object({ id: z.string(), label: z.string(), at: iso, actor: z.string(), note: z.string().nullable() }),
+  ),
+});
+export type LeadRecord = z.infer<typeof LeadRecord>;
+export const SlotsAnswer = z.object({ slots: z.array(z.string()) });
+
+/** M6 (S81): the figures a primary deal's form shows, computed by the engine from the rulebook and the policy. */
+export const DealQuote = z.object({
+  listPriceFils: z.number().int().nullable(),
+  priceFils: z.number().int().nullable(),
+  discountBps: z.number().int().nullable(),
+  maxDiscountBps: z.number().int(),
+  withinPolicy: z.boolean(),
+  bookingMinBps: z.number().int(),
+  bookingMinFils: z.number().int().nullable(),
+  bookingFils: z.number().int().nullable(),
+  bookingOk: z.boolean(),
+  dldFeeFils: z.number().int().nullable(),
+  dldFeePayer: z.string(),
+  commission: z.object({ buyerSideBps: z.number().int(), sellerSideBps: z.number().int() }),
+  reasons: z.array(z.string()),
+});
+export type DealQuote = z.infer<typeof DealQuote>;
+
+/** A listing's offers (M6): terms, each seller's answer, the deal once accepted. Buyers are null without sales rights. */
+export const OfferRow = z.object({
+  id: z.string(),
+  status: z.enum(["SENT", "ACCEPTED", "REJECTED", "EXPIRED", "WITHDRAWN"]),
+  statusLabel: z.string(),
+  priceFils: z.number().int(),
+  buyerMortgage: z.boolean(),
+  sellerMortgage: z.boolean(),
+  targetTransferOn: z.string().nullable(),
+  conditions: z.string().nullable(),
+  validUntil: z.string(),
+  createdAt: z.string(),
+  sellers: z.array(
+    z.object({ name: z.string(), answer: z.enum(["accept", "reject"]).nullable(), answerLabel: z.string() }),
+  ),
+  buyers: z.array(z.object({ name: z.string(), email: z.string(), shareBps: z.number().int().nullable() })).nullable(),
+  deal: z.object({ id: z.string(), ref: z.string() }).nullable(),
+  deposit: z.object({ amountFils: z.number().int(), bank: z.string(), chequeOn: z.string() }).nullable().default(null),
+  canRecordDeposit: z.boolean().default(false),
+  canWithdraw: z.boolean(),
+});
+export type OfferRow = z.infer<typeof OfferRow>;
+export const OffersView = z.object({
+  offers: z.array(OfferRow),
+  terms: z.object({ depositBps: z.number().int(), validityDays: z.number().int(), validityMaxDays: z.number().int() }),
+});
+export type OffersView = z.infer<typeof OffersView>;

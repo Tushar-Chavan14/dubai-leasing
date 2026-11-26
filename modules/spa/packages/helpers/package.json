@@ -11,6 +11,7 @@
     "@platform/kernel": "workspace:*",
     "@platform/llm": "workspace:*",
     "@platform/readers": "workspace:*",
+    "@platform/ui": "workspace:*",
     "@spa/core": "workspace:*",
     "@spa/rulebook": "workspace:*",
     "zod": "^4.6.7"

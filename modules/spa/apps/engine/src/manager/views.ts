@@ -1,21 +1,6 @@
 import { toDubaiDate } from "@platform/kernel/dates";
 import { maskPii, maskPiiText } from "@platform/kernel/pii";
-import {
-  type DealStep,
-  dealSteps,
-  type DealState,
-  eventVisibleTo,
-  isComplianceGate,
-  isComplianceRole,
-  mayDecide,
-  type SpaGateId,
-  spaGates,
-  type SpaRole,
-  stageKey,
-  type StepKey,
-  stepsFor,
-  taskVisibleTo,
-} from "@spa/core";
+import { type RoleSet, type DealStep, dealSteps, type DealState, eventVisibleTo, isComplianceGate, isComplianceRole, mayDecide, type SpaGateId, spaGates, type SpaRole, stageKey, type StepKey, stepsFor, taskVisibleTo, hasAnyRole, rolesOf } from "@spa/core";
 import {
   agreements,
   amlCases,
@@ -50,7 +35,9 @@ import { signingView } from "./signing.ts";
  */
 export interface Viewer {
   id: string;
+  /** The main role; what the viewer may see and do is decided from every role they hold (`rolesOf`, M5c, S83). */
   role: SpaRole;
+  roles?: readonly SpaRole[] | undefined;
 }
 type Reader = { db: SpaDb };
 export type EventRow = typeof dealEvents.$inferSelect;
@@ -125,13 +112,13 @@ export function eventLabel(type: string, payload: Record<string, unknown>): stri
   if (type === "APPROVAL_DECIDED") return `Approval decided: ${gateName(payload.gate)}`;
   return humanise(type);
 }
-const stateFor = (s: string | null, role: SpaRole): string | null =>
+const stateFor = (s: string | null, role: RoleSet): string | null =>
   s === null ? null : s === "AML_HOLD" ? stageKey("AML_HOLD", role) : s;
 
 /** One timeline entry for a role, or null when the role may not see this type (fail closed). */
 export function viewEvent(
   row: EventRow,
-  role: SpaRole,
+  role: RoleSet,
   names: ReadonlyMap<string, string> = new Map(),
 ): EventView | null {
   if (!eventVisibleTo(row.type, role)) return null;
@@ -190,7 +177,7 @@ export interface ApprovalView {
 }
 
 /** Whether a role is shown this approval as it is (false: only the neutral open/closed form). */
-export const sees = (gate: string, role: SpaRole): boolean => !isComplianceGate(gate) || isComplianceRole(role);
+export const sees = (gate: string, role: RoleSet): boolean => !isComplianceGate(gate) || isComplianceRole(role);
 
 export function viewApproval(
   row: ApprovalRow,
@@ -198,7 +185,7 @@ export function viewApproval(
   names: ReadonlyMap<string, string> = new Map(),
 ): ApprovalView | NeutralApprovalView {
   const entity = { kind: row.entityKind as string, id: row.entityId };
-  if (!sees(row.gate, viewer.role))
+  if (!sees(row.gate, rolesOf(viewer)))
     return {
       id: row.id,
       gate: "compliance_review",
@@ -243,7 +230,7 @@ export interface HelperRunView {
   createdAt: Date;
 }
 /** A run the helper marked for compliance is hidden from every other role. */
-export function viewHelperRun(row: HelperRunRow, role: SpaRole): HelperRunView | null {
+export function viewHelperRun(row: HelperRunRow, role: RoleSet): HelperRunView | null {
   if (row.visibility === "compliance" && !isComplianceRole(role)) return null;
   return {
     id: row.id,
@@ -312,7 +299,7 @@ export function waitingFor(
   deal: { state: DealState; createdAt: Date },
   pending: readonly { id: string; gate: SpaGateId; approverRole: SpaRole; createdAt: Date }[],
   enteredAt: Date | null,
-  role: SpaRole,
+  role: RoleSet,
   now: Date,
 ): WaitingFor | null {
   if (deal.state === "COMPLETED" || deal.state === "HANDED_OVER" || deal.state === "CANCELLED") return null;
@@ -347,7 +334,7 @@ export interface RecordSection {
    */
   steps?: readonly StepKey[];
   /** The roles that may read the section. A role that may not never gets the key: absent, not empty. */
-  visibleTo?(role: SpaRole): boolean;
+  visibleTo?(role: RoleSet): boolean;
   load(r: Reader, deal: DealRow, viewer: Viewer, ctx: SpaContext): Promise<unknown>;
 }
 
@@ -475,7 +462,7 @@ export const RECORD_SECTIONS: readonly RecordSection[] = [
         label: COMPLIANCE_LABEL,
         status: c.open ? "open" : "none",
         // Compliance roles are pointed to the case screen; everyone else has nothing to follow.
-        ...(isComplianceRole(viewer.role) ? { cases: c.cases, detailPath: `/api/deals/${deal.id}/aml` } : {}),
+        ...(isComplianceRole(rolesOf(viewer)) ? { cases: c.cases, detailPath: `/api/deals/${deal.id}/aml` } : {}),
       };
     },
   },
@@ -503,7 +490,7 @@ export const RECORD_SECTIONS: readonly RecordSection[] = [
         .where(eq(spaTasks.dealId, deal.id))
         .orderBy(desc(spaTasks.createdAt), desc(spaTasks.id))
         .limit(100);
-      return rows.filter((t) => taskVisibleTo(t.role, viewer.role)).map(viewTask);
+      return rows.filter((t) => taskVisibleTo(t.role, rolesOf(viewer))).map(viewTask);
     },
   },
   {
@@ -516,12 +503,12 @@ export const RECORD_SECTIONS: readonly RecordSection[] = [
         .where(
           and(
             eq(helperRuns.dealId, deal.id),
-            ...(isComplianceRole(viewer.role) ? [] : [eq(helperRuns.visibility, "staff" as const)]),
+            ...(isComplianceRole(rolesOf(viewer)) ? [] : [eq(helperRuns.visibility, "staff" as const)]),
           ),
         )
         .orderBy(desc(helperRuns.createdAt), desc(helperRuns.id))
         .limit(10);
-      return rows.map((r) => viewHelperRun(r, viewer.role)).filter((v) => v !== null);
+      return rows.map((r) => viewHelperRun(r, rolesOf(viewer))).filter((v) => v !== null);
     },
   },
   {
@@ -601,7 +588,7 @@ function stepSections(): RecordSection[] {
     key,
     ...(steps ? { steps } : {}),
     appliesTo: (deal) => !steps || stepApplies(deal, steps),
-    ...(readers ? { visibleTo: (role: SpaRole) => readers.includes(role) } : {}),
+    ...(readers ? { visibleTo: (role: RoleSet) => [role].flat().some((r) => readers.includes(r)) } : {}),
     load,
   });
   return [
@@ -628,7 +615,7 @@ function stepSections(): RecordSection[] {
     section("finance", ["finance"], STAFF_READERS, async (_r, deal, viewer, ctx) => {
       const status = await nocStatusView(ctx, deal.id);
       // The payments route is not legal's: legal reads the bank letters (as `nocStatus` allows) and no receipt.
-      const rows = PAYMENT_READERS.includes(viewer.role) ? await paymentsView(ctx, deal.id, viewer.role) : [];
+      const rows = hasAnyRole(viewer, PAYMENT_READERS) ? await paymentsView(ctx, deal.id, rolesOf(viewer)) : [];
       return {
         bankLetters: status.bankLetters,
         // An allow-list: the payer check is for compliance roles only, and a new field never reaches here by default.

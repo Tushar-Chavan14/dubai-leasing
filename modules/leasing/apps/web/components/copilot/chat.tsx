@@ -12,6 +12,7 @@ import { Rethinking, Thinking } from "../chat-ui/thinking";
 import { ChoiceCardView } from "../chat-ui/choice-card";
 import { CardError, CardNote, CardShell, Facts } from "../chat-ui/card-shell";
 import { SEND_BTN, StaffComposer, TOOL_BTN, VoiceMenu } from "../chat-ui/composer";
+import { CHIP } from "@platform/ui/shell/composer";
 import { STAFF_PILLS } from "../chat-ui/quick-actions.ts";
 import { roleLabel, shortDate } from "../../lib/format";
 import { type ChatMessage, type DraftView, type PageRef, type ProposalView, useCopilotChat } from "./use-chat";
@@ -79,8 +80,6 @@ const STARTERS: Record<PageRef["kind"] | "none" | "settings" | "kyc", Starter[]>
     prepare("Publish the KYC draft of…"),
   ],
 };
-const CHIP =
-  "cursor-pointer rounded-full border border-line bg-page px-3 py-1.5 text-left font-sans text-[12.5px] leading-snug text-ink hover:border-ink data-[kind=draft]:border-dashed data-[kind=prepare]:border-dashed";
 const MAX_CHIPS = 4;
 /** At most four chips, mixing the kinds (questions first, then one draft and one prepare) so the row stays short. */
 function pickChips(groups: { kind: Starter["kind"]; list: Starter[] }[]): { kind: Starter["kind"]; text: string }[] {

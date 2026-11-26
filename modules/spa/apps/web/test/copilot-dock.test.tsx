@@ -2,7 +2,8 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup as render } from "react-dom/server";
 import { SpaRole } from "@spa/core";
-import { CopilotDock, DockView, markUnverified, type DockLine } from "../components/copilot-dock";
+import { CopilotDock, DockBody, DockView, markUnverified, type DockLine } from "../components/copilot-dock";
+import { startersFor } from "../lib/copilot-starters";
 import { InboxList } from "../components/inbox";
 import { copilotTarget } from "../lib/copilot-proxy";
 import { inboxItem } from "./fixtures";
@@ -25,15 +26,54 @@ const bot = (over: Partial<Extract<DockLine, { who: "copilot" }>> = {}): DockLin
 const view = (lines: DockLine[], role: SpaRole = "sales_officer") => render(<DockView lines={lines} role={role} />);
 
 describe("C36: the copilot dock (S68)", () => {
-  test("an empty dock has a labelled question box, a send button and says what the copilot can and cannot do", () => {
-    const html = render(<CopilotDock role="sales_officer" />);
-    expect(html).toContain('id="copilot-dock"');
-    expect(html).toContain('aria-label="Copilot"');
+  test("an empty dock has a labelled question box, a send button, starter chips and says what the agent can and cannot do", () => {
+    const html = render(
+      <DockBody
+        lines={[]}
+        role="sales_officer"
+        draft=""
+        setDraft={() => {}}
+        busy={false}
+        onSend={() => {}}
+        starters={startersFor("sales_officer", "/")}
+      />,
+    );
+    expect(html).toContain("cp-chat");
+    expect(html).toContain("What would you like to know?");
     expect(html).toContain('for="copilot-text"');
-    expect(html).toContain("Send");
+    expect(html).toContain('placeholder="Ask the agent"');
+    expect(html).toContain('aria-label="Send"');
+    expect((html.match(/rounded-full border border-line bg-page/g) ?? []).length).toBeLessThanOrEqual(4);
     expect(html).toMatch(/reads, drafts and proposes/i);
     expect(html).toMatch(/never approves, sends, signs or changes anything/i);
     expect(html).not.toMatch(AML);
+  });
+
+  test("before the browser has measured the viewport the dock draws nothing (the frame decides)", () => {
+    expect(render(<CopilotDock role="sales_officer" />)).toBe("");
+  });
+
+  test("your line is a right-hand bubble; the agent's answer is plain text with its handling and proposals", () => {
+    const html = view([
+      you("Find D-1001"),
+      bot({
+        proposals: [
+          { id: ID, kind: "create_task", status: "proposed", expiresAt: "2026-11-21T10:30:00Z", summary: "x" },
+        ],
+      }),
+    ]);
+    expect(html).toContain("rounded-[16px_16px_4px_16px]");
+    expect(html).toContain("How this was handled");
+    expect(html).toContain('aria-label="Proposal"');
+    expect(html).not.toMatch(/rounded-xl border border-line px-3 py-2/);
+  });
+
+  test("starters: at most four, compliance roles lead with open cases, deal pages ask about the deal", () => {
+    expect(startersFor("compliance_officer", "/")[0]).toBe("Which cases are open?");
+    expect(startersFor("compliance_officer", "/").length).toBeLessThanOrEqual(4);
+    expect(startersFor("sales_officer", "/deals/abc")[0]).toBe("What is this deal waiting for?");
+    expect(startersFor("sales_officer", "/listings")).toEqual(["Which listings are published?"]);
+    expect(startersFor("sales_officer", "/")).toHaveLength(4);
   });
 
   test("messages show who spoke, in a log region", () => {

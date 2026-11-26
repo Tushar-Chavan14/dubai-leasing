@@ -139,7 +139,7 @@ bun run lint                    # oxlint + oxfmt --check + domain-rule guard (sc
 bun run lint:fix                # oxlint --fix + oxfmt (writes)
 bun run eval                    # helper + copilot evals against labelled fixtures (needs Ollama running)
 bun run eval -- copilot         # copilot evals only
-bun run voice:setup             # once: build whisper.cpp + download ggml-base.bin (needs cmake, ffmpeg)
+bun run voice:setup             # once: build whisper.cpp + download ggml-small.bin (needs cmake, ffmpeg)
 bun run voice                   # local whisper-server for voice input (VOICE_URL)
 ```
 

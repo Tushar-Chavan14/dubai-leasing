@@ -393,8 +393,13 @@ export async function ApprovalDetail({
             {a.gate.startsWith("ejari_") && typeof a.proposal.systemName === "string"
               ? a.gateDef.label.replace(/\bEjari\b/g, a.proposal.systemName)
               : a.gateDef.label}
-            . {a.gateDef.when === "always" ? "Always needs a person" : "Needed because a limit was crossed"}; decided by{" "}
-            {decider}. Proposed by {actorLabel(a.proposedBy).toLowerCase()} on {dateTime(a.createdAt)}
+            .{" "}
+            {a.gateDef.when === "always"
+              ? "Always needs a person"
+              : compact && a.reasons.length
+                ? `Needs a person for the reason${a.reasons.length === 1 ? "" : "s"} below`
+                : "Needed because a limit was crossed"}
+            ; decided by {decider}. Proposed by {actorLabel(a.proposedBy).toLowerCase()} on {dateTime(a.createdAt)}
             {a.rulesVersion ? (
               <>
                 , rules <span className="font-mono text-xs">{a.rulesVersion}</span>
@@ -402,6 +407,29 @@ export async function ApprovalDetail({
             ) : null}
             .
           </p>
+          {compact && a.reasons.length > 0 && (
+            // The actual reasons (a KYC flag, a contract conflict), not just the gate's generic label: on a record the
+            // panel is the only place they show. The first three, then the rest on demand.
+            <div className="grid gap-1">
+              <ul className="m-0 grid list-disc gap-1 pl-5 text-sm font-medium text-ink">
+                {a.reasons.slice(0, 3).map((r) => (
+                  <li key={r}>{r}</li>
+                ))}
+              </ul>
+              {a.reasons.length > 3 && (
+                <details className="group/why">
+                  <summary className="cursor-pointer list-none text-[13px] text-muted [&::-webkit-details-marker]:hidden">
+                    {a.reasons.length - 3} more reason{a.reasons.length - 3 === 1 ? "" : "s"}
+                  </summary>
+                  <ul className="m-0 mt-1 grid list-disc gap-1 pl-5 text-[13px] text-ink">
+                    {a.reasons.slice(3).map((r) => (
+                      <li key={r}>{r}</li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+            </div>
+          )}
           {deadline && today && waiting && (
             <p className="m-0 text-[13px] font-semibold">
               Notice must be sent by {proposalValue("legalDeadline", deadline)},{" "}

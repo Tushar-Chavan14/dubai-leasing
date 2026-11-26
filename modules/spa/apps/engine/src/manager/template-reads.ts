@@ -1,5 +1,5 @@
 import type { TemplateBlank, TemplateSections, TemplateStyle } from "@platform/readers/structure/schema";
-import { type DealType, type SheetKeyInfo, type SpaRole, spaDataSheet } from "@spa/core";
+import { type DealType, type SheetKeyInfo, type SpaRole, spaDataSheet, hasAnyRole } from "@spa/core";
 import { spaTemplates, spaTemplateVersions, templateUploads } from "@spa/db";
 import { type PlanRow, type SettlementRow, renderSpaAgreement, type SpaValues } from "@spa/helpers";
 import { desc, eq } from "drizzle-orm";
@@ -10,8 +10,8 @@ import { agreementRenderInput } from "./prepare.ts";
 
 /** Who reads the template pages: admin writes, legal decides in the inbox, a sales manager looks (S66). */
 export const TEMPLATE_READERS: readonly SpaRole[] = ["admin", "legal", "sales_manager"];
-export const needTemplateReader = (user: { role: SpaRole }) => {
-  if (!TEMPLATE_READERS.includes(user.role)) throw forbidden("you can't view templates");
+export const needTemplateReader = (user: { role: SpaRole; roles?: readonly SpaRole[] | undefined }) => {
+  if (!hasAnyRole(user, TEMPLATE_READERS)) throw forbidden("you can't view templates");
 };
 const idOf = (id: string, what: string) => {
   const p = z.uuid().safeParse(id);
@@ -28,7 +28,7 @@ const counts = (checks: unknown) => {
 };
 
 /** The templates, newest first, with the version in use and the latest one. */
-export async function listTemplates(ctx: SpaContext, user: { role: SpaRole }) {
+export async function listTemplates(ctx: SpaContext, user: { role: SpaRole; roles?: readonly SpaRole[] | undefined }) {
   needTemplateReader(user);
   const templates = await ctx.database.db.select().from(spaTemplates).orderBy(desc(spaTemplates.createdAt));
   const versions = await ctx.database.db
@@ -59,7 +59,7 @@ export async function listTemplates(ctx: SpaContext, user: { role: SpaRole }) {
 }
 
 /** One template: its versions (with the number of blockers and warnings) and its uploads. */
-export async function getTemplate(ctx: SpaContext, user: { role: SpaRole }, id: string) {
+export async function getTemplate(ctx: SpaContext, user: { role: SpaRole; roles?: readonly SpaRole[] | undefined }, id: string) {
   needTemplateReader(user);
   const tid = idOf(id, "template");
   const db = ctx.database.db;
@@ -113,7 +113,7 @@ const SHEET_CHOICES = Object.entries(spaDataSheet)
  * mapping, the checks, and the keys a blank can be mapped to. Whatever a model proposed (headings, labels) is returned
  * as plain text for the page to escape.
  */
-export async function getTemplateVersion(ctx: SpaContext, user: { role: SpaRole }, id: string) {
+export async function getTemplateVersion(ctx: SpaContext, user: { role: SpaRole; roles?: readonly SpaRole[] | undefined }, id: string) {
   needTemplateReader(user);
   const vid = idOf(id, "template version");
   const [row] = await ctx.database.db
@@ -196,7 +196,7 @@ function sampleSheet() {
  */
 export async function previewTemplateVersion(
   ctx: SpaContext,
-  user: { role: SpaRole },
+  user: { role: SpaRole; roles?: readonly SpaRole[] | undefined },
   id: string,
 ): Promise<Uint8Array> {
   needTemplateReader(user);

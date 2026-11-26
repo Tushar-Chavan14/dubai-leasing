@@ -3,8 +3,16 @@ import { ArrowUpRightIcon, CheckIcon, ChatCircleTextIcon } from "@phosphor-icons
 import Link from "next/link";
 import { type Chip, type GridFilters, SIZE_BANDS, aed, applyChip, isActive, toQuery } from "../../lib/grid-filters";
 import { gridText } from "../../lib/grid-text";
-import { type PropertyCategory, type PublicUnitSummary, factsList, rentShort, typeLabel } from "../../lib/listings";
+import {
+  type PropertyCategory,
+  type PublicUnitSummary,
+  factsList,
+  photoSrc,
+  rentShort,
+  typeLabel,
+} from "../../lib/listings";
 import { buttonClass } from "@platform/ui/button";
+import { PropertyCard } from "@platform/ui/catalogue/property-card";
 import { Cover } from "./cover";
 import { Finder } from "./finder";
 import { HeroPanel } from "./hero-panel";
@@ -186,42 +194,25 @@ export function PropertyGrid({
 function Card({ unit: u }: { unit: PublicUnitSummary }) {
   const type = typeLabel(u);
   return (
-    <article className="grid gap-2.5">
-      <Link
-        href={`/customer/properties/${u.id}`}
-        className="group grid gap-3 rounded-[18px] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ink"
-      >
-        <span className="block aspect-[4/3] overflow-hidden rounded-[18px] bg-raised">
-          <Cover
-            building={u.building}
-            photo={u.photoUrls[0]}
-            alt=""
-            className="transition-transform duration-500 ease-out motion-reduce:transition-none group-hover:scale-[1.02] motion-reduce:group-hover:scale-100"
-          />
-        </span>
-        <span className="flex items-start justify-between gap-4">
-          <span className="grid gap-0.5">
-            <b className="text-base leading-snug font-semibold tracking-tight">{u.building}</b>
-            <span className="text-sm text-muted">
-              {u.community}, {EMIRATE_LABELS[u.emirate]}
-              {type ? ` · ${type}` : ""}
-            </span>
-            <span className="text-sm text-muted">{factsList(u).join(" · ")}</span>
-          </span>
-          <span className="text-base font-semibold whitespace-nowrap tabular-nums">
-            {rentShort(u.rent)}
-            <span className="font-normal text-muted"> /yr</span>
-          </span>
-        </span>
-      </Link>
-      <Link
-        href={`/customer/chat?unit=${u.id}`}
-        className="inline-flex w-fit items-center gap-1 rounded-full text-sm text-muted! hover:text-ink! focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
-      >
-        Ask about this in chat
-        <ArrowUpRightIcon size={13} aria-hidden="true" />
-        <span className="sr-only">: {u.building}</span>
-      </Link>
-    </article>
+    <PropertyCard
+      href={`/customer/properties/${u.id}`}
+      name={u.building}
+      src={photoSrc(u.photoUrls[0]) ?? undefined}
+      title={u.building}
+      subtitle={`${u.community}, ${EMIRATE_LABELS[u.emirate]}${type ? ` · ${type}` : ""}`}
+      facts={factsList(u)}
+      price={rentShort(u.rent)}
+      priceNote="/yr"
+      footer={
+        <Link
+          href={`/customer/chat?unit=${u.id}`}
+          className="inline-flex w-fit items-center gap-1 rounded-full text-sm text-muted! hover:text-ink! focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
+        >
+          Ask about this in chat
+          <ArrowUpRightIcon size={13} aria-hidden="true" />
+          <span className="sr-only">: {u.building}</span>
+        </Link>
+      }
+    />
   );
 }

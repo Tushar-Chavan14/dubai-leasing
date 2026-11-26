@@ -1,17 +1,5 @@
 import { newId } from "@platform/kernel/ids";
-import {
-  ALERT_DEFAULT_HOURS,
-  alertText,
-  AlertThresholds,
-  COMPLIANCE_GATES,
-  COMPLIANCE_REVIEW_KEY,
-  isComplianceGate,
-  isComplianceRole,
-  type AlertLevel,
-  type SpaGateId,
-  type SpaRole,
-  spaGates,
-} from "@spa/core";
+import { ALERT_DEFAULT_HOURS, alertText, AlertThresholds, COMPLIANCE_GATES, COMPLIANCE_REVIEW_KEY, isComplianceGate, isComplianceRole, type AlertLevel, type SpaGateId, type SpaRole, spaGates, hasRole, rolesOf } from "@spa/core";
 import { alertSettings, alerts, deals, type SpaDb, spaApprovals, spaUsers, withSpaTx } from "@spa/db";
 import { gateAlertMail } from "@spa/helpers";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
@@ -21,7 +9,7 @@ import { appendDealEvent } from "./events.ts";
 import { scrub, sendSpaMail } from "./mail.ts";
 import { POLICY_ENTITY } from "./policy.ts";
 
-type Person = { id: string; role: SpaRole };
+type Person = { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined };
 const MS_HOUR = 3_600_000;
 const COMPLIANCE_GATE_LIST = [...COMPLIANCE_GATES] as SpaGateId[];
 
@@ -48,7 +36,7 @@ const keyGates = (key: string): SpaGateId[] =>
  * "Compliance review": nobody outside the compliance roles reads their names (S42), and the admin sets all three at once.
  */
 export async function getAlertSettings(ctx: SpaContext, user: Person) {
-  if (user.role !== "admin" && !isComplianceRole(user.role)) throw forbidden("you can't view these settings");
+  if (!hasRole(user, "admin") && !isComplianceRole(rolesOf(user))) throw forbidden("you can't view these settings");
   const th = await currentThresholds(ctx.database.db);
   const gates = (Object.keys(ALERT_DEFAULT_HOURS) as SpaGateId[]).filter((g) => !isComplianceGate(g));
   const entry = (key: string, label: string, gate: SpaGateId) => ({
@@ -66,7 +54,7 @@ export async function getAlertSettings(ctx: SpaContext, user: Person) {
 
 /** An admin saves thresholds in hours. A new version per gate that changed; the same value again writes nothing. */
 export async function setAlertSettings(ctx: SpaContext, user: Person, input: unknown): Promise<{ changed: number }> {
-  if (user.role !== "admin") throw forbidden("only an admin changes alert settings");
+  if (!hasRole(user, "admin")) throw forbidden("only an admin changes alert settings");
   const parsed = AlertThresholds.safeParse(input);
   if (!parsed.success)
     throw unprocessable(
@@ -213,7 +201,7 @@ export async function listAlerts(
     .innerJoin(spaApprovals, eq(spaApprovals.id, alerts.approvalId))
     .where(eq(alerts.userId, user.id))
     .orderBy(desc(alerts.createdAt), desc(alerts.id));
-  const visible = rows.filter((r) => !isComplianceGate(r.gate) || isComplianceRole(user.role));
+  const visible = rows.filter((r) => !isComplianceGate(r.gate) || isComplianceRole(rolesOf(user)));
   const dealIds = [...new Set(visible.filter((r) => r.entityKind === "deal").map((r) => r.entityId))];
   const refs = new Map(
     dealIds.length

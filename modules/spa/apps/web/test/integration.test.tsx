@@ -1,4 +1,5 @@
 /* oxlint-disable no-explicit-any -- response bodies are read loosely in these tests */
+import { noToggles } from "./no-toggles.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { issueToken } from "../../engine/test/session.ts";
 import type { SpaDatabase } from "../../../packages/db/src/index.ts";
@@ -92,7 +93,7 @@ describe.skipIf(!url)("C30: pages render what the engine returns, per role", () 
       expect(html).not.toContain("Oqood");
       expect(html).not.toMatch(COMPLIANCE_WORDS);
       for (const s of [PASSPORT, EID, PHONE]) expect(html).not.toContain(s);
-      expect(html).not.toMatch(/<(form|button|input)\b/);
+      expect(noToggles(html)).not.toMatch(/<(form|button|input)\b/);
     }
   });
 

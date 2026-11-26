@@ -1,4 +1,4 @@
-import { DEFAULT_COMPANY_KIND, type SpaPolicy, SpaRole } from "@spa/core";
+import { DEFAULT_COMPANY_KIND, type SpaPolicy, SpaRole, hasAnyRole, hasRole } from "@spa/core";
 import { companies, parties, signatories, spaDemoSettings, spaUsers, withSpaTx } from "@spa/db";
 import {
   getSalesRulebook,
@@ -18,14 +18,14 @@ import { setCompany } from "./parties.ts";
 import { currentPolicy, publishPolicy } from "./policy.ts";
 
 /** The remaining Settings pages (C40, S72). Admin writes; an admin or a sales manager reads; nobody else. */
-type Who = { id: string; role: SpaRole };
+type Who = { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined };
 
 const READERS: readonly SpaRole[] = ["admin", "sales_manager"];
 const needReader = (user: Who) => {
-  if (!READERS.includes(user.role)) throw forbidden("you can't view these settings");
+  if (!hasAnyRole(user, READERS)) throw forbidden("you can't view these settings");
 };
 const needAdmin = (user: Who) => {
-  if (user.role !== "admin") throw forbidden("only an admin changes these settings");
+  if (!hasRole(user, "admin")) throw forbidden("only an admin changes these settings");
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -81,8 +81,14 @@ export const PLAN_KEYS = [
   "instalmentReminders",
 ] as const;
 export const SIGNING_KEYS = ["signingLinkDays", "signingOrder"] as const;
+/** S79: the viewing days, hours, slot length, lead time and horizon, and the per-email enquiry cap. */
+export const VIEWING_KEYS = ["viewings", "leads"] as const;
 /** The fixed page allowlist: nothing else in the policy is reachable from these routes. */
-const POLICY_PAGES: Record<string, readonly (keyof SpaPolicy)[]> = { plans: PLAN_KEYS, signing: SIGNING_KEYS };
+const POLICY_PAGES: Record<string, readonly (keyof SpaPolicy)[]> = {
+  plans: PLAN_KEYS,
+  signing: SIGNING_KEYS,
+  viewings: VIEWING_KEYS,
+};
 
 const pageKeys = (page: string) => {
   const keys = Object.hasOwn(POLICY_PAGES, page) ? POLICY_PAGES[page] : undefined;
@@ -241,7 +247,7 @@ export async function changeUser(
     const role = "role" in p.data ? p.data.role : target.role;
     const active = "active" in p.data ? p.data.active : target.active;
     const stopsBeingActiveAdmin = target.role === "admin" && target.active && (role !== "admin" || !active);
-    if (stopsBeingActiveAdmin && locked.filter((u) => u.role === "admin" && u.active && u.id !== targetId).length === 0)
+    if (stopsBeingActiveAdmin && locked.filter((u) => hasRole(u, "admin") && u.active && u.id !== targetId).length === 0)
       throw conflict("last_admin", "there must be at least one active admin");
     let changed = false;
     if (role !== target.role) {

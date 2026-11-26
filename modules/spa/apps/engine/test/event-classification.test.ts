@@ -30,10 +30,10 @@ describe("S57: every appended event type is classified", () => {
     const unclassified = [...literals.keys()].filter((t) => !STAFF_EVENTS.has(t) && !COMPLIANCE_EVENTS.has(t));
     expect(unclassified).toEqual([]);
   });
-  test("the one template-literal type (OFFER_<status>) has both of its values classified", () => {
+  test("the one template-literal type (OFFER_<status>) has all of its values classified", () => {
     const { templates } = appendedTypes();
     expect(templates).toEqual(["type: `OFFER_${status}`,"]);
-    for (const t of ["OFFER_REJECTED", "OFFER_EXPIRED"]) expect(STAFF_EVENTS.has(t)).toBe(true);
+    for (const t of ["OFFER_REJECTED", "OFFER_EXPIRED", "OFFER_WITHDRAWN"]) expect(STAFF_EVENTS.has(t)).toBe(true);
   });
   test("a type nobody classified is hidden from every non-compliance role", () => {
     for (const role of SpaRole.options)

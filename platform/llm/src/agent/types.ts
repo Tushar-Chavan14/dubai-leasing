@@ -17,5 +17,7 @@ export interface AgentModel {
     tools: ToolSpec[] | null,
     onToken: (text: string) => void,
     signal?: AbortSignal,
+    /** `format`: a JSON schema the answer must follow (Ollama structured output); use with `tools: null`. */
+    opts?: { format?: Record<string, unknown> },
   ): Promise<ModelTurn>;
 }

@@ -51,6 +51,8 @@ export interface RecordRowDto {
   reservationDueFils?: number | null;
   /** Registered by hand: the web path of the one-file registration pack (engine-built, leasing roles only). */
   registrationPackUrl?: string;
+  /** Registered by hand and waiting for the portal's answer: the certificate can be recorded. */
+  registrationAwaiting?: boolean;
 }
 
 /**
@@ -99,6 +101,12 @@ export function recordActions(r: RecordRowDto, pendingSigners: string[], role: S
         `Propose resending the signing link to the ${role} on lease ${r.ref}.`,
       );
   }
+  if (r.kind === "lease" && r.registrationAwaiting)
+    say(
+      "certificate",
+      "Upload certificate",
+      `Show the registration card for lease ${r.ref} so I can upload the certificate.`,
+    );
   if (r.registrationPackUrl && PROPOSERS.includes(role))
     out.push({ type: "link", key: "pack", label: "Download registration pack", href: r.registrationPackUrl });
   out.push({ type: "link", key: "open", label: "Open in the Workspace", href: workHref(r.kind, r.id) });

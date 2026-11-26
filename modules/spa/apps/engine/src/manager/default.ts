@@ -9,8 +9,9 @@ import { appendDealEvent } from "./events.ts";
 import { planCoverage } from "./payment-facts.ts";
 import { policyAt } from "./policy.ts";
 import { closeTask, openTask } from "./tasks.ts";
+import { hasAnyRole, hasRole } from "@spa/core";
 
-type Person = { id: string; role: SpaRole };
+type Person = { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined };
 export const DEFAULT_ACTOR: SpaActor = "system:default-check";
 const CLOSED = new Set(["HANDED_OVER", "COMPLETED", "CANCELLED"]);
 /** Who records a withdrawal or a no-show (S55), and who alone clears the flag. */
@@ -80,7 +81,7 @@ const PartyDefault = z.object({
 
 /** A sales officer or manager records that a party withdrew or did not show up (S55); the flag is set as for an overdue instalment. */
 export async function recordPartyDefault(ctx: SpaContext, dealId: string, input: unknown, user: Person): Promise<void> {
-  if (!RECORD_ROLES.includes(user.role)) throw forbidden(`only ${RECORD_ROLES.join(" or ")} can record this`);
+  if (!hasAnyRole(user, RECORD_ROLES)) throw forbidden(`only ${RECORD_ROLES.join(" or ")} can record this`);
   const parsed = PartyDefault.safeParse(input);
   if (!parsed.success) throw unprocessable("invalid_default", "say what happened and add a note");
   const flagged = await withSpaTx(ctx.database, (tx) =>
@@ -91,7 +92,7 @@ export async function recordPartyDefault(ctx: SpaContext, dealId: string, input:
 
 /** Only a sales manager clears the flag, with a reason (S55). The open default task is finished. */
 export async function clearDefaultFlag(ctx: SpaContext, dealId: string, reason: unknown, user: Person): Promise<void> {
-  if (user.role !== "sales_manager") throw forbidden("only a sales manager clears the default flag");
+  if (!hasRole(user, "sales_manager")) throw forbidden("only a sales manager clears the default flag");
   const why = z.string().trim().min(1).max(500).safeParse(reason);
   if (!why.success) throw unprocessable("reason_required", "give the reason for clearing the flag");
   await withSpaTx(ctx.database, async (tx) => {

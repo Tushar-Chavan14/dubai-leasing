@@ -64,6 +64,8 @@ export interface DealFacts {
   buyerMortgage: boolean;
   planTakenOver: boolean;
   documentsRequested: boolean;
+  /** No price or booking amount outside policy waits for, or was refused by, a sales manager (M6, S81). */
+  priceCleared: boolean;
   kycOk: boolean;
   companyChecksOk: boolean;
   /** A buyer or seller is a company: only then do company checks gate `PARTY_CHECK` (C20, S52). */
@@ -94,6 +96,7 @@ export const DEAL_FACT_KEYS = [
   "buyerMortgage",
   "planTakenOver",
   "documentsRequested",
+  "priceCleared",
   "kycOk",
   "companyChecksOk",
   "hasCompanyParty",
@@ -154,7 +157,10 @@ const transitions: T[] = [
     from: "OFFER_AGREED",
     event: "CHECKS_STARTED",
     to: "PARTY_CHECK",
-    guard: needs([(f) => f.documentsRequested, "Documents haven't been requested from every party."]),
+    guard: needs(
+      [(f) => f.priceCleared, "The price or booking amount is outside policy and waits for a sales manager."],
+      [(f) => f.documentsRequested, "Documents haven't been requested from every party."],
+    ),
     description: "Documents requested from every party",
   },
   {

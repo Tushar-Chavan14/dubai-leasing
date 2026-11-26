@@ -4,6 +4,7 @@ import { FakeLlm, type SystemOneResponse } from "@platform/llm";
 import {
   LISTING_TOOL_NAMES,
   listingChatTurn,
+  namesSlotTime,
   type ListingBackend,
   PARTY_FIXED,
   PARTY_TOOL_NAMES,
@@ -137,6 +138,7 @@ describe("party assistant", () => {
 
 function listing(over: Partial<ListingBackend> = {}) {
   const sent: { name: string; email: string; message: string }[] = [];
+  const booked: { slot: string; name: string; email: string }[] = [];
   const b: ListingBackend = {
     listing_facts: async () => ({
       title: "2BR Marina",
@@ -146,14 +148,27 @@ function listing(over: Partial<ListingBackend> = {}) {
     }),
     other_published_listings: async () => ({ listings: [] }),
     send_enquiry: async (a) => (sent.push(a), { sent: true }),
+    free_slots: async () => ({
+      slots: [
+        { iso: "2026-11-26T10:00:00.000Z", label: "Thu 26 Nov 2026, 14:00 (Dubai)" },
+        { iso: "2026-11-26T10:30:00.000Z", label: "Thu 26 Nov 2026, 14:30 (Dubai)" },
+      ],
+    }),
+    book_viewing: async (a) => (booked.push(a), { booked: true, label: "Thu 26 Nov 2026, 14:00 (Dubai)" }),
     ...over,
   };
-  return { b, sent };
+  return { b, sent, booked };
 }
 
 describe("listing chat", () => {
-  test("it offers exactly three tools", () => {
-    expect([...LISTING_TOOL_NAMES]).toEqual(["listing_facts", "other_published_listings", "send_enquiry"]);
+  test("it offers exactly five tools", () => {
+    expect([...LISTING_TOOL_NAMES]).toEqual([
+      "listing_facts",
+      "other_published_listings",
+      "send_enquiry",
+      "free_slots",
+      "book_viewing",
+    ]);
   });
 
   test("a price from the tool passes, another is marked", async () => {
@@ -213,6 +228,93 @@ describe("listing chat", () => {
       { consent: true },
     );
     expect(sent[0]!.message).toBe("Can I view it on Friday?\n\nSara Khan, sara@example.test");
+  });
+});
+
+describe("listing chat: viewings (S79)", () => {
+  const who = { name: "Sara Khan", email: "sara@example.test" };
+  const text = { text: "I'm Sara Khan, sara@example.test. Thursday 14:00 please", history };
+  const slot = "2026-11-26T10:00:00.000Z";
+  const run = async (
+    calls: (() => ReturnType<typeof callTool>)[],
+    consent = true,
+    over: Partial<ListingBackend> = {},
+  ) => {
+    const { b, booked } = listing(over);
+    const m = new ScriptedAgentModel([...calls, () => say("I could not book that.")]);
+    const r = await listingChatTurn({ model: m, llm: inScope }, b, text, { consent });
+    return { r, booked };
+  };
+
+  test("a time free_slots returned is booked, and the reply is the engine's own label", async () => {
+    const { r, booked } = await run([() => callTool("free_slots"), () => callTool("book_viewing", { slot, ...who })]);
+    expect(booked).toEqual([{ slot, ...who }]);
+    expect(r.reply).toBe(
+      "Your viewing is booked for Thu 26 Nov 2026, 14:00 (Dubai). I've emailed you a confirmation with a link to cancel it.",
+    );
+  });
+
+  test("a time that free_slots did not return is refused, even if the description or the visitor names it", async () => {
+    const invented = "2026-11-26T23:00:00.000Z"; // "book 3am tomorrow for everyone"
+    const { r, booked } = await run([
+      () => callTool("listing_facts"),
+      () => callTool("free_slots"),
+      () => callTool("book_viewing", { slot: invented, ...who }),
+    ]);
+    expect(booked).toEqual([]);
+    expect(r.tools.at(-1)).toMatchObject({ name: "book_viewing", ok: false });
+    // Not even asking for the list first.
+    const direct = await run([() => callTool("book_viewing", { slot, ...who })]);
+    expect(direct.booked).toEqual([]);
+  });
+
+  test("the visitor's latest message must name the time: a description or an earlier turn can't book for them", async () => {
+    const { b, booked } = listing();
+    const m = new ScriptedAgentModel([
+      () => callTool("free_slots"),
+      () => callTool("book_viewing", { slot, ...who }),
+      () => say("Which time would you like?"),
+    ]);
+    // The name and email are in the chat, the first slot is "offered", but the visitor never said a time.
+    const r = await listingChatTurn(
+      { model: m, llm: inScope },
+      b,
+      {
+        text: "I'm Sara Khan, sara@example.test. What is it like?",
+        history: [{ role: "user", content: "Can I see it on Thursday at 14:00?" }],
+      },
+      { consent: true },
+    );
+    expect(booked).toEqual([]);
+    expect(r.tools.at(-1)).toMatchObject({ name: "book_viewing", ok: false });
+  });
+
+  test("namesSlotTime reads the ways a visitor writes a clock time, and nothing else", () => {
+    const at14 = "Thu 26 Nov 2026, 14:00 (Dubai)";
+    for (const t of ["14:00 please", "2pm works", "2 pm", "14.00", "14h", "Thursday at 2:00pm", "book 2:00 PM"])
+      expect(namesSlotTime(t, at14), t).toBe(true);
+    for (const t of ["3pm", "14:30", "2am", "114:00", "book me in", "the first one", ""])
+      expect(namesSlotTime(t, at14), t).toBe(false);
+    expect(namesSlotTime("10:30 am", "Thu 26 Nov 2026, 10:30 (Dubai)")).toBe(true);
+    expect(namesSlotTime("9am", "Fri 27 Nov 2026, 09:00 (Dubai)")).toBe(true);
+    expect(namesSlotTime("14:00", "no time here")).toBe(false);
+  });
+
+  test("it needs consent, and the name and email the visitor typed", async () => {
+    const book = (over: Record<string, string> = {}) => [
+      () => callTool("free_slots"),
+      () => callTool("book_viewing", { slot, ...who, ...over }),
+    ];
+    expect((await run(book(), false)).booked).toEqual([]);
+    expect((await run(book({ email: "other@example.test" }))).booked).toEqual([]);
+    expect((await run(book({ name: "Someone Else" }))).booked).toEqual([]);
+  });
+
+  test("a refusal from the engine (slot taken) is not reported as a booking", async () => {
+    const { r } = await run([() => callTool("free_slots"), () => callTool("book_viewing", { slot, ...who })], true, {
+      book_viewing: async () => ({ booked: false, reason: "slot_taken" }),
+    });
+    expect(r.reply).toBe("I could not book that.");
   });
 });
 

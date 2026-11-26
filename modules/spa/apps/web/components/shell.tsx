@@ -4,15 +4,16 @@ import type { ReactNode } from "react";
 import { signOut } from "../app/sign-in/actions";
 import { initials, weekdayDate } from "../lib/format";
 import type { Theme } from "../lib/theme";
-import { AlertBell } from "./alert-bell";
 import { AvatarMenu } from "./avatar-menu";
 import { CopilotDock } from "./copilot-dock";
+import { DemoSwitcher, type DemoUserItem } from "./demo-switcher";
 import { PortalLink } from "./portal-link";
 import { Rail } from "./rail";
 import { ThemeButtons } from "./theme-buttons";
 
 export interface ShellUser {
   name: string;
+  email?: string | undefined;
   role: SpaRole;
   roleLabel: string;
   companyKind: CompanyKind;
@@ -32,6 +33,7 @@ export function Shell({
   portalUrl,
   waiting = 0,
   alerts = 0,
+  demoUsers = [],
   children,
 }: {
   user: ShellUser;
@@ -42,6 +44,8 @@ export function Shell({
   waiting?: number;
   /** Unread alerts for this user (C23, S62): the bell. */
   alerts?: number;
+  /** Demo mode only (S80): the demo users for the avatar menu's quick switcher. Empty with demo mode off. */
+  demoUsers?: readonly DemoUserItem[];
   children: ReactNode;
 }) {
   const footer = (
@@ -58,6 +62,7 @@ export function Shell({
           </span>
         </div>
       )}
+      <DemoSwitcher users={demoUsers} currentEmail={user.email} demo={!!clock?.demo} />
       <ThemeButtons current={theme} />
       <PortalLink href={portalUrl} className={MENU_BUTTON} />
       <form action={signOut}>
@@ -69,12 +74,12 @@ export function Shell({
     </AvatarMenu>
   );
   return (
-    <div className="flex min-h-screen bg-page text-ink">
-      <Rail items={railItems(user.role, user.companyKind)} footer={footer} badges={{ work: waiting }} />
-      <main id="main" className="mx-auto w-full min-w-0 max-w-[1240px] flex-1 px-6 pb-24 pt-9 max-sm:px-4 max-sm:pt-6">
-        <div className="mb-2 flex justify-end">
-          <AlertBell unread={alerts} />
-        </div>
+    <div className="flex min-h-screen bg-canvas text-ink">
+      <Rail items={railItems(user.role, user.companyKind)} footer={footer} badges={{ work: waiting }} alerts={alerts} />
+      <main
+        id="main"
+        className="min-w-0 flex-1 px-6 pt-9 pb-24 max-sm:px-4 max-sm:pt-6 max-sm:pb-[72px] has-[[data-wk]]:p-0"
+      >
         {children}
       </main>
       <CopilotDock role={user.role} />

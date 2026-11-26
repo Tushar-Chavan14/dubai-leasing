@@ -1,5 +1,5 @@
 import { verifyToken } from "@platform/kernel";
-import { type SpaRole } from "@spa/core";
+import { rolesOf, type SpaRole } from "@spa/core";
 import { type SpaDatabase, spaUsers } from "@spa/db";
 import { and, eq } from "drizzle-orm";
 import type { MiddlewareHandler } from "hono";
@@ -9,7 +9,10 @@ export interface SpaUser {
   id: string;
   email: string;
   name: string;
+  /** The main role: labels and the rail's home screen. */
   role: SpaRole;
+  /** Every role held, the main role first (M5c, S83). Role checks use these (`hasRole`), not `role`. */
+  roles: SpaRole[];
 }
 export type AuthEnv = { Variables: { user: SpaUser } };
 
@@ -27,7 +30,7 @@ export function requireUser(database: SpaDatabase, secret: string, nowMs: () => 
       .from(spaUsers)
       .where(and(eq(spaUsers.id, uid), eq(spaUsers.active, true)));
     if (!u) return c.json({ error: "unauthorised", code: "unauthorised" }, 401);
-    c.set("user", { id: u.id, email: u.email, name: u.name, role: u.role });
+    c.set("user", { id: u.id, email: u.email, name: u.name, role: u.role, roles: rolesOf({ role: u.role, roles: u.extraRoles }) });
     await next();
   };
 }

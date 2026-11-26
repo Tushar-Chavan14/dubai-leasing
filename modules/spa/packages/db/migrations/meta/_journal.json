@@ -456,6 +456,41 @@
       "when": 1795166432797,
       "tag": "0064_portal_handoffs",
       "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1795594259513,
+      "tag": "0065_m2_unit_project_listing_details",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1795601100517,
+      "tag": "0066_m3_listing_documents",
+      "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1795679108045,
+      "tag": "0067_m5_leads_viewings",
+      "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1795683181217,
+      "tag": "0068_m6_offer_withdraw_lead",
+      "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1795685598734,
+      "tag": "0069_m5c_extra_roles",
+      "breakpoints": true
     }
   ]
 }

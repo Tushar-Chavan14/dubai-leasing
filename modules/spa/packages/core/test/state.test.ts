@@ -102,6 +102,7 @@ const ALL: DealFacts = {
   oqoodIssued: true,
   instalmentsPaid: true,
   handoverRecorded: true,
+  priceCleared: true,
 };
 const guard = (event: DealMachineEvent, from: string, facts: DealFacts) => {
   const t = dealMachine.transitions.find((x) => x.event === event && x.from === from)!;
@@ -145,7 +146,7 @@ describe("type guards refuse the other type's branch", () => {
 describe("each fact guard refuses when its fact is false", () => {
   const RESALE: Partial<DealFacts> = { type: "resale_ready" };
   test.each([
-    ["CHECKS_STARTED", "OFFER_AGREED", {}, ["documentsRequested"]],
+    ["CHECKS_STARTED", "OFFER_AGREED", {}, ["documentsRequested", "priceCleared"]],
     ["CHECKS_PASSED", "PARTY_CHECK", {}, ["kycOk", "companyChecksOk"]],
     ["AML_FLAGGED", "PARTY_CHECK", {}, ["amlFlaggedByRule"]],
     ["AML_FLAGGED", "AGREEMENT_DRAFT", {}, ["amlFlaggedByRule"]],

@@ -4,6 +4,7 @@ import { ALERT } from "@platform/ui/settings";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { CaseList, parseTab } from "../../../components/compliance-cases";
+import { webEnv } from "../../../lib/env";
 import { InboxList } from "../../../components/inbox";
 import { ExportCaseForm } from "../../../components/export-case";
 import { ExportLog, ReportsSection, RetentionSection } from "../../../components/records";
@@ -63,6 +64,7 @@ export default async function Page({
           items={inbox?.items ?? []}
           viewer={user.role}
           decideAction={decideApproval}
+          demo={webEnv().SPA_DEMO_MODE}
           from="compliance"
           draft={draft}
           error={error && !ERRORS[error] ? error : undefined}

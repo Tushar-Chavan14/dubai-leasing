@@ -49,7 +49,7 @@ describe("postChat", () => {
       return new Response(JSON.stringify({ reply: "Hello", verified: true, unverified: [] }), { status: 200 });
     }) as unknown as typeof fetch;
     const line = await postChat("L-0007", { text: "hi", consent: true, session: "session-abcdefgh" }, f);
-    expect(seen!.url).toBe("/listings/L-0007/chat");
+    expect(seen!.url).toBe("/properties/L-0007/chat");
     expect(JSON.parse(String(seen!.init.body))).toEqual({ text: "hi", consent: true, session: "session-abcdefgh" });
     expect(line).toEqual({ who: "assistant", text: "Hello", unverified: [] });
   });

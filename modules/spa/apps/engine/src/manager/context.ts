@@ -41,4 +41,20 @@ export interface SpaContext {
   /** Without it nothing can be emailed: offers and signing refuse (503) instead of showing a link to staff. */
   mail?: SpaMailConfig;
   rulebook?: (version: string) => SalesRulebook | null;
+  /**
+   * Keys the visitor's cancel link (S79): the link's token is an HMAC of the viewing id, so the invitation, the reminder
+   * and the cancel page all agree without the raw token being stored (only its hash is). Without it nothing can be booked.
+   */
+  viewingLinkSecret?: string;
+  /**
+   * Queues one viewing email job (S79): `<viewingId>:<milestone>` is the job's singleton key. May run before the
+   * caller's transaction has committed, so a job started from inside one passes a short `delaySeconds`. The delay is relative to the queue's own wall clock, never a date. Its failure
+   * never undoes a booking: the mail is then sent at once instead.
+   */
+  queueViewingMail?: (e: {
+    viewingId: string;
+    milestone: ViewingMailMilestone;
+    delaySeconds?: number;
+  }) => Promise<void>;
 }
+export type ViewingMailMilestone = "invite" | "reminder" | "cancel";

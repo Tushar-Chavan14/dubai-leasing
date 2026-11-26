@@ -118,6 +118,8 @@ export interface RecordRow {
   contractSent: boolean;
   /** Set when the lease is registered by hand: where its one-file registration pack downloads. */
   registrationPackUrl?: string;
+  /** Registered by hand and waiting for the portal's answer: the certificate can be recorded. */
+  registrationAwaiting?: boolean;
   /** The applicant accepted the offer and the reservation payment waits to be recorded (fils, from the accepted offer). */
   reservationDueFils: number | null;
   updatedAt: string;
@@ -674,12 +676,14 @@ export async function loadRecords(db: Db, me: Me): Promise<Loaded> {
     db.select().from(tasks).where(eq(tasks.status, "open")),
     db.selectDistinct({ leaseId: contracts.leaseId }).from(contracts).where(eq(contracts.status, "sent")),
     db
-      .selectDistinct({ leaseId: ejariSubmissions.leaseId })
+      .selectDistinct({ leaseId: ejariSubmissions.leaseId, status: ejariSubmissions.status })
       .from(ejariSubmissions)
       .where(eq(ejariSubmissions.mode, "manual")),
   ]);
   const sentLeaseIds = new Set(sentContracts.map((c) => c.leaseId));
   const manualLeaseIds = new Set(manualSubs.map((m) => m.leaseId));
+  // A hand registration the portal hasn't answered yet: the record can take the certificate.
+  const awaitingLeaseIds = new Set(manualSubs.filter((m) => m.status === "awaiting_manual").map((m) => m.leaseId));
   const tenant = new Map(tenantRows.map((r) => [r.leaseId, r.name]));
   const approvalsBy = new Map<string, typeof openApprovals>();
   for (const a of openApprovals) approvalsBy.set(a.entityId, [...(approvalsBy.get(a.entityId) ?? []), a]);
@@ -751,6 +755,7 @@ export async function loadRecords(db: Db, me: Me): Promise<Loaded> {
       contractHeld,
       contractSent,
       ...(manualRegistration ? { registrationPackUrl: `/api/leases/${id}/registration/pack` } : {}),
+      ...(manualRegistration && awaitingLeaseIds.has(id) ? { registrationAwaiting: true } : {}),
       reservationDueFils,
       updatedAt: base.updatedAt.toISOString(),
       _entityIds: ids,

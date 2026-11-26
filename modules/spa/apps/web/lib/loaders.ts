@@ -1,11 +1,16 @@
-import type { z } from "zod";
+import { z } from "zod";
 import {
   AlertSettingsView,
   CompanyView,
   DemoClockView,
   IntegrationsView,
   ModelsView,
+  LeadRecord,
+  LeadsPage,
   PlansView,
+  ViewingsPage,
+  ViewingsPolicyView,
+  SlotsAnswer,
   RulebookView,
   SigningView,
   UsersView,
@@ -28,9 +33,13 @@ import {
   EventsPage,
   InboxPage,
   ListingRecord,
+  DealQuote,
+  OffersView,
   ListingsPage,
   ProjectRecord,
   ProjectsList,
+  UnitRecord,
+  UnitsPage,
   type RecordSections,
   RecordView,
   readSections,
@@ -63,6 +72,13 @@ export const loadNoteDraft = async (get: Get, id: string | undefined) => {
 };
 
 export const loadSummary = (get: Get) => get("/api/summary", Summary);
+
+/** M5 (S79): the Leads tab, one lead, the Viewings tab and the free times for a lead's home. */
+export const loadLeads = (get: Get, qs: string) => get(`/api/leads${qs ? `?${qs}` : ""}`, LeadsPage);
+export const loadLead = (get: Get, id: string) => get(`/api/leads/${id}`, LeadRecord);
+export const loadViewings = (get: Get, qs: string) => get(`/api/viewings${qs ? `?${qs}` : ""}`, ViewingsPage);
+export const loadLeadSlots = (get: Get, id: string) => get(`/api/leads/${id}/slots`, SlotsAnswer);
+export const loadViewingSettings = (get: Get) => get("/api/settings/policy/viewings", ViewingsPolicyView);
 
 /** The record and the first (or the asked-for) page of its activity. */
 export async function loadRecordPage(
@@ -118,9 +134,21 @@ export const loadExports = (get: Get) => get("/api/compliance/exports", ExportLo
  */
 export const loadProjects = (get: Get) => get("/api/projects", ProjectsList);
 export const loadProject = (get: Get, id: string) => get(`/api/projects/${id}`, ProjectRecord);
-export const loadListings = (get: Get, scope: "mine" | "all", cursor: string | undefined) =>
-  get(`/api/listings?scope=${scope}&limit=25${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, ListingsPage);
+/** The Units list (S75): `query` is the URL's own parameters; the engine drops any value it doesn't understand. */
+export const loadUnits = (get: Get, query: URLSearchParams) => get(`/api/units?${query.toString()}`, UnitsPage);
+export const loadUnit = (get: Get, id: string) => get(`/api/units/${id}`, UnitRecord);
+export const loadListings = (get: Get, scope: "mine" | "all", cursor: string | undefined, filters?: URLSearchParams) =>
+  get(
+    `/api/listings?scope=${scope}&limit=24${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}${filters?.size ? `&${filters.toString()}` : ""}`,
+    ListingsPage,
+  );
+/** The agents a listing can be given to (sales roles only; null for anyone else). */
+export const loadListingAgents = (get: Get) =>
+  get("/api/listings/agents", z.array(z.object({ id: z.string(), name: z.string() })));
 export const loadListing = (get: Get, id: string) => get(`/api/listings/${id}`, ListingRecord);
+/** M6 (S81): a listing's offers with the policy terms, and the figures for a primary deal on one unit. */
+export const loadOffers = (get: Get, id: string) => get(`/api/listings/${id}/offers`, OffersView);
+export const loadDealQuote = (get: Get, unitId: string) => get(`/api/deals/quote?unitId=${unitId}`, DealQuote);
 
 /** Compliance cases (C33, S65): null for every role the engine refuses (403) and for an unknown case (404). */
 export const loadCases = (get: Get, tab: CaseTab, cursor: string | undefined) =>

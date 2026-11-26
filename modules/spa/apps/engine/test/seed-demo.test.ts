@@ -53,6 +53,35 @@ describe.skipIf(!url)("C30: the demo seed fills the Work screens (S58)", () => {
       expect(new Set(byType(t).map((d) => d.state)).size).toBeGreaterThanOrEqual(2);
   });
 
+  test("M5: leads in every status and viewings today, upcoming and past, with and without an outcome; project agents set", async () => {
+    const { rows: leads } = await database.pool.query("select status, source, agent_user_id from spa_leads");
+    for (const st of ["new", "contacted", "viewing_booked", "interested", "not_interested", "closed"])
+      expect(
+        leads.some((l: { status: string }) => l.status === st),
+        st,
+      ).toBe(true);
+    expect(leads.some((l: { source: string }) => l.source === "staff")).toBe(true);
+    expect(leads.some((l: { source: string }) => l.source === "listing_chat")).toBe(true);
+    const { rows: v } = await database.pool.query("select status, starts_at from spa_viewings");
+    const day = (offset: number) => new Date(Date.parse("2026-11-19T00:00:00+04:00") + offset * 86_400_000).getTime();
+    const at = (x: { starts_at: Date }) => new Date(x.starts_at).getTime();
+    expect(v.some((x) => at(x) >= day(0) && at(x) < day(1))).toBe(true);
+    expect(v.some((x) => at(x) >= day(1) && x.status === "booked")).toBe(true);
+    expect(v.some((x) => at(x) < day(0) && x.status === "booked")).toBe(true);
+    expect(v.some((x) => at(x) < day(0) && x.status === "attended")).toBe(true);
+    expect(v.some((x) => x.status === "no_show")).toBe(true);
+    expect(v.some((x) => x.status === "cancelled")).toBe(true);
+    const { rows: p } = await database.pool.query(
+      "select count(*)::int as n from projects where sales_agent_user_id is not null",
+    );
+    expect(p[0].n).toBeGreaterThanOrEqual(1);
+    // Every seeded row went through events: leads have a creation event.
+    const { rows: ev } = await database.pool.query(
+      "select count(*)::int as n from deal_events where entity_kind = 'lead' and type = 'LEAD_CREATED'",
+    );
+    expect(ev[0].n).toBe(leads.length);
+  });
+
   test("every deal went through the manager: it has a creation event and an event for each move, with the rulebook version", async () => {
     for (const d of await all()) {
       const events = await database.db.select().from(dealEvents).where(eq(dealEvents.entityId, d.id));
@@ -125,9 +154,10 @@ describe.skipIf(!url)("C30: the demo seed fills the Work screens (S58)", () => {
     const [admin] = await database.db.select().from(spaUsers).where(eq(spaUsers.role, "admin"));
     const officer = (await database.db.select().from(spaUsers).where(eq(spaUsers.role, "sales_officer")))[0]!;
     const list = await listProjects(ctx, { id: admin!.id, role: "admin" });
-    expect(list.items.length).toBe(1);
+    // S78: a second project is seeded for the public site; this test reads the first one.
+    expect(list.items.length).toBe(2);
     expect(list.unplacedUnits).toBe(0);
-    const [project] = list.items;
+    const project = list.items.find((p) => p.name === "Demo Marina Vista");
     expect(project!.buildings).toBeGreaterThanOrEqual(2);
     expect(project!.units).toBeGreaterThanOrEqual(8);
     expect(project!.priceListVersion).toBeGreaterThanOrEqual(1);
@@ -140,6 +170,24 @@ describe.skipIf(!url)("C30: the demo seed fills the Work screens (S58)", () => {
     // prices are in whole dirhams between AED 1m and AED 3m (integer fils)
     for (const u of rec.units) expect(u.listPriceFils! >= 100_000_000 && u.listPriceFils! <= 300_000_000).toBe(true);
     expect(JSON.stringify(rec)).not.toMatch(COMPLIANCE_WORDS);
+  });
+
+  test("S75: every demo unit has its details, the project has a community and description, the listing its new fields", async () => {
+    const rows = await database.db.select().from(units);
+    expect(rows.length).toBeGreaterThanOrEqual(8);
+    for (const u of rows) {
+      expect(u.type, u.code).not.toBeNull();
+      expect(u.bedrooms, u.code).not.toBeNull();
+      expect(u.internalSqft, u.code).not.toBeNull();
+      expect(u.view, u.code).not.toBeNull();
+    }
+    expect(rows.filter((u) => u.type === "penthouse")).toHaveLength(2);
+    expect(rows.some((u) => u.bedrooms === 0)).toBe(true);
+    const [p] = await database.db.select().from(projects).where(eq(projects.code, "MV-01"));
+    expect(p!.community).toBeTruthy();
+    expect(p!.description).toBeTruthy();
+    const [l] = await database.db.select().from(listings).where(eq(listings.ref, "L-0001"));
+    expect(l).toMatchObject({ unitType: "apartment", furnished: "semi", bathrooms: 2 });
   });
 
   test("C32: the company is set, so inventory and listings can both be opened; the demo listings show on the table", async () => {

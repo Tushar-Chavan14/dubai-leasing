@@ -555,6 +555,7 @@ export async function prepareContract(
       clauseReasons: [] as { id: string; reason: string }[],
       rewrites: fm.rewrites,
       extraReasons: fm.reasons ?? [],
+      leadReasons: [] as string[],
     };
   };
   const modelPre = async () => {
@@ -648,6 +649,13 @@ export async function prepareContract(
         clauseReasons: result.data.clauseReasons ?? [],
         rewrites: result.data.rewrites ?? [],
         extraReasons: [] as string[],
+        // D77: the agent's model gave no valid answer, so no AI review ran; the approver reads this first.
+        leadReasons:
+          ctx.contractAgent && result.data.reviewed === false
+            ? [
+                "No AI review ran (the contract agent's model gave no valid answer): the contract was prepared by code from the records and the template. Read the wording before approving.",
+              ]
+            : [],
       };
     });
     return pre;
@@ -868,6 +876,7 @@ export async function prepareContract(
       title: `Final contract for ${i.lease.ref} (version ${version})`,
       proposal,
       reasons: [
+        ...pre.leadReasons,
         // D64: a conflict the agent could not reword is listed first, so the approver checks it before anything else.
         ...d.flags
           .filter((f) => f.kind === "conflict")

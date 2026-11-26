@@ -1,10 +1,9 @@
-import { newId } from "@platform/kernel/ids";
 import { formatAed } from "@platform/kernel/money";
 import { maskPiiText } from "@platform/kernel/pii";
 import { untrusted } from "@platform/llm/agent";
 import { and, eq, ne, gte, asc } from "drizzle-orm";
-import { listingEnquiries, listings, spaUsers } from "@spa/db";
-import { listingChatTurn, listingEnquiryMail, type ListingBackend } from "@spa/helpers";
+import { listings, spaUsers } from "@spa/db";
+import { dubaiTimeLabel, listingChatTurn, type ListingBackend } from "@spa/helpers";
 import {
   type AssistantRuntime,
   dayBucket,
@@ -16,10 +15,12 @@ import {
   threadHistory,
 } from "./assistants.ts";
 import type { SpaContext } from "./context.ts";
-import { tooMany } from "./errors.ts";
+import { SpaDomainError, tooMany } from "./errors.ts";
+import { recordLead } from "./leads.ts";
+import { takeHomeAllowance } from "./public-leads.ts";
+import { bookViewing, freeSlotsFor } from "./viewings.ts";
 import { findPublicListing } from "./listings.ts";
 import { currentPolicy } from "./policy.ts";
-import { sendSpaMail } from "./mail.ts";
 import type { AssistantReply } from "./party-assistant.ts";
 
 /** At most this many messages an hour per visitor and listing, and this many enquiries a day (S24, S61). */
@@ -84,7 +85,7 @@ function listingBackend(ctx: SpaContext, l: ListingRow, who: { client: string; t
       if (!ctx.mail) return { sent: false, reason: "mail_unavailable" };
       if (!l.agentUserId) return { sent: false, reason: "no_agent" };
       const [agent] = await db
-        .select({ email: spaUsers.email })
+        .select({ id: spaUsers.id })
         .from(spaUsers)
         .where(and(eq(spaUsers.id, l.agentUserId), eq(spaUsers.active, true)));
       if (!agent) return { sent: false, reason: "no_agent" };
@@ -102,35 +103,49 @@ function listingBackend(ctx: SpaContext, l: ListingRow, who: { client: string; t
         limit: cap,
       });
       if (!globalOk) return { sent: false, reason: "daily_limit" };
-      const id = newId();
-      const now = ctx.clock.now();
-      // Kept as the visitor wrote it, with the moment they consented (the chat only calls this with the box ticked).
-      await db.insert(listingEnquiries).values({
-        id,
-        listingId: l.id,
-        name: a.name,
-        email: a.email.toLowerCase(),
-        message: a.message,
-        consentAt: now,
-        createdAt: now,
-      });
-      const r = await sendSpaMail(ctx, {
-        entityKind: "listing_enquiry",
-        entityId: id,
-        purpose: "notice",
-        milestone: "enquiry:1",
-        to: agent.email,
-        parts: listingEnquiryMail({
-          listingRef: l.ref,
-          title: l.title ?? "",
-          name: a.name,
-          email: a.email,
-          message: a.message,
-        }),
-      });
-      if (r.status !== "sent") return { sent: false, reason: "mail_failed" };
-      await db.update(listingEnquiries).set({ outboundMessageId: r.outboundId }).where(eq(listingEnquiries.id, id));
+      // The enquiry is a lead now (S79): one open lead per email and home, the visitor's own words as a message. The
+      // listing page chat only calls this with the consent box ticked.
+      try {
+        await recordLead(
+          ctx,
+          { ref: l.ref, name: a.name, email: a.email, message: a.message, consent: true },
+          "party:visitor:chat",
+          { source: "listing_chat" },
+        );
+      } catch (e) {
+        if (e instanceof SpaDomainError)
+          return { sent: false, reason: e.code === "rate_limited" ? "daily_limit" : e.code };
+        throw e;
+      }
       return { sent: true };
+    },
+    async free_slots() {
+      const slots = await freeSlotsFor(ctx, { kind: "listing", ref: l.ref }, 8);
+      return { slots: slots.map((iso) => ({ iso, label: dubaiTimeLabel(iso) })) };
+    },
+    async book_viewing(a) {
+      // Counts with the day's enquiries from this visitor (S61); the engine then refuses any time that isn't free.
+      const within = await takeRateLimit(ctx, {
+        key: who.client,
+        bucket: `listing-enquiry:${l.ref}:${dayBucket(ctx)}`,
+        limit: ENQUIRIES_PER_DAY,
+      });
+      if (!within) return { booked: false, reason: "daily_limit" };
+      try {
+        // All visitors together: the same per-home hourly cap the public form has.
+        await takeHomeAllowance(ctx, l.ref);
+        const r = await bookViewing(
+          ctx,
+          { ref: l.ref, slot: a.slot, name: a.name, email: a.email, phone: a.phone, consent: true },
+          "party:visitor:chat",
+          { source: "listing_chat" },
+        );
+        return { booked: true, label: dubaiTimeLabel(r.startsAt) };
+      } catch (e) {
+        if (e instanceof SpaDomainError)
+          return { booked: false, reason: e.code === "rate_limited" ? "daily_limit" : e.code };
+        throw e;
+      }
     },
   };
 }

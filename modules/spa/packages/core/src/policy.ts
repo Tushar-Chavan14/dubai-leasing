@@ -6,6 +6,16 @@ const signers = z
   .array(z.enum(["buyer", "seller"]))
   .refine((s) => s.length === 2 && new Set(s).size === 2, "each of buyer and seller once");
 
+/** Mon–Sat, 10:00–18:00 Dubai, 30 minutes, at least 4 hours ahead, up to 14 days ahead (S79; placeholders). */
+const DEFAULT_VIEWINGS = {
+  viewingDays: [1, 2, 3, 4, 5, 6],
+  viewingStartHour: 10,
+  viewingEndHour: 18,
+  viewingSlotMinutes: 30,
+  viewingLeadHours: 4,
+  viewingHorizonDays: 14,
+};
+
 /**
  * Company policy (architecture §6): the company's own choices, versioned, never law. The defaults are placeholders a
  * company changes in Settings; legal and money rules come from `@spa/rulebook`.
@@ -77,6 +87,25 @@ export const SpaPolicy = z
         enquiriesPerListingPerHour: z.number().int().min(1).max(1_000),
       })
       .default({ messagesPerListingPerHour: 200, enquiriesPerListingPerHour: 10 }),
+    /**
+     * Viewings (S79): the days (0 = Sunday), hours, slot length, lead time and horizon the public slots follow, in
+     * Asia/Dubai time. `perEmailPerDay` caps how many enquiries one email may send (all homes together). Placeholders.
+     */
+    viewings: z
+      .object({
+        viewingDays: z.array(z.number().int().min(0).max(6)).min(1).max(7),
+        viewingStartHour: z.number().int().min(0).max(23),
+        viewingEndHour: z.number().int().min(1).max(24),
+        viewingSlotMinutes: z.number().int().min(15).max(120),
+        viewingLeadHours: z.number().int().min(0).max(168),
+        viewingHorizonDays: z.number().int().min(1).max(60),
+      })
+      .refine((v) => v.viewingStartHour < v.viewingEndHour, {
+        path: ["viewingEndHour"],
+        message: "closing hour must be after the opening hour",
+      })
+      .default(DEFAULT_VIEWINGS),
+    leads: z.object({ perEmailPerDay: z.number().int().min(1).max(100) }).default({ perEmailPerDay: 5 }),
     signingOrder: z.record(DealType, signers),
     nocRules: z
       .array(
@@ -111,6 +140,8 @@ export const DEFAULT_SPA_POLICY: SpaPolicy = Object.freeze({
   chaseTaskAfterDays: 7,
   retentionYears: 5,
   listingChat: { messagesPerListingPerHour: 200, enquiriesPerListingPerHour: 10 },
+  viewings: DEFAULT_VIEWINGS,
+  leads: { perEmailPerDay: 5 },
   signingOrder: {
     primary_offplan: ["buyer", "seller"],
     resale_ready: ["buyer", "seller"],

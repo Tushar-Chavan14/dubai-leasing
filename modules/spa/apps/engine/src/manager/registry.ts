@@ -1,16 +1,7 @@
 import { createHash } from "node:crypto";
 import { newId } from "@platform/kernel/ids";
 import { maskPiiText } from "@platform/kernel/pii";
-import {
-  type DealType,
-  REGISTRY_GATE_OF_KIND,
-  type RegistryKind,
-  type RegistryField,
-  type RegistryRejection,
-  type SpaActor,
-  type SpaGateId,
-  type SpaRole,
-} from "@spa/core";
+import { type DealType, REGISTRY_GATE_OF_KIND, type RegistryKind, type RegistryField, type RegistryRejection, type SpaActor, type SpaGateId, type SpaRole, hasAnyRole } from "@spa/core";
 import { deals, helperRuns, registrations, spaApprovals, type SpaTx, withSpaTx } from "@spa/db";
 import {
   buildOqoodRegister,
@@ -42,7 +33,7 @@ export interface RegistryDeps {
   transfer: TransferAdapter;
 }
 
-type Person = { id: string; role: SpaRole };
+type Person = { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined };
 const REQUEST_ROLES: readonly SpaRole[] = ["sales_officer", "sales_manager", "sales_admin", "admin"];
 const READ_ROLES: readonly SpaRole[] = ["sales_officer", "sales_manager", "sales_admin", "legal", "finance", "admin"];
 
@@ -401,7 +392,7 @@ export async function requestRegistration(
   dealId: string,
   user: Person,
 ): Promise<RequestResult> {
-  if (!REQUEST_ROLES.includes(user.role))
+  if (!hasAnyRole(user, REQUEST_ROLES))
     throw forbidden(`only ${REQUEST_ROLES.join(", ")} can request a registration`);
   const [deal] = await ctx.database.db.select().from(deals).where(eq(deals.id, dealId));
   if (!deal) throw notFound("deal");
@@ -435,7 +426,7 @@ export async function requestRegistration(
 
 /** A deal's registration attempts, newest last: what was sent where and what came back. No payload, no ID numbers. */
 export async function listRegistrations(ctx: SpaContext, dealId: string, user: Person) {
-  if (!READ_ROLES.includes(user.role)) throw forbidden("your role can't read registrations");
+  if (!hasAnyRole(user, READ_ROLES)) throw forbidden("your role can't read registrations");
   const [d] = await ctx.database.db.select({ id: deals.id }).from(deals).where(eq(deals.id, dealId));
   if (!d) throw notFound("deal");
   return registrationsView(ctx, dealId);

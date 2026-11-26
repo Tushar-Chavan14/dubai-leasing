@@ -79,6 +79,14 @@ export const SIGNING_REMIND_JOB = "spa.signing.remind";
 /** Stamps and stores the signed PDF once everyone signed, then advances `ALL_SIGNED` (S54). Key `<envelopeId>:finish`. */
 export const SIGNING_FINISH_JOB = "spa.signing.finish";
 
+/**
+ * Viewing emails (S79): the visitor's confirmation and the agent's "new viewing" (`invite`), the reminder 24 hours before
+ * (`reminder`, queued with `startAfter`) and the cancellation notice (`cancel`). Key `<viewingId>:<milestone>`; the
+ * handler is safe to run twice (each mail is claimed once per milestone, and a viewing that is no longer booked sends no reminder).
+ */
+export const VIEWING_MAIL_JOB = "spa.viewing.mail";
+export const viewingMailKey = (viewingId: string, milestone: string) => `${viewingId}:${milestone}`;
+
 /** The daily default check (S55): flags a deal whose dated instalment is overdue past the policy's days. Key `default-check:<date>`. */
 export const DEFAULT_CHECK_JOB = "spa.default.check";
 export const defaultCheckKey = (today: string) => `default-check:${today}`;
@@ -155,6 +163,8 @@ export async function startJobs(
     signingInvite?: (data: { envelopeId: string }) => Promise<unknown>;
     signingRemind?: (data: { signatureId: string; n: number }) => Promise<unknown>;
     signingFinish?: (data: { envelopeId: string }) => Promise<unknown>;
+    /** Needs mail (S79): without it the viewing mail jobs wait in the queue. */
+    viewingMail?: (data: { viewingId: string; milestone: "invite" | "reminder" | "cancel" }) => Promise<unknown>;
   } = {},
 ): Promise<Jobs> {
   let last: Date | null = null;
@@ -321,6 +331,15 @@ export async function startJobs(
     await boss.work<{ envelopeId: string }>(SIGNING_FINISH_JOB, async (batch) => {
       for (const job of batch) await signingFinish(job.data);
     });
+  await boss.createQueue(VIEWING_MAIL_JOB, { policy: "exclusive" });
+  const viewingMail = handlers.viewingMail;
+  if (viewingMail)
+    await boss.work<{ viewingId: string; milestone: "invite" | "reminder" | "cancel" }>(
+      VIEWING_MAIL_JOB,
+      async (batch) => {
+        for (const job of batch) await viewingMail(job.data);
+      },
+    );
   await boss.createQueue(HEARTBEAT_JOB, { policy: "exclusive" });
   await boss.work(HEARTBEAT_JOB, async () => {
     last = clock.now();

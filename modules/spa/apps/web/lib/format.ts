@@ -81,3 +81,10 @@ export function sizeLabel(bytes: number): string {
   if (bytes < 1024 * 1024) return `${Math.ceil(bytes / 1024)} KB`;
   return `${Math.ceil(bytes / (1024 * 1024))} MB`;
 }
+
+/** Whole fils as the text a price box takes ("1500000" or "1500000.5"), for filling a form: integer arithmetic only. */
+export function filsToAedInput(fils: number): string {
+  const whole = Math.floor(fils / 100);
+  const rest = fils % 100;
+  return rest ? `${whole}.${String(rest).padStart(2, "0").replace(/0$/, "")}` : String(whole);
+}

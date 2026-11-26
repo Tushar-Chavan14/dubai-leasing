@@ -1,3 +1,5 @@
+import { resolve } from "node:path";
+import { LocalDiskStore } from "@platform/adapters";
 import { loadSpaEnv } from "@spa/core/env";
 import { createSpaDatabase, runSpaMigrations } from "@spa/db";
 import { SpaDemoClock } from "./clock.ts";
@@ -18,6 +20,12 @@ await runSpaMigrations(database);
 // Dates follow the SPA demo clock (its offset in spa_demo_settings).
 const clock = new SpaDemoClock(database, true);
 await clock.refresh();
-await seedSpaDemo(database, clock, env);
+await seedSpaDemo(
+  database,
+  clock,
+  env,
+  new LocalDiskStore(resolve(import.meta.dir, "../../../../data/spa-uploads")),
+  new LocalDiskStore(resolve(import.meta.dir, "../../../../data/spa-media")),
+);
 await database.close();
 console.log(`reset ${name}: migrated and seeded (pg-boss recreates its schema when the engine starts)`);

@@ -1,10 +1,14 @@
 "use client";
 
+import { ArrowUpIcon, PlusCircleIcon } from "@phosphor-icons/react";
 import { Button } from "@platform/ui/button";
-import { FIELD, INPUT, LABEL } from "@platform/ui/form";
-import type { SpaRole } from "@spa/core/roles";
-import { Fragment, useEffect, useRef, useState } from "react";
+import { CHIP as STARTER_CHIP, ComposerCard, FIELD_BARE, SEND_BTN } from "@platform/ui/shell/composer";
+import { DOCK_ICON_BTN, DOCK_MIN_WIDTH, DockFrame, useDockState } from "@platform/ui/shell/dock-frame";
+import { type SpaRole, screenOf } from "@spa/core/roles";
+import { usePathname, useSearchParams } from "next/navigation";
+import { Fragment, type ReactNode, type RefObject, type SyntheticEvent, useEffect, useRef, useState } from "react";
 import { dubaiDateTime } from "../lib/format";
+import { startersFor } from "../lib/copilot-starters";
 
 /** What the engine's chat answer carries for one proposal (status `proposed` until a click). */
 export interface ProposalLite {
@@ -247,15 +251,15 @@ export function DraftCard({ card, role }: { card: DraftLite; role: SpaRole }) {
 function Line({ line, role }: { line: DockLine; role: SpaRole }) {
   if (line.who === "you")
     return (
-      <p className="m-0 rounded-xl bg-raised px-3 py-2 text-sm text-ink">
-        <span className="mr-1 text-xs font-semibold text-muted">You</span>
+      <div className="max-w-[85%] self-end whitespace-pre-wrap rounded-[16px_16px_4px_16px] bg-raised px-3.5 py-2.5 text-sm leading-relaxed text-ink">
+        <span className="sr-only">You: </span>
         {line.text}
-      </p>
+      </div>
     );
   return (
-    <div className="grid gap-2 rounded-xl border border-line px-3 py-2 text-sm text-ink">
-      <p className="m-0">
-        <span className="mr-1 text-xs font-semibold text-muted">Copilot</span>
+    <div className="grid gap-2.5 text-sm leading-relaxed text-ink">
+      <p className="m-0 whitespace-pre-wrap break-words">
+        <span className="sr-only">Agent: </span>
         <Marked text={line.text} values={line.unverified} />
       </p>
       {line.tools.length > 0 && (
@@ -284,18 +288,106 @@ function Line({ line, role }: { line: DockLine; role: SpaRole }) {
   );
 }
 
-/** The conversation as drawn: pure of any request, so a test can render any state of it. */
-export function DockView({ lines, role }: { lines: DockLine[]; role: SpaRole }) {
+/** The conversation as drawn: pure of any request, so a test can render any state of it. `empty` shows when there are no lines. */
+export function DockView({ lines, role, empty }: { lines: DockLine[]; role: SpaRole; empty?: ReactNode }) {
   return (
     <div
       role="log"
       aria-live="polite"
       aria-label="Conversation"
-      className="grid min-h-0 flex-1 content-start gap-2 overflow-y-auto"
+      className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-4 py-3.5"
     >
-      {lines.map((l, i) => (
-        <Line key={i} line={l} role={role} />
-      ))}
+      {lines.length === 0 ? empty : lines.map((l, i) => <Line key={i} line={l} role={role} />)}
+    </div>
+  );
+}
+
+/** The panel body (log, empty state, composer), pure of any request: `.cp-chat` is where the frame focuses the box. */
+export function DockBody({
+  lines,
+  role,
+  draft,
+  setDraft,
+  busy,
+  onSend,
+  starters,
+  box,
+}: {
+  lines: DockLine[];
+  role: SpaRole;
+  draft: string;
+  setDraft: (v: string) => void;
+  busy: boolean;
+  onSend: (text: string) => void;
+  starters: string[];
+  box?: RefObject<HTMLTextAreaElement | null>;
+}) {
+  const submit = (e?: SyntheticEvent) => {
+    e?.preventDefault();
+    onSend(draft);
+  };
+  return (
+    <div className="cp-chat flex min-h-0 flex-1 flex-col">
+      <DockView
+        lines={lines}
+        role={role}
+        empty={
+          <div className="grid gap-2 text-sm text-muted">
+            <h2 className="m-0 text-base font-semibold tracking-tight text-ink">What would you like to know?</h2>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {starters.slice(0, 4).map((t) => (
+                <button key={t} type="button" className={STARTER_CHIP} disabled={busy} onClick={() => onSend(t)}>
+                  {t}
+                </button>
+              ))}
+            </div>
+            <p className="m-0 mt-2 text-xs">
+              It reads, drafts and proposes, using only what your role may see. It never approves, sends, signs or
+              changes anything: a proposal runs only when you click Confirm. Please do not type passport or ID numbers.
+            </p>
+          </div>
+        }
+      />
+      <ComposerCard
+        onSubmit={submit}
+        field={
+          <>
+            <label htmlFor="copilot-text" className="sr-only">
+              Ask the agent
+            </label>
+            <textarea
+              id="copilot-text"
+              ref={box}
+              rows={1}
+              maxLength={2000}
+              value={draft}
+              placeholder="Ask the agent"
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) submit(e);
+              }}
+              className={FIELD_BARE}
+            />
+          </>
+        }
+        send={
+          <button
+            type="submit"
+            className={SEND_BTN}
+            disabled={busy || !draft.trim()}
+            aria-label={busy ? "Sending" : "Send"}
+          >
+            {busy ? (
+              <span
+                aria-hidden="true"
+                className="size-3.5 animate-spin rounded-full border-2 border-on-cta/40 border-t-on-cta"
+              />
+            ) : (
+              <ArrowUpIcon size={16} weight="bold" aria-hidden />
+            )}
+          </button>
+        }
+      />
     </div>
   );
 }
@@ -333,20 +425,16 @@ const failure = (status: number): string =>
  * the person clicks Confirm on its card. The browser talks to this site's own `/copilot/...` route, never to the engine.
  */
 export function CopilotDock({ role }: { role: SpaRole }) {
+  const pathname = usePathname() ?? "/";
+  const search = useSearchParams()?.toString() ?? "";
+  const dock = useDockState({
+    screen: screenOf(pathname),
+    defaultOpen: (screen, width) => screen !== "inventory" && width >= DOCK_MIN_WIDTH,
+  });
   const [lines, setLines] = useState<DockLine[]>([]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const box = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => {
-    const key = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === "k" && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        box.current?.focus();
-      }
-    };
-    window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
-  }, []);
   // The earlier conversation comes back after a reload (text only: a proposal card does not outlive its page).
   useEffect(() => {
     let live = true;
@@ -367,8 +455,8 @@ export function CopilotDock({ role }: { role: SpaRole }) {
       live = false;
     };
   }, []);
-  const send = async () => {
-    const text = draft.trim();
+  const send = async (raw: string) => {
+    const text = raw.trim();
     if (!text || busy) return;
     setBusy(true);
     setLines((l) => [...l, { who: "you", text }]);
@@ -401,51 +489,32 @@ export function CopilotDock({ role }: { role: SpaRole }) {
     setBusy(false);
   };
   return (
-    <aside
-      id="copilot-dock"
-      tabIndex={-1}
-      aria-label="Copilot"
-      className="sticky top-0 hidden h-screen w-[340px] flex-none flex-col gap-3 border-l border-line bg-page p-4 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ink xl:flex"
+    <DockFrame
+      state={dock}
+      title="Agent"
+      contextLabel="Anything"
+      headerActions={
+        <button
+          type="button"
+          className={DOCK_ICON_BTN}
+          onClick={() => setLines([])}
+          aria-label="New chat"
+          title="Start a new conversation"
+        >
+          <PlusCircleIcon size={18} aria-hidden />
+        </button>
+      }
     >
-      <h2 className="m-0 font-sans text-[15px] font-semibold text-ink">Copilot</h2>
-      <p className="m-0 text-xs text-muted">
-        It reads, drafts and proposes, using only what your role may see. It never approves, sends, signs or changes
-        anything: a proposal runs only when you click Confirm. Please do not type passport or ID numbers.
-      </p>
-      <DockView lines={lines} role={role} />
-      <form
-        className="grid gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void send();
-        }}
-      >
-        <div className={FIELD}>
-          <label htmlFor="copilot-text" className={LABEL}>
-            Ask the copilot
-          </label>
-          <textarea
-            id="copilot-text"
-            ref={box}
-            rows={2}
-            maxLength={2000}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void send();
-              }
-            }}
-            className={INPUT}
-          />
-        </div>
-        <div>
-          <Button variant="primary" size="sm" type="submit" disabled={busy || !draft.trim()}>
-            {busy ? "Sending…" : "Send"}
-          </Button>
-        </div>
-      </form>
-    </aside>
+      <DockBody
+        lines={lines}
+        role={role}
+        draft={draft}
+        setDraft={setDraft}
+        busy={busy}
+        onSend={(t) => void send(t)}
+        starters={startersFor(role, search ? `${pathname}?${search}` : pathname)}
+        box={box}
+      />
+    </DockFrame>
   );
 }

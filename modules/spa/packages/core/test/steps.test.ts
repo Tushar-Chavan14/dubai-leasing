@@ -35,6 +35,7 @@ function reachable(type: DealType, flags: StepFlags): Set<DealState> {
       oqoodIssued: true,
       instalmentsPaid: true,
       handoverRecorded: true,
+      priceCleared: true,
     }),
   ) as unknown as DealFacts;
   const seen = new Set<DealState>([dealMachine.initial]);

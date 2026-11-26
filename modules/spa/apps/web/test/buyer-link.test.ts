@@ -8,6 +8,7 @@ test("an unknown link is not valid; a used, expired or replaced link says what h
   expect(linkProblem(410, "link_superseded").title).toBe("This agreement has been replaced");
   expect(linkProblem(410, "offer_expired").title).toBe("This offer has expired");
   expect(linkProblem(410, "offer_closed").title).toBe("This offer is closed");
+  expect(linkProblem(410, "offer_withdrawn").title).toBe("This offer was withdrawn");
   expect(linkProblem(500, "internal").title).toBe("Something went wrong");
 });
 

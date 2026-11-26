@@ -54,19 +54,20 @@ Rules:
 
 ## 2. App shell (staff)
 
-Same three columns as leasing: **rail · main · copilot dock**.
+The SPA staff shell is the shared leasing shell (`@platform/ui/shell`, S76): **rail · main · agent dock**.
 
 | Part | Content |
 |---|---|
-| Rail (72 px, left) | Brand mark, then one icon-over-label item per screen (§3), then ⌘K (ask the copilot), then the avatar menu |
-| Avatar menu | Name and role; today's date ("UAE time") and the demo clock when on; theme; **Portal** (back to the module chooser); **Sign out** |
-| Main | The screen. Max width 1240 px for reading pages; tables and the Work view may use the full width |
-| Copilot dock (right) | The staff copilot, docked, survives navigation; opened with ⌘K or the rail button |
+| Rail (76 px, left, navy) | Brand mark "S" (aria label "Sales, home"), one icon-over-label item per screen (§3), the alerts bell, ⌘K (ask the agent), then the avatar menu |
+| Avatar menu | Name and role; today's date ("UAE time") and the demo clock when on; **Switch demo user** (demo mode only, S80: the four cast people, then Back-office, you marked); theme; **Portal** (back to the module chooser); **Sign out** |
+| Main | The screen, on the canvas colour, no width cap on the shell; a page sets its own reading width |
+| Agent dock (right, 380 px) | "Agent" header with context pill and New chat; starter chips and the legal footnote when empty; rounded composer with a round send button. Docked at 1200 px and wider (closed by default on Inventory), a sheet overlay below that, opened with Ctrl/Cmd+K, closed with Escape; the choice per screen is kept in `localStorage` (`dock:<screen>`). Voice and thread history come in F5 |
 
 Rules (S21):
 - The SPA app never names, links, counts or switches to another module. "Portal" in the avatar menu is the only way out besides Sign out.
 - Count badges on rail items mean "waiting for you" only (your role's open gates and tasks).
 - Screens a role can't use are hidden from its rail; the engine still refuses the action if called.
+- Demo mode only (S80): a waiting card (deal banner, Work inbox row, listing Next step) names the person it waits on with a "Switch to Omar" button. A compliance review outside compliance says "Under review" and the role only. Demo sign-in shows four cards with a one-line hint and a closed back-office disclosure.
 
 ---
 
@@ -146,9 +147,19 @@ Used in the Inbox detail and on the record. Must show, in this order:
 Header: ref · property · state pill · asking price. Stepper: Draft → Verified → Active → Published → Under offer → Sold.
 Sections: Sellers (individual, co-owners or company with checks) · Ownership document check · Advertising permit (number, dates, expiry warning) · Public page (published switch, preview link; disabled without a valid permit) · Offer (the one open offer: buyer, price, conditions, valid until, seller-link status, Resend/Withdraw) · Enquiries · Activity.
 
+**M3 (S77).** The Listings screen is built like Units: status chips with counts, filters (community, type, bedrooms, agent, price band) kept in the address, a photo card grid with a list view, a permit chip ("Permit ends 12 Dec", warning from 7 days, danger once ended) and an offer chip. Only the sales roles see **New listing**.
+The record reads, top to bottom: gallery, title with state pill and **Edit listing**, the stepper (a withdrawn listing shows a danger pill instead), then collapsible cards: **Next step** (the engine's next step as one button, disabled with the reasons and a link to the fixing section; a published listing shows "The page is live", the public link and **Unpublish**; **Withdraw listing** on every open state; both open a reason box with Confirm and Cancel), **Overview**, **Documents** (sub-cards Ownership, Listing agreement, Permit), **Sellers** (sales roles only), **Photos**, **Offers and deals**, **Activity**. The new-listing form has Property, Price, Sellers (person or company rows, optional shares), Permit and Agent. Photos are added on Edit listing, as for units.
+
 ### 4.6 Inventory (developer)
 
 Projects → buildings → units, each unit with status (Available · Held · Sold · Registered · Handed over), price-list price, and the deal link. Price lists by version. Project page shows escrow account (masked), anticipated completion and the SPA template in use.
+
+**M2 (S75).** Inventory has two tabs, **Units** (default) and **Projects**, built like leasing's Units screen.
+
+- **Units tab:** search by unit code; filters for project, type, bedrooms, status and a price band (kept in the address, so a filtered view can be shared); a photo card grid with a list view; Next page. Only an admin sees **New unit**.
+- **Unit page:** breadcrumbs, gallery, name and status, then Overview (facts), Price (price in use and its history by version, oldest first), Deals (open and past, linked) and Activity, with a Price in use card and a Project card beside. Only an admin sees **Edit unit** (details, photos and the unit's code; the project and building are fixed once placed).
+- **Project page:** Overview (community, location, handover, template, escrow masked), Photos, Buildings, Units (the Units browser filtered to the project), Price lists, Activity. `/inventory/<id>` redirects to `/inventory/projects/<id>`.
+- Photos come through `/media/<id>` only; a unit or project without one shows the calm tile "No photo yet". No screen prints an id, an enum or a column name.
 
 ### 4.7 Listings
 
@@ -238,7 +249,7 @@ Staff screens say "Deal"; parties see "your purchase" (buyer) or "your sale" (se
 
 ### 7.2 Link rules
 
-- Path: `/b/<token>/<page>` for parties and brokers; `/listings/<ref>` for the public page.
+- Path: `/b/<token>/<page>` for parties and brokers; `/properties/<ref>` for the public page.
 - A token is signed and scoped to **one deal (or listing), one person, one purpose**. It never grants anything else.
 - Expiry per purpose (Settings → Signing and reminders; defaults: documents 14 days (`documentLinkDays`, S67), offer answer = offer validity, signing 14 days, payments and transfer info for the life of the deal).
 - Resending a link invalidates the old one. An expired or used link shows "This link has expired" and "Ask {agent} for a new link" with the agent's email as text.
@@ -260,9 +271,11 @@ Staff screens say "Deal"; parties see "your purchase" (buyer) or "your sale" (se
 
 Every deal type: buyers → broker → the seller (a company signs through its signatory), in the order of the policy's `signingOrder` (S54). The page shows the order and where the person is in it.
 
-### 7.5 Public listing page
+### 7.5 Public site (S78)
 
-Photos, title ("2-bed apartment, Marina Vista"), asking price, size, bedrooms, community, description, **advertising permit number**, agent name and email, listing chat. Never: owner names, title-deed or plot numbers, documents, offers. Taken down automatically when the permit expires.
+`/properties`: the leasing property screen with this module's words: hero with the finder (Community, Type, Bedrooms, Price), source chips (All, Resale, New from developer), sort chips, a grid of cards (photo or plan tile, title, community and project, beds, type and size, price in AED; resale cards print "Permit 123456", developer cards carry a "New · developer" chip). Filters live in the address. Empty: "No homes match these filters" with "Clear filters"; engine down: "Homes couldn't be loaded. Try again in a moment."
+
+`/properties/[ref]`: back link "All homes", title, community and project, gallery, facts list, description, and an aside with the price, the **advertising permit number** (resale only), the listing agent's name and the listing chat (resale only). Never: owner names, title-deed or Oqood numbers, floor prices, documents, any email or phone.
 
 ### 7.6 Emails
 
@@ -322,4 +335,5 @@ Photos, title ("2-bed apartment, Marina Vista"), asking price, size, bedrooms, c
 - **C30 (S58):** the Work list shows the Deals and Tasks tabs only (Inbox, Listings and Done arrive with their screens; the Inbox tab came with C31); "Read, not confirmed"
   shows once the engine marks an amount unconfirmed. `RecordStepper` takes an optional `states` map so a finished or cancelled deal draws
   correctly. A record shows only the sections the engine sent; `SignerList` waits for a signing section.
-
+- **M5 (S79):** Work gains **Leads** and **Viewings** tabs for the sales roles (counts: new leads, today's viewings). Viewings has Today / Upcoming / Past and Mine / All (managers); times are Dubai time; a started viewing with no outcome shows "Needs an outcome" and **Record the outcome** (Attended / No-show with a note); Reschedule opens a free-time picker grouped by day; Cancel opens the reason box first. Leads has filters (status, source, home), Mine / All, and the columns ref, name, home, source, status, last message, agent, created. A lead is a record at `/leads/<id>` (Next step, Overview, Messages, Viewings, Activity); the Next step follows the status, and **Start deal** opens the deal form (M6). The public property page's aside holds one form with two tabs, **Book a viewing** (times grouped by day, Dubai time) and **Ask a question**, with name, email, phone, message and the consent tick, laid out like leasing's enquiry form; the listing chat sits below it on a listing. `/v/<token>/cancel` asks before it cancels. Settings gains **Viewings**.
+- **M6 (S81):** **Start deal** (unit page when the unit is Available, and the lead record) opens `/deals/new`: breadcrumbs Inventory, the unit, Start deal; sections Home, Buyers (person or company rows, shared with the listing form), Price and booking (a quote panel of engine figures: list price, discount, the policy limit, booking minimum, DLD fee and who pays; "A sales manager must approve this price" when outside), Payment plan (Booking and Handover to start, a running total that errors until 100%), Broker (optional) and Mortgage. After it starts, a banner names any approval the manager must give. A listing's **Make an offer** (`/listings/<id>/offer`) has Buyers, Offer (price, days to answer, conditions; the deposit % is shown read-only from policy) and Mortgage. The listing's Offers and deals section shows the current offer with each seller's answer (Waiting / Accepted / Declined), **Withdraw offer** (reason box on the second click), past offers, the deal link and, once accepted, a deposit cheque form. Read-only roles see offers without buyer details or buttons.

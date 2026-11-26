@@ -1041,7 +1041,8 @@ The leasing assistant automates the work up to the contract. Staff should approv
 
 - **Voice.** Speech to text moves from an Ollama audio model (`VOICE_MODEL=gemma4:e4b`, which did not transcribe
   reliably) to a local whisper.cpp `whisper-server` with `ggml-base.bin` (`VOICE_URL`, loopback only, rule 8).
-  Same caps, masking and review-before-send as D39. Supersedes the model part of D39.
+  Same caps, masking and review-before-send as D39. Supersedes the model part of D39. Amended 2026-11-23: the
+  default model is now `ggml-small.bin` (better accuracy, multilingual; `WHISPER_MODEL` overrides).
 - **Document form (per company).** `company_kyc_configs` holds a versioned form (`FormField[]`: label, key, type
   text/email/phone/date/number/select/document, required, shown to individuals/companies/both, placeholder, help,
   choices, document kind) and the KYC rules. The upload link renders exactly the company's form; answers are stored
@@ -1828,3 +1829,75 @@ module split; renumbered on merge because D73 to D75 were taken.
   approvals and open tasks and is hidden when there are none; Add task is a floating button on a lease. Deadlines and
   renewal shows only real milestones (the agent's own timed reminders are not listed). Next-step copy
   (`nextStepFor`) is rewritten in plain professional English, e.g. "Awaiting signatures from the tenant and the landlord."
+
+## D77 — The contract agent's model advises; it never stops the contract
+Amends D45 and D64. A 4B model (`qwen3.5:4b`) gave no valid JSON twice for a Sharjah shop on a residential template
+(`{"error": ""}`, then nothing usable), and the whole preparation went to a person, although every field and check
+is code. The 9B model's answer parsed, but its rewrite of the particulars paragraph was refused ("Residential use
+only" holds legal words), so the contract printed "Apartment … Residential use only" for a shop either way.
+- **Fallback, not a stop.** No valid answer after one retry → the answer is discarded and the contract is prepared
+  as the no-model path does: fields copied from the records, the starting clauses, no flags, `reviewed: false`, a
+  first reason saying no AI review ran. Code checks (cheques, deposit, rent band, landlord, blanks, legal wording)
+  still stop it (`needs_human`); a model that is down is still `failed` and retried. `final_contract` is unchanged:
+  a person approves every contract, and its reasons start with "No AI review ran". Nothing is taken from an
+  unparsed answer; this is a carve-out from rule 6's "→ needs_human" for advisory output only.
+- **Lenient parse, still Zod.** JSON is found inside prose or a fence; invalid items are dropped one by one instead
+  of losing the answer (the count is listed in the reasons); an object without any of the answer's keys counts as no
+  answer.
+- **Code rewords the particulars.** A template paragraph that lists the unit's particulars and states no obligation
+  (`unitParticulars`, not a company clause) gets the type word and the use copied from the unit record by code
+  (`codeUnitRewrite`); no model is involved and no number, amount, date or name is added. A rewrite the model gave and
+  code accepted (D64) wins. The usage word is the record's `propertyUsage`, the same value Ejari receives. A
+  particulars line holds no `LEGAL_WORDS` other than the use words (use, only, permitted, residential, commercial)
+  and no money word; "No." as a label is allowed. Code leaves alone joined types or uses ("studio apartment",
+  "residential or commercial use") and negated uses ("non-residential", "no commercial use"), and keeps "a"/"an"
+  right. A conflict flag is dropped only when its quote names a word code changed, and the reasons say so.
+- Clauses with obligations ("The Tenant shall use the Premises for residential purposes") are never changed by
+  code: a template for the wrong use is still a configuration matter, shown to the approver by the agent's flags.
+
+## D78 — The contract agent rewords from a case brief; code rewords only below 30% confidence
+Amends D64 and D77. A 4B model reworded nothing (eval: 0 of 4 unit-wording cases) because it had to discover the
+template through tool calls, the prompt called every contract "residential" and "Dubai", and the particulars line
+("Permitted Use Residential use only") was locked.
+- **Case brief.** The first message is built by code: the emirate, the unit's type, use and facts, the clauses to
+  check against each other, and each template line that disagrees with the record (`unitDisagreements`: a type word,
+  a use, a count, or a feature the unit's description lacks) with the paragraph's wording as delimited data. The
+  system prompt fits any emirate and use and has two worked examples.
+- **The model may reword particulars lines** (`particulars`, D77) under code checks: the blanks unchanged; word by
+  word the line stays the same except a type word, a use word, a number or "a"/"an" (case and a trailing full stop
+  aside), so "only" and every label survive; no value (date, ID, phone, email) that isn't verbatim in the original;
+  any use stated must be the record's `propertyUsage` (never another, never "non-…", never dropped); any type word
+  must be the unit's type. Every rewording must leave no disagreement in its paragraph (a no-op is not a fix). A
+  paragraph code finds nothing wrong with keeps its wording, and the reasons say so. In the brief, template words and
+  a free-text subtype are delimited data.
+- **Retries.** A disagreeing line the answer left unfixed is sent back once, naming the paragraph. After any nudge
+  the turn has no tools and is held to the answer's JSON schema (Ollama structured output).
+- **Confidence** = the share of disagreeing lines the model reworded and code accepted (no disagreement: 1 with a valid
+  answer, 0 without). It is stored as the run's `model.confidence` and shown to the approver. Below 30%, code copies
+  the type and use into the particulars itself (`codeUnitRewrite`, D77), as the last resort. Whatever stays unfixed is
+  a conflict flag with the template's own words, which leads the `final_contract` reasons.
+- **Evals** (`bun run eval -- contract-agent`, cases a07 and a09–a13 on unit wording): `qwen3.5:4b` went from 1 of 5
+  unit-wording cases (none reworded by the model) to 6 of 6, all by the model; `qwen3.5:9b` 12 of 13 overall. a05
+  (an injected clause must be flagged) fails on both models before and after this change: open.
+
+## D79 — The title states the unit's use; leftover type words go; a bad clause id never stops the contract
+Amends D64, D77, D78. A retail shop in Ras Al Khaimah got a contract titled "RESIDENTIAL LEASE CONTRACT" with
+"Property Type shop Shop", and the 9B model's answer was cut off: `company_clauses` sent all 75 clauses (57 already in
+the template), filling the 16k context.
+- **Title and headings.** A title or heading that states a use and nothing else legal (`headingWithUse`) is given to
+  the agent as a paragraph marked `heading`; only its use word may change, to the record's (`propertyUsage`: retail
+  is commercial, as for Ejari). The model rewords it first; code does below 30% (D78). The renderer prints a reworded
+  title or heading only when it is listed as rewritten.
+- **Leftover type word.** A type word right after a blank mapped to `propertySubtype` (`typeBlanks`) is a sample value
+  (D70): it disagrees with the record and any rewording has it removed by code (`normalizeRewrite`), so the line prints
+  the type once.
+- **Context.** `company_clauses` lists only clauses the agent may add (not those in the template); repeated tool calls
+  no longer count toward the tool limit.
+- **Clause ids.** An id that is not an approved clause of the company is not added and is listed in the reasons; it no
+  longer stops the contract (code alone decides what is added). Trade-off: a model that tries another company's clause
+  no longer halts preparation; nothing is added and the approver sees the id (capped) at `final_contract`.
+- A leftover type word is removed only when it stands alone after the blank (punctuation, a blank or the end next),
+  and never when the record has no type. A title or heading may change its use word only. Confirm with legal that a
+  commercial title on a residential template body is acceptable; the body's residential-only clauses are flagged, not
+  rewritten.
+

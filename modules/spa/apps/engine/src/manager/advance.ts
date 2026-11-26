@@ -20,6 +20,7 @@ import { appendDealEvent } from "./events.ts";
 import type { DealRow } from "./facts.ts";
 import { supersedeAgreementOnCancel } from "./agreement-cancel.ts";
 import { supersedeOnCancel } from "./settlement.ts";
+import { cancelFutureViewingsFor } from "./viewings.ts";
 
 export interface AdvanceOptions {
   actor: SpaActor;
@@ -138,6 +139,8 @@ async function advanceUnit(ctx: SpaContext, tx: SpaTx, id: string, event: UnitEv
   const t = unitMachine.transitions.find((x) => x.from === unit.state && x.event === event);
   if (!t) throw conflict("transition_not_allowed", `a unit in ${unit.state} does not accept ${event}`);
   await tx.db.update(units).set({ state: t.to }).where(eq(units.id, id));
+  // S79: a unit that leaves AVAILABLE is no longer on the public site: its future viewings are cancelled by code.
+  if (unit.state === "AVAILABLE" && t.to !== "AVAILABLE") await cancelFutureViewingsFor(ctx, tx, { kind: "unit", id });
   const eventId = await appendDealEvent(tx, ctx, {
     entity: { kind: "unit", id },
     type: event,
@@ -158,6 +161,9 @@ async function advanceListing(ctx: SpaContext, tx: SpaTx, id: string, event: Lis
   const g = t.guard?.(await ctx.facts.listing(tx, listing, ctx.clock.today()));
   if (g && !g.ok) throw unprocessable("guard_failed", `can't ${event}`, g.reasons);
   await tx.db.update(listings).set({ state: t.to }).where(eq(listings.id, id));
+  // S79: a listing that leaves PUBLISHED/UNDER_OFFER is no longer offered: its future viewings are cancelled by code.
+  const live = (st: string) => st === "PUBLISHED" || st === "UNDER_OFFER";
+  if (live(listing.state) && !live(t.to)) await cancelFutureViewingsFor(ctx, tx, { kind: "listing", id });
   const eventId = await appendDealEvent(tx, ctx, {
     entity: { kind: "listing", id },
     type: event,

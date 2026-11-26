@@ -91,9 +91,9 @@ describe.skipIf(!url)("SPA engine on spa_test (S2)", () => {
 
   test("the demo seed creates units, listings and a mix of deals (C30), idempotently", async () => {
     await seedSpaDemo(database, undefined, { SPA_DEMO_MODE: true });
-    // five demo units (U-101 to U-105) and, from C32, the four available units of building B in the demo project
-    expect(await database.db.select().from(units)).toHaveLength(9);
-    expect(await database.db.select().from(listings)).toHaveLength(5);
+    // five demo units (U-101 to U-105), the four available units of building B in the demo project, and (S78) the four units of the second project
+    expect(await database.db.select().from(units)).toHaveLength(13);
+    expect(await database.db.select().from(listings)).toHaveLength(12);
     expect(await database.db.select().from(deals)).toHaveLength(10);
     const [u101] = await database.db.select().from(units).where(eq(units.code, "U-101"));
     expect(u101?.state).toBe("HELD");
@@ -188,6 +188,40 @@ describe.skipIf(!url)("SPA engine on spa_test (S2)", () => {
       body: JSON.stringify({ email: DEMO_USERS[0]!.email }),
     });
     expect(r.status).toBe(200);
+  });
+  test("M5b: the demo user list marks the four-person cast first, with hints", async () => {
+    const list = (await (await call(appWith(true), "/api/auth/demo-users")).json()) as {
+      role: string;
+      cast: boolean;
+      hint: string;
+      shortRole: string;
+    }[];
+    expect(list.slice(0, 4).map((u) => [u.role, u.cast])).toEqual([
+      ["sales_officer", true],
+      ["sales_manager", true],
+      ["legal", true],
+      ["admin", true],
+    ]);
+    expect(list[0]!.hint).toBe("Listings, leads, viewings, deals, documents");
+    expect(list.slice(4).every((u) => !u.cast)).toBe(true);
+    expect(list.find((u) => u.role === "compliance_officer")).toMatchObject({ hint: "AML review", cast: false });
+  });
+  test("M5b: the demo hand-off picks the cast member, else the first active user of the role, else nothing; 404 with demo off", async () => {
+    expect((await call(appWith(false), "/api/demo/handoff?role=legal")).status).toBe(404);
+    const get = async (role: string) => (await call(appWith(true), `/api/demo/handoff?role=${role}`)).json();
+    expect(await get("legal")).toEqual({ name: "Omar Legal", email: "legal@spa-demo.test", roleLabel: "Legal" });
+    expect(await get("compliance_officer")).toMatchObject({ name: "Sara Compliance", roleLabel: "Compliance" });
+    expect((await call(appWith(true), "/api/demo/handoff?role=nope")).status).toBe(400);
+    // A second legal user sorting first is not the cast; the cast member still wins.
+    await database.pool.query(
+      "insert into spa_users (id, email, name, role) values ('0198a1b2-0000-7000-8000-0000000000f1', 'aaron@spa-demo.test', 'Aaron Legal', 'legal')",
+    );
+    expect(await get("legal")).toMatchObject({ email: "legal@spa-demo.test" });
+    // No active user for a role: null, so the card says no demo user has the role.
+    await database.pool.query("update spa_users set active = false where role = 'mlro'");
+    expect(await get("mlro")).toBeNull();
+    await database.pool.query("update spa_users set active = true where role = 'mlro'");
+    await database.pool.query("delete from spa_users where email = 'aaron@spa-demo.test'");
   });
   test("/health is green with the database and queue up, and says why when not", async () => {
     const ok = await call(appWith(true), "/health");

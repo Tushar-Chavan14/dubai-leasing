@@ -1,109 +1,19 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { PhotoManager as PlatformPhotoManager } from "@platform/ui/media/photo-manager";
 import { captionPhotoAction, deletePhotoAction, reorderPhotosAction } from "../app/(staff)/units/actions";
 import { uploadPhoto } from "../lib/images";
-import { WarningIcon as IconWarning } from "@phosphor-icons/react";
 import type { UnitPhoto } from "../lib/types";
-import { Banner } from "@platform/ui/form";
-import { moveItem, type PhotoItem, PhotoPicker } from "./photo-picker";
 
-/** Edits a saved unit's photos in place: every change is saved as it happens. */
+/** Edits a saved unit's photos in place: every change is saved as it happens. Binds leasing's unit actions. */
 export function PhotoManager({ unitId, photos }: { unitId: string; photos: UnitPhoto[] }) {
-  const router = useRouter();
-  const [items, setItems] = useState<PhotoItem[]>(() =>
-    photos.map((p) => ({
-      key: p.id,
-      id: p.id,
-      src: `/media/units/${unitId}/${p.id}`,
-      caption: p.caption ?? "",
-      status: "saved",
-    })),
-  );
-  const [error, setError] = useState<string | null>(null);
-  const savedCaptions = useRef(new Map(photos.map((p) => [p.id, p.caption ?? ""])));
-  const busy = items.some((p) => p.status === "uploading" || p.status === "queued");
-
-  const patch = (key: string, change: Partial<PhotoItem>) =>
-    setItems((l) => l.map((p) => (p.key === key ? { ...p, ...change } : p)));
-
-  async function add(files: File[]) {
-    setError(null);
-    const fresh = files.map((f) => ({
-      key: `new-${crypto.randomUUID()}`,
-      src: URL.createObjectURL(f),
-      caption: "",
-      file: f,
-      status: "queued" as const,
-    }));
-    setItems((l) => [...l, ...fresh]);
-    for (const p of fresh) {
-      patch(p.key, { status: "uploading" });
-      try {
-        const { photo } = await uploadPhoto(unitId, p.file, "");
-        savedCaptions.current.set(photo.id, "");
-        patch(p.key, { status: "saved", id: photo.id });
-      } catch (e) {
-        patch(p.key, { status: "error", error: (e as Error).message });
-      }
-    }
-    router.refresh();
-  }
-
-  async function remove(key: string) {
-    const p = items.find((x) => x.key === key);
-    setItems((l) => l.filter((x) => x.key !== key));
-    if (!p?.id) return;
-    const r = await deletePhotoAction(unitId, p.id);
-    if (!r.ok) {
-      setError(r.error ?? "Couldn't remove the photo.");
-      setItems((l) => [...l, p]);
-    }
-    router.refresh();
-  }
-
-  async function move(key: string, to: number) {
-    const from = items.findIndex((x) => x.key === key);
-    const next = moveItem(items, from, to);
-    setItems(next);
-    const ids = next.map((x) => x.id).filter((x): x is string => !!x);
-    if (ids.length !== next.length) return; // wait for uploads to finish before saving order
-    const r = await reorderPhotosAction(unitId, ids);
-    if (!r.ok) {
-      setError(r.error ?? "Couldn't save the new order.");
-      setItems(items);
-    }
-    router.refresh();
-  }
-
-  async function commitCaption(key: string) {
-    const p = items.find((x) => x.key === key);
-    if (!p?.id || savedCaptions.current.get(p.id) === p.caption) return;
-    const r = await captionPhotoAction(unitId, p.id, p.caption);
-    if (r.ok) savedCaptions.current.set(p.id, p.caption);
-    else setError(r.error ?? "Couldn't save the caption.");
-  }
-
   return (
-    <div className="grid gap-3">
-      {error && (
-        <Banner tone="bad" role="alert">
-          <IconWarning size={16} className="mt-0.5 shrink-0" />
-          {error}
-        </Banner>
-      )}
-      <PhotoPicker
-        items={items}
-        onAdd={add}
-        onRemove={remove}
-        onMove={move}
-        onCaption={(key, caption) => patch(key, { caption })}
-        onCaptionCommit={commitCaption}
-      />
-      <p className="m-0 text-[13px] text-muted" role="status">
-        {busy ? "Uploading…" : "Changes to photos are saved as you make them."}
-      </p>
-    </div>
+    <PlatformPhotoManager
+      photos={photos.map((p) => ({ id: p.id, src: `/media/units/${unitId}/${p.id}`, caption: p.caption }))}
+      upload={uploadPhoto.bind(null, unitId)}
+      caption={captionPhotoAction.bind(null, unitId)}
+      remove={deletePhotoAction.bind(null, unitId)}
+      reorder={reorderPhotosAction.bind(null, unitId)}
+    />
   );
 }

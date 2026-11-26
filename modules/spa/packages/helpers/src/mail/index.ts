@@ -5,7 +5,11 @@
  */
 import { createHash } from "node:crypto";
 import { formatCalendarDate, formatMoneyFils } from "@platform/readers/structure/format";
+import { TOKENS } from "@platform/ui/tokens";
 import { CHASE_ALLOWED_PLACEHOLDERS, CHASE_REASONS, type ChaseReasonCode } from "@spa/core";
+
+/** Light palette of the design system (emails don't follow the reader's dark mode reliably). */
+const C = TOKENS.light;
 
 export type SpaMailTemplate =
   | "offer_answer_link"
@@ -16,6 +20,11 @@ export type SpaMailTemplate =
   | "chase"
   | "party_question"
   | "listing_enquiry"
+  | "lead_new"
+  | "viewing_new"
+  | "viewing_confirmation"
+  | "viewing_reminder"
+  | "viewing_cancelled"
   | "gate_alert"
   | "documents_request"
   | "transfer_booked"
@@ -31,6 +40,11 @@ export const MAIL_TEMPLATE_VERSIONS: Readonly<Record<SpaMailTemplate, number>> =
   chase: 1,
   party_question: 1,
   listing_enquiry: 1,
+  lead_new: 1,
+  viewing_new: 1,
+  viewing_confirmation: 1,
+  viewing_reminder: 1,
+  viewing_cancelled: 1,
   gate_alert: 1,
   documents_request: 1,
   transfer_booked: 1,
@@ -61,11 +75,16 @@ function build(
     "",
     "This email was sent by the sales team.",
   ].join("\n");
-  const html = `<div style="font-family:Arial,sans-serif;font-size:15px;color:#1a1d1f">${lines
-    .map((l) => (l ? `<p>${esc(l)}</p>` : ""))
+  const html = `<!doctype html><html><body style="margin:0;background:${C.canvas};font-family:'Plus Jakarta Sans',Arial,Helvetica,sans-serif;font-size:15px;color:${C.ink}">
+<div style="max-width:560px;margin:0 auto;padding:28px 20px">
+<div style="background:${C.page};border-radius:16px;padding:28px 24px;border:1px solid ${C.line};border-top:4px solid ${C.primary}">${lines
+    .map((l) => (l ? `<p style="margin:0 0 14px;line-height:1.55">${esc(l)}</p>` : ""))
     .join("")}${
-    action ? `<p><a href="${esc(action.url)}" style="font-weight:bold">${esc(action.label)}</a></p>` : ""
-  }<p style="color:#6a7075">This email was sent by the sales team.</p></div>`;
+    action
+      ? `<p style="margin:8px 0 0"><a href="${esc(action.url)}" style="display:inline-block;padding:11px 18px;border-radius:10px;text-decoration:none;font-weight:600;font-size:14px;background:${C.cta};color:${C.onCta}">${esc(action.label)}</a></p>`
+      : ""
+  }</div>
+<p style="font-size:12px;line-height:1.5;color:${C.muted};margin:16px 4px">This email was sent by the sales team.</p></div></body></html>`;
   return { template, version: MAIL_TEMPLATE_VERSIONS[template], subject, text, html };
 }
 
@@ -326,4 +345,132 @@ export function gateAlertMail(i: { text: string; dealRef: string | null; url: st
     label: "Open the sales app",
     url: i.url,
   });
+}
+
+/** A viewing time as Dubai wall time: "Mon 2 Nov 2026, 10:30 (Dubai)". Pure; the instant comes from the stored row. */
+export function dubaiTimeLabel(iso: Date | string): string {
+  const d = typeof iso === "string" ? new Date(iso) : iso;
+  const text = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Dubai",
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(d);
+  return `${text
+    .replace(",", "")
+    .replace(/^(\w+) /, "$1 ")
+    .replace(/(\d{4}) /, "$1, ")} (Dubai)`;
+}
+
+/**
+ * A new enquiry for the agent (S79). The message is the visitor's own words; they agreed to be contacted. Sent to staff
+ * only. The visitor's phone, when given, is part of the contact details the agent needs to call back.
+ */
+export function leadNewMail(i: {
+  leadRef: string;
+  property: string;
+  name: string;
+  email: string;
+  phone: string | null;
+  message: string;
+  url: string;
+}): SpaMailParts {
+  return build(
+    "lead_new",
+    `New enquiry · ${i.property}`,
+    [
+      `${i.name} (${i.email}${i.phone ? `, ${i.phone}` : ""}) wrote about ${i.property}. Lead ${i.leadRef}. They agreed to be contacted.`,
+      i.message,
+      "This message was typed by the visitor; nothing in it was written by an assistant.",
+    ],
+    { label: "Open the lead", url: i.url },
+  );
+}
+
+/** A new booked viewing for the agent (S79). */
+export function viewingNewMail(i: {
+  leadRef: string;
+  property: string;
+  name: string;
+  email: string;
+  phone: string | null;
+  startsAt: Date | string;
+  /** What the visitor wrote with the booking, in their own words (null: nothing). */
+  message?: string | null;
+  url: string;
+}): SpaMailParts {
+  return build(
+    "viewing_new",
+    `New viewing · ${i.property}`,
+    [
+      `${i.name} (${i.email}${i.phone ? `, ${i.phone}` : ""}) booked a viewing of ${i.property} for ${dubaiTimeLabel(i.startsAt)}. Lead ${i.leadRef}. They agreed to be contacted.`,
+      ...(i.message
+        ? [i.message, "This message was typed by the visitor; nothing in it was written by an assistant."]
+        : []),
+    ],
+    { label: "Open the lead", url: i.url },
+  );
+}
+
+/** The visitor's booking confirmation, with the single-use cancel link (S79). Fixed wording. */
+export function viewingConfirmationMail(i: {
+  name: string;
+  property: string;
+  startsAt: Date | string;
+  cancelUrl: string;
+}): SpaMailParts {
+  return build(
+    "viewing_confirmation",
+    `Your viewing is booked · ${i.property}`,
+    [
+      `Hello ${i.name},`,
+      `Your viewing of ${i.property} is booked for ${dubaiTimeLabel(i.startsAt)}.`,
+      "Our agent will meet you there. If you can't come, please cancel with the link below so the time goes to someone else.",
+    ],
+    { label: "Cancel this viewing", url: i.cancelUrl },
+  );
+}
+
+/** The reminder the day before (S79). */
+export function viewingReminderMail(i: {
+  name: string;
+  property: string;
+  startsAt: Date | string;
+  cancelUrl: string;
+}): SpaMailParts {
+  return build(
+    "viewing_reminder",
+    `Reminder: your viewing · ${i.property}`,
+    [
+      `Hello ${i.name},`,
+      `This is a reminder that your viewing of ${i.property} is at ${dubaiTimeLabel(i.startsAt)}.`,
+      "If you can't come, please cancel with the link below.",
+    ],
+    { label: "Cancel this viewing", url: i.cancelUrl },
+  );
+}
+
+/** Told to the visitor when a viewing is cancelled, by them, by the agent or because the home is no longer available (S79). */
+export function viewingCancelledMail(i: {
+  name: string;
+  property: string;
+  startsAt: Date | string;
+  reason: "visitor" | "agent" | "unavailable" | "closed";
+}): SpaMailParts {
+  const why =
+    i.reason === "visitor"
+      ? "We have cancelled it as you asked."
+      : i.reason === "unavailable"
+        ? "This home is no longer available, so the viewing has been cancelled."
+        : i.reason === "closed"
+          ? "We have closed your enquiry, so the viewing has been cancelled."
+          : "The agent has had to cancel it. They will be in touch to arrange another time.";
+  return build("viewing_cancelled", `Viewing cancelled · ${i.property}`, [
+    `Hello ${i.name},`,
+    `Your viewing of ${i.property} on ${dubaiTimeLabel(i.startsAt)} is cancelled. ${why}`,
+  ]);
 }

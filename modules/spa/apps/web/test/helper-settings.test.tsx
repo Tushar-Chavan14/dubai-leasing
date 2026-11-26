@@ -1,4 +1,5 @@
 /* oxlint-disable no-explicit-any -- response bodies are read loosely in these tests */
+import { noToggles } from "./no-toggles.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { renderToStaticMarkup as render } from "react-dom/server";
 import { issueToken } from "../../engine/test/session.ts";
@@ -77,7 +78,7 @@ describe("HelperSettingsView (C24, S59)", () => {
     const html = render(<HelperSettingsView data={data({ canEdit: false })} action={noop} />);
     expect(html).toContain("Identity (KYC) check");
     expect(html).toContain("Review");
-    expect(html).not.toMatch(/<(form|button|input)\b/);
+    expect(noToggles(html)).not.toMatch(/<(form|button|input)\b/);
     expect(html).toContain("An admin changes these");
   });
 

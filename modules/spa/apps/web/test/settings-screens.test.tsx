@@ -63,6 +63,10 @@ const redirects: string[] = [];
 const revalidated: string[] = [];
 mock.module("next/headers", () => ({ cookies: async () => ({ get: () => ({ value: session }) }) }));
 mock.module("next/navigation", () => ({
+  usePathname: () => "/",
+  useSearchParams: () => new URLSearchParams(),
+  // The shared mocks are global: a component that reads the router (the M5 forms) must find one here too.
+  useRouter: () => ({ push() {}, refresh() {} }),
   redirect: (to: string) => {
     redirects.push(to);
     throw new Error(`NEXT_REDIRECT ${to}`);
@@ -72,7 +76,11 @@ mock.module("next/navigation", () => ({
   },
 }));
 mock.module("next/cache", () => ({ revalidatePath: (p: string) => revalidated.push(p) }));
-mock.module("../lib/env", () => ({ engineUrl: () => "http://engine.test", sessionCookie: () => "spa_session" }));
+mock.module("../lib/env", () => ({
+  engineUrl: () => "http://engine.test",
+  sessionCookie: () => "spa_session",
+  webEnv: () => ({ SPA_PORTAL_URL: "http://portal.test" }),
+}));
 
 // ---- pure pieces -------------------------------------------------------------------------------------------------------
 

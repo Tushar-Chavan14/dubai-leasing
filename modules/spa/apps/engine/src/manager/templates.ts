@@ -28,9 +28,10 @@ import { proposeApproval } from "./approvals.ts";
 import type { SpaContext } from "./context.ts";
 import { conflict, forbidden, notFound, unprocessable } from "./errors.ts";
 import { appendDealEvent } from "./events.ts";
+import { hasRole } from "@spa/core";
 
-const adminOnly = (user: { role: SpaRole }) => {
-  if (user.role !== "admin") throw forbidden("only an admin manages templates");
+const adminOnly = (user: { role: SpaRole; roles?: readonly SpaRole[] | undefined }) => {
+  if (!hasRole(user, "admin")) throw forbidden("only an admin manages templates");
 };
 
 const NewTemplate = z.object({
@@ -43,7 +44,7 @@ const NewTemplate = z.object({
 export async function createTemplate(
   ctx: SpaContext,
   input: unknown,
-  user: { id: string; role: SpaRole },
+  user: { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined },
 ): Promise<{ id: string }> {
   adminOnly(user);
   const p = NewTemplate.safeParse(input);
@@ -97,7 +98,7 @@ const blockersOf = (checks: readonly TemplateCheck[]) =>
 export async function addTemplateVersion(
   ctx: SpaContext,
   input: { templateId: string; docId: string; docHash: string; data: unknown },
-  user: { id: string; role: SpaRole },
+  user: { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined },
 ): Promise<{ id: string; version: number; checks: TemplateCheck[]; approvalId: string }> {
   adminOnly(user);
   const parsed = ContractStructureData.safeParse(input.data);
@@ -159,7 +160,7 @@ export async function addTemplateVersion(
 export async function remapBlank(
   ctx: SpaContext,
   input: { versionId: string; blankId: string; key: string },
-  user: { id: string; role: SpaRole },
+  user: { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined },
   /** Joins the caller's transaction (the assistant's apply marks its proposal in the same one). */
   joined?: SpaTx,
 ): Promise<{ checks: TemplateCheck[] }> {
@@ -240,7 +241,7 @@ export const BlankLabel = z
 export async function relabelBlank(
   ctx: SpaContext,
   input: { versionId: string; blankId: string; label: string },
-  user: { id: string; role: SpaRole },
+  user: { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined },
   /** Joins the caller's transaction (the assistant's apply marks its proposal in the same one). */
   joined?: SpaTx,
 ): Promise<{ checks: TemplateCheck[] }> {

@@ -19,7 +19,7 @@ export function WorkFilters({
   catalogue,
 }: {
   search: WorkSearch;
-  counts: { deals: number; tasks: number; inbox?: number };
+  counts: { deals: number; tasks: number; inbox?: number; leads?: number; viewings?: number };
   /** The screens the role has for this company kind (C32, S64): each is a tab that opens its own page. */
   catalogue?: { listings: boolean; inventory: boolean };
 }) {
@@ -31,6 +31,18 @@ export function WorkFilters({
     ...(catalogue?.listings ? [{ href: "/listings", label: "Listings", current: false }] : []),
     ...(catalogue?.inventory ? [{ href: "/inventory", label: "Inventory", current: false }] : []),
     { href: "/work?tab=tasks", label: "Tasks", count: counts.tasks, current: search.tab === "tasks" },
+    // Leads and viewings (S79): the sales roles only; the count is what is new or happening today.
+    ...(counts.leads === undefined
+      ? []
+      : [
+          { href: "/work?tab=leads", label: "Leads", count: counts.leads, current: search.tab === "leads" },
+          {
+            href: "/work?tab=viewings",
+            label: "Viewings",
+            count: counts.viewings ?? 0,
+            current: search.tab === "viewings",
+          },
+        ]),
   ];
   return (
     <div className="grid gap-3">

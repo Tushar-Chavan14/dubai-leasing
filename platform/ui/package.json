@@ -10,10 +10,23 @@
     "./contrast": "./src/contrast.ts",
     "./field-errors": "./src/field-errors.ts",
     "./use-action-form": "./src/use-action-form.ts",
+    "./media/hue": "./src/media/hue.ts",
+    "./media/photo-check": "./src/media/photo-check.ts",
+    "./live/poll": "./src/live/poll.ts",
+    "./live/use-live": "./src/live/use-live.ts",
+    "./catalogue/finder-values": "./src/catalogue/finder-values.ts",
+    "./catalogue/nav-match": "./src/catalogue/nav-match.ts",
+    "./shell/*": "./src/shell/*.tsx",
+    "./media/*": "./src/media/*.tsx",
+    "./catalogue/*": "./src/catalogue/*.tsx",
+    "./chat/*": "./src/chat/*.tsx",
+    "./live/*": "./src/live/*.tsx",
     "./*": "./src/*.tsx"
   },
   "devDependencies": {
-    "@types/react": "19.3.0"
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "react-dom": "19.3.1"
   },
   "peerDependencies": {
     "@phosphor-icons/react": "2.1.10",

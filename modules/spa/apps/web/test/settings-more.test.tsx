@@ -45,6 +45,10 @@ const redirects: string[] = [];
 const revalidated: string[] = [];
 mock.module("next/headers", () => ({ cookies: async () => ({ get: () => ({ value: session }) }) }));
 mock.module("next/navigation", () => ({
+  usePathname: () => "/",
+  useSearchParams: () => new URLSearchParams(),
+  // The shared mocks are global: a component that reads the router (the M5 forms) must find one here too.
+  useRouter: () => ({ push() {}, refresh() {} }),
   redirect: (to: string) => {
     redirects.push(to);
     throw new Error(`NEXT_REDIRECT ${to}`);
@@ -54,7 +58,11 @@ mock.module("next/navigation", () => ({
   },
 }));
 mock.module("next/cache", () => ({ revalidatePath: (p: string) => revalidated.push(p) }));
-mock.module("../lib/env", () => ({ engineUrl: () => "http://engine.test", sessionCookie: () => "spa_session" }));
+mock.module("../lib/env", () => ({
+  engineUrl: () => "http://engine.test",
+  sessionCookie: () => "spa_session",
+  webEnv: () => ({ SPA_PORTAL_URL: "http://portal.test" }),
+}));
 
 describe("C40: the form builders read a fixed list of fields", () => {
   test("company: a name and a real kind; a stuffed field is never sent", () => {
@@ -337,7 +345,8 @@ describe.skipIf(!url)("C40: the new Settings pages and actions against the real 
     const integ = (await page(`${base}/integrations/page`)) as string;
     expect(integ).toContain("Simulated");
     expect(integ).toContain("Not set up");
-    for (const h of [models, integ]) expect(h).not.toMatch(/https?:|localhost|\b127\.|smtp|key\b/i);
+    for (const h of [models, integ])
+      expect(h.replace(/ xmlns="[^"]*"/g, "")).not.toMatch(/https?:|localhost|\b127\.|smtp|key\b/i);
   });
 
   test("company action: a forged form from a manager changes nothing; the admin saves", async () => {

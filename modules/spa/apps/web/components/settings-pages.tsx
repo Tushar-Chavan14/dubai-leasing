@@ -2,7 +2,15 @@ import { ALERT, Panel, SaveBar, SET_INPUT, SET_SELECT, SettingRow } from "@platf
 import { Button } from "@platform/ui/button";
 import { Pill } from "@platform/ui/pill";
 import type { SpaRole } from "@spa/core";
-import type { CompanyView, DemoClockView, PlansView, RulebookView, SigningView, UsersView } from "../lib/contracts";
+import type {
+  CompanyView,
+  DemoClockView,
+  PlansView,
+  RulebookView,
+  SigningView,
+  UsersView,
+  ViewingsPolicyView,
+} from "../lib/contracts";
 import { bpsToPct, formRoleKey, settingsError, settingsSaved } from "../lib/settings-forms";
 import { formatMoneyFils, shareLabel, weekdayDate } from "../lib/format";
 
@@ -485,5 +493,123 @@ export function ClockPanel({ data, action }: { data: DemoClockView; action: Acti
         </Button>
       </form>
     </div>
+  );
+}
+
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
+const hourLabel = (h: number) => `${String(h).padStart(2, "0")}:00`;
+
+/** Settings -> Viewings (S79): when visitors may book, how long a slot is, and the per-email enquiry cap. Dubai time. */
+export function ViewingsForm({
+  data,
+  canEdit,
+  action,
+}: {
+  data: ViewingsPolicyView;
+  canEdit: boolean;
+  action: Action;
+}) {
+  const v = data.values.viewings;
+  const d = !canEdit;
+  return (
+    <form action={action} className="grid gap-4">
+      <input type="hidden" name="baseVersion" value={data.version} />
+      <Panel className="px-4">
+        <SettingRow title="Days a viewing can be booked" sub="Dubai time.">
+          <fieldset className="m-0 flex flex-wrap gap-x-4 gap-y-2 border-0 p-0">
+            <legend className="sr-only">Viewing days</legend>
+            {WEEKDAYS.map((name, i) => (
+              <label key={name} className="flex items-center gap-1.5 text-sm">
+                <input type="checkbox" name={`day_${i}`} defaultChecked={v.viewingDays.includes(i)} disabled={d} />
+                {name}
+              </label>
+            ))}
+          </fieldset>
+        </SettingRow>
+        <SettingRow title="First viewing starts at" sub={`Now ${hourLabel(v.viewingStartHour)}.`} htmlFor="startHour">
+          <Num
+            id="startHour"
+            name="startHour"
+            value={v.viewingStartHour}
+            min={0}
+            max={23}
+            unit="o'clock"
+            step="1"
+            disabled={d}
+          />
+        </SettingRow>
+        <SettingRow title="Last viewing ends by" sub={`Now ${hourLabel(v.viewingEndHour)}.`} htmlFor="endHour">
+          <Num
+            id="endHour"
+            name="endHour"
+            value={v.viewingEndHour}
+            min={1}
+            max={24}
+            unit="o'clock"
+            step="1"
+            disabled={d}
+          />
+        </SettingRow>
+        <SettingRow title="Length of a viewing" htmlFor="slotMinutes">
+          <Num
+            id="slotMinutes"
+            name="slotMinutes"
+            value={v.viewingSlotMinutes}
+            min={15}
+            max={120}
+            unit="minutes"
+            step="1"
+            disabled={d}
+          />
+        </SettingRow>
+        <SettingRow title="Earliest booking from now" sub="Visitors can't book sooner than this." htmlFor="leadHours">
+          <Num
+            id="leadHours"
+            name="leadHours"
+            value={v.viewingLeadHours}
+            min={0}
+            max={168}
+            unit="hours"
+            step="1"
+            disabled={d}
+          />
+        </SettingRow>
+        <SettingRow title="Furthest booking ahead" htmlFor="horizonDays">
+          <Num
+            id="horizonDays"
+            name="horizonDays"
+            value={v.viewingHorizonDays}
+            min={1}
+            max={60}
+            unit="days"
+            step="1"
+            disabled={d}
+          />
+        </SettingRow>
+        <SettingRow
+          title="Enquiries one email may send a day"
+          sub="All homes together; a booking counts as one."
+          htmlFor="perEmailPerDay"
+        >
+          <Num
+            id="perEmailPerDay"
+            name="perEmailPerDay"
+            value={data.values.leads.perEmailPerDay}
+            min={1}
+            max={100}
+            unit="a day"
+            step="1"
+            disabled={d}
+          />
+        </SettingRow>
+      </Panel>
+      {canEdit && (
+        <SaveBar note="Saving makes a new version. Viewings already booked keep their time.">
+          <Button type="submit" variant="primary" size="sm">
+            Save viewing settings
+          </Button>
+        </SaveBar>
+      )}
+    </form>
   );
 }

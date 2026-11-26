@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { dealMachine, PaymentPlan, type SpaPolicy, type SpaRole } from "@spa/core";
+import { dealMachine, PaymentPlan, type SpaPolicy, type SpaRole, hasAnyRole } from "@spa/core";
 import {
   agreements,
   bankLetters,
@@ -18,7 +18,7 @@ import {
 } from "@spa/db";
 import { moneyInWords, type PlanRow, sortPlan, type SpaValues } from "@spa/helpers";
 import { bpsOfFloor, getSalesRulebook, registrationFee, type SalesRulebook, validatePlan } from "@spa/rulebook";
-import { and, asc, eq, ne } from "drizzle-orm";
+import { and, asc, desc, eq, ne, sql } from "drizzle-orm";
 import { overrideApproved } from "./commission.ts";
 import type { SpaContext } from "./context.ts";
 import { conflict, forbidden, notFound, unprocessable } from "./errors.ts";
@@ -343,9 +343,9 @@ export async function setPaymentPlan(
   ctx: SpaContext,
   dealId: string,
   input: unknown,
-  user: { id: string; role: SpaRole },
+  user: { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined },
 ): Promise<{ rows: number }> {
-  if (!PLAN_ROLES.includes(user.role)) throw forbidden(`only ${PLAN_ROLES.join(", ")} can set the payment plan`);
+  if (!hasAnyRole(user, PLAN_ROLES)) throw forbidden(`only ${PLAN_ROLES.join(", ")} can set the payment plan`);
   const parsed = PaymentPlan.safeParse(input);
   if (!parsed.success)
     throw unprocessable(
@@ -365,7 +365,30 @@ export async function setPaymentPlan(
     if (live) throw conflict("plan_fixed", "the plan is fixed while an agreement is waiting; ask legal to return it");
     const rb = rulebookFor(ctx, d.rulesVersion);
     if (!rb) throw conflict("no_rulebook", `the rulebook ${d.rulesVersion} isn't available`);
-    const r = validatePlan(parsed.data, d.priceFils, rb, { primary: d.dealType === "primary_offplan" });
+    // M6 (S81): a booking below the rulebook's minimum that a sales manager approved lowers the minimum for this deal to
+    // exactly the approved share; nothing else is relaxed.
+    const [okBooking] = await tx.db
+      .select({ proposal: spaApprovals.proposal })
+      .from(spaApprovals)
+      .where(
+        and(
+          eq(spaApprovals.gate, "price_out_of_range"),
+          eq(spaApprovals.entityKind, "deal"),
+          eq(spaApprovals.entityId, dealId),
+          eq(spaApprovals.status, "approved"),
+          sql`${spaApprovals.proposal}->>'kind' = 'booking'`,
+        ),
+      )
+      .orderBy(desc(spaApprovals.createdAt))
+      .limit(1);
+    const approvedBps = okBooking?.proposal.bookingBps;
+    const minBookingBps = typeof approvedBps === "number" ? Math.min(rb.minBookingBps, approvedBps) : rb.minBookingBps;
+    const r = validatePlan(
+      parsed.data,
+      d.priceFils,
+      { ...rb, minBookingBps },
+      { primary: d.dealType === "primary_offplan" },
+    );
     if (!r.ok) throw unprocessable("invalid_plan", "the payment plan doesn't hold", r.reasons);
     await tx.db.delete(paymentPlanRows).where(eq(paymentPlanRows.dealId, dealId));
     await tx.db.insert(paymentPlanRows).values(

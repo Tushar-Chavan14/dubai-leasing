@@ -33,7 +33,7 @@
       }
     },
     {
-      "files": ["modules/leasing/apps/web/**"],
+      "files": ["modules/leasing/apps/web/**", "platform/ui/src/media/**"],
       "rules": {
         "nextjs/no-img-element": "off"
       }

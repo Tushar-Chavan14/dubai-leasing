@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { noToggles } from "./no-toggles.ts";
 import { renderToStaticMarkup as render } from "react-dom/server";
 import { DealRecord } from "../components/deal-record";
 import { DealTable } from "../components/deal-table";
@@ -110,7 +111,7 @@ describe("DealRecord: each deal type shows its own steps and sections", () => {
     expect(html).toContain("Sample Owner One");
     expect(html).toContain("Sample Buyer One");
     expect(html).toContain("In default");
-    expect(html).toContain("border-danger");
+    expect(html).toContain("text-danger");
     expect(html).toContain("Work");
   });
   test("an unconfirmed plan amount is flagged 'Read, not confirmed'", () => {
@@ -131,7 +132,7 @@ describe("DealRecord: each deal type shows its own steps and sections", () => {
 describe("DealRecord: read only, role-safe, masked", () => {
   test("no form, button or input anywhere on a record, even with a pending gate", () => {
     const html = show(record("primary_offplan", "SIGNING"));
-    expect(html).not.toMatch(/<(form|button|input|select|textarea)\b/);
+    expect(noToggles(html)).not.toMatch(/<(form|button|input|select|textarea)\b/);
     expect(html).not.toMatch(/Approve and|Decide|Reject/);
     expect(html).toContain("Waiting for");
     expect(html).toContain("Legal");
@@ -480,7 +481,7 @@ describe("DealRecord: agreement review and chasing (C25, S60)", () => {
 
   test("the agreement review shows nothing to approve, block or edit: no control, and the approval stays decidable elsewhere", () => {
     const html = show(record("primary_offplan", "SIGNING", { approvals: [], agreement_review: agreementSection() }));
-    expect(html).not.toMatch(/<(form|button|input|select|textarea)\b/);
+    expect(noToggles(html)).not.toMatch(/<(form|button|input|select|textarea)\b/);
     expect(html).not.toMatch(/Approve|Reject|Block/);
   });
 

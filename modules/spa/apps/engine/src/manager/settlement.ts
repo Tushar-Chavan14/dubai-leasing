@@ -15,8 +15,9 @@ import {
   priceLinesBalance,
   settlementInputHash,
 } from "./settlement-facts.ts";
+import { hasAnyRole } from "@spa/core";
 
-type Person = { id: string; role: SpaRole };
+type Person = { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined };
 type DealRow = typeof deals.$inferSelect;
 const SYSTEM: SpaActor = "system:settlement";
 /** Who may read the statement (S48). */
@@ -208,7 +209,7 @@ export async function refreshSettlement(
 
 /** A person asks for the statement to be rebuilt (e.g. after finance rejected it). A no-op when nothing changed. */
 export async function requestSettlementRefresh(ctx: SpaContext, dealId: string, user: Person): Promise<BuildResult> {
-  if (!REFRESH_ROLES.includes(user.role)) throw forbidden(`only ${REFRESH_ROLES.join(", ")} can rebuild the statement`);
+  if (!hasAnyRole(user, REFRESH_ROLES)) throw forbidden(`only ${REFRESH_ROLES.join(", ")} can rebuild the statement`);
   return withSpaTx(ctx.database, async (tx) => {
     const [d] = await tx.db.select().from(deals).where(eq(deals.id, dealId));
     if (!d) throw notFound("deal");
@@ -304,7 +305,7 @@ export async function supersedeOnCancel(ctx: SpaContext, tx: SpaTx, dealId: stri
 
 /** The statement a resale shows (S48): lines with their sources, its status, and why none can be built, if so. */
 export async function getSettlement(ctx: SpaContext, dealId: string, user: Person) {
-  if (!READ_ROLES.includes(user.role)) throw forbidden("your role can't read the settlement statement");
+  if (!hasAnyRole(user, READ_ROLES)) throw forbidden("your role can't read the settlement statement");
   const db = ctx.database.db;
   const [d] = await db.select().from(deals).where(eq(deals.id, dealId));
   if (!d) throw notFound("deal");

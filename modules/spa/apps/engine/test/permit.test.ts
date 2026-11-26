@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { FixedClock, newId } from "@platform/kernel";
+import { PublicPropertyDetail } from "@spa/core";
 import { dealEvents, listings, type SpaDatabase, spaUsers } from "@spa/db";
 import { freshSpaDatabase, spaTestDatabaseUrl } from "@spa/db/testing";
 import { eq } from "drizzle-orm";
@@ -115,20 +116,10 @@ describe.skipIf(!url)("permit sweep and public page (C6)", () => {
     const r = await app.request(`/public/listings/${l.ref}`);
     expect(r.status).toBe(200);
     const body = (await r.json()) as Record<string, unknown>;
-    expect(Object.keys(body).toSorted()).toEqual(
-      [
-        "agent",
-        "askingPriceFils",
-        "bedrooms",
-        "community",
-        "description",
-        "permitNo",
-        "ref",
-        "sizeSqft",
-        "title",
-      ].toSorted(),
-    );
-    expect((body.agent as { name: string }).name).toBe("Rania Agent");
+    // S78: the page reads the allow-listed catalogue shape (strict: no other key can be there), and the agent is a name only.
+    expect(Object.keys(body).toSorted()).toEqual(Object.keys(PublicPropertyDetail.shape).toSorted());
+    expect(PublicPropertyDetail.strict().safeParse(body).success).toBe(true);
+    expect(body.agent).toEqual({ name: "Rania Agent" });
     const text = JSON.stringify(body);
     expect(text).not.toContain("Hidden Owner Name");
     expect(text).not.toContain("TD-SECRET-123");

@@ -31,6 +31,7 @@ import { KYC_RUN_JOB } from "../jobs.ts";
 import { driveAfter } from "./drive.ts";
 import { mailDocumentsLink } from "./portal.ts";
 import { afterHelperResult, requireHelperOn } from "./helper-modes.ts";
+import { hasAnyRole } from "@spa/core";
 
 export { KYC_RUN_JOB };
 /** The answers a person typed on the form are part of the job's identity: new answers on the same documents are a new job. */
@@ -67,11 +68,11 @@ export const KYC_PROMPT_VERSION = "spa-kyc.v1";
 const KYC_ACTOR: SpaActor = "system:kyc";
 const CLOSED = new Set(["HANDED_OVER", "COMPLETED", "CANCELLED"]);
 
-type Person = { id: string; role: SpaRole };
+type Person = { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined };
 /** Who asks for documents and starts a check: the sales team and admin. */
 const SALES_ROLES: readonly SpaRole[] = ["sales_officer", "sales_manager", "sales_admin", "admin"];
 const need = (u: Person, what: string) => {
-  if (!SALES_ROLES.includes(u.role)) throw forbidden(`only ${SALES_ROLES.join(", ")} can ${what}`);
+  if (!hasAnyRole(u, SALES_ROLES)) throw forbidden(`only ${SALES_ROLES.join(", ")} can ${what}`);
 };
 
 /** What the reader needs from outside: a model and the stored file's bytes. Documents never leave this machine. */

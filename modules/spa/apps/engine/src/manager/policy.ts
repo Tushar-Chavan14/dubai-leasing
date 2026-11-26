@@ -1,4 +1,4 @@
-import { DEFAULT_SPA_POLICY, SpaPolicy, type SpaRole } from "@spa/core";
+import { DEFAULT_SPA_POLICY, SpaPolicy, type SpaRole, hasRole } from "@spa/core";
 import { type SpaDb, spaPolicy, withSpaTx } from "@spa/db";
 import { desc, eq } from "drizzle-orm";
 import type { SpaContext } from "./context.ts";
@@ -20,11 +20,11 @@ export async function currentPolicy(db: SpaDb): Promise<{ version: number; value
 export async function publishPolicy(
   ctx: SpaContext,
   input: unknown,
-  user: { id: string; role: SpaRole },
+  user: { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined },
   /** `expectVersion`: refuse (409) unless this is still the latest version, checked inside the locking transaction. */
   opts: { expectVersion?: number } = {},
 ): Promise<{ version: number }> {
-  if (user.role !== "admin") throw forbidden("only an admin publishes company policy");
+  if (!hasRole(user, "admin")) throw forbidden("only an admin publishes company policy");
   const parsed = SpaPolicy.safeParse(input);
   if (!parsed.success)
     throw unprocessable(

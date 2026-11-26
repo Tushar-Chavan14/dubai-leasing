@@ -1,5 +1,5 @@
 import { newId } from "@platform/kernel/ids";
-import { DealType, SpaKycConfig, SpaKycRole, type SpaRole, starterKycConfig } from "@spa/core";
+import { DealType, SpaKycConfig, SpaKycRole, type SpaRole, starterKycConfig, hasRole } from "@spa/core";
 import { type SpaDb, spaKycConfigs, withSpaTx } from "@spa/db";
 import { and, desc, eq, max } from "drizzle-orm";
 import { z } from "zod";
@@ -10,15 +10,15 @@ import { appendDealEvent } from "./events.ts";
 const KYC_SETTINGS = { kind: "settings" as const, id: "00000000-0000-7000-8000-000000000003" };
 const Target = z.object({ role: SpaKycRole, dealType: DealType.optional() });
 const scopeOf = (dealType?: string | null) => dealType ?? "any";
-const adminOnly = (user: { role: SpaRole }) => {
-  if (user.role !== "admin") throw forbidden("only an admin changes KYC settings");
+const adminOnly = (user: { role: SpaRole; roles?: readonly SpaRole[] | undefined }) => {
+  if (!hasRole(user, "admin")) throw forbidden("only an admin changes KYC settings");
 };
 
 /** Saves (or replaces) the draft config for a role and scope (S19). Validated on save; nothing is in force yet. */
 export async function saveKycDraft(
   ctx: SpaContext,
   input: { role: string; dealType?: string; config: unknown },
-  user: { id: string; role: SpaRole },
+  user: { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined },
 ): Promise<{ id: string }> {
   adminOnly(user);
   const t = Target.parse({ role: input.role, dealType: input.dealType });
@@ -58,7 +58,7 @@ export async function saveKycDraft(
 export async function publishKycDraft(
   ctx: SpaContext,
   input: { role: string; dealType?: string },
-  user: { id: string; role: SpaRole },
+  user: { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined },
 ): Promise<{ version: number }> {
   adminOnly(user);
   const t = Target.parse(input);

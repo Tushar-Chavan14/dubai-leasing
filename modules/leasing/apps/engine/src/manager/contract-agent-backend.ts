@@ -7,7 +7,9 @@ import {
   type ContractAgentContext,
   describesUnit,
   templateParagraphs,
+  headingWithUse,
   type TemplateBlank,
+  unitParticulars,
 } from "@leasing/helpers";
 import type { EngineContext } from "../context.ts";
 import { approvedClauses } from "./clause-refs.ts";
@@ -66,7 +68,14 @@ export async function contractAgentContext(
         }
       : null,
     clauses,
-    template: printed ? { id: printed.id, version: printed.version, paragraphs: printed.paragraphs } : null,
+    template: printed
+      ? {
+          id: printed.id,
+          version: printed.version,
+          paragraphs: printed.paragraphs,
+          ...(printed.typeBlanks ? { typeBlanks: printed.typeBlanks } : {}),
+        }
+      : null,
     // D70: the rulebook pinned on the lease, the unit's emirate and the lease's own values for the wording checks.
     legal: {
       rules: {
@@ -132,10 +141,29 @@ async function printedTemplate(tx: Tx, row: TemplateRow, clauseIds: readonly str
       const over = Object.hasOwn(linked.paragraphs, p.key) ? linked.paragraphs[p.key] : undefined;
       if (over === null) return [];
       // D64: only a paragraph about the unit (no legal or money terms, no company clause) may be reworded from its records.
-      return [{ key: p.key, text: over ?? p.text, rewritable: over === undefined && describesUnit(p.text) }];
+      // D77: a particulars paragraph (no obligation, no clause) gets the unit's type and use from the record by code.
+      return [
+        {
+          key: p.key,
+          text: over ?? p.text,
+          rewritable: over === undefined && describesUnit(p.text),
+          particulars: over === undefined && unitParticulars(p.text),
+        },
+      ];
     });
-  const headings = templateParagraphs(t.sections)
-    .filter((p) => p.kind !== "paragraph" && !dropped.has(p.key))
-    .map((p) => p.text);
-  return { id: row.id, version: row.version, paragraphs, headings };
+  const headingRows = templateParagraphs(t.sections).filter((p) => p.kind !== "paragraph" && !dropped.has(p.key));
+  const headings = headingRows.map((p) => p.text);
+  // D79: the title and headings that state a use, so the agent can match them to the unit's use.
+  const useHeadings = headingRows
+    .filter((p) => headingWithUse(p.text))
+    .map((p) => ({ key: p.key, text: p.text, heading: true }));
+  // D79: blanks that print the unit's type (a type word after one is a leftover sample value).
+  const typeBlanks = t.blanks.filter((b) => b.field === "propertySubtype").map((b) => `{{${b.id}}}`);
+  return {
+    id: row.id,
+    version: row.version,
+    paragraphs: [...useHeadings, ...paragraphs],
+    headings,
+    ...(typeBlanks.length ? { typeBlanks } : {}),
+  };
 }

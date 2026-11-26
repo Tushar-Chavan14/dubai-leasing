@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { resolve } from "node:path";
+import { LocalDiskStore } from "@platform/adapters";
 import { DEFAULT_STYLE } from "@platform/readers/structure/look";
 import { addDays, type CalendarDate, type Clock, newId, SystemClock } from "@platform/kernel";
 import type { DealEvent, DealType, SpaActor } from "@spa/core";
@@ -14,6 +16,7 @@ import {
   projects,
   type SpaDatabase,
   spaDemoSettings,
+  spaMedia,
   spaTasks,
   spaTemplates,
   spaUsers,
@@ -21,12 +24,22 @@ import {
   withSpaTx,
 } from "@spa/db";
 import { FakeScreening } from "@spa/helpers";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNotNull } from "drizzle-orm";
 import { advance } from "./manager/advance.ts";
 import type { SpaContext } from "./manager/context.ts";
 import { createDeal } from "./manager/deals.ts";
 import { recordPartyDefault } from "./manager/default.ts";
-import { createListing, listingStep, recordListingSignature, recordOwnership } from "./manager/listings.ts";
+import {
+  createListing,
+  createListingDraft,
+  listingStep,
+  recordListingSignature,
+  recordOwnership,
+  uploadListingDocument,
+} from "./manager/listings.ts";
+import { addMedia } from "./manager/media.ts";
+import type { DocumentStore } from "./manager/noc.ts";
+import { placeholderPhoto } from "./seed-photos.ts";
 import { addBuilding, addUnit, createPriceList, createProject, publishPriceList } from "./manager/inventory.ts";
 import { setEscrowAccount } from "./manager/escrow.ts";
 import { createParty, setCompany } from "./manager/parties.ts";
@@ -35,6 +48,7 @@ import { type FactsLoader, failClosedFacts } from "./manager/facts.ts";
 import { setPaymentPlan } from "./manager/sheet.ts";
 import { completeTask, openTask } from "./manager/tasks.ts";
 import { SpaDemoClock } from "./clock.ts";
+import { seedLeadsAndViewings } from "./seed-leads.ts";
 import { DEMO_TEMPLATE, DEMO_USERS } from "./seed-data.ts";
 import { addTemplateVersion, createTemplate } from "./manager/templates.ts";
 
@@ -48,6 +62,10 @@ export async function seedSpaDemo(
   clock: Clock = new SystemClock(),
   /** Demo mode is checked here, not only by the scripts that call this (review 15). */
   env: Pick<SpaEnv, "SPA_DEMO_MODE">,
+  /** Where the demo listings' placeholder files go; without it the listings are seeded with no files. */
+  store?: DocumentStore,
+  /** Where the demo's placeholder photos go (S78); without it nothing is given a photo. */
+  media?: LocalDiskStore,
 ): Promise<void> {
   requireDemo(env);
   for (const u of DEMO_USERS) {
@@ -60,6 +78,9 @@ export async function seedSpaDemo(
   await seedInventory(database, clock);
   await seedDealMix(database, clock);
   await seedProjects(database, clock);
+  await seedListingStates(database, clock, store);
+  await seedPublicSite(database, clock, media);
+  await seedLeadsAndViewings(database, clock);
   await seedTemplates(database, clock);
 }
 
@@ -121,10 +142,16 @@ async function seedInventory(database: SpaDatabase, clock: Clock): Promise<void>
   const listing = await createListing(
     ctx,
     {
-      title: "2-bed apartment, [BUILDING]",
-      community: "[COMMUNITY]",
+      title: "2-bed apartment, Demo Marina Tower",
+      community: "Demo Marina District",
       bedrooms: 2,
-      propertyDescription: "2 bedroom apartment, [BUILDING]",
+      bathrooms: 2,
+      unitType: "apartment",
+      floor: 12,
+      view: "Marina",
+      parkingSpaces: 1,
+      furnished: "semi",
+      propertyDescription: "2 bedroom apartment, Demo Marina Tower",
       askingPriceFils: 185_000_000,
       permitNo: "[PERMIT NO.]",
       permitExpiresOn: addDays(clock.today(), 180),
@@ -161,6 +188,249 @@ async function seedInventory(database: SpaDatabase, clock: Clock): Promise<void>
 
 // ---------------------------------------------------------------------------------------------
 // C32 (S64): one fictional project through SpaManager, so Inventory has something to show.
+
+const demoPerson = (name: string, n: number) => ({
+  kind: "person" as const,
+  fullNameEn: name,
+  email: `demo-seller${n}@spa-demo.test`,
+});
+/** A tiny fictional PDF for the demo listings' files: it says so on the page, and no real data is in it. */
+const DEMO_PDF = (title: string) =>
+  new TextEncoder().encode(
+    `%PDF-1.4\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 300 120] /Contents 4 0 R >> endobj\n4 0 obj << /Length 72 >> stream\nBT /F1 12 Tf 20 60 Td (${title}: fictional demo file) Tj ET\nendstream endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n`,
+  );
+
+/**
+ * M3 (S77): one demo listing in each state the record shows, made through the same draft route the form uses (a person and
+ * a company seller), so the Listings screen and each record have something to open: a draft missing one signature, verified,
+ * active, published with a permit ending in 5 days, and withdrawn. Names are fictional. Skipped when already seeded.
+ */
+async function seedListingStates(database: SpaDatabase, clock: Clock, store?: DocumentStore): Promise<void> {
+  const [officer] = await database.db.select().from(spaUsers).where(eq(spaUsers.role, "sales_officer"));
+  if (!officer) return;
+  if ((await database.db.select().from(listings).where(eq(listings.title, "Studio, Demo Draft Court"))).length) return;
+  const ctx: SpaContext = { database, clock, facts: failClosedFacts };
+  const user = { id: officer.id, role: "sales_officer" as const };
+  const actor = `user:${officer.id}` as const;
+  const today = clock.today();
+  const company = (name: string, n: number) => ({
+    kind: "company" as const,
+    tradeName: name,
+    email: `demo-company${n}@spa-demo.test`,
+    licenceNo: `[LICENCE NO. ${n}]`,
+    licenceExpiresOn: addDays(today, 400),
+    issuingAuthority: "DED",
+    signatory: { fullNameEn: `${name} Signatory`, email: `demo-signer${n}@spa-demo.test`, authority: "poa" as const },
+  });
+  const make = async (
+    n: number,
+    title: string,
+    sellers: (ReturnType<typeof demoPerson> | ReturnType<typeof company>)[],
+    o: {
+      signed: "all" | "all but one";
+      steps: ("VERIFY" | "ACTIVATE" | "PUBLISH" | "WITHDRAW")[];
+      permitDays: number;
+      community?: string;
+    },
+  ) => {
+    const l = await createListingDraft(
+      ctx,
+      {
+        title,
+        community: o.community ?? "Demo Marina District",
+        // The card shows the title and the facts side by side: the beds come from the title so they agree.
+        bedrooms: Number(/^(\d+)-bed/.exec(title)?.[1] ?? 0),
+        bathrooms: 1 + (n % 2),
+        sizeSqft: 600 + n * 140,
+        unitType: "apartment",
+        view: "Marina",
+        furnished: "semi",
+        propertyDescription: `${title}. A fictional listing for the demo.`,
+        askingPriceFils: 90_000_000 + n * 21_000_000,
+        permitNo: `[PERMIT NO. D${n}]`,
+        permitIssuedOn: addDays(today, o.permitDays - 180),
+        permitExpiresOn: addDays(today, o.permitDays),
+        agentUserId: officer.id,
+        sellers,
+      },
+      user,
+    );
+    await recordOwnership(
+      ctx,
+      l.id,
+      {
+        kind: "title_deed",
+        ref: `[TITLE DEED NO. D${n}]`,
+        ownersAsOnDocument: sellers.map((s) => (s.kind === "person" ? s.fullNameEn : s.tradeName)),
+      },
+      actor,
+    );
+    const links = await database.db.select().from(listingParties).where(eq(listingParties.listingId, l.id));
+    for (const link of o.signed === "all" ? links : links.slice(0, -1))
+      await recordListingSignature(ctx, l.id, link.partyId, actor);
+    if (store) {
+      const file = (name: string) => ({ name, bytes: DEMO_PDF(name) });
+      await uploadListingDocument(ctx, store, l.id, "title_deed", file("Demo title deed"), user);
+      await uploadListingDocument(ctx, store, l.id, "permit", file("Demo advertising permit"), user);
+      if (o.signed === "all")
+        await uploadListingDocument(ctx, store, l.id, "listing_agreement", file("Demo listing agreement"), user);
+    }
+    for (const step of o.steps)
+      await listingStep(ctx, l.id, step, {
+        actor,
+        ...(step === "WITHDRAW" ? { payload: { reason: "The seller changed their mind" } } : {}),
+      });
+    return l;
+  };
+  await make(
+    1,
+    "Studio, Demo Draft Court",
+    [demoPerson("Sample Seller Draft", 1), company("Fictional Holdings Draft LLC", 1)],
+    {
+      signed: "all but one",
+      steps: [],
+      permitDays: 120,
+    },
+  );
+  await make(2, "1-bed apartment, Demo Verified Court", [demoPerson("Sample Seller Verified", 2)], {
+    signed: "all",
+    steps: ["VERIFY"],
+    permitDays: 120,
+  });
+  await make(
+    3,
+    "2-bed apartment, Demo Active Court",
+    [demoPerson("Sample Seller Active", 3), demoPerson("Sample Seller Active Two", 4)],
+    {
+      signed: "all",
+      steps: ["VERIFY", "ACTIVATE"],
+      permitDays: 120,
+    },
+  );
+  await make(4, "2-bed apartment, Demo Published Court", [company("Fictional Holdings Published LLC", 2)], {
+    signed: "all",
+    steps: ["VERIFY", "ACTIVATE", "PUBLISH"],
+    permitDays: 5,
+  });
+  await make(5, "Studio, Demo Withdrawn Court", [demoPerson("Sample Seller Withdrawn", 5)], {
+    signed: "all",
+    steps: ["VERIFY", "WITHDRAW"],
+    permitDays: 120,
+  });
+  // S78: three of the demo listings are public (a valid permit), in three communities, so the site has resale homes to show.
+  await make(6, "3-bed apartment, Demo Skyline Court", [demoPerson("Sample Seller Skyline", 6)], {
+    signed: "all",
+    steps: ["VERIFY", "ACTIVATE", "PUBLISH"],
+    permitDays: 120,
+    community: "Demo Skyline Quarter",
+  });
+  await make(7, "1-bed apartment, Demo Palm View", [company("Fictional Holdings Palm LLC", 3)], {
+    signed: "all",
+    steps: ["VERIFY", "ACTIVATE", "PUBLISH"],
+    permitDays: 90,
+    community: "Demo Palm Shore",
+  });
+}
+
+/**
+ * S78: what the public site needs to look lived in. A second project (so the catalogue shows two developers' worth of
+ * homes: units on a published price list), then 2 to 3 placeholder photos for each project, each published listing and each
+ * unit on sale. The photos are drawn in code (no stock images, no people, no logos). Demo only; skipped when done.
+ */
+async function seedPublicSite(database: SpaDatabase, clock: Clock, media?: LocalDiskStore): Promise<void> {
+  const db = database.db;
+  const [admin] = await db.select().from(spaUsers).where(eq(spaUsers.role, "admin"));
+  const [officer] = await db.select().from(spaUsers).where(eq(spaUsers.role, "sales_officer"));
+  if (!admin || !officer) return;
+  const ctx: SpaContext = { database, clock, facts: failClosedFacts };
+  const user = { id: admin.id, role: "admin" as const };
+  const [existing] = await db.select().from(projects).where(eq(projects.code, "CH-01"));
+  if (!existing && (await db.select().from(companies).limit(1)).length) {
+    const project = await createProject(
+      ctx,
+      {
+        code: "CH-01",
+        name: "Demo Creek Gardens",
+        anticipatedCompletionOn: addDays(clock.today(), 720),
+        community: "Demo Creek Harbour",
+        location: "Demo creekside district",
+        description: "A fictional low-rise residential project beside a creek park, with apartments and townhouses.",
+        templateKind: "spa",
+      },
+      user,
+    );
+    const tower = await addBuilding(ctx, project.id, { code: "C", name: "Block C" }, user);
+    const layout = [
+      {
+        code: "C-101",
+        type: "apartment",
+        bedrooms: 1,
+        bathrooms: 1,
+        internalSqft: 690,
+        floor: 1,
+        view: "Garden",
+        parkingSpaces: 1,
+      },
+      {
+        code: "C-202",
+        type: "apartment",
+        bedrooms: 2,
+        bathrooms: 2,
+        internalSqft: 1090,
+        floor: 2,
+        view: "Creek",
+        parkingSpaces: 1,
+      },
+      {
+        code: "C-303",
+        type: "apartment",
+        bedrooms: 3,
+        bathrooms: 3,
+        internalSqft: 1580,
+        floor: 3,
+        view: "Creek",
+        parkingSpaces: 2,
+      },
+      {
+        code: "C-T1",
+        type: "townhouse",
+        bedrooms: 4,
+        bathrooms: 4,
+        internalSqft: 2650,
+        floor: 0,
+        view: "Garden",
+        parkingSpaces: 2,
+      },
+    ];
+    const ids: string[] = [];
+    for (const u of layout) ids.push((await addUnit(ctx, project.id, { buildingId: tower.id, ...u }, user)).id);
+    const list = await createPriceList(
+      ctx,
+      project.id,
+      {
+        items: ids.map((unitId, i) => ({ unitId, priceFils: [95_000_000, 160_000_000, 235_000_000, 410_000_000][i]! })),
+      },
+      user,
+    );
+    await publishPriceList(ctx, list.id, user);
+  }
+  if (!media) return;
+  if ((await db.select({ id: spaMedia.id }).from(spaMedia).limit(1)).length) return;
+  let n = 0;
+  const photos = async (
+    kind: "project" | "unit" | "listing",
+    id: string,
+    count: number,
+    who: typeof user | { id: string; role: "sales_officer" },
+  ) => {
+    for (let i = 0; i < count; i++) await addMedia(ctx, media, { kind, id }, placeholderPhoto(++n), null, who);
+  };
+  for (const p of await db.select({ id: projects.id }).from(projects)) await photos("project", p.id, 3, user);
+  for (const u of await db.select({ id: units.id }).from(units).where(isNotNull(units.buildingId)))
+    await photos("unit", u.id, 2, user);
+  for (const l of await db.select({ id: listings.id }).from(listings).where(eq(listings.state, "PUBLISHED")))
+    await photos("listing", l.id, 3, { id: officer.id, role: "sales_officer" });
+}
 
 /**
  * C34 (S66): one fictional template with a read version waiting for legal, so Settings → Templates and legal's inbox
@@ -204,19 +474,118 @@ async function seedProjects(database: SpaDatabase, clock: Clock): Promise<void> 
     ctx,
     {
       code: "MV-01",
-      name: "Marina Vista [PROJECT]",
+      name: "Demo Marina Vista",
       anticipatedCompletionOn: addDays(clock.today(), 540),
+      community: "Demo Marina Vista Bay",
+      location: "Demo waterfront district",
+      description:
+        "A fictional waterfront residential project of two towers with studios, apartments and penthouses, a podium pool and landscaped gardens.",
       templateKind: "spa",
     },
     user,
   );
   const a = await addBuilding(ctx, project.id, { code: "A", name: "Tower A" }, user);
   const b = await addBuilding(ctx, project.id, { code: "B", name: "Tower B" }, user);
+  // Fictional details: studios and 1 to 3 bedroom apartments, two penthouses (S75).
+  const layout: Record<string, Record<string, unknown>> = {
+    "U-101": {
+      type: "apartment",
+      bedrooms: 0,
+      bathrooms: 1,
+      internalSqft: 480,
+      balconySqft: 60,
+      floor: 3,
+      view: "Marina",
+      parkingSpaces: 1,
+    },
+    "U-102": {
+      type: "apartment",
+      bedrooms: 1,
+      bathrooms: 1,
+      internalSqft: 760,
+      balconySqft: 90,
+      floor: 5,
+      view: "Community",
+      parkingSpaces: 1,
+    },
+    "U-103": {
+      type: "apartment",
+      bedrooms: 1,
+      bathrooms: 2,
+      internalSqft: 820,
+      balconySqft: 100,
+      floor: 8,
+      view: "Pool",
+      parkingSpaces: 1,
+    },
+    "U-104": {
+      type: "apartment",
+      bedrooms: 2,
+      bathrooms: 2,
+      internalSqft: 1180,
+      balconySqft: 140,
+      floor: 10,
+      view: "Marina",
+      parkingSpaces: 2,
+    },
+    "U-105": {
+      type: "apartment",
+      bedrooms: 2,
+      bathrooms: 3,
+      internalSqft: 1260,
+      balconySqft: 150,
+      floor: 12,
+      view: "Community",
+      parkingSpaces: 2,
+    },
+    "U-201": {
+      type: "apartment",
+      bedrooms: 0,
+      bathrooms: 1,
+      internalSqft: 455,
+      balconySqft: 55,
+      floor: 2,
+      view: "Pool",
+      parkingSpaces: 1,
+    },
+    "U-202": {
+      type: "apartment",
+      bedrooms: 3,
+      bathrooms: 3,
+      internalSqft: 1750,
+      balconySqft: 210,
+      floor: 14,
+      view: "Marina",
+      parkingSpaces: 2,
+    },
+    "U-203": {
+      type: "penthouse",
+      bedrooms: 3,
+      bathrooms: 4,
+      internalSqft: 2400,
+      balconySqft: 420,
+      floor: 30,
+      view: "Marina",
+      parkingSpaces: 3,
+      description: "A fictional full-floor penthouse with a private terrace.",
+    },
+    "U-204": {
+      type: "penthouse",
+      bedrooms: 4,
+      bathrooms: 5,
+      internalSqft: 3100,
+      balconySqft: 560,
+      floor: 31,
+      view: "Community",
+      parkingSpaces: 3,
+      description: "A fictional duplex penthouse with a roof terrace.",
+    },
+  };
   const unitIds: string[] = [];
   for (const code of ["U-101", "U-102", "U-103", "U-104", "U-105"])
-    unitIds.push((await addUnit(ctx, project.id, { buildingId: a.id, code }, user)).id);
+    unitIds.push((await addUnit(ctx, project.id, { buildingId: a.id, code, ...layout[code] }, user)).id);
   for (const code of ["U-201", "U-202", "U-203", "U-204"])
-    unitIds.push((await addUnit(ctx, project.id, { buildingId: b.id, code }, user)).id);
+    unitIds.push((await addUnit(ctx, project.id, { buildingId: b.id, code, ...layout[code] }, user)).id);
   const prices = (uplift: number) => ({
     items: unitIds.map((unitId, i) => ({
       unitId,
@@ -231,9 +600,9 @@ async function seedProjects(database: SpaDatabase, clock: Clock): Promise<void> 
     ctx,
     {
       projectCode: "MV-01",
-      accountHolder: "Marina Vista Escrow [ACCOUNT HOLDER]",
+      accountHolder: "Demo Escrow Bank",
       iban: "AE070331234567890123456",
-      bankName: "[BANK]",
+      bankName: "Demo National Bank",
     },
     user,
   );
@@ -274,10 +643,10 @@ async function activeListing(ctx: SpaContext, actor: SpaActor, n: number, ownerN
   const listing = await createListing(
     ctx,
     {
-      title: `${n % 2 ? "2" : "3"}-bed apartment, [BUILDING ${n}]`,
-      community: "[COMMUNITY]",
+      title: `${n % 2 ? "2" : "3"}-bed apartment, Demo Tower ${n}`,
+      community: "Demo Marina District",
       bedrooms: n % 2 ? 2 : 3,
-      propertyDescription: `Apartment, [BUILDING ${n}]`,
+      propertyDescription: `Apartment, Demo Tower ${n}`,
       askingPriceFils: 150_000_000 + n * 12_500_000,
       permitNo: `[PERMIT NO. ${n}]`,
       permitExpiresOn: addDays(ctx.clock.today(), 150 + n),
@@ -493,7 +862,13 @@ if (import.meta.main) {
   // Dates follow the SPA demo clock (its offset in spa_demo_settings).
   const clock = new SpaDemoClock(database, true);
   await clock.refresh();
-  await seedSpaDemo(database, clock, env);
+  await seedSpaDemo(
+    database,
+    clock,
+    env,
+    new LocalDiskStore(resolve(import.meta.dir, "../../../../data/spa-uploads")),
+    new LocalDiskStore(resolve(import.meta.dir, "../../../../data/spa-media")),
+  );
   await database.close();
   console.log(`seeded ${DEMO_USERS.length} demo users, the demo clock and fictional deals of each type`);
 }

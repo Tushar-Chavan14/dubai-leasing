@@ -204,7 +204,7 @@ export async function generateMonthlyReport(
 }
 
 /** The reports, newest month first, for a compliance role. */
-export async function listReports(ctx: SpaContext, user: { id: string; role: SpaRole }) {
+export async function listReports(ctx: SpaContext, user: { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined }) {
   requireCompliance(user);
   const rows = await ctx.database.db.select().from(complianceReports).orderBy(desc(complianceReports.period));
   return rows.map((r) => ({
@@ -225,7 +225,7 @@ export async function downloadReport(
   deps: { store: Pick<ExportStore, "read"> },
   reportId: string,
   ext: "csv" | "pdf",
-  user: { id: string; role: SpaRole },
+  user: { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined },
 ): Promise<{ bytes: Uint8Array; contentType: string; fileName: string }> {
   requireCompliance(user);
   const [r] = await ctx.database.db.select().from(complianceReports).where(eq(complianceReports.id, reportId));

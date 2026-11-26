@@ -3,7 +3,7 @@ import { shortDate } from "./format";
 
 /** The Work list's search params, parsed (C30, S58). Anything that isn't one of ours is dropped, never passed on. */
 export interface WorkSearch {
-  tab: "deals" | "tasks" | "inbox";
+  tab: "deals" | "tasks" | "inbox" | "leads" | "viewings";
   type?: DealType;
   stage?: string;
   q?: string;
@@ -18,12 +18,13 @@ export interface WorkSearch {
 }
 /** The stages the list may filter by: the hold is "ON_HOLD", never its internal name (S57). */
 const FILTER_STAGES: ReadonlySet<string> = new Set(["ON_HOLD", ...DEAL_STATES.filter((s) => s !== "AML_HOLD")]);
+const WORK_TABS: ReadonlySet<string> = new Set(["tasks", "inbox", "leads", "viewings"]);
 type Raw = Record<string, string | string[] | undefined>;
 const one = (v: string | string[] | undefined): string | undefined => (typeof v === "string" ? v : undefined);
 
 export function parseWorkSearch(raw: Raw): WorkSearch {
   const out: WorkSearch = {
-    tab: one(raw.tab) === "tasks" ? "tasks" : one(raw.tab) === "inbox" ? "inbox" : "deals",
+    tab: WORK_TABS.has(one(raw.tab) ?? "") ? (one(raw.tab) as WorkSearch["tab"]) : "deals",
     scope: one(raw.scope) === "all" ? "all" : "mine",
     done: one(raw.done) === "1",
   };
@@ -61,8 +62,8 @@ export function workHref(s: WorkSearch, patch: Patch): string {
   const m: WorkSearch = { ...rest };
   for (const [k, v] of Object.entries(patch)) (m as unknown as Record<string, unknown>)[k] = v;
   const p = new URLSearchParams();
-  if (m.tab === "tasks" || m.tab === "inbox") p.set("tab", m.tab);
-  if (m.tab === "inbox") {
+  if (m.tab !== "deals") p.set("tab", m.tab);
+  if (m.tab === "inbox" || m.tab === "leads" || m.tab === "viewings") {
     // the inbox has no filters: only its page
   } else if (m.tab === "tasks") {
     if (m.scope === "all") p.set("scope", "all");
@@ -87,6 +88,9 @@ export function stageTone(stage: StageKey): "accent" | "warning" | "neutral" {
   return "neutral";
 }
 
+/** The engine's label for a compliance review (the same words); a non-compliance viewer is given this and no role. */
+export const COMPLIANCE_LABEL = "Compliance review";
+
 export interface WaitingView {
   role: SpaRole | null;
   label: string;
@@ -110,5 +114,10 @@ export const canFinishTask = (task: { role: SpaRole; status: string }, viewer: S
   task.status === "open" && (task.role === viewer || viewer === "sales_manager");
 
 /** The rail badge for Work: what waits for this role (open gates it decides, plus its tasks). Nothing when zero. */
-export const waitingCount = (s: { inbox: { open: number }; tasks: { open: number } } | null): number =>
-  s ? s.inbox.open + s.tasks.open : 0;
+export const waitingCount = (
+  s: {
+    inbox: { open: number };
+    tasks: { open: number };
+    leads?: { viewings: number; newLeads: number } | undefined;
+  } | null,
+): number => (s ? s.inbox.open + s.tasks.open + (s.leads ? s.leads.viewings + s.leads.newLeads : 0) : 0);

@@ -33,16 +33,17 @@ import type { SpaContext } from "./context.ts";
 import { forbidden, notFound, unprocessable } from "./errors.ts";
 import { appendDealEvent } from "./events.ts";
 import { lockResale, NOC_STATES, storeBankLetter, storeNoc } from "./noc.ts";
+import { hasAnyRole } from "@spa/core";
 
 export { DOCUMENT_READ_JOB };
 export const documentReadJobKey = (documentId: string) => `${documentId}:read`;
 
 const READER: SpaActor = "system:document-reader";
-type Person = { id: string; role: SpaRole };
+type Person = { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined };
 /** Who starts a read: the sales team and admin (as for KYC). */
 export const READ_START_ROLES: readonly SpaRole[] = ["sales_officer", "sales_manager", "sales_admin", "admin"];
 export const needSales = (u: Person, what: string) => {
-  if (!READ_START_ROLES.includes(u.role)) throw forbidden(`only ${READ_START_ROLES.join(", ")} can ${what}`);
+  if (!hasAnyRole(u, READ_START_ROLES)) throw forbidden(`only ${READ_START_ROLES.join(", ")} can ${what}`);
 };
 
 /** What the reader reads, by the kind a document was uploaded as. `valuation` and person IDs are read elsewhere or not. */

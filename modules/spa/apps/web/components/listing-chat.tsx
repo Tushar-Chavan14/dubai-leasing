@@ -99,6 +99,8 @@ export function ChatBox({ lines, draft, consent, busy, onDraft, onConsent, onSen
 
 /** The listing page chat (S24, S61). The conversation lives in this tab only; the engine stores it, masked. */
 export function ListingChat({ listingRef }: { listingRef: string }) {
+  // Closed until the visitor asks for it: the enquiry form is the main way to ask, this is the secondary one.
+  const [open, setOpen] = useState(false);
   const [lines, setLines] = useState<ChatLine[]>([]);
   const [draft, setDraft] = useState("");
   const [consent, setConsent] = useState(false);
@@ -116,6 +118,16 @@ export function ListingChat({ listingRef }: { listingRef: string }) {
     setLines((l) => [...l, answer]);
     setBusy(false);
   };
+  if (!open)
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="cursor-pointer justify-self-start border-0 bg-transparent p-0 font-sans text-sm font-medium text-muted underline underline-offset-4 hover:text-ink"
+      >
+        Chat with the assistant
+      </button>
+    );
   return (
     <ChatBox
       lines={lines}

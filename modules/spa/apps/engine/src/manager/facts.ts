@@ -14,6 +14,7 @@ import { amlFlaggedByRuleFact, openAmlFlagFact } from "./aml-facts.ts";
 import { companyChecksOkFact, hasCompanyPartyFact } from "./company-facts.ts";
 import { documentsRequestedFact, kycOkFact } from "./kyc-facts.ts";
 import { ownershipKey } from "./names.ts";
+import { priceClearedFact } from "./price-facts.ts";
 import { ownershipOkFact } from "./ownership-facts.ts";
 import { bankLettersFact, nocOkFact } from "./noc-facts.ts";
 import { instalmentsPaidFact } from "./payment-facts.ts";
@@ -50,6 +51,8 @@ export const failClosedFacts: FactsLoader = {
       planTakenOver: row.planTakenOver,
       // Real since C17 (S49): every buyer and seller has a request; every person has a passed, current KYC run.
       documentsRequested: await documentsRequestedFact(tx, row),
+      // Real since M6 (S81): no price or booking approval is pending or refused.
+      priceCleared: await priceClearedFact(tx, row),
       kycOk: await kycOkFact(tx, row, today),
       // Real since C20 (S52): every company has a passed check (or an approved review of that run) on the documents on
       // file, licence still valid. The guard asks for it only when a company is on the deal.

@@ -1,5 +1,6 @@
 import { isCalendarDate } from "@platform/kernel/dates";
 import { z } from "zod";
+import { FURNISHED, UNIT_TYPES } from "./inventory.ts";
 import { DealType } from "./state/deal.ts";
 
 /**
@@ -79,37 +80,186 @@ export const DealParties = z.array(DealParty).superRefine((ps, c) => {
   }
 });
 
-export const ListingInput = z
-  .object({
-    ref: text(20).optional(),
-    /** Public title, e.g. "2-bed apartment, Marina Vista" (no owner names). */
-    title: text(120),
-    community: text(120),
-    bedrooms: z.number().int().min(0).max(20).optional(),
-    sizeSqft: z.number().int().min(1).max(1_000_000).optional(),
-    propertyDescription: text(2000),
-    askingPriceFils: positiveFils,
-    permitNo: text(40).optional(),
-    permitIssuedOn: calDate.optional(),
-    /** The permit's last valid day (S38). */
-    permitExpiresOn: calDate.optional(),
-    /** The listing agent, shown as the public page's contact. */
-    agentUserId: uuid.optional(),
-    sellers: z
-      .array(DealParty)
-      .min(1)
-      .superRefine((s, c) => {
-        if (!s.every((p) => p.role === "seller")) c.addIssue({ code: "custom", message: "only seller parties" });
-        if (new Set(s.map((p) => p.partyId)).size !== s.length)
-          c.addIssue({ code: "custom", message: "each seller once" });
-        checkRole(s, "seller", c);
-      }),
-  })
-  .refine((l) => !l.permitIssuedOn || !l.permitExpiresOn || l.permitIssuedOn <= l.permitExpiresOn, {
-    message: "the permit can't expire before it is issued",
-    path: ["permitExpiresOn"],
-  });
+/** The listing's own fields, shared by the full input, the draft input and an edit. */
+const ListingFields = z.object({
+  ref: text(20).optional(),
+  /** Public title, e.g. "2-bed apartment, Marina Vista" (no owner names). */
+  title: text(120),
+  community: text(120),
+  bedrooms: z.number().int().min(0).max(20).optional(),
+  sizeSqft: z.number().int().min(1).max(1_000_000).optional(),
+  /** S75: the same detail fields as a unit; furnishing is a listing's own. */
+  unitType: z.enum(UNIT_TYPES).optional(),
+  bathrooms: z.number().int().min(0).max(10).optional(),
+  floor: z.number().int().min(-5).max(200).optional(),
+  view: text(60).optional(),
+  parkingSpaces: z.number().int().min(0).max(10).optional(),
+  furnished: z.enum(FURNISHED).optional(),
+  propertyDescription: text(2000),
+  askingPriceFils: positiveFils,
+  permitNo: text(40).optional(),
+  permitIssuedOn: calDate.optional(),
+  /** The permit's last valid day (S38). */
+  permitExpiresOn: calDate.optional(),
+  /** The listing agent, shown as the public page's contact. */
+  agentUserId: uuid.optional(),
+});
+const permitOrder = {
+  check: (l: { permitIssuedOn?: string | undefined; permitExpiresOn?: string | undefined }) =>
+    !l.permitIssuedOn || !l.permitExpiresOn || l.permitIssuedOn <= l.permitExpiresOn,
+  opts: { message: "the permit can't expire before it is issued", path: ["permitExpiresOn"] },
+};
+
+export const ListingInput = ListingFields.extend({
+  sellers: z
+    .array(DealParty)
+    .min(1)
+    .superRefine((s, c) => {
+      if (!s.every((p) => p.role === "seller")) c.addIssue({ code: "custom", message: "only seller parties" });
+      if (new Set(s.map((p) => p.partyId)).size !== s.length)
+        c.addIssue({ code: "custom", message: "each seller once" });
+      checkRole(s, "seller", c);
+    }),
+}).refine(permitOrder.check, permitOrder.opts);
 export type ListingInput = z.infer<typeof ListingInput>;
+
+const shareBps = z.number().int().min(1).max(10_000).optional();
+/** A seller typed into the listing form (S74): a person or a company, who signs through a signatory. */
+export const SellerInput = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("person"),
+    fullNameEn: text(200),
+    email: z.email(),
+    phone: text(30).optional(),
+    nationality: text(60).optional(),
+    shareBps,
+  }),
+  z.object({
+    kind: z.literal("company"),
+    tradeName: text(200),
+    email: z.email(),
+    licenceNo: text(60),
+    licenceExpiresOn: calDate,
+    issuingAuthority: text(120),
+    signatory: z.object({
+      fullNameEn: text(200),
+      email: z.email(),
+      authority: z.enum(["poa", "board_resolution"]),
+    }),
+    shareBps,
+  }),
+]);
+export type SellerInput = z.infer<typeof SellerInput>;
+/** A seller already in the system. */
+export const ExistingSeller = z.object({ partyId: uuid, shareBps });
+
+/**
+ * A listing draft with its sellers (S74): each email once, each existing party once, shares for all or none and adding
+ * up to 100%. Every co-owner is a seller and signs (S14).
+ */
+export const ListingDraftInput = ListingFields.extend({
+  sellers: z
+    .array(z.union([SellerInput, ExistingSeller]))
+    .min(1, "Add at least one seller")
+    .max(10),
+})
+  .superRefine((l, c) => {
+    const emails = l.sellers.flatMap((s) => ("email" in s ? [s.email.trim().toLowerCase()] : []));
+    // A company's signatory is a person too; their email may not repeat a seller's either.
+    const signers = l.sellers.flatMap((s) => ("signatory" in s ? [s.signatory.email.trim().toLowerCase()] : []));
+    if (new Set([...emails, ...signers]).size !== emails.length + signers.length)
+      c.addIssue({ code: "custom", path: ["sellers"], message: "each seller once: two sellers share an email" });
+    const ids = l.sellers.flatMap((s) => ("partyId" in s ? [s.partyId] : []));
+    if (new Set(ids).size !== ids.length)
+      c.addIssue({ code: "custom", path: ["sellers"], message: "each seller once" });
+    const given = l.sellers.filter((s) => s.shareBps !== undefined);
+    if (given.length && given.length !== l.sellers.length)
+      c.addIssue({ code: "custom", path: ["sellers"], message: "give a share for every seller or none" });
+    else if (given.length && given.reduce((a, s) => a + (s.shareBps ?? 0), 0) !== 10_000)
+      c.addIssue({ code: "custom", path: ["sellers"], message: "shares must add up to 100%" });
+  })
+  .refine(permitOrder.check, permitOrder.opts);
+export type ListingDraftInput = z.infer<typeof ListingDraftInput>;
+
+/** A buyer typed into the deal or offer form (S81): a person (nationality required) or a company with its signatory. */
+export const BuyerInput = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("person"),
+    fullNameEn: text(200),
+    email: z.email(),
+    phone: text(30).optional(),
+    nationality: text(60),
+    shareBps,
+  }),
+  SellerInput.options[1],
+]);
+export type BuyerInput = z.infer<typeof BuyerInput>;
+
+/** 1 to 4 buyers (S81): each email once, each existing party once, shares for all or none adding up to 100%. */
+export const BuyersInput = z
+  .array(z.union([BuyerInput, ExistingSeller]))
+  .min(1, "Add at least one buyer")
+  .max(4, "At most four buyers")
+  .superRefine((buyers, c) => {
+    const emails = buyers.flatMap((s) => ("email" in s ? [s.email.trim().toLowerCase()] : []));
+    const signers = buyers.flatMap((s) => ("signatory" in s ? [s.signatory.email.trim().toLowerCase()] : []));
+    if (new Set([...emails, ...signers]).size !== emails.length + signers.length)
+      c.addIssue({ code: "custom", message: "each buyer once: two buyers share an email" });
+    const ids = buyers.flatMap((s) => ("partyId" in s ? [s.partyId] : []));
+    if (new Set(ids).size !== ids.length) c.addIssue({ code: "custom", message: "each buyer once" });
+    const given = buyers.filter((s) => s.shareBps !== undefined);
+    if (given.length && given.length !== buyers.length)
+      c.addIssue({ code: "custom", message: "give a share for every buyer or none" });
+    else if (given.length && given.reduce((a, s) => a + (s.shareBps ?? 0), 0) !== 10_000)
+      c.addIssue({ code: "custom", message: "buyer shares must add up to 100%" });
+  });
+
+/** The agency and agent who brought the buyer (S81). The commission % is the policy's unless one is typed. */
+export const DealBrokerInput = z.object({
+  agencyName: text(200),
+  agencyEmail: z.email(),
+  agentName: text(200),
+  orn: text(40),
+  brn: text(40),
+  commissionBps: z.number().int().min(0).max(10_000).optional(),
+});
+export type DealBrokerInput = z.infer<typeof DealBrokerInput>;
+
+/**
+ * A primary deal started from a unit (S81). Sellers are not typed: the developer is the seller. A price below the
+ * allowed discount or a booking below the minimum still creates the deal and opens `price_out_of_range`.
+ */
+export const NewDealInput = z.object({
+  unitId: uuid,
+  buyers: BuyersInput,
+  /** Omitted: the unit's price-list price. */
+  priceFils: positiveFils.optional(),
+  bookingFils: positiveFils.optional(),
+  buyerMortgage: z.boolean().default(false),
+  broker: DealBrokerInput.optional(),
+  leadId: uuid.optional(),
+});
+export type NewDealInput = z.infer<typeof NewDealInput>;
+
+/** An offer made on a resale listing (S81). The deposit % is the pinned policy's, not typed. */
+export const MakeOfferInput = z.object({
+  listingId: uuid,
+  buyers: BuyersInput,
+  priceFils: positiveFils,
+  buyerMortgage: z.boolean().default(false),
+  sellerMortgage: z.boolean().optional(),
+  planTakenOver: z.boolean().optional(),
+  targetTransferOn: calDate.optional(),
+  conditions: z.string().trim().max(1000).optional(),
+  /** Days the sellers have to answer; omitted: the policy's `offerValidityDays`. */
+  validDays: z.number().int().min(1).max(30).optional(),
+  leadId: uuid.optional(),
+});
+export type MakeOfferInput = z.infer<typeof MakeOfferInput>;
+
+/** An edit of a listing's own fields (not its sellers). Only the fields sent change. */
+export const ListingEdit = ListingFields.omit({ ref: true }).partial().refine(permitOrder.check, permitOrder.opts);
+export type ListingEdit = z.infer<typeof ListingEdit>;
 
 /** A new deal (S13): a primary deal points to a unit, a resale to a listing, exactly one. */
 export const DealInput = z
@@ -174,3 +324,56 @@ export const TemplateVersion = z.object({
   partyBlocks: z.array(z.object({ role: z.enum(["seller", "purchaser", "broker"]), repeatable: z.boolean() })),
   signatureBlocks: z.array(z.object({ role: text(40), page: z.number().int().min(1) })),
 });
+
+// ---------------------------------------------------------------------------------------------
+// M4 (S78): the public catalogue. One allow-listed shape for a resale listing and a developer unit. `.strict()` on both:
+// an extra key in what the engine builds is a failure, so a new column can never leak by accident.
+
+export const PublicProperty = z
+  .object({
+    /** A listing's ref ("L-0007") or a unit's public ref ("U-<project code>-<unit code>"). */
+    ref: z.string(),
+    source: z.enum(["listing", "developer"]),
+    title: z.string(),
+    community: z.string().nullable(),
+    projectName: z.string().nullable(),
+    /** The developer's trade name, for developer units only. */
+    developerName: z.string().nullable(),
+    unitType: z.string().nullable(),
+    unitTypeLabel: z.string().nullable(),
+    bedrooms: z.number().nullable(),
+    bathrooms: z.number().nullable(),
+    sizeSqft: z.number().nullable(),
+    priceFils: z.number().int(),
+    permitNo: z.string().nullable(),
+    coverPhotoId: z.string().nullable(),
+    photoCount: z.number().int(),
+    /** The project's expected handover, as a label (developer units). */
+    handover: z.string().nullable(),
+  })
+  .strict();
+export type PublicProperty = z.infer<typeof PublicProperty>;
+
+export const PublicPropertyDetail = PublicProperty.extend({
+  description: z.string().nullable(),
+  floor: z.number().nullable(),
+  view: z.string().nullable(),
+  parkingSpaces: z.number().nullable(),
+  furnishedLabel: z.string().nullable(),
+  photoIds: z.array(z.string()),
+  agent: z.object({ name: z.string() }).strict().nullable(),
+  /** The listing chat is offered (resale listings only). */
+  chat: z.boolean(),
+}).strict();
+export type PublicPropertyDetail = z.infer<typeof PublicPropertyDetail>;
+
+export const CatalogueQuery = z.object({
+  source: z.enum(["all", "listing", "developer"]).default("all"),
+  community: z.string().max(120).optional(),
+  type: z.enum(UNIT_TYPES).optional(),
+  beds: z.coerce.number().int().min(0).max(10).optional(),
+  min: z.coerce.number().int().min(0).optional(),
+  max: z.coerce.number().int().min(0).optional(),
+  sort: z.enum(["newest", "price_asc", "price_desc"]).default("newest"),
+});
+export type CatalogueQuery = z.infer<typeof CatalogueQuery>;

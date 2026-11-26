@@ -139,6 +139,8 @@ export function listingFixture(): ListingFixture {
       ],
     }),
     send_enquiry: async (a) => (sent.push(a), { sent: true }),
+    free_slots: async () => ({ slots: [{ iso: "2026-11-26T10:00:00.000Z", label: "Thu 26 Nov 2026, 14:00 (Dubai)" }] }),
+    book_viewing: async () => ({ booked: true, label: "Thu 26 Nov 2026, 14:00 (Dubai)" }),
   };
   return { backend, sent };
 }

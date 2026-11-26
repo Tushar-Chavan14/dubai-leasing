@@ -19,6 +19,7 @@ import {
   RULEBOOK_AML_KEYS,
   RULEBOOK_SETTING_KEYS,
   SIGNING_KEYS,
+  VIEWING_KEYS,
 } from "../src/manager/settings-pages.ts";
 import { company, party, seedUsers, type U } from "./prepare-fixtures.ts";
 
@@ -41,7 +42,7 @@ describe("S72: every rulebook key is classified for the Fees page", () => {
     );
   });
   test("the page key lists are disjoint and name real policy keys", () => {
-    for (const k of [...PLAN_KEYS, ...SIGNING_KEYS]) expect(k in DEFAULT_SPA_POLICY).toBe(true);
+    for (const k of [...PLAN_KEYS, ...SIGNING_KEYS, ...VIEWING_KEYS]) expect(k in DEFAULT_SPA_POLICY).toBe(true);
     expect(PLAN_KEYS.filter((k) => (SIGNING_KEYS as readonly string[]).includes(k))).toEqual([]);
   });
   test("the three new events are classified", () => {
@@ -207,6 +208,68 @@ describe.skipIf(!url)("S72: the remaining Settings routes", () => {
         signingLinkDays: 21,
         signingOrder: { ...prior.values.signingOrder, resale_ready: ["seller", "buyer"] },
       });
+    });
+    test("the viewings page (S79): an admin saves days, hours, slot, lead and horizon; others read or are refused; bad values are 422", async () => {
+      const read = await call("GET", "/api/settings/policy/viewings", "manager");
+      expect(read.status).toBe(200);
+      expect(Object.keys(read.json.values).toSorted()).toEqual([...VIEWING_KEYS].toSorted());
+      expect(read.json.values.viewings).toMatchObject({
+        viewingDays: [1, 2, 3, 4, 5, 6],
+        viewingStartHour: 10,
+        viewingEndHour: 18,
+        viewingSlotMinutes: 30,
+        viewingLeadHours: 4,
+        viewingHorizonDays: 14,
+      });
+      expect(read.json.values.leads).toEqual({ perEmailPerDay: 5 });
+      expect((await call("GET", "/api/settings/policy/viewings", "officer")).status).toBe(403);
+      const rows = await policyRows();
+      const good = {
+        ...read.json.values.viewings,
+        viewingDays: [0, 1, 2],
+        viewingSlotMinutes: 45,
+        viewingHorizonDays: 21,
+      };
+      expect(
+        (
+          await call("PUT", "/api/settings/policy/viewings", "manager", {
+            baseVersion: read.json.version,
+            values: { viewings: good },
+          })
+        ).status,
+      ).toBe(403);
+      for (const bad of [
+        { ...good, viewingStartHour: 18, viewingEndHour: 10 },
+        { ...good, viewingStartHour: 10, viewingEndHour: 10 },
+        { ...good, viewingSlotMinutes: 10 },
+        { ...good, viewingSlotMinutes: 150 },
+        { ...good, viewingHorizonDays: 0 },
+        { ...good, viewingHorizonDays: 61 },
+        { ...good, viewingDays: [] },
+        { ...good, viewingDays: [7] },
+      ]) {
+        const r = await call("PUT", "/api/settings/policy/viewings", "admin", {
+          baseVersion: read.json.version,
+          values: { viewings: bad },
+        });
+        expect([r.status, r.json.code], JSON.stringify(bad)).toEqual([422, "invalid_policy"]);
+      }
+      expect(await policyRows()).toBe(rows);
+      const saved = await call("PUT", "/api/settings/policy/viewings", "admin", {
+        baseVersion: read.json.version,
+        values: { viewings: good, leads: { perEmailPerDay: 3 } },
+      });
+      expect(saved.status).toBe(200);
+      const now = await currentPolicy(database.db);
+      expect(now.values.viewings).toEqual(good);
+      expect(now.values.leads.perEmailPerDay).toBe(3);
+      // The viewing slot code reads the new policy: Sunday is now a viewing day.
+      const again = await call("GET", "/api/settings/policy/viewings", "admin");
+      const restore = await call("PUT", "/api/settings/policy/viewings", "admin", {
+        baseVersion: again.json.version,
+        values: { viewings: DEFAULT_SPA_POLICY.viewings, leads: DEFAULT_SPA_POLICY.leads },
+      });
+      expect(restore.status).toBe(200);
     });
     test("a key from another page or from the policy at large is 422 and writes nothing", async () => {
       const v = (await call("GET", "/api/settings/policy/plans", "admin")).json.version;

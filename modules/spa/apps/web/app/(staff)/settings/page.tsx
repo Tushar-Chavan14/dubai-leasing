@@ -47,6 +47,12 @@ const CARDS: readonly Card[] = [
     roles: ["admin", "sales_manager"],
   },
   {
+    href: "/settings/viewings",
+    title: "Viewings",
+    body: "The days, hours and length of a viewing visitors can book, and how many enquiries one email may send.",
+    roles: ["admin", "sales_manager"],
+  },
+  {
     href: "/settings/fees",
     title: "Fees and rulebook",
     body: "The fees and rules in force, set by legal. Read only.",

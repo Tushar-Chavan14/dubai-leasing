@@ -211,15 +211,17 @@ describe.skipIf(!url)("C32: listings reads and the draft write (S64)", () => {
       const rec = await getListing(ctx, as(k), ids.COOWN!);
       expect(rec.sellers!.map((s) => s.name).toSorted()).toEqual([OWNER, OWNER2].toSorted());
       expect(rec.sellers![0]).toMatchObject({ kind: "person", signed: true });
-      expect(JSON.stringify(rec)).not.toContain(DOC_REF);
+      // M3 (S77): the sales roles see the document number and owners they entered; the passport never leaves the party row.
+      expect(rec.ownership).toMatchObject({ ref: DOC_REF });
       expect(JSON.stringify(rec)).not.toContain(PASSPORT);
     }
     const rec = await getListing(ctx, as("admin"), ids.COOWN!);
     expect(rec.sellers).toBeNull();
     expect(JSON.stringify(rec)).not.toContain(OWNER);
+    expect(JSON.stringify(rec)).not.toContain(DOC_REF);
   });
 
-  test("the record: header, permit, ownership check result (no number), public page, the offer", async () => {
+  test("the record: header, permit, ownership check result (number for sales roles only), public page, the offer", async () => {
     const rec = await getListing(ctx, as("officer"), ids.EXP7!);
     expect(rec).toMatchObject({
       ref: expect.stringMatching(/^L-/),
@@ -230,7 +232,7 @@ describe.skipIf(!url)("C32: listings reads and the draft write (S64)", () => {
       page: { state: "live" },
       offer: { state: "SENT", priceFils: 180_000_000, validUntil: "2026-11-25" },
     });
-    expect(rec.ownership).not.toHaveProperty("ref");
+    expect((await getListing(ctx, as("admin"), ids.EXP7!)).ownership).not.toHaveProperty("ref");
     expect(await getListing(ctx, as("officer"), ids.EXP8!).then((r) => r.offer)).toBeNull();
     expect((await fail(getListing(ctx, as("officer"), newId())))?.status).toBe(404);
   });

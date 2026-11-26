@@ -765,3 +765,30 @@ describe("paragraph texts for change marks", () => {
     expect(r.paragraphs.find((p) => p.key === "s1:1")?.rewritable).toBe(false);
   });
 });
+
+describe("D79: a reworded title or heading prints its rewording", () => {
+  const add = { clauses: [], freeText: null };
+  test("title and heading overrides apply only when listed as rewritten", () => {
+    const sec: TemplateSections = {
+      ...sections,
+      title: "RESIDENTIAL LEASE CONTRACT",
+      items: [{ id: "s0", number: "1.", heading: "Residential premises", paragraphs: ["Made between {{b1}}"] }],
+    };
+    const paragraphs = { title: "COMMERCIAL LEASE CONTRACT", "s0:h": "Commercial premises" };
+    const on = templateContractBlocks(
+      { sections: sec, blanks: blanks(), templateVersion: 3, paragraphs, rewritten: ["title", "s0:h"] },
+      SAMPLE_CONTRACT_FIELDS,
+      add,
+      opts,
+    );
+    expect(textOf(on.blocks)).toContain("COMMERCIAL LEASE CONTRACT");
+    expect(textOf(on.blocks)).toContain("1. Commercial premises");
+    const off = templateContractBlocks(
+      { sections: sec, blanks: blanks(), templateVersion: 3, paragraphs },
+      SAMPLE_CONTRACT_FIELDS,
+      add,
+      opts,
+    );
+    expect(textOf(off.blocks)).toContain("RESIDENTIAL LEASE CONTRACT");
+  });
+});

@@ -471,7 +471,13 @@ export function templateContractBlocks(
     return m ? `${m[1]} ${m[2]!.trim()}` : sectionLabel;
   };
   // D70: a title or heading the review dropped (a value of the sample stood in it) is not printed.
-  const title = t.sections.title && !dropped.has("title") ? inline(t.sections.title) : "Tenancy contract";
+  // D79: a title or heading reworded to the unit's use ("Residential" -> "Commercial") prints its rewording.
+  const reworded = (key: string, raw: string) => {
+    const over = t.paragraphs && Object.hasOwn(t.paragraphs, key) ? t.paragraphs[key] : undefined;
+    return typeof over === "string" && t.rewritten?.includes(key) ? over : raw;
+  };
+  const title =
+    t.sections.title && !dropped.has("title") ? inline(reworded("title", t.sections.title)) : "Tenancy contract";
   blocks.push({ kind: "title", text: title });
   texts.push({ key: "title", label: "Title", text: title, values: [], rewritable: false, page: null });
   const seen: string[] = [];
@@ -479,7 +485,7 @@ export function templateContractBlocks(
   let lastNumber: string | null = null;
   for (const s of t.sections.items) {
     if (s.heading !== null && !dropped.has(`${s.id}:h`)) {
-      const heading = inline(s.heading);
+      const heading = inline(reworded(`${s.id}:h`, s.heading));
       blocks.push({ kind: "heading", text: s.number ? `${s.number} ${heading}` : heading });
       texts.push({
         key: `${s.id}:h`,

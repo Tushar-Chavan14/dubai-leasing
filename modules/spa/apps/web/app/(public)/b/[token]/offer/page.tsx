@@ -17,10 +17,10 @@ export default async function OfferPage({
   searchParams,
 }: {
   params: Promise<{ token: string }>;
-  searchParams: Promise<{ done?: string }>;
+  searchParams: Promise<{ done?: string; problem?: string }>;
 }) {
   const { token } = await params;
-  const { done } = await searchParams;
+  const { done, problem } = await searchParams;
   if (done)
     return (
       <section className="grid gap-2" aria-live="polite">
@@ -30,6 +30,15 @@ export default async function OfferPage({
         <p className="m-0 text-sm text-ink">Thank you. Your agent will be in touch about the next step.</p>
       </section>
     );
+  if (problem === "offer_expired" || problem === "offer_closed" || problem === "link_used") {
+    const p = linkProblem(410, problem);
+    return (
+      <section className="grid gap-2">
+        <h1 className="m-0 text-[26px] font-semibold tracking-tight text-ink">{p.title}</h1>
+        <p className="m-0 text-sm text-muted">{p.body}</p>
+      </section>
+    );
+  }
   const res = await publicEngine()
     .public["offer-links"][":token"].$get({ param: { token } })
     .catch(() => null);
@@ -44,7 +53,10 @@ export default async function OfferPage({
   }
   const o = await res.json();
   if (o.status !== "SENT") {
-    const p = linkProblem(410, o.status === "EXPIRED" ? "offer_expired" : "offer_closed");
+    const p = linkProblem(
+      410,
+      o.status === "EXPIRED" ? "offer_expired" : o.status === "WITHDRAWN" ? "offer_withdrawn" : "offer_closed",
+    );
     return (
       <section className="grid gap-2">
         <h1 className="m-0 text-[26px] font-semibold tracking-tight text-ink">{p.title}</h1>

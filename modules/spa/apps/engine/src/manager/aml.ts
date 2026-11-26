@@ -1,12 +1,5 @@
 import { newId } from "@platform/kernel/ids";
-import {
-  assessRisk,
-  DEFAULT_SPA_AML_POLICY,
-  type RiskInput,
-  SpaAmlPolicy,
-  type SpaActor,
-  type SpaRole,
-} from "@spa/core";
+import { assessRisk, DEFAULT_SPA_AML_POLICY, type RiskInput, SpaAmlPolicy, type SpaActor, type SpaRole, hasRole } from "@spa/core";
 import { dealParties, deals, riskAssessments, type SpaDb, spaAmlPolicy, type SpaTx, withSpaTx } from "@spa/db";
 import { and, desc, eq } from "drizzle-orm";
 import { proposeApproval } from "./approvals.ts";
@@ -28,9 +21,9 @@ export async function currentAmlPolicy(db: SpaDb): Promise<{ version: number; va
 export async function publishAmlPolicy(
   ctx: SpaContext,
   input: unknown,
-  user: { id: string; role: SpaRole },
+  user: { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined },
 ): Promise<{ version: number }> {
-  if (user.role !== "admin" && user.role !== "compliance_officer")
+  if (!hasRole(user, "admin") && !hasRole(user, "compliance_officer"))
     throw forbidden("only an admin or a compliance officer publishes the AML policy");
   const parsed = SpaAmlPolicy.safeParse(input);
   if (!parsed.success)

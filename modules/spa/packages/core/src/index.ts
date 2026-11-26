@@ -3,6 +3,7 @@
  * Listing machines, `spaGates` and the schemas come in P3. Imports shared code only from `@platform/kernel`.
  */
 export * from "./roles.ts";
+export * from "./demo.ts";
 export * from "./gates.ts";
 export * from "./state/index.ts";
 export * from "./actor.ts";
@@ -20,3 +21,5 @@ export * from "./chase.ts";
 export * from "./agreement-review.ts";
 export * from "./vocab.ts";
 export * from "./alerts.ts";
+export * from "./inventory.ts";
+export * from "./leads.ts";

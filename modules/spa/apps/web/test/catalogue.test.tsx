@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { noToggles } from "./no-toggles.ts";
 import { renderToStaticMarkup as render } from "react-dom/server";
 import { ListingTable, ListingView } from "../components/listings";
 import { ProjectTable, ProjectView } from "../components/projects";
@@ -19,6 +20,7 @@ import { COMPLIANCE_WORDS } from "./fixtures";
 
 const noop = async () => {};
 const ACTIONS = { addBuilding: noop, addUnit: noop, createPriceList: noop, publishPriceList: noop };
+const UNITS = <p>units slot</p>;
 const ID = (n: number) => `0198a1b2-0000-7000-8000-${String(n).padStart(12, "0")}`;
 
 const permit = (status: "none" | "valid" | "expiring" | "expired", daysLeft: number | null) => ({
@@ -97,9 +99,9 @@ describe("C32: the project table and record (design §4.6)", () => {
     ],
   });
 
-  test("the table: code links to the project, buildings, units by state, price list in use, completion", () => {
+  test("the table: the name links to the project, buildings, units by state, price list in use, completion", () => {
     const html = render(<ProjectTable projects={list.items} unplaced={list.unplacedUnits} />);
-    expect(html).toContain(`href="/inventory/${ID(9)}"`);
+    expect(html).toContain(`href="/inventory/projects/${ID(9)}"`);
     for (const s of ["MV-01", "Marina Vista", "Version 2", "30 Jun 2028", "6 available", "2 held"])
       expect(html).toContain(s);
     expect(html).toContain("3 units are not in a project yet");
@@ -112,15 +114,33 @@ describe("C32: the project table and record (design §4.6)", () => {
     expect(render(<ProjectTable projects={[]} unplaced={0} />)).toContain("No projects yet.");
   });
 
-  test("the record: buildings, units with status pill, price and deal link, price lists by version, template, completion", () => {
-    const p = ProjectRecord.parse(project());
-    const html = render(<ProjectView project={p} viewer="sales_officer" canWork />);
+  test("the record: overview, photos, buildings, the units slot, price lists by version, template, handover, activity", () => {
+    const p = ProjectRecord.parse(
+      project({
+        community: "Marina Bay",
+        location: "Waterfront district",
+        description: "A fictional waterfront project.",
+        activity: [
+          {
+            id: ID(70),
+            label: "Details changed",
+            at: "2026-11-20T06:00:00.000Z",
+            actor: "Admin",
+            changed: ["community"],
+          },
+        ],
+      }),
+    );
+    const html = render(<ProjectView project={p} viewer="sales_officer" units={UNITS} />);
     for (const s of [
       "Tower A",
-      "U-101",
-      "Held",
-      "AED 1,500,000",
-      "Available",
+      "Marina Bay",
+      "Waterfront district",
+      "A fictional waterfront project.",
+      "units slot",
+      "No photo yet",
+      "Details changed",
+      "community",
       "Version 2",
       "Version 1",
       "Draft",
@@ -129,26 +149,25 @@ describe("C32: the project table and record (design §4.6)", () => {
       "30 Jun 2028",
     ])
       expect(html).toContain(s);
-    expect(html).toContain(`href="/work/deals/${ID(40)}"`);
-    expect(html).toContain("D-0001");
-    // a unit without a price says so
-    expect(html).toContain("No price");
+    // sections in record order: overview, photos, buildings, units, price lists, activity
+    const at = (id: string) => html.indexOf(`id="${id}"`);
+    expect([at("facts"), at("photos"), at("buildings"), at("units"), at("price-lists"), at("activity")]).toEqual(
+      [at("facts"), at("photos"), at("buildings"), at("units"), at("price-lists"), at("activity")].sort(
+        (a, b) => a - b,
+      ),
+    );
+    expect(at("facts")).toBeGreaterThan(-1);
+    expect(html).not.toMatch(/\b(AVAILABLE|apartment)\b/);
   });
 
   test("the escrow account is masked on screen: last four only, no full number, no holder", () => {
-    const html = render(<ProjectView project={ProjectRecord.parse(project())} viewer="sales_officer" canWork />);
+    const html = render(<ProjectView project={ProjectRecord.parse(project())} viewer="sales_officer" units={UNITS} />);
     expect(html).toContain("•••• 3456");
     expect(html).not.toMatch(/AE\d{2}/);
     expect(html).not.toContain("0331234567890");
     expect(
-      render(<ProjectView project={ProjectRecord.parse(project({ escrow: null }))} viewer="admin" canWork={false} />),
+      render(<ProjectView project={ProjectRecord.parse(project({ escrow: null }))} viewer="admin" units={UNITS} />),
     ).toContain("No escrow account");
-  });
-
-  test("a viewer without Work (admin) sees the deal ref as text, not a link", () => {
-    const html = render(<ProjectView project={ProjectRecord.parse(project())} viewer="admin" canWork={false} />);
-    expect(html).toContain("D-0001");
-    expect(html).not.toContain("/work/deals/");
   });
 
   test("read-only for every role but admin: no form, no input, no button", () => {
@@ -162,18 +181,19 @@ describe("C32: the project table and record (design §4.6)", () => {
       "mlro",
     ] as const) {
       const html = render(
-        <ProjectView project={ProjectRecord.parse(project())} viewer={role} canWork actions={ACTIONS} />,
+        <ProjectView project={ProjectRecord.parse(project())} viewer={role} units={UNITS} actions={ACTIONS} />,
       );
-      expect(html, role).not.toMatch(/<(form|button|input|select|textarea)\b/);
+      expect(noToggles(html), role).not.toMatch(/<(form|button|input|select|textarea)\b/);
     }
   });
 
   test("an admin gets the add forms: building, unit, a new price list with a price per unit, publish on a draft only", () => {
     const html = render(
-      <ProjectView project={ProjectRecord.parse(project())} viewer="admin" canWork={false} actions={ACTIONS} />,
+      <ProjectView project={ProjectRecord.parse(project())} viewer="admin" units={UNITS} actions={ACTIONS} />,
     );
     expect(html).toContain("Add a building");
-    expect(html).toContain("Add a unit");
+    expect(html).toContain("Quick add");
+    expect(html).toContain(`href="/inventory/units/new?project=${ID(9)}"`);
     expect(html).toContain("New price list");
     expect(html).toContain(`name="price_${ID(30)}"`);
     expect(html).toContain(`name="price_${ID(31)}"`);
@@ -185,7 +205,7 @@ describe("C32: the project table and record (design §4.6)", () => {
 
   test("an admin form sends the project id it came from and nothing about who or which role", () => {
     const html = render(
-      <ProjectView project={ProjectRecord.parse(project())} viewer="admin" canWork={false} actions={ACTIONS} />,
+      <ProjectView project={ProjectRecord.parse(project())} viewer="admin" units={UNITS} actions={ACTIONS} />,
     );
     expect(html).toContain(`name="projectId" value="${ID(9)}"`);
     expect(html).not.toMatch(/name="(role|actor|user|userId|createdBy)"/);
@@ -193,7 +213,7 @@ describe("C32: the project table and record (design §4.6)", () => {
 
   test("no AML word and no leasing word on the page", () => {
     const html = render(
-      <ProjectView project={ProjectRecord.parse(project())} viewer="admin" canWork={false} actions={ACTIONS} />,
+      <ProjectView project={ProjectRecord.parse(project())} viewer="admin" units={UNITS} actions={ACTIONS} />,
     );
     expect(html).not.toMatch(COMPLIANCE_WORDS);
   });
@@ -300,7 +320,13 @@ describe("C32: the listings table and record (design §4.7)", () => {
         { name: "Sample Owner One", kind: "person", shareBps: 5000, signed: true },
         { name: "Sample Owner Two", kind: "person", shareBps: 5000, signed: false },
       ],
-      ownership: { kind: "title_deed", matched: true },
+      ownership: {
+        kind: "title_deed",
+        matched: true,
+        ref: "TD-SAMPLE-1",
+        owners: ["Sample Owner One", "Sample Owner Two"],
+      },
+      documents: [],
       permit: permit("expiring", 5),
       page: { state: "live", label: "Live" },
       offer: {
@@ -335,10 +361,10 @@ describe("C32: the listings table and record (design §4.7)", () => {
   });
 
   test("the record for admin has no sellers and says why; there is no form on it for anyone", () => {
-    const html = render(<ListingView listing={record({ sellers: null })} viewer="admin" />);
+    const html = render(<ListingView listing={record({ sellers: null, documents: null })} viewer="admin" />);
     expect(html).not.toContain("Sample Owner");
     expect(html).toContain("Sellers are shown to sales roles");
-    expect(html).not.toMatch(/<(form|button|input)\b/);
+    expect(noToggles(html)).not.toMatch(/<(form|button|input)\b/);
   });
 
   test("no AML word on the record or the table", () => {

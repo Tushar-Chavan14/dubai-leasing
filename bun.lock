@@ -122,6 +122,7 @@
       "dependencies": {
         "@leasing/core": "workspace:*",
         "@platform/adapters": "workspace:*",
+        "@platform/ui": "workspace:*",
         "grammy": "1.46.0",
         "zod": "^4.6.7",
       },
@@ -293,6 +294,7 @@
         "@platform/kernel": "workspace:*",
         "@platform/llm": "workspace:*",
         "@platform/readers": "workspace:*",
+        "@platform/ui": "workspace:*",
         "@spa/core": "workspace:*",
         "@spa/rulebook": "workspace:*",
         "zod": "^4.6.7",
@@ -358,6 +360,8 @@
       "version": "0.0.0",
       "devDependencies": {
         "@types/react": "19.3.0",
+        "@types/react-dom": "19.3.0",
+        "react-dom": "19.3.1",
       },
       "peerDependencies": {
         "@phosphor-icons/react": "2.1.10",

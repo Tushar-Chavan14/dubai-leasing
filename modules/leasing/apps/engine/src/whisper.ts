@@ -32,7 +32,7 @@ function isLoopback(url: string): boolean {
 }
 
 /**
- * `whisper-server -m ggml-base.bin --host 127.0.0.1 --port 8178 --convert`. Visitor and staff speech is personal
+ * `whisper-server -m ggml-small.bin --host 127.0.0.1 --port 8178 --convert`. Visitor and staff speech is personal
  * data, so the server must be on a loopback address (AGENTS rule 8); anything else throws at start-up. The clip is
  * sent in memory and never written by the engine. Confidence is 1 − the highest segment no-speech probability.
  */

@@ -26,8 +26,9 @@ import { enqueueAmlScreening } from "./aml-screening.ts";
 import { heldDocumentIds } from "./helper-modes.ts";
 import { planCoverage } from "./payment-facts.ts";
 import { closeTask, openTask } from "./tasks.ts";
+import { hasAnyRole } from "@spa/core";
 
-type Person = { id: string; role: SpaRole };
+type Person = { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined };
 /** Who registers a receipt, sets the project and marks a milestone: the people who run the deal, and finance for receipts. */
 const SALES_ROLES: readonly SpaRole[] = ["sales_officer", "sales_manager", "sales_admin", "admin"];
 const REGISTER_ROLES: readonly SpaRole[] = [...SALES_ROLES, "finance"];
@@ -37,7 +38,7 @@ const COMPLIANCE_ROLES: readonly SpaRole[] = ["compliance_officer", "mlro"];
 const CLOSED = new Set(["HANDED_OVER", "COMPLETED", "CANCELLED"]);
 const actorOf = (u: Person): SpaActor => `user:${u.id}`;
 const need = (u: Person, roles: readonly SpaRole[], what: string) => {
-  if (!roles.includes(u.role)) throw forbidden(`only ${roles.join(", ")} can ${what}`);
+  if (!hasAnyRole(u, roles)) throw forbidden(`only ${roles.join(", ")} can ${what}`);
 };
 
 const RegisterInput = z.object({
@@ -269,17 +270,17 @@ export async function listPayments(ctx: SpaContext, dealId: string, user: Person
   need(user, READ_ROLES, "read payments");
   const [d] = await ctx.database.db.select({ id: deals.id }).from(deals).where(eq(deals.id, dealId));
   if (!d) throw notFound("deal");
-  return paymentsView(ctx, dealId, user.role);
+  return paymentsView(ctx, dealId, rolesOf(user));
 }
 
 /** The payments with no role check; only a compliance role gets the payer check (the caller has checked the role). */
-export async function paymentsView(ctx: SpaContext, dealId: string, role: SpaRole) {
+export async function paymentsView(ctx: SpaContext, dealId: string, role: RoleSet) {
   const rows = await ctx.database.db
     .select()
     .from(payments)
     .where(eq(payments.dealId, dealId))
     .orderBy(payments.createdAt, payments.id);
-  const compliance = COMPLIANCE_ROLES.includes(role);
+  const compliance = isComplianceRole(role);
   return rows.map((r) => ({
     id: r.id,
     seq: r.seq,

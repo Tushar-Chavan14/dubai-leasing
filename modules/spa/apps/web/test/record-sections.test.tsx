@@ -1,4 +1,5 @@
 /* oxlint-disable no-explicit-any -- response bodies are read loosely in these tests */
+import { noToggles } from "./no-toggles.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Glob } from "bun";
 import { renderToStaticMarkup as render } from "react-dom/server";
@@ -80,7 +81,7 @@ describe.skipIf(!url)("C39: the record's evidence sections render through the re
     for (const [key, role] of ROLES) {
       const html = await page(key, role, w.late.dealId);
       for (const id of ALL) expect(html.includes(`id="${id}"`), `${role} ${id}`).toBe(SHOWN[role]!.includes(id));
-      expect(html).not.toMatch(/<(form|button|input)\b/);
+      expect(noToggles(html)).not.toMatch(/<(form|button|input)\b/);
     }
   });
 

@@ -490,6 +490,18 @@ describe("record card quick actions", () => {
     expect(labels(row({ kind: "lease", stage: "Ejari" }))).not.toContain("Download registration pack");
   });
 
+  test("a hand registration waiting for the portal offers Upload certificate, which only asks for the card", () => {
+    const pack = "/api/leases/x/registration/pack";
+    const waiting = row({ kind: "lease", stage: "Ejari", registrationPackUrl: pack, registrationAwaiting: true });
+    const action = recordActions(waiting, [], "leasing_officer").find((a) => a.key === "certificate");
+    expect(action).toMatchObject({ type: "prompt", label: "Upload certificate" });
+    expect(action && "prompt" in action ? action.prompt : "").toContain("registration card");
+    expect(recordActions(waiting, [], "finance").find((a) => a.key === "certificate")).toHaveProperty("blocked");
+    expect(labels(row({ kind: "lease", stage: "Ejari", registrationPackUrl: pack }))).not.toContain(
+      "Upload certificate",
+    );
+  });
+
   test("chosen by stage, always ending with the Workspace link", () => {
     expect(labels(row({ stage: "Enquiry" }))).toEqual(["Invite to a site visit", "Open in the Workspace"]);
     for (const stage of ["Viewing", "Documents"])

@@ -5,7 +5,7 @@ import { maskPii } from "@platform/kernel/pii";
 import { templateLines } from "@platform/readers/structure/mapping";
 import type { TemplateBlank, TemplateSections, TemplateStyle } from "@platform/readers/structure/schema";
 import { formatMoneyFils } from "@platform/readers/structure/format";
-import { type DealType, type SheetKeyInfo, type SpaActor, spaDataSheet, type SpaRole } from "@spa/core";
+import { type DealType, type SheetKeyInfo, type SpaActor, spaDataSheet, type SpaRole, hasAnyRole } from "@spa/core";
 import { agreements, deals, helperRuns, spaApprovals, spaTemplateVersions, type SpaTx, withSpaTx } from "@spa/db";
 import {
   formatSpaValue,
@@ -499,9 +499,9 @@ export async function enqueuePrepare(
   ctx: SpaContext,
   boss: Pick<PgBoss, "send">,
   dealId: string,
-  user?: { id: string; role: SpaRole },
+  user?: { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined },
 ): Promise<{ key: string; jobId: string | null; queued: boolean }> {
-  if (user && !START_ROLES.includes(user.role)) throw forbidden("you can't prepare an agreement");
+  if (user && !hasAnyRole(user, START_ROLES)) throw forbidden("you can't prepare an agreement");
   const [d] = await ctx.database.db.select({ state: deals.state }).from(deals).where(eq(deals.id, dealId));
   if (!d) throw notFound("deal");
   if (d.state !== "AGREEMENT_DRAFT")

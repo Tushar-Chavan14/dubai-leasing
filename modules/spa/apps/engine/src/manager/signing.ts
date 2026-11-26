@@ -31,6 +31,7 @@ import { policyAt } from "./policy.ts";
 import { agreementRenderInput } from "./prepare.ts";
 import { gatherSheetInputs, rulebookFor, sheetFromInputs, sheetInputHash } from "./sheet.ts";
 import { SIGNING_FINISH_JOB, SIGNING_INVITE_JOB, SIGNING_REMIND_JOB } from "../jobs.ts";
+import { hasAnyRole } from "@spa/core";
 
 const SYSTEM: SpaActor = "system:signing";
 /** Who may resend a link or read the signing status (S54): the people who run the deal, and legal and finance read. */
@@ -362,9 +363,9 @@ export async function resendSigningLink(
   ctx: SpaContext,
   dealId: string,
   signatureId: string,
-  user: { id: string; role: SpaRole },
+  user: { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined },
 ): Promise<{ status: "sent" | "failed" }> {
-  if (!RESEND_ROLES.includes(user.role)) throw forbidden("you can't resend a signing link");
+  if (!hasAnyRole(user, RESEND_ROLES)) throw forbidden("you can't resend a signing link");
   const [row] = await ctx.database.db
     .select({ s: signatures, e: signingEnvelopes })
     .from(signatures)
@@ -685,8 +686,8 @@ export async function finishSigning(ctx: SpaContext, deps: SigningDeps, envelope
 // ---- staff view ---------------------------------------------------------------------------------------------------
 
 /** Signing status for staff: who has signed, whose link was mailed. No links, addresses or hashes. */
-export async function listSigning(ctx: SpaContext, dealId: string, user: { id: string; role: SpaRole }) {
-  if (!READ_ROLES.includes(user.role)) throw forbidden("you can't read the signing status");
+export async function listSigning(ctx: SpaContext, dealId: string, user: { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined }) {
+  if (!hasAnyRole(user, READ_ROLES)) throw forbidden("you can't read the signing status");
   return signingView(ctx, dealId);
 }
 

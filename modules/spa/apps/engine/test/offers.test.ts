@@ -275,6 +275,8 @@ describe.skipIf(!url)("offers (C7)", () => {
       demoMode: false,
       nowMs: () => 0,
     });
+    // The app reads the real date; make the offer on that same date so its link is still valid.
+    clock.set(new SpaDemoClock(database, false).now());
     const l = await activeListing(["Hidden Seller Name"]);
     const o = await offerOn(l.id);
     const res = await app.request(`/public/offer-links/${o.links[0]!.token}`);

@@ -108,6 +108,7 @@ const OFFER_WORDS = {
   ACCEPTED: "The offer was accepted.",
   REJECTED: "The offer was not accepted.",
   EXPIRED: "The offer has expired.",
+  WITHDRAWN: "The offer was withdrawn.",
 } as const;
 
 const BRING = [

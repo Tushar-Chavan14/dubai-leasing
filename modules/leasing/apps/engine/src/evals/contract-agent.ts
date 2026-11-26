@@ -4,8 +4,8 @@
  * the rent is always the record's value, and an injection never makes the agent drop its flags or pick every clause.
  */
 import { readFileSync } from "node:fs";
-import { ollamaCopilotModel } from "@leasing/copilot";
 import { type CalendarDate, EnvSchema } from "@leasing/core";
+import { contractAgentModel } from "../contract-agent-model.ts";
 import { type ContractAgentContext, contractAgent, runHelper, ContractAgentSchemas } from "@leasing/helpers";
 
 interface Case {
@@ -24,12 +24,25 @@ interface Case {
   unitDescription?: string;
   mustRewrite?: boolean;
   mustNotRewrite?: boolean;
+  /** The unit (default: a residential 2-bed apartment). */
+  unit?: { subtype: string; kind: "residential" | "commercial"; bedrooms: number | null; description: string };
+  /** The unit paragraph is a particulars line (type, use), not a description. */
+  particulars?: boolean;
+  /** Words the reworded unit paragraph must contain (case-insensitive) and must not contain. */
+  mustSay?: string[];
+  mustNotSay?: string[];
+  /** A contract title stating a use (D79), and words its rewording must contain. */
+  title?: string;
+  titleMustSay?: string;
+  /** The rewording must be the model's own (D78: code rewords only when the model's confidence is below 30%). */
+  byModel?: boolean;
 }
 const only = process.argv.slice(2);
 const env = EnvSchema.pick({ OLLAMA_URL: true, CHAT_MODEL: true, CONTRACT_AI_MODEL: true }).parse(process.env);
 const modelTag = env.CONTRACT_AI_MODEL || env.CHAT_MODEL;
 if (!modelTag) throw new Error("CONTRACT_AI_MODEL or CHAT_MODEL is not set");
-const model = ollamaCopilotModel({ url: env.OLLAMA_URL, model: modelTag });
+// The same model settings as production (answer length, JSON format on the final turn).
+const model = contractAgentModel({ url: env.OLLAMA_URL, model: modelTag });
 const cases = readFileSync(
   new URL("../../../../packages/helpers/src/contract-agent/evals/cases.jsonl", import.meta.url),
   "utf8",
@@ -89,41 +102,48 @@ const context = (c: Case): ContractAgentContext => {
       },
       unit: {
         id: "u",
-        kind: "residential",
+        kind: c.unit?.kind ?? "residential",
         building: "Demo Marina Tower",
         community: "Dubai Marina",
         dldPropertyNo: "DEMO-DLD-001608",
         unitNo: "1608",
         makaniNo: "1111144444",
         plotNo: null,
-        bedrooms: 2,
+        bedrooms: c.unit ? c.unit.bedrooms : 2,
       },
       addendum: { clauses: ["no_pets", "maintenance"], freeText: null },
     },
     rule: { id: "r", tenures: ["annual"], minCheques: 1, maxCheques: 4, clauseIds: ["no_pets", "maintenance"] },
     clauses: [...extras, ...inTemplate],
     template:
-      c.templateClause || c.unitParagraph
+      c.templateClause || c.unitParagraph || c.title
         ? {
             id: "tpl",
             version: 1,
             paragraphs: [
+              ...(c.title ? [{ key: "title", text: c.title, heading: true }] : []),
               ...(c.templateClause
                 ? [{ key: "s1:0", text: `${c.templateClause.title}. ${c.templateClause.text}` }]
                 : []),
-              ...(c.unitParagraph ? [{ key: "s2:0", text: c.unitParagraph, rewritable: true }] : []),
+              ...(c.unitParagraph
+                ? [
+                    c.particulars
+                      ? { key: "s2:0", text: c.unitParagraph, rewritable: false, particulars: true }
+                      : { key: "s2:0", text: c.unitParagraph, rewritable: true },
+                  ]
+                : []),
             ],
           }
         : null,
     unitFacts: {
-      subtype: "apartment",
-      bedrooms: 2,
+      subtype: c.unit?.subtype ?? "apartment",
+      bedrooms: c.unit ? c.unit.bedrooms : 2,
       bathrooms: 2,
       areaSqft: 1250,
       parkingSpaces: 1,
       floor: 16,
       furnished: false,
-      description: c.unitDescription ?? "Two-bedroom apartment with a balcony and a marina view",
+      description: c.unitDescription ?? c.unit?.description ?? "Two-bedroom apartment with a balcony and a marina view",
     },
     rentBand: { minFils: 15_000_000, maxFils: 17_000_000 },
     depositMaxFils: 800_000,
@@ -167,11 +187,23 @@ for (const c of cases) {
   const rewrites = r.data?.rewrites ?? [];
   if (c.mustRewrite && !rewrites.some((x) => x.key === "s2:0")) problems.push("unit paragraph not reworded");
   if (c.mustNotRewrite && rewrites.length) problems.push("reworded a paragraph that matches the records");
+  const unitRw = rewrites.find((x) => x.key === "s2:0");
+  if (c.titleMustSay) {
+    const t = rewrites.find((x) => x.key === "title");
+    if (!t?.after.includes(c.titleMustSay)) problems.push(`title not reworded to "${c.titleMustSay}"`);
+    else if (/copied from the unit record/.test(t.reason)) problems.push("title reworded by code, not the model");
+  }
+  for (const w of c.mustSay ?? [])
+    if (!unitRw?.after.toLowerCase().includes(w.toLowerCase())) problems.push(`rewording lacks "${w}"`);
+  for (const w of c.mustNotSay ?? [])
+    if (unitRw?.after.toLowerCase().includes(w.toLowerCase())) problems.push(`rewording still says "${w}"`);
+  if (c.byModel && unitRw && /copied from the unit record/.test(unitRw.reason))
+    problems.push(`reworded by code, not the model (confidence ${r.model?.confidence ?? "?"})`);
   // Hard limit: an accepted rewrite always passed code's checks; never a value outside the unit's facts.
   for (const x of rewrites) if (/AED|\d{4}-\d{2}-\d{2}/.test(x.after)) hardFail++;
   if (!problems.length) pass++;
   console.log(
-    `${problems.length ? "FAIL" : "ok  "} ${c.id} ${problems.join("; ")} ${r.reasons.slice(0, 2).join(" | ")}`,
+    `${problems.length ? "FAIL" : "ok  "} ${c.id} ${problems.join("; ")} ${r.reasons.slice(0, 2).join(" | ")}${problems.length ? `\n     ${r.reasons.filter((x) => /refused|Rewording|Flag/.test(x)).join("\n     ")}` : ""}`,
   );
 }
 console.log(`\n${pass}/${cases.length} passed; hard-limit failures: ${hardFail}`);

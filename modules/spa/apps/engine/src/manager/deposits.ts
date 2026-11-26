@@ -8,6 +8,7 @@ import { SIGNING_FINISH_JOB } from "../jobs.ts";
 import { proposeApproval } from "./approvals.ts";
 import type { SpaContext } from "./context.ts";
 import { conflict, notFound, unprocessable } from "./errors.ts";
+import { RECORDABLE } from "./deposit-states.ts";
 import { appendDealEvent } from "./events.ts";
 import { policyAt } from "./policy.ts";
 
@@ -20,8 +21,6 @@ const Cheque = z.object({
   chequeOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   holder: z.string().trim().min(1).max(200),
 });
-/** States in which the deposit may still be recorded: before signing is complete (S18); never during an AML hold (S40 amendment: no tipping-off, no money moves). */
-const RECORDABLE = new Set(["OFFER_AGREED", "PARTY_CHECK", "AGREEMENT_DRAFT", "LEGAL_REVIEW", "SIGNING"]);
 /** After the transfer was issued (S18: the cheque goes to the seller only then). */
 const TRANSFERRED = new Set(["COMPLETED", "INSTALMENTS", "HANDED_OVER"]);
 

@@ -59,10 +59,10 @@ export const enginePostJson: SendJson = async (path, init) => {
 /** A POST to the engine as the signed-in user, for the server actions that send a body (the decision form, C31). */
 export const enginePost: Send = enginePostJson;
 
-/** Any write to the engine as the signed-in user (PUT and multipart for the Settings screens, C34). */
+/** Any write to the engine as the signed-in user (PUT and multipart for the Settings screens, C34; PATCH and DELETE for photos, S75). */
 export const engineSend = async (
   path: string,
-  init: { method: "POST" | "PUT"; headers?: Record<string, string>; body: string | FormData },
+  init: { method: "POST" | "PUT" | "PATCH" | "DELETE"; headers?: Record<string, string>; body?: string | FormData },
 ): Promise<{ status: number; json(): Promise<unknown> }> => {
   const token = (await cookies()).get(sessionCookie())?.value;
   if (!token) redirect("/sign-in");

@@ -1,21 +1,5 @@
 import { maskPiiText } from "@platform/kernel/pii";
-import {
-  canDecideSpaGate,
-  type DealStep,
-  HELPER_LABELS,
-  type DealState,
-  DealType,
-  DEAL_STATES,
-  isComplianceGate,
-  isComplianceRole,
-  SpaGateId,
-  type SpaRole,
-  stageKey,
-  type StageKey,
-  stageLabel,
-  STAFF_EVENTS,
-  taskVisibleTo,
-} from "@spa/core";
+import { canDecideSpaGate, type DealStep, HELPER_LABELS, type DealState, DealType, DEAL_STATES, isComplianceGate, isComplianceRole, SpaGateId, type SpaRole, stageKey, type StageKey, stageLabel, STAFF_EVENTS, taskVisibleTo, hasRole, rolesOf } from "@spa/core";
 import {
   dealEvents,
   dealParties,
@@ -33,6 +17,7 @@ import { z } from "zod";
 import type { SpaContext } from "./context.ts";
 import { notFound, forbidden } from "./errors.ts";
 import type { DealRow } from "./facts.ts";
+import { leadWorkCounts } from "./lead-reads.ts";
 import { agreementReviewView } from "./agreement-review.ts";
 import {
   type ApprovalRow,
@@ -180,7 +165,7 @@ async function dealViews(ctx: SpaContext, viewer: Viewer, rows: DealJoined[]): P
   );
   const now = ctx.clock.now();
   return rows.map(({ deal, unitCode, listingRef, listingTitle }) => {
-    const stage = stageKey(deal.state, viewer.role);
+    const stage = stageKey(deal.state, rolesOf(viewer));
     const owner = deal.createdBy.startsWith("user:") ? (names.get(deal.createdBy.slice(5)) ?? null) : null;
     return {
       id: deal.id,
@@ -297,7 +282,7 @@ export async function listDealEvents(ctx: SpaContext, viewer: Viewer, dealId: st
   if (!d) throw notFound("deal");
   const where: (SQL | undefined)[] = [eq(dealEvents.entityKind, "deal"), eq(dealEvents.entityId, dealId)];
   // The allowlist is applied in the query, so a page is never short because of hidden rows (fail closed: S57).
-  if (!isComplianceRole(viewer.role)) where.push(inArray(dealEvents.type, [...STAFF_EVENTS]));
+  if (!isComplianceRole(rolesOf(viewer))) where.push(inArray(dealEvents.type, [...STAFF_EVENTS]));
   if (cur) where.push(sql`(${dealEvents.at}, ${dealEvents.id}) < (${cur.at}::timestamptz, ${cur.id}::uuid)`);
   const rows = await db
     .select()
@@ -426,7 +411,7 @@ const ROLES_FOR_ALL = (viewer: SpaRole): SpaRole[] =>
 export async function listTasks(ctx: SpaContext, viewer: Viewer, q: z.infer<typeof TasksQuery>) {
   const db = ctx.database.db;
   const cur = cursorOf(q.cursor);
-  if (q.scope === "all" && viewer.role !== "sales_manager")
+  if (q.scope === "all" && !hasRole(viewer, "sales_manager"))
     throw forbidden("only a sales manager sees everyone's tasks");
   const roles = q.scope === "all" ? ROLES_FOR_ALL(viewer.role) : [viewer.role];
   const ascending = q.status === "open";
@@ -448,7 +433,7 @@ export async function listTasks(ctx: SpaContext, viewer: Viewer, q: z.infer<type
     )
     .limit(q.limit + 1);
   const p = paged(rows, q.limit, (r) => ({ at: r.createdAt, id: r.id }));
-  return { items: p.rows.filter((t) => taskVisibleTo(t.role, viewer.role)).map(viewTask), nextCursor: p.nextCursor };
+  return { items: p.rows.filter((t) => taskVisibleTo(t.role, rolesOf(viewer))).map(viewTask), nextCursor: p.nextCursor };
 }
 
 /** Home's counts (design §4.1): what waits for this role, and the open deals by the stage this role may read. */
@@ -474,9 +459,12 @@ export async function homeSummary(ctx: SpaContext, viewer: Viewer) {
     .from(deals)
     .where(notInArray(deals.state, TERMINAL));
   const byStage: Record<string, number> = {};
-  for (const d of open) byStage[stageKey(d.state, viewer.role)] = (byStage[stageKey(d.state, viewer.role)] ?? 0) + 1;
+  for (const d of open) byStage[stageKey(d.state, rolesOf(viewer))] = (byStage[stageKey(d.state, rolesOf(viewer))] ?? 0) + 1;
+  const leads = await leadWorkCounts(ctx, viewer);
   return {
     role: viewer.role,
+    // S79: today's viewings and new leads, for the Work badge (sales roles only; zero for everyone else).
+    leads: { viewings: leads.viewings, newLeads: leads.newLeads },
     inbox: { open: inbox!.n },
     tasks: { open: tasks!.n },
     deals: {

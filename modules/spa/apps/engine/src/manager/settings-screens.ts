@@ -1,4 +1,4 @@
-import { DealType, type SpaKycRole, SPA_KYC_ROLES, SpaKycRole as KycRoleSchema, type SpaRole } from "@spa/core";
+import { DealType, type SpaKycRole, SPA_KYC_ROLES, SpaKycRole as KycRoleSchema, type SpaRole, hasAnyRole, hasRole } from "@spa/core";
 import { spaAmlPolicy, spaKycConfigs } from "@spa/db";
 import { desc } from "drizzle-orm";
 import { z } from "zod";
@@ -15,8 +15,8 @@ const Query = z.object({ role: KycRoleSchema.optional(), dealType: DealType.opti
 const Target = z.object({ role: KycRoleSchema, dealType: DealType.optional() });
 export const KycDraftBody = Target.extend({ config: z.unknown() });
 
-function needKycReader(user: { role: SpaRole }) {
-  if (!KYC_READERS.includes(user.role)) throw forbidden("you can't view the KYC forms");
+function needKycReader(user: { role: SpaRole; roles?: readonly SpaRole[] | undefined }) {
+  if (!hasAnyRole(user, KYC_READERS)) throw forbidden("you can't view the KYC forms");
 }
 
 /**
@@ -24,7 +24,7 @@ function needKycReader(user: { role: SpaRole }) {
  * and whether a draft waits; with a role (and a deal type for an override) it gives the form in force, the draft if any
  * and the published versions. A published version is only ever read: a change is a new draft, then a new version.
  */
-export async function getKycSettings(ctx: SpaContext, user: { role: SpaRole }, query: unknown) {
+export async function getKycSettings(ctx: SpaContext, user: { role: SpaRole; roles?: readonly SpaRole[] | undefined }, query: unknown) {
   needKycReader(user);
   const q = Query.safeParse(query);
   if (!q.success) throw unprocessable("invalid_request", "that query isn't valid");
@@ -72,8 +72,8 @@ export async function getKycSettings(ctx: SpaContext, user: { role: SpaRole }, q
   };
 }
 
-export const saveKycSettings = (ctx: SpaContext, user: { id: string; role: SpaRole }, body: unknown) => {
-  if (user.role !== "admin") throw forbidden("only an admin changes KYC settings");
+export const saveKycSettings = (ctx: SpaContext, user: { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined }, body: unknown) => {
+  if (!hasRole(user, "admin")) throw forbidden("only an admin changes KYC settings");
   const p = KycDraftBody.safeParse(body);
   if (!p.success) throw unprocessable("invalid_request", "send a role, an optional deal type and the form");
   return saveKycDraft(
@@ -83,16 +83,16 @@ export const saveKycSettings = (ctx: SpaContext, user: { id: string; role: SpaRo
   );
 };
 
-export const publishKycSettings = (ctx: SpaContext, user: { id: string; role: SpaRole }, body: unknown) => {
-  if (user.role !== "admin") throw forbidden("only an admin changes KYC settings");
+export const publishKycSettings = (ctx: SpaContext, user: { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined }, body: unknown) => {
+  if (!hasRole(user, "admin")) throw forbidden("only an admin changes KYC settings");
   const p = Target.safeParse(body);
   if (!p.success) throw unprocessable("invalid_request", "send a role and an optional deal type");
   return publishKycDraft(ctx, { role: p.data.role, ...(p.data.dealType ? { dealType: p.data.dealType } : {}) }, user);
 };
 
 /** The compliance rules page: the compliance officer publishes, the MLRO reads, nobody else sees it (S57, S66). */
-export async function getAmlPolicySettings(ctx: SpaContext, user: { role: SpaRole }) {
-  if (user.role !== "compliance_officer" && user.role !== "mlro") throw forbidden("you can't do this");
+export async function getAmlPolicySettings(ctx: SpaContext, user: { role: SpaRole; roles?: readonly SpaRole[] | undefined }) {
+  if (!hasRole(user, "compliance_officer") && !hasRole(user, "mlro")) throw forbidden("you can't do this");
   const current = await currentAmlPolicy(ctx.database.db);
   const history = await ctx.database.db
     .select({ version: spaAmlPolicy.version, createdAt: spaAmlPolicy.createdAt })
@@ -104,7 +104,7 @@ export async function getAmlPolicySettings(ctx: SpaContext, user: { role: SpaRol
     values: current.values,
     // Version 0 is the code's placeholder: compliance sets its own before relying on it.
     confirmWithCompliance: current.version === 0,
-    mayPublish: user.role === "compliance_officer",
+    mayPublish: hasRole(user, "compliance_officer"),
     history: history.map((h) => ({ version: h.version, createdAt: h.createdAt.toISOString() })),
   };
 }
@@ -113,7 +113,7 @@ export async function getAmlPolicySettings(ctx: SpaContext, user: { role: SpaRol
  * Publishes the AML policy from the compliance page. Only the compliance officer: this route refuses an admin and the
  * MLRO. The manager's own rule (S42) is unchanged and recorded as a follow-up in S66.
  */
-export function putAmlPolicy(ctx: SpaContext, user: { id: string; role: SpaRole }, body: unknown) {
-  if (user.role !== "compliance_officer") throw forbidden("you can't do this");
+export function putAmlPolicy(ctx: SpaContext, user: { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined }, body: unknown) {
+  if (!hasRole(user, "compliance_officer")) throw forbidden("you can't do this");
   return publishAmlPolicy(ctx, body, user);
 }

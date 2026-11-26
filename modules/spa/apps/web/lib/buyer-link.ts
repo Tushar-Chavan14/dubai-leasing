@@ -29,6 +29,7 @@ export function linkProblem(status: number, code: string | undefined, page?: "po
   if (code === "link_superseded")
     return { title: "This agreement has been replaced", body: "Your agent will send you a new link." };
   if (code === "offer_expired") return { title: "This offer has expired", body: "It can no longer be answered." };
+  if (code === "offer_withdrawn") return { title: "This offer was withdrawn", body: "It can no longer be answered." };
   if (code === "offer_closed") return { title: "This offer is closed", body: "It can no longer be answered." };
   return { title: "Something went wrong", body: "Please try again in a moment, or ask your agent." };
 }

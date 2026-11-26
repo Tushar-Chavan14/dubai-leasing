@@ -1,4 +1,5 @@
 /* oxlint-disable no-explicit-any -- response bodies are read loosely in these tests */
+import { noToggles } from "./no-toggles.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { railItems, type CompanyKind } from "@spa/core";
 import { renderToStaticMarkup as render } from "react-dom/server";
@@ -28,8 +29,9 @@ import { seedUsers, type U } from "../../engine/test/prepare-fixtures.ts";
 import { HomeView } from "../components/home-view";
 import { ListingTable, ListingView } from "../components/listings";
 import { ProjectTable, ProjectView } from "../components/projects";
+import { UnitsBrowser } from "../components/units-browser";
 import { WorkFilters } from "../components/work-filters";
-import { loadListing, loadListings, loadProject, loadProjects, type Get } from "../lib/loaders";
+import { loadListing, loadListings, loadProject, loadProjects, loadUnits, type Get } from "../lib/loaders";
 import { parseWorkSearch } from "../lib/work";
 import { COMPLIANCE_WORDS } from "./fixtures";
 
@@ -198,9 +200,19 @@ describe.skipIf(!url)(
       )) {
         const list = (await loadProjects(getAs(key)))!;
         const rec = (await loadProject(getAs(key), projectId))!;
-        const html =
-          render(<ProjectTable projects={list.items} unplaced={list.unplacedUnits} />) +
-          render(<ProjectView project={rec} viewer={role} canWork={role !== "admin"} />);
+        const units = (await loadUnits(getAs(key), new URLSearchParams({ project: projectId })))!;
+        const browser = render(
+          <UnitsBrowser
+            page={units}
+            filters={{}}
+            canWork={role !== "admin"}
+            canAdd={false}
+            nextHref={null}
+            scope={{ projectId, action: `/inventory/projects/${projectId}` }}
+          />,
+        );
+        const view = render(<ProjectView project={rec} viewer={role} units={<p>units</p>} />);
+        const html = render(<ProjectTable projects={list.items} unplaced={list.unplacedUnits} />) + view + browser;
         for (const s of [
           "MV-01",
           "Marina Vista",
@@ -217,7 +229,7 @@ describe.skipIf(!url)(
         for (const s of [IBAN, "AE07", "0331234567890", "Escrow Holder"]) expect(html).not.toContain(s);
         expect(html).not.toMatch(COMPLIANCE_WORDS);
         expect(html).not.toMatch(LEASING);
-        expect(html).not.toMatch(/<(form|button|input)\b/);
+        expect(noToggles(view)).not.toMatch(/<(form|button|input)\b/);
       }
     });
 
@@ -240,7 +252,10 @@ describe.skipIf(!url)(
           expect(table, `${key} ${s}`).toContain(s);
         for (const s of [OWNER, DOC, PASSPORT]) expect(table).not.toContain(s);
         const rec = render(<ListingView listing={(await loadListing(getAs(key), listingId))!} viewer={role} />);
-        for (const s of [DOC, PASSPORT]) expect(rec).not.toContain(s);
+        expect(rec).not.toContain(PASSPORT);
+        // M3 (S77): the document number and its owners are for the sales roles; the admin sees neither.
+        if (role === "admin") expect(rec).not.toContain(DOC);
+        else expect(rec).toContain(DOC);
         if (role === "admin") {
           expect(rec).not.toContain(OWNER);
           expect(rec).toContain("Sellers are shown to sales roles");

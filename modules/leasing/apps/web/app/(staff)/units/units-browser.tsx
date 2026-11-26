@@ -3,6 +3,7 @@
 import { MagnifyingGlassIcon } from "@phosphor-icons/react";
 import Link from "next/link";
 import { type ReactNode, useMemo, useState } from "react";
+import { StaffUnitCard } from "@platform/ui/catalogue/staff-unit-card";
 import { EmptyState } from "@platform/ui/empty-state";
 import { Pill } from "@platform/ui/pill";
 import { Segmented } from "@platform/ui/segmented";
@@ -161,68 +162,43 @@ export function UnitsBrowser({
         <ul className="m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(270px,1fr))] gap-x-5 gap-y-7 p-0">
           {rows.map((u) => (
             <li key={u.id}>
-              <Link
+              <StaffUnitCard
                 href={`/units/${u.id}`}
-                className="group grid gap-3 text-ink! no-underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ink"
-              >
-                <div className="relative aspect-[4/3] overflow-hidden rounded-2xl border border-line bg-raised">
-                  {u.coverPhotoId ? (
-                    <img
-                      src={`/media/units/${u.id}/${u.coverPhotoId}`}
-                      alt={`Unit ${u.code}`}
-                      loading="lazy"
-                      width={520}
-                      height={390}
-                      className="block h-full w-full object-cover transition-transform duration-300 ease-out group-hover:scale-[1.02] motion-reduce:transition-none motion-reduce:group-hover:scale-100"
-                    />
+                imageSrc={u.coverPhotoId ? `/media/units/${u.id}/${u.coverPhotoId}` : undefined}
+                imageAlt={`Unit ${u.code}`}
+                placeholder={<PlanPlaceholder bedrooms={u.bedrooms} label="No photos yet" />}
+                photoCount={u.photoCount}
+                code={u.code}
+                status={<Status value={u.state} />}
+                subtitle={`${u.building}, ${u.community}`}
+                facts={[
+                  bedroomsLabel(u.bedrooms),
+                  u.areaSqft ? `${u.areaSqft.toLocaleString("en-US")} sq ft` : null,
+                  u.furnished === null ? null : u.furnished ? "Furnished" : "Unfurnished",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+                price={
+                  u.lease ? (
+                    <>
+                      <b className="font-semibold text-ink">{aedShort(u.lease.annualRentFils)}</b> / yr, let
+                    </>
+                  ) : u.askingRentFils ? (
+                    <>
+                      <b className="font-semibold text-ink">{aedShort(u.askingRentFils)}</b> / yr
+                    </>
                   ) : (
-                    <PlanPlaceholder bedrooms={u.bedrooms} label="No photos yet" />
-                  )}
-                  {u.photoCount > 1 && (
-                    <span className="absolute bottom-2.5 right-2.5 rounded-full bg-page/90 px-2 py-0.5 font-sans text-xs font-semibold text-ink">
-                      {u.photoCount} photos
-                    </span>
-                  )}
-                </div>
-                <div className="grid gap-0.5 font-sans">
-                  <div className="flex items-center justify-between gap-2">
-                    <b className="min-w-0 truncate text-[15px] font-semibold group-hover:underline">{u.code}</b>
-                    <Status value={u.state} />
-                  </div>
-                  <span className="text-[13px] text-muted">
-                    {u.building}, {u.community}
-                  </span>
-                  <span className="text-[13px] text-muted">
-                    {[
-                      bedroomsLabel(u.bedrooms),
-                      u.areaSqft ? `${u.areaSqft.toLocaleString("en-US")} sq ft` : null,
-                      u.furnished === null ? null : u.furnished ? "Furnished" : "Unfurnished",
-                    ]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </span>
-                  <span className="text-[13px] text-muted">
-                    {u.lease ? (
-                      <>
-                        <b className="font-semibold text-ink">{aedShort(u.lease.annualRentFils)}</b> / yr, let
-                      </>
-                    ) : u.askingRentFils ? (
-                      <>
-                        <b className="font-semibold text-ink">{aedShort(u.askingRentFils)}</b> / yr
-                      </>
-                    ) : (
-                      "No price yet"
-                    )}
-                  </span>
-                  {u.lease && (
-                    <span className="mt-1">
-                      <Pill tone="neutral">
-                        Lease {u.lease.ref}, {stateLabel(u.lease.state).toLowerCase()}
-                      </Pill>
-                    </span>
-                  )}
-                </div>
-              </Link>
+                    "No price yet"
+                  )
+                }
+                chip={
+                  u.lease ? (
+                    <Pill tone="neutral">
+                      Lease {u.lease.ref}, {stateLabel(u.lease.state).toLowerCase()}
+                    </Pill>
+                  ) : undefined
+                }
+              />
             </li>
           ))}
         </ul>

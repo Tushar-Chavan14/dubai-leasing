@@ -17,13 +17,14 @@ import { forbidden, notFound, SpaDomainError, unprocessable } from "./errors.ts"
 import { appendDealEvent } from "./events.ts";
 import { type DocumentStore, MAX_DOCUMENT_BYTES, sniffFile } from "./noc.ts";
 import { addTemplateVersion } from "./templates.ts";
+import { hasRole } from "@spa/core";
 
 /** The words a person reads when a sample holds what looks like a real customer's data (S66). Never repeats the value. */
 export const REAL_DATA_REASON = "Upload a blank or fictional copy";
 
 /** Only an admin writes templates (S45, S66). Checked before a body, a file or an id is looked at. */
-export const needTemplateAdmin = (user: { role: SpaRole }) => {
-  if (user.role !== "admin") throw forbidden("only an admin manages templates");
+export const needTemplateAdmin = (user: { role: SpaRole; roles?: readonly SpaRole[] | undefined }) => {
+  if (!hasRole(user, "admin")) throw forbidden("only an admin manages templates");
 };
 
 const PATTERNS: readonly RegExp[] = [
@@ -62,7 +63,7 @@ export async function uploadTemplateSample(
   deps: { store: DocumentStore; boss: Pick<PgBoss, "send"> },
   templateId: string,
   input: { fileName: string; bytes: Uint8Array; noRealData: unknown },
-  user: { id: string; role: SpaRole },
+  user: { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined },
 ): Promise<UploadResult> {
   needTemplateAdmin(user);
   const tid = idParam.safeParse(templateId);

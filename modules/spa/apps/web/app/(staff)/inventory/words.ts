@@ -9,6 +9,7 @@ export const errorWords = (code: string): string =>
 export const savedWords = (code: string): string | null =>
   ({
     project: "Project added.",
+    updated: "Project saved.",
     building: "Building added.",
     unit: "Unit added.",
     draft: "Saved as a draft version. Publish it when it is ready.",

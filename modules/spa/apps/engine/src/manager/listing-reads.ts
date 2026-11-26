@@ -1,12 +1,28 @@
-import { diffDays, type CalendarDate } from "@platform/kernel/dates";
-import { type CompanyKind, type ListingState, type SpaRole } from "@spa/core";
-import { listingParties, listingSignatures, listings, offers, parties, spaUsers, type SpaDb } from "@spa/db";
-import { and, desc, eq, inArray, type SQL, sql } from "drizzle-orm";
+import { diffDays, toDubaiDate, type CalendarDate } from "@platform/kernel/dates";
+import { type ListingEvent, listingMachine, type ListingState, type SpaRole, stageKey, stageLabel, UNIT_TYPES, hasAnyRole, rolesOf } from "@spa/core";
+import {
+  dealEvents,
+  deals,
+  type ListingDocumentKind,
+  listingDocuments,
+  listingOwners,
+  listingParties,
+  listingSignatures,
+  listings,
+  offers,
+  parties,
+  spaApprovals,
+  spaUsers,
+  type SpaDb,
+} from "@spa/db";
+import { and, desc, eq, inArray, isNotNull, type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { SpaContext } from "./context.ts";
-import { forbidden, notFound } from "./errors.ts";
-import { CATALOGUE_READERS } from "./inventory.ts";
-import { companyKind } from "./parties.ts";
+import { notFound } from "./errors.ts";
+import { requireListings } from "./listing-access.ts";
+import { activityOf } from "./inventory-activity.ts";
+import { coverMedia } from "./media-cover.ts";
+import { listMedia } from "./media.ts";
 import { Cursor, cursorOf, Limit, paged } from "./reads.ts";
 
 /**
@@ -14,21 +30,22 @@ import { Cursor, cursorOf, Limit, paged } from "./reads.ts";
  * brokerage and `both` companies (S12); a developer's company has none. The table carries no owner name and no
  * document number; the record shows the sellers to the sales roles only. No compliance word is ever written here.
  */
-type Person = { id: string; role: SpaRole };
+type Person = { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined };
 const SALES_ROLES: readonly SpaRole[] = ["sales_officer", "sales_manager", "sales_admin"];
 
-/** Reads: the catalogue readers. Writes (a draft): the three sales roles. A developer company has no listings, whoever asks. */
-export async function requireListings(db: SpaDb, user: Person, mode: "read" | "write"): Promise<CompanyKind> {
-  const kind = await companyKind(db);
-  if (kind === "developer") throw forbidden("this company keeps inventory, not listings");
-  const roles = mode === "write" ? SALES_ROLES : CATALOGUE_READERS;
-  if (!roles.includes(user.role))
-    throw forbidden(mode === "write" ? "only sales roles add a listing" : "you can't read the listings");
-  return kind;
-}
+export { requireListings };
 
+const opt = <T extends z.ZodType>(t: T) => t.optional().catch(undefined);
+/** Filters come from the address, so a value that isn't understood is dropped, never an error and never SQL. */
 export const ListingsQuery = z.object({
   scope: z.enum(["mine", "all"]).default("all"),
+  state: opt(z.enum(["DRAFT", "VERIFIED", "ACTIVE", "PUBLISHED", "UNDER_OFFER", "SOLD", "WITHDRAWN"])),
+  community: opt(z.string().trim().min(1).max(120)),
+  type: opt(z.enum(UNIT_TYPES)),
+  beds: opt(z.coerce.number().int().min(0).max(20)),
+  minPriceFils: opt(z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER)),
+  maxPriceFils: opt(z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER)),
+  agent: opt(z.uuid()),
   limit: Limit,
   cursor: Cursor,
 });
@@ -43,7 +60,25 @@ const STATE_LABELS: Record<ListingState, string> = {
   SOLD: "Sold",
   WITHDRAWN: "Withdrawn",
 };
-const OFFER_LABELS = { SENT: "Open", ACCEPTED: "Accepted", REJECTED: "Rejected", EXPIRED: "Expired" } as const;
+export const LISTING_DOCUMENT_LABELS: Record<ListingDocumentKind, string> = {
+  title_deed: "Title deed",
+  oqood: "Oqood certificate",
+  listing_agreement: "Signed listing agreement",
+  permit: "Advertising permit",
+};
+/** The one forward step each state offers on the record (S77); the later steps move with an offer or a deal. */
+const NEXT_STEP: Partial<Record<ListingState, { event: ListingEvent; label: string }>> = {
+  DRAFT: { event: "VERIFY", label: "Verify the listing" },
+  VERIFIED: { event: "ACTIVATE", label: "Activate" },
+  ACTIVE: { event: "PUBLISH", label: "Publish the page" },
+};
+const OFFER_LABELS = {
+  SENT: "Open",
+  ACCEPTED: "Accepted",
+  REJECTED: "Rejected",
+  EXPIRED: "Expired",
+  WITHDRAWN: "Withdrawn",
+} as const;
 /** Warn this many days before the permit's last valid day (design §4.7). */
 export const PERMIT_WARNING_DAYS = 7;
 
@@ -114,6 +149,15 @@ export async function listListings(ctx: SpaContext, user: Person, q: ListingsQue
   const cur = cursorOf(q.cursor);
   const where: (SQL | undefined)[] = [];
   if (q.scope === "mine") where.push(eq(listings.agentUserId, user.id));
+  if (q.community) where.push(eq(listings.community, q.community));
+  if (q.type) where.push(eq(listings.unitType, q.type));
+  if (q.beds !== undefined) where.push(eq(listings.bedrooms, q.beds));
+  if (q.minPriceFils !== undefined) where.push(sql`${listings.askingPriceFils} >= ${q.minPriceFils}`);
+  if (q.maxPriceFils !== undefined) where.push(sql`${listings.askingPriceFils} <= ${q.maxPriceFils}`);
+  if (q.agent) where.push(eq(listings.agentUserId, q.agent));
+  // The status chips count what the other filters leave, whatever status is chosen.
+  const countWhere = [...where];
+  if (q.state) where.push(eq(listings.state, q.state));
   if (cur) where.push(sql`(${listings.createdAt}, ${listings.id}) < (${cur.at}::timestamptz, ${cur.id}::uuid)`);
   const rows = await db
     .select()
@@ -122,12 +166,40 @@ export async function listListings(ctx: SpaContext, user: Person, q: ListingsQue
     .orderBy(desc(listings.createdAt), desc(listings.id))
     .limit(q.limit + 1);
   const p = paged(rows, q.limit, (r) => ({ at: r.createdAt, id: r.id }));
-  if (!p.rows.length) return { items: [], nextCursor: null };
+  const [communityRows, typeRows, bedRows, agentRows, stateRows] = await Promise.all([
+    db.selectDistinct({ v: listings.community }).from(listings).where(isNotNull(listings.community)),
+    db.selectDistinct({ v: listings.unitType }).from(listings).where(isNotNull(listings.unitType)),
+    db.selectDistinct({ v: listings.bedrooms }).from(listings).where(isNotNull(listings.bedrooms)),
+    db
+      .selectDistinct({ id: spaUsers.id, name: spaUsers.name })
+      .from(listings)
+      .innerJoin(spaUsers, eq(spaUsers.id, listings.agentUserId))
+      .orderBy(spaUsers.name),
+    db
+      .select({ state: listings.state, n: sql<number>`count(*)::int` })
+      .from(listings)
+      .where(and(...countWhere))
+      .groupBy(listings.state),
+  ]);
+  const facets = {
+    communities: communityRows.map((r) => r.v!).toSorted(),
+    types: typeRows.map((r) => r.v!).toSorted(),
+    beds: bedRows.map((r) => r.v!).toSorted((a, b) => a - b),
+    agents: agentRows,
+    states: Object.fromEntries(stateRows.map((r) => [r.state, r.n])) as Partial<Record<ListingState, number>>,
+  };
+  if (!p.rows.length) return { items: [], nextCursor: null, facets };
   const ids = p.rows.map((r) => r.id);
-  const [sellers, offerBy] = await Promise.all([sellersOf(db, ids), latestOffers(db, ids)]);
+  const [sellers, offerBy, covers] = await Promise.all([
+    sellersOf(db, ids),
+    latestOffers(db, ids),
+    coverMedia(db, "listing", ids),
+  ]);
+  const agentNames = new Map(agentRows.map((a) => [a.id, a.name]));
   const today = ctx.clock.today();
   return {
     nextCursor: p.nextCursor,
+    facets,
     items: p.rows.map((l) => {
       const permit = permitOf(l, today);
       const o = offerBy.get(l.id);
@@ -136,6 +208,13 @@ export async function listListings(ctx: SpaContext, user: Person, q: ListingsQue
         ref: l.ref,
         title: l.title ?? l.ref,
         community: l.community,
+        bedrooms: l.bedrooms,
+        bathrooms: l.bathrooms,
+        sizeSqft: l.sizeSqft,
+        unitType: l.unitType,
+        view: l.view,
+        agent: l.agentUserId ? (agentNames.get(l.agentUserId) ?? null) : null,
+        coverMediaId: covers.get(l.id) ?? null,
         sellerKind: sellerKindOf(sellers.filter((s) => s.listingId === l.id)),
         askingPriceFils: l.askingPriceFils,
         state: l.state,
@@ -173,6 +252,74 @@ export async function getListing(ctx: SpaContext, user: Person, listingId: strin
   const [agent] = l.agentUserId
     ? await db.select({ name: spaUsers.name }).from(spaUsers).where(eq(spaUsers.id, l.agentUserId))
     : [];
+  const sales = hasAnyRole(user, SALES_ROLES);
+  const step = NEXT_STEP[l.state];
+  const transition = step && listingMachine.transitions.find((t) => t.from === l.state && t.event === step.event);
+  const guard = transition?.guard?.(await ctx.facts.listing({ db }, l, today));
+  const next =
+    sales && step ? { event: step.event, label: step.label, reasons: guard && !guard.ok ? guard.reasons : [] } : null;
+  const actions = !sales
+    ? []
+    : l.state === "PUBLISHED"
+      ? (["UNPUBLISH", "WITHDRAW"] as const)
+      : l.state === "DRAFT" || l.state === "VERIFIED" || l.state === "ACTIVE"
+        ? (["WITHDRAW"] as const)
+        : [];
+  const documents = sales
+    ? (
+        await db
+          .select()
+          .from(listingDocuments)
+          .where(eq(listingDocuments.listingId, l.id))
+          .orderBy(listingDocuments.uploadedAt, listingDocuments.id)
+      ).map((d) => ({
+        id: d.id,
+        kind: d.kind,
+        kindLabel: LISTING_DOCUMENT_LABELS[d.kind],
+        fileName: d.fileName,
+        uploadedAt: d.uploadedAt.toISOString(),
+      }))
+    : null;
+  const owners = sales
+    ? (
+        await db
+          .select({ name: listingOwners.nameAsOnDocument })
+          .from(listingOwners)
+          .where(eq(listingOwners.listingId, l.id))
+          .orderBy(listingOwners.order)
+      ).map((o) => o.name)
+    : null;
+  const [waiting] = sales
+    ? await db
+        .select({ id: spaApprovals.id })
+        .from(spaApprovals)
+        .where(
+          and(
+            eq(spaApprovals.gate, "seller_verification"),
+            eq(spaApprovals.entityKind, "listing"),
+            eq(spaApprovals.entityId, l.id),
+            eq(spaApprovals.status, "pending"),
+          ),
+        )
+        .limit(1)
+    : [];
+  // The newest deal on this listing that isn't over (read only here; the deal itself is worked on its own screen).
+  const [dealRow] = await db
+    .select({ id: deals.id, ref: deals.ref, state: deals.state })
+    .from(deals)
+    .where(and(eq(deals.listingId, l.id), sql`${deals.state} not in ('HANDED_OVER', 'COMPLETED', 'CANCELLED')`))
+    .orderBy(desc(deals.createdAt))
+    .limit(1);
+  let lastUnpublish: { on: string; reason: string } | null = null;
+  if (l.state === "ACTIVE") {
+    const [ev] = await db
+      .select({ at: dealEvents.at, payload: dealEvents.payload })
+      .from(dealEvents)
+      .where(and(eq(dealEvents.entityKind, "listing"), eq(dealEvents.entityId, l.id), eq(dealEvents.type, "UNPUBLISH")))
+      .orderBy(desc(dealEvents.at), desc(dealEvents.id))
+      .limit(1);
+    if (ev && sales) lastUnpublish = { on: toDubaiDate(ev.at), reason: String(ev.payload.reason ?? "") };
+  }
   return {
     id: l.id,
     ref: l.ref,
@@ -180,18 +327,48 @@ export async function getListing(ctx: SpaContext, user: Person, listingId: strin
     community: l.community,
     description: l.description,
     bedrooms: l.bedrooms,
+    bathrooms: l.bathrooms,
     sizeSqft: l.sizeSqft,
+    unitType: l.unitType,
+    floor: l.floor,
+    view: l.view,
+    parkingSpaces: l.parkingSpaces,
+    furnished: l.furnished,
     askingPriceFils: l.askingPriceFils,
     state: l.state,
     stateLabel: STATE_LABELS[l.state],
     agent: agent?.name ?? null,
+    agentUserId: l.agentUserId,
     sellerKind: sellerKindOf(sellers),
-    sellers: SALES_ROLES.includes(user.role)
+    sellers: sales
       ? sellers
           .toSorted((a, b) => a.order - b.order)
-          .map((s) => ({ name: s.name, kind: s.kind, shareBps: s.shareBps, signed: signed.has(s.partyId) }))
+          .map((s) => ({
+            partyId: s.partyId,
+            name: s.name,
+            kind: s.kind,
+            shareBps: s.shareBps,
+            signed: signed.has(s.partyId),
+          }))
       : null,
-    ownership: l.ownershipKind ? { kind: l.ownershipKind, matched: l.ownershipMatched } : null,
+    // The document's number and the names printed on it go to the sales roles only.
+    ownership: l.ownershipKind
+      ? {
+          kind: l.ownershipKind,
+          matched: l.ownershipMatched,
+          ...(sales ? { ref: l.ownershipRef, owners, waitingForManager: Boolean(waiting) } : {}),
+        }
+      : null,
+    media: await listMedia(db, { kind: "listing", id: l.id }),
+    // A reason is a staff member's own sentence: the sales roles read it, nobody else.
+    activity: (await activityOf(db, "listing", l.id)).map((a) => (sales ? a : { ...a, note: null })),
+    documents,
+    next,
+    actions,
+    lastUnpublish,
+    openDeal: dealRow
+      ? { id: dealRow.id, ref: dealRow.ref, stageLabel: stageLabel(stageKey(dealRow.state, rolesOf(user))) }
+      : null,
     permit,
     page: pageOf(l, permit),
     offer: offer
@@ -204,4 +381,14 @@ export async function getListing(ctx: SpaContext, user: Person, listingId: strin
         }
       : null,
   };
+}
+
+/** The agents a listing can be given to: active users with a sales role. Write roles only (they fill the form). */
+export async function listAgents(ctx: SpaContext, user: Person): Promise<{ id: string; name: string }[]> {
+  await requireListings(ctx.database.db, user, "write");
+  return ctx.database.db
+    .select({ id: spaUsers.id, name: spaUsers.name })
+    .from(spaUsers)
+    .where(and(eq(spaUsers.active, true), inArray(spaUsers.role, [...SALES_ROLES])))
+    .orderBy(spaUsers.name);
 }

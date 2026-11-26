@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { noToggles } from "./no-toggles.ts";
 import { renderToStaticMarkup as render } from "react-dom/server";
 import { ActivityLog } from "../components/activity-log";
 import { Amount } from "../components/amount";
@@ -62,7 +63,7 @@ describe("WaitingBanner", () => {
     expect(html).toContain("Legal approval");
     expect(html).toContain("Legal");
     expect(html).toContain("since 15 Nov 2026");
-    expect(html).not.toMatch(/<(button|form|input)/);
+    expect(noToggles(html)).not.toMatch(/<(button|form|input)/);
   });
   test("a deal that waits for the viewer says so", () => {
     const html = render(

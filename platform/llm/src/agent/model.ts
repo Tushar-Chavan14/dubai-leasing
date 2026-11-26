@@ -27,10 +27,15 @@ export function ollamaChatModel(cfg: { url: string; model: string; numPredict?: 
   });
   return {
     name: cfg.model,
-    async respond(messages: BaseMessage[], tools: ToolSpec[] | null, onToken, signal): Promise<ModelTurn> {
+    async respond(messages: BaseMessage[], tools: ToolSpec[] | null, onToken, signal, opts): Promise<ModelTurn> {
       const runnable = tools?.length ? chat.bindTools(tools) : chat;
       let acc: AIMessageChunk | undefined;
-      for await (const chunk of await runnable.stream(messages, signal ? { signal } : {})) {
+      const call = {
+        ...(signal ? { signal } : {}),
+        // Structured output only on a turn with no tools (a schema would stop tool calls).
+        ...(opts?.format && !tools?.length ? { format: opts.format } : {}),
+      };
+      for await (const chunk of await runnable.stream(messages, call)) {
         const t = textOf(chunk.content);
         if (t) onToken(t);
         acc = acc ? acc.concat(chunk) : chunk;

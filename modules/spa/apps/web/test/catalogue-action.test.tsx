@@ -18,6 +18,10 @@ const redirects: string[] = [];
 const revalidated: string[] = [];
 mock.module("next/headers", () => ({ cookies: async () => ({ get: () => ({ value: session }) }) }));
 mock.module("next/navigation", () => ({
+  usePathname: () => "/",
+  useSearchParams: () => new URLSearchParams(),
+  // The shared mocks are global: a component that reads the router (the M5 forms) must find one here too.
+  useRouter: () => ({ push() {}, refresh() {} }),
   redirect: (to: string) => {
     redirects.push(to);
     throw new Error(`NEXT_REDIRECT ${to}`);
@@ -27,7 +31,11 @@ mock.module("next/navigation", () => ({
   },
 }));
 mock.module("next/cache", () => ({ revalidatePath: (p: string) => revalidated.push(p) }));
-mock.module("../lib/env", () => ({ engineUrl: () => "http://engine.test", sessionCookie: () => "spa_session" }));
+mock.module("../lib/env", () => ({
+  engineUrl: () => "http://engine.test",
+  sessionCookie: () => "spa_session",
+  webEnv: () => ({ SPA_PORTAL_URL: "http://portal.test" }),
+}));
 
 describe.skipIf(!url)("C32: the Inventory server actions", () => {
   let database: SpaDatabase;
@@ -72,7 +80,7 @@ describe.skipIf(!url)("C32: the Inventory server actions", () => {
   test("a sales role's forged form changes nothing: the engine refuses and the page shows its fixed words", async () => {
     asUser("officer");
     expect(await run("createProject", { code: "FORGED", name: "Forged", role: "admin" })).toBe(
-      "/inventory?error=refused",
+      "/inventory/projects/new?error=refused",
     );
     expect((await database.db.select().from(projects)).length).toBe(0);
     expect(revalidated).toEqual([]);
@@ -80,7 +88,7 @@ describe.skipIf(!url)("C32: the Inventory server actions", () => {
 
   test("a bad form is refused before any request", async () => {
     asUser("admin");
-    expect(await run("createProject", { code: "", name: "x" })).toBe("/inventory?error=invalid");
+    expect(await run("createProject", { code: "", name: "x" })).toBe("/inventory/projects/new?error=invalid");
     expect((await database.db.select().from(projects)).length).toBe(0);
   });
 
@@ -93,31 +101,33 @@ describe.skipIf(!url)("C32: the Inventory server actions", () => {
       templateKind: "spa",
     });
     const [p] = await database.db.select().from(projects);
-    expect(to).toBe(`/inventory/${p!.id}?saved=project`);
+    expect(to).toBe(`/inventory/projects/${p!.id}?saved=project`);
     expect(revalidated).toContain("/inventory");
-    expect(await run("createProject", { code: "MV-01", name: "Again" })).toBe("/inventory?error=exists");
+    expect(await run("createProject", { code: "MV-01", name: "Again" })).toBe("/inventory/projects/new?error=exists");
 
     expect(await run("addBuilding", { projectId: p!.id, code: "A", name: "Tower A" })).toBe(
-      `/inventory/${p!.id}?saved=building#buildings`,
+      `/inventory/projects/${p!.id}?saved=building#buildings`,
     );
     const [b] = await database.db.select().from(buildings);
     expect(await run("addUnit", { projectId: p!.id, buildingId: b!.id, code: "U-101" })).toBe(
-      `/inventory/${p!.id}?saved=unit#units`,
+      `/inventory/projects/${p!.id}?saved=unit#units`,
     );
     const [u] = await database.db.select().from(units);
     expect(u!.buildingId).toBe(b!.id);
 
     expect(await run("createPriceList", { projectId: p!.id, [`price_${u!.id}`]: "1,500,000" })).toBe(
-      `/inventory/${p!.id}?saved=draft#price-lists`,
+      `/inventory/projects/${p!.id}?saved=draft#price-lists`,
     );
     const [l] = await database.db.select().from(priceLists);
     expect(l!.publishedAt).toBeNull();
     expect(await run("publishPriceList", { projectId: p!.id, id: l!.id })).toBe(
-      `/inventory/${p!.id}?saved=published#price-lists`,
+      `/inventory/projects/${p!.id}?saved=published#price-lists`,
     );
     expect((await database.db.select().from(priceLists))[0]!.publishedAt).not.toBeNull();
     // publishing twice is refused with the fixed "exists" word
-    expect(await run("publishPriceList", { projectId: p!.id, id: l!.id })).toBe(`/inventory/${p!.id}?error=exists`);
+    expect(await run("publishPriceList", { projectId: p!.id, id: l!.id })).toBe(
+      `/inventory/projects/${p!.id}?error=exists`,
+    );
   });
 
   test("a price in the form that isn't money refuses the whole form before any request", async () => {
@@ -126,7 +136,7 @@ describe.skipIf(!url)("C32: the Inventory server actions", () => {
     const [u] = await database.db.select().from(units);
     const before = (await database.db.select().from(priceLists)).length;
     expect(await run("createPriceList", { projectId: p!.id, [`price_${u!.id}`]: "12 million" })).toBe(
-      `/inventory/${p!.id}?error=invalid`,
+      `/inventory/projects/${p!.id}?error=invalid`,
     );
     expect((await database.db.select().from(priceLists)).length).toBe(before);
   });

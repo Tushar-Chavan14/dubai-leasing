@@ -548,6 +548,34 @@ shown side by side on the approval and contract panel. Unresolved conflicts lead
 read, labelled unit lines (Description, Furnishing, Bathrooms, Area, Parking, Floor, Property type, Usage) become
 blanks mapped to the unit's data-sheet keys (`unitDescription` is new).
 
+**A small model never stops the contract (D77).** The answer is parsed leniently but still with Zod: the outermost
+`{…}` is taken from prose or a fence, items that don't fit are dropped one by one (over-long quotes and reasons cut
+to their limits), and an object with none of the answer's keys (e.g. `{"error": ""}`) is no answer. No valid answer
+after one retry → the model's output is discarded and the contract is prepared by code only: fields from the
+records, the starting clauses, no flags, `reviewed: false`, and the `final_contract` reasons start with "No AI review
+ran".
+Failed code checks still → `needs_human`; a model error still → `failed` (the job retries). Separately, the `template`
+context marks a paragraph `particulars` when it prints no company clause, mentions the unit (type, rooms, size) and
+has no `LEGAL_WORDS` but the use words, and no money word (`unitParticulars`; "No." labels allowed). Where no accepted rewrite covers it, `codeUnitRewrite`
+(no model) copies the unit's type word (apartment, villa, shop, office, …; flat = apartment) and its use
+(`residential`/`commercial` before "use"/"purposes", from `propertyUsage`) into it; blanks and every other word stay.
+Joined types or uses and negated uses are left alone. These rewrites go through the same `rewrites` path and
+side-by-side view; a conflict flag is dropped only when its quote names a word code changed (listed in the reasons).
+
+**Case brief and confidence (D78).** The run opens with a code-built brief: emirate, unit type, use and facts, the
+clauses, and `unitDisagreements` (type word, use, count, or a feature missing from the unit's description, per
+rewritable or particulars paragraph) with each paragraph's wording as data. Particulars may be reworded by the model
+under `checkRewrite`'s use and type checks. Rewrites of paragraphs with no disagreement are not used. An answer that
+leaves a disagreement unfixed is sent back once; nudged turns run without tools and with the answer's JSON schema as
+Ollama `format` (`AgentModel.respond` `opts.format`). Confidence = disagreements fixed by accepted model rewrites ÷
+disagreements; `codeUnitRewrite` runs only below 0.3 (`CODE_REWORD_BELOW`). Unfixed disagreements become conflict flags.
+
+**Titles, leftover type words, clause ids (D79).** `printedTemplate` adds the title and headings that pass
+`headingWithUse` as `heading` paragraphs (only the use word may change) and lists `typeBlanks` (blanks mapped to
+`propertySubtype`). A type word right after one is a disagreement and is stripped from any rewording
+(`normalizeRewrite`). `templateContractBlocks` prints a rewritten title or heading (`rewritten` keys). `company_clauses`
+returns only clauses not in the template. Unknown clause ids are dropped and listed, not `needs_human`.
+
 ### Contract template and customer agent (slice 3, D35, D36)
 
 - **`contract_template`** (`modules/leasing/packages/helpers/src/contract-template`): reads a sample contract (PDF
@@ -618,7 +646,7 @@ flowchart LR
 | Complaint Triage | category, urgency 0–3, safety, legal threat, system instruction, language | 2–3 sentence acknowledgement from the category and urgency band only (never the tenant's text), post-checked; fixed EN/AR template on any doubt (D28) | — | routing (escalate / review / ticket), ticket due hours from policy |
 | Contract template (D35) | - | clause proposals from a sample contract (`CHAT_MODEL`; text only, the quote must appear in the document) | `VISION_MODEL` only if a page renderer is wired (not yet) | PDF text, caps, quote guard, `hasValues`, approval, `cc:` ids |
 | Contract structure (D38) | - | headings and blank-to-field proposals from a sample (`CONTRACT_AI_MODEL`, else `CHAT_MODEL`), validated by code | - | wording copy, blanks, look, mapping types, approval problems, render |
-| Voice (D39) | - | speech to text (whisper.cpp `ggml-base.bin` via `VOICE_URL`, local) | - | type, size and length caps, masking, nothing stored |
+| Voice (D39) | - | speech to text (whisper.cpp `ggml-small.bin` via `VOICE_URL`, local) | - | type, size and length caps, masking, nothing stored |
 | Customer agent (D36) | - | tool loop for web chat free text (`CUSTOMER_AGENT_MODEL`, else `CHAT_MODEL`; local Ollama, tool calling) | - | every tool body, identity, choice cards, value post-check, deadline, fixed fallbacks |
 | Renewal & Notice | reply class | — | — | cap, dates, template |
 | Exit & Deposit | — | — | photo differences per room, move-in vs move-out, price-list ids only, suggestions an officer confirms (`exit_compare`, D29) | statement: price list × quantity, capped at the deposit, refund, approval reasons (`exit_deposit`) |
@@ -915,10 +943,10 @@ A microphone button in the public chat and the staff copilot records at most 30 
 or `audio/ogg`, 2 MB). The web routes (`/api/public/voice`, `/api/voice/transcribe`) relay to the
 engine (`/channel/web/voice`, `/api/voice/transcribe`), refusing a missing `Content-Length` (411)
 and reading the body as a stream cut off past the cap (413). The engine sends the audio to a
-local whisper.cpp `whisper-server` (`VOICE_URL`, loopback only, model `ggml-base.bin`; D46); the bytes stay in
+local whisper.cpp `whisper-server` (`VOICE_URL`, loopback only, model `ggml-small.bin`; D46); the bytes stay in
 memory for the call and are never stored. Without `VOICE_URL` voice input answers "Voice input isn't set up".
 Setup: `bun run voice:setup` (clones and builds whisper.cpp into `data/whisper.cpp`, downloads
-`ggml-base.bin`; needs git, cmake, a C++ compiler and ffmpeg), then `bun run voice` (starts `whisper-server` on the
+`ggml-small.bin`; needs git, cmake, a C++ compiler and ffmpeg), then `bun run voice` (starts `whisper-server` on the
 loopback host and port of `VOICE_URL`, language auto-detect, temporary files in `/dev/shm`). The microphone shows
 only when the engine has `VOICE_URL` (`/health` → `voice`). The
 reply is the PII-masked transcript, which fills the message box: the person reads and sends it as
@@ -986,7 +1014,7 @@ Officer reply: staff app → /api/conversations/:id/reply → TelegramSender →
   approved asking rent, formatted by code.
 - **Search and slots are pure code** (`availability.ts`, shared with the copilot). Residential
   units LISTED with a settled price (inside the company range, or approved) and no contracted
-  lease, cheapest first, five at most. Slots (`viewing-slots.ts`): policy days and
+  lease, cheapest first, five at most. Slots (`viewing-slots.ts`; `freeViewingSlots` now lives in `@platform/kernel/viewing-slots` and this file re-exports it, no behaviour change; SPA uses it too): policy days and
   hours in Asia/Dubai, `viewingSlotMinutes`, `viewingLeadHours` ahead, up to
   `viewingHorizonDays`; any booked viewing on the unit (staff or Telegram) takes the slots it
   overlaps.
@@ -1301,7 +1329,7 @@ export interface CopilotTool<I extends z.ZodTypeAny, O extends z.ZodTypeAny> {
 | `propose` (registration settings, D53) | `save_registration_settings` (admin) | D45 pattern: applied now only if the user's own latest message asks, else a Confirm card | `suggest`: **yes** |
 | `read` (settings, D45) | `get_company_settings` (all staff) | `GET /api/copilot/company-settings?company=` | No |
 | `read` (KYC settings, D50) | `get_kyc_config` (all staff) | `GET /api/copilot/kyc-config?company=` (the open draft first) | No |
-| `read` (decision card, D48) | `show_decision` (all staff; the card is blocked for roles that can't decide) | `GET /api/copilot/records`, `GET /api/approvals?status=pending`; the card's buttons call `POST /api/approvals/:id/decide`, `POST /api/applications/:id/viewing-outcome` and `POST /api/applications/:id/reservation` as the user. D53 adds the actions `registration` (record a manual registration; fee prefill from the engine, cleared if untrusted text was seen; the certificate upload stays on the lease page) and `registration_rejected`, which post to `POST /api/leases/:id/registration/record|rejected` | No (the user's click decides) |
+| `read` (decision card, D48) | `show_decision` (all staff; the card is blocked for roles that can't decide) | `GET /api/copilot/records`, `GET /api/approvals?status=pending`; the card's buttons call `POST /api/approvals/:id/decide`, `POST /api/applications/:id/viewing-outcome` and `POST /api/applications/:id/reservation` as the user. D53 adds the actions `registration` (record a manual registration; fee prefill from the engine, cleared if untrusted text was seen; the card has the same certificate upload as the lease page, posting the PDF from the browser to `POST /api/leases/:id/registration/read-certificate` and `/record`; it never reaches the model. A hand registration waiting for the portal gets an "Upload certificate" quick action on its record card, which only asks for this card) and `registration_rejected`, which post to `POST /api/leases/:id/registration/record|rejected` | No (the user's click decides) |
 | `propose` (settings, D45; KYC D50) | `add_contract_clause`, `save_rent_rule`, `save_contract_rule`, `edit_kyc_config` (admin), `save_sri_value` (admin, leasing manager) | `explicit`: `POST /api/copilot/config-changes`, applied now only if `userQuote` is in the user's latest message; `suggest`: a `config_change` proposal | `explicit`: no (the user's own words asked for it); `suggest`: **yes** |
 | `propose` (accept a suggested clause, D57) | `add_suggested_clause` (admin) | `POST /api/copilot/config-changes` with `mode: accept_suggestion`: the engine adds the one pending `add_clause` suggestion from the copilot's previous answer (or the one whose title the user names), unchanged, only if the user's latest message is a plain acceptance ("add it"; acceptance words only, no question, ≤ 80 chars) containing `userQuote`, that answer showed the wording, the clause has no amount, date or period, and no untrusted text was read in either turn | no: the user's own "add it" accepts the wording they were shown (audited `COPILOT_CONFIG_CHANGED`, `acceptedSuggestion`) |
 | `propose` | `propose_application` (D25), `propose_viewing_invite`, `propose_request_documents`, `propose_resend_signing_link`, `propose_prepare_contract` (leasing roles; D42: prepare only, the contract still waits at `final_contract`), `create_task` (leasing roles), `propose_approval` (gates `formal_reminder`: leasing roles and finance; `vacate_notice`: leasing roles) (D26) | Stores a proposal; on Confirm the normal engine route creates the application, the task or the pending approval, as the user | **Yes**: the user clicks Confirm in the chat |

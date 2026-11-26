@@ -8,8 +8,9 @@ import type { SpaContext } from "./context.ts";
 import { conflict, forbidden, unprocessable } from "./errors.ts";
 import { appendDealEvent } from "./events.ts";
 import { POLICY_ENTITY } from "./policy.ts";
+import { hasAnyRole, hasRole } from "@spa/core";
 
-type Person = { id: string; role: SpaRole };
+type Person = { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined };
 /** Only an admin enters an escrow account; finance reads it (S55). */
 const READ_ROLES: readonly SpaRole[] = ["admin", "finance"];
 
@@ -36,7 +37,7 @@ export async function currentEscrowAccount(db: SpaDb, projectCode: string | null
  * carries only a masked IBAN.
  */
 export async function setEscrowAccount(ctx: SpaContext, input: unknown, user: Person): Promise<{ id: string }> {
-  if (user.role !== "admin") throw forbidden("only an admin enters an escrow account");
+  if (!hasRole(user, "admin")) throw forbidden("only an admin enters an escrow account");
   const parsed = EscrowInput.safeParse(input);
   if (!parsed.success)
     throw unprocessable(
@@ -89,7 +90,7 @@ export async function setEscrowAccount(ctx: SpaContext, input: unknown, user: Pe
 
 /** Every escrow account version, newest first (admin and finance). */
 export async function listEscrowAccounts(ctx: SpaContext, user: Person) {
-  if (!READ_ROLES.includes(user.role)) throw forbidden("you can't read the escrow accounts");
+  if (!hasAnyRole(user, READ_ROLES)) throw forbidden("you can't read the escrow accounts");
   const rows = await ctx.database.db
     .select()
     .from(projectEscrowAccounts)

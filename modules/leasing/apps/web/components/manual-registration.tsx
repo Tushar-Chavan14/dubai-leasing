@@ -146,25 +146,34 @@ export function ManualGuide({ leaseId, reg }: { leaseId: string; reg: ManualRegi
   );
 }
 
-/** Record what the portal answered: the reference and certificate, or the rejection reasons. */
-export function ManualRecordForms({
+/**
+ * The record-registration form with the certificate upload (D53). Used on the lease page and in the copilot's decision
+ * card: both post to the same route as the signed-in user. Reading the PDF only prefills; the officer still submits.
+ */
+export function RecordRegistrationForm({
   leaseId,
   submissionId,
-  reg,
   today,
+  referenceLabel = "Reference from the portal",
+  referenceExample = "As shown in the portal",
+  initial = {},
+  bare = false,
+  onRecorded,
 }: {
   leaseId: string;
   submissionId: string;
-  reg: ManualRegistration;
   today: string;
+  referenceLabel?: string;
+  referenceExample?: string;
+  initial?: { reference?: string; issuedOn?: string; fee?: string };
+  /** Without its own border and title (inside a card that already has them). */
+  bare?: boolean;
+  onRecorded?: () => void;
 }) {
-  const router = useRouter();
   const [rec, setRec] = useState<RegistrationActionState & { busy?: boolean }>({});
-  const [rej, rejAction] = useActionState<RegistrationActionState, FormData>(recordRegistrationRejected, {});
-  const feeFils = reg.pack.fee.feeFils;
-  const [reference, setReference] = useState("");
-  const [issuedOn, setIssuedOn] = useState("");
-  const feeDefault = feeFils === null ? "" : (feeFils / 100).toFixed(2);
+  const [reference, setReference] = useState(initial.reference ?? "");
+  const [issuedOn, setIssuedOn] = useState(initial.issuedOn ?? "");
+  const feeDefault = initial.fee ?? "";
   const [fee, setFee] = useState(feeDefault);
   /** Fields the last certificate read filled in (shown as "from the certificate" until edited). */
   const [filledFrom, setFilledFrom] = useState<Set<string>>(new Set());
@@ -243,82 +252,110 @@ export function ManualRecordForms({
     setFee(feeDefault);
     setFilledFrom(new Set());
     setReading({ state: "idle" });
-    router.refresh();
+    onRecorded?.();
   }
 
   return (
+    <form onSubmit={onRecord} className={bare ? "grid gap-2.5" : "grid gap-3 rounded-xl border border-line p-3.5"}>
+      {!bare && <b className="text-sm font-semibold">Record registration</b>}
+      <input type="hidden" name="submissionId" value={submissionId} />
+      <label className={`${FIELD} rounded-lg border border-dashed border-line p-3`}>
+        <span className={LABEL}>Upload the certificate (PDF, up to 10 MB)</span>
+        <span className="text-[13px] text-muted">
+          We read it and fill in the reference, the issue date and the fee for you, then check it against the lease. You
+          can still type the details yourself.
+        </span>
+        <input className={INPUT} type="file" name="certificate" accept="application/pdf,.pdf" onChange={onPick} />
+      </label>
+      <CertificateReading r={reading} />
+      <label className={FIELD}>
+        <span className={LABEL}>
+          {referenceLabel}
+          {filledFrom.has("reference") && <span className="font-normal text-muted"> · from the certificate</span>}
+        </span>
+        <input
+          className={INPUT}
+          name="reference"
+          required
+          maxLength={60}
+          value={reference}
+          onChange={(e) => {
+            setReference(e.target.value);
+            setFilledFrom((f) => new Set([...f].filter((x) => x !== "reference")));
+          }}
+          placeholder={referenceExample}
+        />
+      </label>
+      <label className={FIELD}>
+        <span className={LABEL}>
+          Issued on
+          {filledFrom.has("issuedOn") && <span className="font-normal text-muted"> · from the certificate</span>}
+        </span>
+        <input
+          className={INPUT}
+          type="date"
+          name="issuedOn"
+          required
+          max={today || undefined}
+          value={issuedOn}
+          onChange={(e) => {
+            setIssuedOn(e.target.value);
+            setFilledFrom((f) => new Set([...f].filter((x) => x !== "issuedOn")));
+          }}
+        />
+      </label>
+      <label className={FIELD}>
+        <span className={LABEL}>
+          Fee paid, AED (optional)
+          {filledFrom.has("fee") && <span className="font-normal text-muted"> · from the certificate</span>}
+        </span>
+        <input
+          className={INPUT}
+          name="feePaidAed"
+          inputMode="decimal"
+          value={fee}
+          onChange={(e) => {
+            setFee(e.target.value);
+            setFilledFrom((f) => new Set([...f].filter((x) => x !== "fee")));
+          }}
+        />
+      </label>
+      <div>
+        <button type="submit" className={buttonClass("primary", "sm")} disabled={rec.busy}>
+          {rec.busy ? "Recording…" : "Record registration"}
+        </button>
+      </div>
+      <Result s={rec} />
+    </form>
+  );
+}
+
+/** Record what the portal answered: the reference and certificate, or the rejection reasons. */
+export function ManualRecordForms({
+  leaseId,
+  submissionId,
+  reg,
+  today,
+}: {
+  leaseId: string;
+  submissionId: string;
+  reg: ManualRegistration;
+  today: string;
+}) {
+  const router = useRouter();
+  const [rej, rejAction] = useActionState<RegistrationActionState, FormData>(recordRegistrationRejected, {});
+  const feeFils = reg.pack.fee.feeFils;
+
+  return (
     <div className="grid gap-4">
-      <form onSubmit={onRecord} className="grid gap-3 rounded-xl border border-line p-3.5">
-        <b className="text-sm font-semibold">Record registration</b>
-        <input type="hidden" name="submissionId" value={submissionId} />
-        <label className={`${FIELD} rounded-lg border border-dashed border-line p-3`}>
-          <span className={LABEL}>Upload the certificate (PDF, up to 10 MB)</span>
-          <span className="text-[13px] text-muted">
-            We read it and fill in the reference, the issue date and the fee for you, then check it against the lease.
-            You can still type the details yourself.
-          </span>
-          <input className={INPUT} type="file" name="certificate" accept="application/pdf,.pdf" onChange={onPick} />
-        </label>
-        <CertificateReading r={reading} />
-        <label className={FIELD}>
-          <span className={LABEL}>
-            Reference from the portal
-            {filledFrom.has("reference") && <span className="font-normal text-muted"> · from the certificate</span>}
-          </span>
-          <input
-            className={INPUT}
-            name="reference"
-            required
-            maxLength={60}
-            value={reference}
-            onChange={(e) => {
-              setReference(e.target.value);
-              setFilledFrom((f) => new Set([...f].filter((x) => x !== "reference")));
-            }}
-            placeholder={reg.pack.registration.referenceExample}
-          />
-        </label>
-        <label className={FIELD}>
-          <span className={LABEL}>
-            Issued on
-            {filledFrom.has("issuedOn") && <span className="font-normal text-muted"> · from the certificate</span>}
-          </span>
-          <input
-            className={INPUT}
-            type="date"
-            name="issuedOn"
-            required
-            max={today || undefined}
-            value={issuedOn}
-            onChange={(e) => {
-              setIssuedOn(e.target.value);
-              setFilledFrom((f) => new Set([...f].filter((x) => x !== "issuedOn")));
-            }}
-          />
-        </label>
-        <label className={FIELD}>
-          <span className={LABEL}>
-            Fee paid, AED (optional)
-            {filledFrom.has("fee") && <span className="font-normal text-muted"> · from the certificate</span>}
-          </span>
-          <input
-            className={INPUT}
-            name="feePaidAed"
-            inputMode="decimal"
-            value={fee}
-            onChange={(e) => {
-              setFee(e.target.value);
-              setFilledFrom((f) => new Set([...f].filter((x) => x !== "fee")));
-            }}
-          />
-        </label>
-        <div>
-          <button type="submit" className={buttonClass("primary", "sm")} disabled={rec.busy}>
-            {rec.busy ? "Recording…" : "Record registration"}
-          </button>
-        </div>
-        <Result s={rec} />
-      </form>
+      <RecordRegistrationForm
+        leaseId={leaseId}
+        submissionId={submissionId}
+        today={today}
+        referenceExample={reg.pack.registration.referenceExample}
+        initial={{ fee: feeFils === null ? "" : (feeFils / 100).toFixed(2) }}
+        onRecorded={() => router.refresh()}
+      />
       <ActionForm
         state={{ error: rej.ok === false ? rej.message : undefined }}
         action={rejAction}

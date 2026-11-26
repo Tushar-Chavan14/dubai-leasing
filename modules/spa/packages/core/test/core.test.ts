@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { findRepoRoot, loadSpaEnv, parseSpaEnv, SPA_DEMO_SESSION_SECRET, sessionSecret } from "../src/env.ts";
-import { type CompanyKind, railItems, screenOf, SpaRole } from "../src/index.ts";
+import { type CompanyKind, hasAnyRole, hasRole, railItems, rolesOf, screenOf, SpaRole } from "../src/index.ts";
 
 const SECRET = "x".repeat(32);
 const good = { SPA_DATABASE_URL: "postgres://u:p@localhost:5432/spa", SPA_SESSION_SECRET: SECRET };
@@ -138,8 +138,46 @@ describe("rail items (design.md §2–3, S33)", () => {
   test("every role sees Home; paths map back to screens", () => {
     for (const r of SpaRole.options) expect(screens(r)[0]).toBe("home");
     expect(screenOf("/work")).toBe("work");
+    expect(screenOf("/leads/0198a1b2")).toBe("work");
     expect(screenOf("/settings/users")).toBe("settings");
     expect(screenOf("/")).toBe("home");
     expect(screenOf("/sign-in")).toBe("home");
+  });
+});
+
+describe("combined roles (M5c, S83)", () => {
+  test("rolesOf lists the main role first, then the extras, without repeats", () => {
+    expect(rolesOf({ role: "sales_manager" })).toEqual(["sales_manager"]);
+    expect(rolesOf({ role: "sales_manager", roles: ["sales_manager", "compliance_officer", "mlro"] })).toEqual([
+      "sales_manager",
+      "compliance_officer",
+      "mlro",
+    ]);
+  });
+  test("hasRole and hasAnyRole look at every role", () => {
+    const karim = { role: "sales_manager", roles: ["sales_manager", "compliance_officer", "mlro"] } as const;
+    expect(hasRole(karim, "mlro")).toBe(true);
+    expect(hasRole(karim, "finance")).toBe(false);
+    expect(hasAnyRole(karim, ["legal", "compliance_officer"])).toBe(true);
+    expect(hasAnyRole({ role: "sales_officer" }, ["legal"])).toBe(false);
+  });
+  test("Karim's rail has Compliance; Rania's has none; Adam has Work, Inventory, Listings and Settings", () => {
+    const screens = (r: readonly SpaRole[]) => railItems(r, "both").map((i) => i.screen);
+    expect(screens(["sales_manager", "compliance_officer", "mlro"])).toEqual([
+      "home",
+      "work",
+      "inventory",
+      "listings",
+      "compliance",
+      "settings",
+    ]);
+    expect(railItems(["sales_manager", "compliance_officer"], "both").find((i) => i.screen === "settings")?.readOnly).toBe(
+      true,
+    );
+    expect(screens(["sales_officer"])).not.toContain("compliance");
+    expect(screens(["legal", "finance"])).toEqual(["home", "work", "settings"]);
+    const adam = railItems(["admin", "sales_admin"], "both");
+    expect(adam.map((i) => i.screen)).toEqual(["home", "work", "inventory", "listings", "settings"]);
+    expect(adam.find((i) => i.screen === "settings")?.readOnly).toBeUndefined();
   });
 });

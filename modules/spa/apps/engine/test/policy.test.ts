@@ -120,7 +120,10 @@ describe.skipIf(!url)("policy and version pinning (C3)", () => {
   test("the demo seed dates follow the clock it is given (demo offset)", async () => {
     clock.set(new Date("2027-03-01T06:00:00Z"));
     await seedSpaDemo(database, clock, { SPA_DEMO_MODE: true });
-    const [l] = await database.db.select().from(listings);
+    const [l] = await database.db
+      .select()
+      .from(listings)
+      .where(eq(listings.title, "2-bed apartment, Demo Marina Tower"));
     expect(l?.permitExpiresOn).toBe("2027-08-28");
     expect(l?.createdAt.toISOString()).toBe("2027-03-01T06:00:00.000Z");
   });

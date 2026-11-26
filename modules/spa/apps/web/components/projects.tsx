@@ -1,12 +1,17 @@
-import { Button } from "@platform/ui/button";
+import { Button, buttonClass } from "@platform/ui/button";
+import { Cover } from "@platform/ui/media/cover";
 import { EmptyState } from "@platform/ui/empty-state";
 import { ROW_LINK, TableFrame } from "@platform/ui/page";
 import { Pill } from "@platform/ui/pill";
 import { Fact, FactGrid, Section, Sub } from "@platform/ui/record";
-import { SET_INPUT, SET_SELECT, SField, TABLE, TD, TH } from "@platform/ui/settings";
+import { SET_INPUT, SET_SELECT, SET_TEXTAREA, SField, TABLE, TD, TH } from "@platform/ui/settings";
 import type { SpaRole } from "@spa/core";
 import Link from "next/link";
+import type { ReactNode } from "react";
 import type { ProjectRecord, ProjectRow, UnitStateKey } from "../lib/contracts";
+import { mediaSrc } from "../lib/media";
+import { fieldWords } from "../lib/words";
+import { MediaGallery } from "./inventory-photos";
 import { formatMoneyFils, shortDate } from "../lib/format";
 import { SPA_TEMPLATE_KIND_LIST, TEMPLATE_KIND_WORDS } from "../lib/kinds";
 
@@ -18,8 +23,6 @@ const STATE_WORDS: Record<UnitStateKey, string> = {
   HANDED_OVER: "handed over",
 };
 const STATE_ORDER: UnitStateKey[] = ["AVAILABLE", "HELD", "SOLD", "REGISTERED", "HANDED_OVER"];
-const unitTone = (s: UnitStateKey): "neutral" | "waiting" | "accent" =>
-  s === "AVAILABLE" ? "neutral" : s === "HELD" ? "waiting" : "accent";
 
 type Action = (f: FormData) => void | Promise<void>;
 /** The server actions the admin's forms call. Absent: nothing is drawn, whoever looks. */
@@ -45,7 +48,7 @@ export function ProjectTable({ projects, unplaced }: { projects: ProjectRow[]; u
             <caption className="sr-only">Projects</caption>
             <thead>
               <tr>
-                {["Code", "Project", "Buildings", "Units", "Price list", "Completion"].map((c) => (
+                {["Project", "Code", "Buildings", "Units", "Price list", "Handover"].map((c) => (
                   <th key={c} scope="col" className={TH}>
                     {c}
                   </th>
@@ -56,11 +59,24 @@ export function ProjectTable({ projects, unplaced }: { projects: ProjectRow[]; u
               {projects.map((p) => (
                 <tr key={p.id} className="group">
                   <td className={TD}>
-                    <Link href={`/inventory/${p.id}`} className={`${ROW_LINK} font-mono tabular-nums`}>
-                      {p.code}
-                    </Link>
+                    <span className="flex items-center gap-3">
+                      <span className="block size-12 flex-none overflow-hidden rounded-xl border border-line bg-raised">
+                        <Cover
+                          name={p.name}
+                          src={p.coverMediaId ? mediaSrc(p.coverMediaId) : undefined}
+                          alt=""
+                          label={false}
+                        />
+                      </span>
+                      <span className="min-w-0">
+                        <Link href={`/inventory/projects/${p.id}`} className={ROW_LINK}>
+                          {p.name}
+                        </Link>
+                        {p.community && <Sub>{p.community}</Sub>}
+                      </span>
+                    </span>
                   </td>
-                  <td className={TD}>{p.name}</td>
+                  <td className={`${TD} font-mono tabular-nums`}>{p.code}</td>
                   <td className={`${TD} tabular-nums`}>{p.buildings}</td>
                   <td className={TD}>
                     <span className="tabular-nums">{p.units}</span>
@@ -112,24 +128,24 @@ const aedField = (fils: number | null): string =>
 export function ProjectView({
   project: p,
   viewer,
-  canWork,
   actions,
+  units,
 }: {
   project: ProjectRecord;
   viewer: SpaRole;
-  /** A role with a Work screen can open the deal; the others see its ref. */
-  canWork: boolean;
   actions?: InventoryActions;
+  /** The Units section's body: the Units browser filtered to this project (the page builds it). */
+  units: ReactNode;
 }) {
   const edit = viewer === "admin" && actions ? actions : null;
-  const building = new Map(p.buildings.map((b) => [b.id, b.code]));
   return (
     <div className="grid gap-8">
-      <Section id="facts" title="Project">
+      <Section id="facts" title="Overview">
         <FactGrid>
-          <Fact label="Anticipated completion">
-            {p.anticipatedCompletionOn ? shortDate(p.anticipatedCompletionOn) : "Not set"}
-          </Fact>
+          <Fact label="Community">{p.community ?? "Not set"}</Fact>
+          <Fact label="Location">{p.location ?? "Not set"}</Fact>
+          <Fact label="Handover">{p.anticipatedCompletionOn ? shortDate(p.anticipatedCompletionOn) : "Not set"}</Fact>
+          <Fact label="Sales agent for new units">{p.salesAgent?.name ?? "None (sales manager's queue)"}</Fact>
           <Fact label="Template in use">
             {p.template ? `${p.template.name}, version ${p.template.version}` : "No approved template"}
           </Fact>
@@ -144,6 +160,13 @@ export function ProjectView({
             )}
           </Fact>
         </FactGrid>
+        {p.description && (
+          <p className="m-0 max-w-[68ch] whitespace-pre-line text-sm leading-relaxed">{p.description}</p>
+        )}
+      </Section>
+
+      <Section id="photos" title="Photos" hint={edit ? "Add, caption and reorder them from Edit project." : undefined}>
+        <MediaGallery title={p.name} name={p.name} photos={p.media} />
       </Section>
 
       <Section id="buildings" title="Buildings" hint={`${p.buildings.length}`}>
@@ -190,59 +213,8 @@ export function ProjectView({
         )}
       </Section>
 
-      <Section id="units" title="Units" hint={`${p.units.length}`}>
-        {p.units.length ? (
-          <TableFrame>
-            <table className={TABLE}>
-              <caption className="sr-only">Units</caption>
-              <thead>
-                <tr>
-                  {["Unit", "Building", "Status", "Price-list price", "Deal"].map((c) => (
-                    <th key={c} scope="col" className={TH}>
-                      {c}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {p.units.map((u) => (
-                  <tr key={u.id} className="group">
-                    <td className={`${TD} font-mono`}>{u.code}</td>
-                    <td className={`${TD} font-mono`}>{building.get(u.buildingId) ?? ""}</td>
-                    <td className={TD}>
-                      <Pill tone={unitTone(u.state)}>{u.stateLabel}</Pill>
-                    </td>
-                    <td className={`${TD} whitespace-nowrap tabular-nums`}>
-                      {u.listPriceFils === null ? (
-                        <span className="text-muted">No price</span>
-                      ) : (
-                        formatMoneyFils(u.listPriceFils)
-                      )}
-                    </td>
-                    <td className={TD}>
-                      {u.deal ? (
-                        <>
-                          {canWork ? (
-                            <Link href={`/work/deals/${u.deal.id}`} className={`${ROW_LINK} font-mono tabular-nums`}>
-                              {u.deal.ref}
-                            </Link>
-                          ) : (
-                            <span className="font-mono tabular-nums">{u.deal.ref}</span>
-                          )}
-                          <Sub>{u.deal.open ? u.deal.stageLabel : `Closed: ${u.deal.stageLabel}`}</Sub>
-                        </>
-                      ) : (
-                        <span className="text-muted">None</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableFrame>
-        ) : (
-          <EmptyState title="No units yet." body="An admin adds each unit to one of the project's buildings." />
-        )}
+      <Section id="units" title="Units" hint={`${p.units.length} in this project`}>
+        {units}
         {edit && p.buildings.length > 0 && (
           <form action={edit.addUnit} className="flex flex-wrap items-end gap-2">
             <input type="hidden" name="projectId" value={p.id} />
@@ -259,8 +231,11 @@ export function ProjectView({
               <input name="code" required maxLength={40} className={`${SET_INPUT} w-36`} />
             </SField>
             <Button type="submit" variant="ghost" size="sm">
-              Add a unit
+              Quick add
             </Button>
+            <Link href={`/inventory/units/new?project=${p.id}`} className={buttonClass("ghost", "sm")}>
+              New unit with details
+            </Link>
           </form>
         )}
       </Section>
@@ -343,37 +318,118 @@ export function ProjectView({
           </form>
         )}
       </Section>
+
+      <Section id="activity" title="Activity" hint="Changes to this project's details and photos">
+        {p.activity.length ? (
+          <ul className="m-0 grid list-none gap-2.5 p-0">
+            {p.activity.map((e) => (
+              <li key={e.id} className="grid grid-cols-[8.5rem_1fr] gap-3 text-sm">
+                <time dateTime={e.at} className="font-mono text-xs leading-5 text-muted">
+                  {shortDate(e.at)}
+                </time>
+                <span>
+                  <b className="font-semibold">{e.label}</b>
+                  {e.changed.length > 0 && <span className="text-muted">: {fieldWords(e.changed)}</span>}
+                  <span className="text-muted">, {e.actor}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="m-0 text-sm text-muted">Nothing has changed yet.</p>
+        )}
+      </Section>
     </div>
   );
 }
 
-/** The add-a-project form on the Inventory page (admin only; the page passes the action only to an admin). */
-export function ProjectForm({ action }: { action: Action }) {
+/**
+ * The New and Edit project form (S75). The code and the template are set when the project is made and don't change here.
+ * A field left empty clears it on Edit. Admin only: the page passes the action only to an admin.
+ */
+export function ProjectForm({
+  action,
+  project,
+}: {
+  action: Action;
+  /** Present on Edit: the values shown and the id sent. */
+  project?: ProjectRecord;
+}) {
+  const p = project;
   return (
-    <form action={action} className="grid gap-3 rounded-xl border border-line p-3.5">
-      <b className="text-sm font-semibold">Add a project</b>
-      <div className="flex flex-wrap items-end gap-3">
-        <SField label="Project code" help="Letters, digits, dot, dash. It can't change once a deal exists.">
-          <input name="code" required maxLength={40} className={`${SET_INPUT} w-40`} />
-        </SField>
+    <form action={action} className="grid max-w-[980px] gap-5 rounded-2xl border border-line bg-page p-5">
+      {p && <input type="hidden" name="id" value={p.id} />}
+      <div className="flex flex-wrap items-start gap-3">
+        {!p && (
+          <SField label="Project code" help="Letters, digits, dot, dash. It can't change once a deal exists.">
+            <input name="code" required maxLength={40} className={`${SET_INPUT} w-40`} />
+          </SField>
+        )}
         <SField label="Project name">
-          <input name="name" required maxLength={120} className={`${SET_INPUT} w-72`} />
+          <input name="name" required maxLength={120} defaultValue={p?.name ?? ""} className={`${SET_INPUT} w-72`} />
         </SField>
-        <SField label="Anticipated completion">
-          <input type="date" name="anticipatedCompletionOn" className={`${SET_INPUT} w-44`} />
+        <SField label="Handover date">
+          <input
+            type="date"
+            name="anticipatedCompletionOn"
+            defaultValue={p?.anticipatedCompletionOn ?? ""}
+            className={`${SET_INPUT} w-44`}
+          />
         </SField>
-        <SField label="Agreement template">
-          <select name="templateKind" defaultValue="spa" className={`${SET_SELECT} w-64`}>
-            {SPA_TEMPLATE_KIND_LIST.map((k) => (
-              <option key={k} value={k}>
-                {TEMPLATE_KIND_WORDS[k]}
+        {!p && (
+          <SField label="Agreement template">
+            <select name="templateKind" defaultValue="spa" className={`${SET_SELECT} w-64`}>
+              {SPA_TEMPLATE_KIND_LIST.map((k) => (
+                <option key={k} value={k}>
+                  {TEMPLATE_KIND_WORDS[k]}
+                </option>
+              ))}
+            </select>
+          </SField>
+        )}
+      </div>
+      <div className="flex flex-wrap items-start gap-3">
+        <SField label="Community">
+          <input name="community" maxLength={80} defaultValue={p?.community ?? ""} className={`${SET_INPUT} w-72`} />
+        </SField>
+        <SField label="Location" help="Free text, for example a district or a street. No map.">
+          <input name="location" maxLength={120} defaultValue={p?.location ?? ""} className={`${SET_INPUT} w-96`} />
+        </SField>
+      </div>
+      {p && (
+        <SField
+          label="Sales agent for new units"
+          help="New leads and viewings for this project's units go to this person. Empty: they wait for the sales manager."
+        >
+          <select name="salesAgentUserId" defaultValue={p.salesAgent?.id ?? ""} className={`${SET_SELECT} w-72`}>
+            <option value="">No agent (sales manager's queue)</option>
+            {p.salesAgentOptions.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
               </option>
             ))}
           </select>
         </SField>
+      )}
+      <SField label="Description">
+        <textarea
+          name="description"
+          rows={5}
+          maxLength={2000}
+          defaultValue={p?.description ?? ""}
+          className={`${SET_TEXTAREA} max-w-[68ch]`}
+        />
+      </SField>
+      <div className="flex flex-wrap items-center gap-2 border-t border-line pt-4">
         <Button type="submit" variant="primary" size="sm">
-          Add the project
+          {p ? "Save changes" : "Add the project"}
         </Button>
+        <Link
+          href={p ? `/inventory/projects/${p.id}` : "/inventory?tab=projects"}
+          className={buttonClass("ghost", "sm")}
+        >
+          Cancel
+        </Link>
       </div>
     </form>
   );

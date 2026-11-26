@@ -77,7 +77,10 @@ export function DealRecord({
   nextEvents,
   viewer,
   back = { href: "/work", label: "Work" },
+  demo = false,
 }: {
+  /** Demo mode only (S80): the waiting banner offers a switch to the person it waits on. */
+  demo?: boolean;
   record: Record;
   events: EventItem[];
   nextEvents: { href: string } | null;
@@ -111,7 +114,7 @@ export function DealRecord({
       <div className="grid grid-cols-[minmax(0,1fr)_320px] items-start gap-10 max-lg:grid-cols-1">
         <div className="grid min-w-0 gap-8">
           <DealStepper steps={s.steps} />
-          <WaitingBanner waiting={record.waitingFor} viewer={viewer} />
+          <WaitingBanner waiting={record.waitingFor} viewer={viewer} demo={demo} />
           <Section id="overview" title="Overview">
             <FactGrid>
               <Fact label="Type">{deal.typeLabel}</Fact>

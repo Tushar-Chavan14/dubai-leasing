@@ -65,7 +65,7 @@ export async function exportCasePack(
   ctx: SpaContext,
   deps: { store: ExportStore },
   dealId: string,
-  user: { id: string; role: SpaRole },
+  user: { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined },
 ): Promise<CasePack> {
   requireCompliance(user);
   const db = ctx.database.db;
@@ -291,7 +291,7 @@ export async function exportCasePack(
 }
 
 /** The export log, newest first, for a compliance role: who exported what, and when. */
-export async function listExports(ctx: SpaContext, user: { id: string; role: SpaRole }, limit = 100) {
+export async function listExports(ctx: SpaContext, user: { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined }, limit = 100) {
   requireCompliance(user);
   const rows = await ctx.database.db
     .select({

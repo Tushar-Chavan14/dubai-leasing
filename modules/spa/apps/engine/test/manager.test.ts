@@ -59,6 +59,7 @@ const ALL_TRUE: Partial<DealFacts> = {
   oqoodIssued: true,
   instalmentsPaid: true,
   handoverRecorded: true,
+  priceCleared: true,
 };
 const officer = () => `user:${users.sales_officer.id}` as const;
 

@@ -1,6 +1,7 @@
 import { buttonClass } from "@platform/ui/button";
 import { EmptyState } from "@platform/ui/empty-state";
 import { Pill } from "@platform/ui/pill";
+import { DemoHandoff } from "./demo-handoff";
 import { ROW_CARD, Sub } from "@platform/ui/record";
 import { ALERT, SET_TEXTAREA } from "@platform/ui/settings";
 import { isComplianceGate, isComplianceRole, SPA_ROLE_LABELS, type SpaRole } from "@spa/core";
@@ -116,7 +117,9 @@ function Card({
   from,
   backTo,
   note,
+  demo = false,
 }: {
+  demo?: boolean;
   item: InboxItem;
   viewer: SpaRole;
   decideAction: (formData: FormData) => void | Promise<void>;
@@ -168,6 +171,7 @@ function Card({
             .filter(Boolean)
             .join(" · ")}
         </Sub>
+        {demo && pending && !decides && item.approverRole && <DemoHandoff role={item.approverRole} demo={demo} />}
         {item.reasons?.length ? (
           <ul className="m-0 grid list-none gap-0.5 p-0">
             {item.reasons.map((r) => (
@@ -245,7 +249,10 @@ export function InboxList({
   next,
   backTo,
   draft,
+  demo = false,
 }: {
+  /** Demo mode only (S80): a waiting item the viewer does not decide offers a switch to the role that does. */
+  demo?: boolean;
   items: InboxItem[];
   viewer: SpaRole;
   decideAction: (formData: FormData) => void | Promise<void>;
@@ -283,6 +290,7 @@ export function InboxList({
                 decideAction={decideAction}
                 from={from}
                 backTo={backTo}
+                demo={demo}
                 note={item.id === noteFor ? draft?.body : undefined}
               />
             ),

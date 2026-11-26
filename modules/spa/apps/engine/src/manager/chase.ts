@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { type CalendarDate, diffDays, toDubaiDate } from "@platform/kernel/dates";
 import { newId } from "@platform/kernel/ids";
 import { maskPiiText } from "@platform/kernel/pii";
-import { CHASE_REASONS, type ChaseReasonCode, type SpaRole, neutralChaseReason } from "@spa/core";
+import { CHASE_REASONS, type ChaseReasonCode, type SpaRole, neutralChaseReason, hasAnyRole } from "@spa/core";
 import {
   amlCases,
   amlHits,
@@ -400,7 +400,7 @@ export async function chaseSweep(ctx: SpaContext, boss: Pick<PgBoss, "send">): P
 
 // ---- pause and resume ---------------------------------------------------------------------------------------------
 
-type Person = { id: string; role: SpaRole };
+type Person = { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined };
 async function lockDeal(ctx: SpaContext, tx: { db: SpaDb }, dealId: string) {
   const [d] = await (tx.db as never as SpaDb).select().from(deals).where(eq(deals.id, dealId)).for("update");
   if (!d) throw notFound("deal");
@@ -413,7 +413,7 @@ export async function pauseChasing(
   user: Person,
   dealId: string,
 ): Promise<{ paused: true; changed: boolean }> {
-  if (!PAUSE_ROLES.includes(user.role)) throw forbidden("you can't pause chasing on a deal");
+  if (!hasAnyRole(user, PAUSE_ROLES)) throw forbidden("you can't pause chasing on a deal");
   return withSpaTx(ctx.database, async (tx) => {
     const d = await lockDeal(ctx, tx, dealId);
     if (CLOSED.includes(d.state)) throw conflict("deal_closed", "this deal is closed: nothing is chased");
@@ -437,7 +437,7 @@ export async function resumeChasing(
   user: Person,
   dealId: string,
 ): Promise<{ paused: false; changed: boolean }> {
-  if (!PAUSE_ROLES.includes(user.role)) throw forbidden("you can't resume chasing on a deal");
+  if (!hasAnyRole(user, PAUSE_ROLES)) throw forbidden("you can't resume chasing on a deal");
   return withSpaTx(ctx.database, async (tx) => {
     const d = await lockDeal(ctx, tx, dealId);
     const open = (await tx.db.select().from(chasePauses).where(eq(chasePauses.dealId, dealId))).find(

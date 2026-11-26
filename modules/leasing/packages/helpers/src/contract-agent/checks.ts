@@ -7,6 +7,7 @@ import {
   sampleValueProblems,
 } from "../contract-structure/legal-wording.ts";
 import { formatCalendarDate, formatMoneyFils } from "@platform/readers/structure/format";
+import { VALUE_PATTERNS } from "@platform/readers/structure/values";
 import { unprintable } from "../contract-structure/render.ts";
 import type { BlankFill, ContractAgentContext, TermCheck, ContractUnitFacts } from "./schema.ts";
 
@@ -133,7 +134,7 @@ function legalWordingChecks(c: ContractAgentContext, fields: ContractFields): Te
     return ids.map((id) => ({ id, ok: true, reason: "Fixed wording: standard contract, no template wording" }));
   const texts = [
     ...c.legal.headings.map((text, i) => ({ key: `heading ${i + 1}`, text })),
-    ...c.template.paragraphs.map((p) => ({ key: p.key, text: p.text })),
+    ...c.template.paragraphs.filter((p) => !p.heading).map((p) => ({ key: p.key, text: p.text })),
   ];
   const own = [
     ...c.legal.ownValues,
@@ -220,16 +221,16 @@ const NUMBER_WORDS = new RegExp(
 export const TOKENS = /\{\{b\d+\}\}/g;
 
 /** Every number a text states, with where it is: digits ("1,250", "2nd"), words ("four", "twenty-five", "third"). */
-function numbersIn(text: string): { value: number; end: number }[] {
+function numbersIn(text: string): { value: number; start: number; end: number }[] {
   const t = text.replace(TOKENS, " ");
-  const out: { value: number; end: number }[] = [];
+  const out: { value: number; start: number; end: number }[] = [];
   for (const m of t.matchAll(/\d[\d,]*(?:\.\d+)?(?:st|nd|rd|th)?/g))
-    out.push({ value: Number(m[0].replace(/,|st|nd|rd|th/g, "")), end: m.index + m[0].length });
+    out.push({ value: Number(m[0].replace(/,|st|nd|rd|th/g, "")), start: m.index, end: m.index + m[0].length });
   for (const m of t.matchAll(NUMBER_WORDS)) {
     const value = m[1]
       ? WORD_VALUE.get(m[1].toLowerCase())! + WORD_VALUE.get(m[2]!.toLowerCase())!
       : WORD_VALUE.get(m[3]!.toLowerCase())!;
-    out.push({ value, end: m.index + m[0].length });
+    out.push({ value, start: m.index, end: m.index + m[0].length });
   }
   return out;
 }
@@ -246,6 +247,14 @@ const COUNTED: [RegExp, FactKey][] = [
   [/^[\s-]*(?:sq\.?\s*f(?:ee)?t|square\s+f(?:ee|oo)t|sqft)\b/i, "areaSqft"],
   [/^[\s-]*(?:floor|storey|level)\b/i, "floor"],
 ];
+
+const COUNT_LABEL: Record<FactKey, string> = {
+  bedrooms: "bedrooms",
+  bathrooms: "bathrooms",
+  parkingSpaces: "parking spaces",
+  areaSqft: "sq ft",
+  floor: "floor",
+};
 
 /** Kept for callers that list the unit's numbers. */
 export function factNumbers(f: ContractUnitFacts): Set<number> {
@@ -285,25 +294,49 @@ export function checkRewrite(
 ): { before: string | null; problems: string[] } {
   const p = c.template?.paragraphs.find((x) => x.key === r.key);
   if (!p) return { before: null, problems: [`${r.key}: there is no template paragraph with this key`] };
-  if (!p.rewritable)
+  // D78: a particulars line (type, rooms, use; no obligation) may be reworded too, under the use checks below.
+  const particulars = (p.particulars === true || p.heading === true) && !p.rewritable;
+  if (!p.rewritable && !particulars)
     return {
       before: p.text,
       problems: [`${r.key}: this paragraph can't be reworded (a heading, title or company clause)`],
     };
-  if (!describesUnit(p.text))
+  if (p.heading ? !headingWithUse(p.text) : particulars ? !unitParticulars(p.text) : !describesUnit(p.text))
     return { before: p.text, problems: [`${r.key}: only a paragraph that describes the unit may be reworded`] };
   const problems: string[] = [];
-  const text = r.text.trim();
+  const text = normalizeRewrite(c, r.text);
   const plain = text.replace(TOKENS, " ");
   if (!text) problems.push(`${r.key}: the new wording is empty`);
   if (tokensOf(text).join() !== tokensOf(p.text).join())
     problems.push(`${r.key}: keep every {{bN}} blank of the paragraph exactly once and add none`);
-  const kinds = fixedValueKinds(text);
+  // A value (date, ID, phone, email, number) is allowed only when the very same value is in the original wording.
+  const kinds = particulars ? newValueKinds(p.text, text) : fixedValueKinds(text);
   if (kinds.length) problems.push(`${r.key}: the new wording contains ${kinds.join(", ")}`);
-  if (LEGAL_WORDS.test(plain))
+  if (particulars) {
+    // D78: a particulars line changes only its type, use and counted words; every other word stays as it was.
+    problems.push(...particularsDiffProblems(r.key, dropLeftoverType(c, p.text), text));
+    // A title or heading changes its use word only (no type word or number swaps).
+    if (p.heading && p.text.replace(USE_ANY_G, "_") !== text.replace(USE_ANY_G, "_"))
+      problems.push(`${r.key}: a title or heading may change only its use word`);
+    problems.push(...useProblems(c, r.key, p.text, text));
+  } else if (LEGAL_WORDS.test(plain))
     problems.push(`${r.key}: the new wording adds legal, money, permission or negation words; describe the unit only`);
+  problems.push(...typeProblems(c, r.key, text));
+  // D78: the rewording must fix what disagreed (a no-op or partial rewording is not a fix).
+  const left = paragraphDisagreements(c, { ...p, text });
+  if (left.length)
+    problems.push(
+      `${r.key}: still disagrees with the unit record: ${left.map((d) => `"${d.said}" (record: ${d.record})`).join(", ")}`,
+    );
   const f = c.unitFacts;
+  // A particulars line may keep the numbers it had (the word-by-word check holds them in place): only new ones count.
+  const kept = particulars ? numbersIn(p.text).map((n) => n.value) : [];
   for (const n of numbersIn(text)) {
+    const at = kept.indexOf(n.value);
+    if (at >= 0) {
+      kept.splice(at, 1);
+      continue;
+    }
     const after = plain.slice(n.end, n.end + 30);
     const counted = COUNTED.find(([re]) => re.test(after))?.[1];
     if (!counted)
@@ -312,8 +345,10 @@ export function checkRewrite(
       problems.push(`${r.key}: ${n.value} ${counted} is not what the unit's record says (${f?.[counted] ?? "none"})`);
   }
   const description = (f?.description ?? "").toLowerCase();
+  // A label the particulars line already had ("Balcony", "Parking") is not a new feature.
+  const had = particulars ? p.text.toLowerCase() : "";
   const unlisted = [...new Set([...plain.matchAll(FEATURES)].map((m) => m[1]!.toLowerCase()))].filter(
-    (w) => !description.includes(w.replace(/'?s$/, "").replace(/ies$/, "y")),
+    (w) => !description.includes(w.replace(/'?s$/, "").replace(/ies$/, "y")) && !had.includes(w),
   );
   if (unlisted.length) problems.push(`${r.key}: ${unlisted.join(", ")} is not in the unit's description`);
   if (text.length > Math.max(p.text.length * 1.5, p.text.length + 80))
@@ -325,3 +360,311 @@ export function checkRewrite(
 /** The model's reason for a rewording, shown to the approver only when it holds no value code can't vouch for. */
 export const safeReason = (reason: string): string =>
   fixedValueKinds(reason).length ? "Matches the unit's record" : reason;
+
+/** Words a particulars line may hold that `LEGAL_WORDS` lists: the use it prints ("Permitted Use Residential use only"). */
+const USE_LINE_WORDS = new Set(["use", "used", "only", "permitted", "residential", "commercial"]);
+/** Extra money words a particulars line never holds. */
+const MONEY_WORDS = /\b(?:price|amount|charges?|costs?|total|security|annual|monthly|utilit(?:y|ies))\b/i;
+
+/**
+ * A template paragraph that lists the unit's particulars (type, rooms, size, use) and holds no other legal, money,
+ * permission or negation word (`LEGAL_WORDS` less the use words). "No." as in "Unit No." is a label, not a negation.
+ * Code may copy the unit's type and use into it from the record (`codeUnitRewrite`).
+ */
+export const unitParticulars = (text: string): boolean =>
+  UNIT_WORDS.test(text.replace(TOKENS, " ")) && !beyondUseLine(text);
+
+/** A legal, money, permission or negation word other than the use words of a particulars line. */
+function beyondUseLine(text: string): boolean {
+  const t = text.replace(TOKENS, " ").replace(/\bNo\.(?=\s)/g, " ");
+  if (MONEY_WORDS.test(t)) return true;
+  const legal = new RegExp(LEGAL_WORDS.source, "gi");
+  return [...t.matchAll(legal)].some((m) => !USE_LINE_WORDS.has(m[0].toLowerCase()));
+}
+
+/** Unit type words a template may print, and what each means. */
+const TYPES = [
+  "apartment",
+  "flat",
+  "villa",
+  "townhouse",
+  "penthouse",
+  "duplex",
+  "studio",
+  "office",
+  "shop",
+  "warehouse",
+];
+const TYPE_WORD = new RegExp(`\\b(?:${TYPES.join("|")})\\b`, "gi");
+const TYPE_OF: Record<string, string> = { flat: "apartment" };
+/** "Residential use", "commercial purposes": the use the template prints. */
+const USE_WORD = /\b(residential|commercial)(?=\s+(?:use|purposes?)\b)/gi;
+const USE_PHRASE = /\b(?:residential|commercial)\s+(?:use|purposes?)\b/gi;
+/** Two types or two uses side by side ("studio apartment", "residential or commercial use"): code leaves it alone. */
+const JOINED_TYPES = new RegExp(
+  `\\b(?:${TYPES.join("|")})(?:\\s+(?:or|and|/)\\s+|[\\s/-]+)(?:${TYPES.join("|")})\\b`,
+  "i",
+);
+const JOINED_USES = /\b(?:residential|commercial)\s*(?:or|and|\/|,)\s*(?:residential|commercial)\b/i;
+/** A negated use ("non-residential", "no commercial use", "not for residential"): code leaves it alone. */
+const NEGATED_USE = /\b(?:non|not|no)\b[\s-]+(?:for\s+)?(?:residential|commercial)\b/i;
+
+const sameCase = (model: string, word: string) =>
+  model === model.toUpperCase()
+    ? word.toUpperCase()
+    : /^[A-Z]/.test(model)
+      ? word[0]!.toUpperCase() + word.slice(1)
+      : word;
+
+/**
+ * The unit's particulars paragraph with its type and use words copied from the unit's record (no model): "Apartment"
+ * becomes "Shop" when the record says shop, "Residential use" becomes "Commercial use" when the unit is commercial,
+ * with "a"/"an" kept right. Nothing else changes; blanks stay. Null when nothing disagrees, the subtype or use is not
+ * known, or the wording is one code must not touch (joined types or uses, a negated use).
+ */
+export function codeUnitRewrite(
+  c: ContractAgentContext,
+  text: string,
+  usage: "residential" | "commercial" | null,
+  heading = false,
+): string | null {
+  const subtype = c.unitFacts?.subtype?.trim().toLowerCase() ?? "";
+  const want = TYPE_OF[subtype] ?? subtype;
+  const original = text;
+  // D79: a title or heading changes only its use word.
+  if (heading) {
+    if (!usage || !headingWithUse(text)) return null;
+    const out = text.replace(USE_ANY_G, (m) => (m.toLowerCase() === usage ? m : sameCase(m, usage)));
+    return out === text ? null : out;
+  }
+  text = dropLeftoverType(c, text);
+  const plain = text.replace(TOKENS, " ");
+  let out = text;
+  if (TYPES.includes(subtype) && !JOINED_TYPES.test(plain)) {
+    out = out.replace(TYPE_WORD, (m) =>
+      (TYPE_OF[m.toLowerCase()] ?? m.toLowerCase()) === want ? m : sameCase(m, subtype),
+    );
+    // "a apartment" → "an apartment", "an shop" → "a shop" (only when a type word changed).
+    if (out !== text)
+      out = out.replace(
+        new RegExp(`\\b(a|an)(\\s+)(${TYPES.join("|")})\\b`, "gi"),
+        (m, art: string, sp: string, w: string) => {
+          const an = /^[aeiou]/i.test(w);
+          const fixed = an ? (art[0] === "A" ? "An" : "an") : art[0] === "A" ? "A" : "a";
+          return `${fixed}${sp}${w}`;
+        },
+      );
+  }
+  if (usage && !JOINED_USES.test(plain) && !NEGATED_USE.test(plain))
+    out = out.replace(USE_WORD, (m) => (m.toLowerCase() === usage ? m : sameCase(m, usage)));
+  if (out === original || tokensOf(out).join() !== tokensOf(original).join()) return null;
+  return out;
+}
+
+/** The words `codeUnitRewrite` changed (lower case), to tell which conflict flags it resolved. */
+export function changedWords(before: string, after: string): string[] {
+  const a = before.split(/(\s+)/);
+  const b = after.split(/(\s+)/);
+  if (a.length !== b.length) return [];
+  return a.flatMap((w, i) => (w !== b[i] ? [w.replace(/[^\p{L}-]/gu, "").toLowerCase()] : [])).filter(Boolean);
+}
+
+/** The unit's use from the contract records ("commercial" covers retail, as for Ejari). */
+export const unitUsage = (c: ContractAgentContext): "residential" | "commercial" => c.contract.unit.kind;
+
+/** D78: a reworded particulars line states the record's use, never another or a negated one, and never drops it. */
+function useProblems(c: ContractAgentContext, key: string, before: string, after: string): string[] {
+  const usage = unitUsage(c);
+  const out: string[] = [];
+  const t = after.replace(TOKENS, " ");
+  if (/\bnon[\s-]/i.test(t)) out.push(`${key}: the new wording negates the use; state the unit's use only`);
+  const said = [...t.matchAll(/\b(residential|commercial)\b/gi)].map((m) => m[1]!.toLowerCase());
+  const wrong = [...new Set(said.filter((u) => u !== usage))];
+  if (wrong.length) out.push(`${key}: the unit's use is ${usage} in its record, not ${wrong.join(", ")}`);
+  if (/\b(?:residential|commercial)\b/i.test(before.replace(TOKENS, " ")) && !said.includes(usage))
+    out.push(`${key}: keep the use, stated as in the record (${usage} use)`);
+  return out;
+}
+
+/** D78: a type word in reworded wording must be the unit's type (flat = apartment). */
+function typeProblems(c: ContractAgentContext, key: string, after: string): string[] {
+  const subtype = c.unitFacts?.subtype?.trim().toLowerCase() ?? "";
+  if (!TYPES.includes(subtype)) return [];
+  const want = TYPE_OF[subtype] ?? subtype;
+  const wrong = [
+    ...new Set(
+      [...after.replace(TOKENS, " ").matchAll(TYPE_WORD)]
+        .map((m) => m[0].toLowerCase())
+        .filter((w) => (TYPE_OF[w] ?? w) !== want),
+    ),
+  ];
+  return wrong.length ? [`${key}: the unit is a ${subtype} in its record, not ${wrong.join(", ")}`] : [];
+}
+
+/** A template line that disagrees with the unit's record, found by code (D78). */
+export interface UnitDisagreement {
+  key: string;
+  what: "type" | "use" | "count" | "feature";
+  /** The template's words. */
+  said: string;
+  /** What the record says. */
+  record: string;
+}
+
+/**
+ * D78: every place a rewordable template paragraph (rewritable or particulars) disagrees with the unit's record: a
+ * type word that isn't the unit's type, a use that isn't the unit's use, a count (bedrooms, bathrooms, parking, area,
+ * floor) that isn't the record's. Joined and negated wording is left out (code can't tell what it means). This is the
+ * checklist the model is given and scored on.
+ */
+export function unitDisagreements(c: ContractAgentContext): UnitDisagreement[] {
+  return (c.template?.paragraphs ?? []).flatMap((p) => paragraphDisagreements(c, p));
+}
+
+/** The disagreements of one rewordable paragraph (its text as given: the template's, or a rewording of it). */
+export function paragraphDisagreements(
+  c: ContractAgentContext,
+  p: {
+    key: string;
+    text: string;
+    rewritable?: boolean | undefined;
+    particulars?: boolean | undefined;
+    heading?: boolean | undefined;
+  },
+): UnitDisagreement[] {
+  if (!p.rewritable && !p.particulars && !p.heading) return [];
+  const out: UnitDisagreement[] = [];
+  const subtype = c.unitFacts?.subtype?.trim().toLowerCase() ?? "";
+  const want = TYPE_OF[subtype] ?? subtype;
+  const usage = unitUsage(c);
+  if (p.heading) {
+    const t = p.text.replace(TOKENS, " ");
+    if (JOINED_USES.test(t) || NEGATED_USE.test(t)) return [];
+    for (const w of new Set([...t.matchAll(USE_ANY_G)].map((m) => m[0])))
+      if (w.toLowerCase() !== usage) out.push({ key: p.key, what: "use", said: w, record: usage });
+    return out;
+  }
+  // A type word the sample left after the type blank: the blank already prints the type, so the word goes.
+  for (const w of leftoverTypes(c, p.text))
+    out.push({ key: p.key, what: "type", said: w, record: "printed by the blank before it: leave the word out" });
+  const plain = dropLeftoverType(c, p.text).replace(TOKENS, " ");
+  if (TYPES.includes(subtype) && !JOINED_TYPES.test(plain))
+    for (const w of new Set([...plain.matchAll(TYPE_WORD)].map((m) => m[0])))
+      if ((TYPE_OF[w.toLowerCase()] ?? w.toLowerCase()) !== want)
+        out.push({ key: p.key, what: "type", said: w, record: subtype });
+  if (!JOINED_USES.test(plain) && !NEGATED_USE.test(plain))
+    for (const m of new Set([...plain.matchAll(USE_PHRASE)].map((x) => x[0])))
+      if (m.split(/\s+/)[0]!.toLowerCase() !== usage)
+        out.push({ key: p.key, what: "use", said: m, record: `${usage} use` });
+  const f = c.unitFacts;
+  // A feature a description names that the unit's own description doesn't (labels of a particulars line aside).
+  if (p.rewritable && !p.particulars) {
+    const description = (f?.description ?? "").toLowerCase();
+    for (const w of new Set([...plain.matchAll(FEATURES)].map((m) => m[1]!)))
+      if (!description.includes(w.toLowerCase().replace(/'?s$/, "").replace(/ies$/, "y")))
+        out.push({ key: p.key, what: "feature", said: w, record: "not in the unit's description" });
+  }
+  if (f)
+    for (const n of numbersIn(p.text)) {
+      const after = plain.slice(n.end, n.end + 30);
+      const hit = COUNTED.find(([re]) => re.test(after));
+      const counted = hit?.[1];
+      if (hit && counted && f[counted] !== null && f[counted] !== n.value) {
+        // The template's own words ("Four-bedroom", "two-car garage"), so the approver can find them.
+        const said = plain.slice(n.start, n.end + after.match(hit[0])![0].length).trim();
+        out.push({ key: p.key, what: "count", said, record: `${f[counted]} ${COUNT_LABEL[counted]}` });
+      }
+    }
+  return out;
+}
+
+/** Value kinds in `after` that bring a value the original doesn't hold verbatim (D78: never swap one for another). */
+function newValueKinds(before: string, after: string): string[] {
+  const strip = (t: string) => t.replace(TOKENS, " ");
+  const out: string[] = [];
+  for (const { kind, re } of VALUE_PATTERNS) {
+    const all = new RegExp(re.source, re.flags.includes("g") ? re.flags : `${re.flags}g`);
+    const had = new Set([...strip(before).matchAll(all)].map((m) => m[0]));
+    if ([...strip(after).matchAll(all)].some((m) => !had.has(m[0]))) out.push(kind);
+  }
+  return out;
+}
+
+const ARTICLES = new Set(["a", "an"]);
+const isNumberWord = (w: string) => /^\d[\d,]*(?:\.\d+)?$/.test(w) || statedNumbers(w).length > 0;
+
+/**
+ * D78: a reworded particulars line keeps every word of the original in place; a word may change only to another of
+ * the same class: a type word, a use word (residential, commercial), a number (a count, checked against the record),
+ * or the article "a"/"an". Punctuation around a word stays. "only" and every label therefore survive.
+ */
+function particularsDiffProblems(key: string, before: string, after: string): string[] {
+  const words = (t: string) => t.trim().split(/\s+/);
+  const a = words(before);
+  const b = words(after);
+  if (a.length !== b.length)
+    return [`${key}: keep the line's words as they are and change only the type, use or count that disagrees`];
+  const core = (w: string) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+  const edge = (w: string) => w.replace(core(w), "\u0000");
+  const bad: string[] = [];
+  a.forEach((w, i) => {
+    const v = b[i]!;
+    if (w === v) return;
+    const x = core(w).toLowerCase();
+    const y = core(v).toLowerCase();
+    // The same word with another case or trailing full stop/comma ("only" -> "only.") is not a change.
+    const tail = (t: string) => t.replace(/[.,;:]+$/, "");
+    if (x === y && tail(edge(w)) === tail(edge(v))) return;
+    const sameClass =
+      edge(w) === edge(v) &&
+      ((TYPES.includes(x) && TYPES.includes(y)) ||
+        (["residential", "commercial"].includes(x) && ["residential", "commercial"].includes(y)) ||
+        (isNumberWord(x) && isNumberWord(y)) ||
+        (ARTICLES.has(x) && ARTICLES.has(y)));
+    if (!sameClass) bad.push(`"${w}" -> "${v}"`);
+  });
+  return bad.length
+    ? [`${key}: only the type, use or count may change in this line, not ${bad.slice(0, 3).join(", ")}`]
+    : [];
+}
+
+/** "RESIDENTIAL LEASE CONTRACT": a title or heading stating a use, with no other legal, money or negation word (D79). */
+export const headingWithUse = (text: string): boolean => {
+  const t = text.replace(TOKENS, " ");
+  return USE_ANY.test(t) && !JOINED_USES.test(t) && !NEGATED_USE.test(t) && !beyondUseLine(text);
+};
+const USE_ANY = /\b(?:residential|commercial)\b/i;
+const USE_ANY_G = /\b(?:residential|commercial)\b/gi;
+
+/**
+ * D79: a type word right after a blank that prints the unit's type is a value the sample left behind ("Property Type
+ * {{b30}} Apartment"): the line reads correctly only without it. Returns the text with such words removed.
+ */
+export function dropLeftoverType(c: ContractAgentContext, text: string): string {
+  const re = leftoverRe(c);
+  return re ? text.replace(re, "$1") : text;
+}
+
+/**
+ * A type word right after a type blank, standing alone: followed by punctuation, another blank or the end ("{{b30}}
+ * Apartment (" yes; "{{b30}} Apartment Building" or "{{b30}} flat fee" no). None when the record has no type, since
+ * the blank would then print nothing.
+ */
+function leftoverRe(c: ContractAgentContext): RegExp | null {
+  const blanks = c.template?.typeBlanks ?? [];
+  if (!blanks.length || !c.unitFacts?.subtype?.trim()) return null;
+  const tokens = blanks.map((b) => b.replace(/[{}]/g, "\\$&")).join("|");
+  return new RegExp(`(${tokens})\\s+(${TYPES.join("|")})\\b(?=\\s*(?:[(),.;:/]|\\{\\{|$))`, "gi");
+}
+
+/** The leftover type words `dropLeftoverType` would remove, as written in the template. */
+function leftoverTypes(c: ContractAgentContext, text: string): string[] {
+  const re = leftoverRe(c);
+  return re ? [...text.matchAll(re)].map((m) => m[2]!) : [];
+}
+
+/**
+ * D79: the rewording as it will print: trimmed, with any type word right after a type blank removed (the blank prints
+ * the type; a word there is the sample's value, which never prints, D70). Checks and storage both use this text.
+ */
+export const normalizeRewrite = (c: ContractAgentContext, text: string): string => dropLeftoverType(c, text.trim());

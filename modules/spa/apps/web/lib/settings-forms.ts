@@ -194,10 +194,48 @@ const ORDER_TYPES = ["primary_offplan", "resale_ready", "resale_offplan"] as con
  * Plans and Signing (S72): the fields of the page are read and nothing else, with the version the page started from.
  * The engine allows only the page's keys, validates the whole policy and refuses a stale version.
  */
-export function policyRequest(page: "plans" | "signing", f: FormData): SettingsRequest | null {
+export function policyRequest(page: "plans" | "signing" | "viewings", f: FormData): SettingsRequest | null {
   const baseVersion = intIn(text(f, "baseVersion", 6), 0, 999_999);
   if (baseVersion === null) return null;
   const path = `/api/settings/policy/${page}`;
+  if (page === "viewings") {
+    const viewingDays = [0, 1, 2, 3, 4, 5, 6].filter((d) => on(f, `day_${d}`));
+    const viewingStartHour = intIn(text(f, "startHour", 2), 0, 23);
+    const viewingEndHour = intIn(text(f, "endHour", 2), 1, 24);
+    const viewingSlotMinutes = intIn(text(f, "slotMinutes", 3), 15, 120);
+    const viewingLeadHours = intIn(text(f, "leadHours", 3), 0, 168);
+    const viewingHorizonDays = intIn(text(f, "horizonDays", 2), 1, 60);
+    const perEmailPerDay = intIn(text(f, "perEmailPerDay", 3), 1, 100);
+    if (
+      !viewingDays.length ||
+      viewingStartHour === null ||
+      viewingEndHour === null ||
+      viewingStartHour >= viewingEndHour ||
+      viewingSlotMinutes === null ||
+      viewingLeadHours === null ||
+      viewingHorizonDays === null ||
+      perEmailPerDay === null
+    )
+      return null;
+    return {
+      method: "PUT",
+      path,
+      body: {
+        baseVersion,
+        values: {
+          viewings: {
+            viewingDays,
+            viewingStartHour,
+            viewingEndHour,
+            viewingSlotMinutes,
+            viewingLeadHours,
+            viewingHorizonDays,
+          },
+          leads: { perEmailPerDay },
+        },
+      },
+    };
+  }
   if (page === "signing") {
     const days = intIn(text(f, "signingLinkDays", 3), 1, 60);
     if (days === null) return null;

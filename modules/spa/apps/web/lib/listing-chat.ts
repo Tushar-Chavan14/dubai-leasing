@@ -53,7 +53,7 @@ export function chatError(status: number): string {
 /** Sends one message through this site's own route and returns the line to show. Never throws. */
 export async function postChat(ref: string, body: ChatSend, fetchFn: typeof fetch = fetch): Promise<ChatLine> {
   try {
-    const res = await fetchFn(`/listings/${encodeURIComponent(ref)}/chat`, {
+    const res = await fetchFn(`/properties/${encodeURIComponent(ref)}/chat`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),

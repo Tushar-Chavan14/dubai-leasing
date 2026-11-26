@@ -3,17 +3,10 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { publicEngine } from "../../lib/engine";
-import { sessionCookie, webEnv } from "../../lib/env";
+import { sessionCookie } from "../../lib/env";
+import { keepSession } from "../../lib/session-cookie";
 
-const keep = async (token: string) =>
-  (await cookies()).set(sessionCookie(), token, {
-    httpOnly: true,
-    sameSite: "lax",
-    path: "/",
-    maxAge: 12 * 3600,
-    // Outside demo mode the app runs behind HTTPS: the cookie never travels over plain HTTP.
-    secure: !webEnv().SPA_DEMO_MODE,
-  });
+const keep = keepSession;
 
 export async function signIn(formData: FormData) {
   const email = String(formData.get("email") ?? "").trim();

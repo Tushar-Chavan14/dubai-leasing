@@ -1,5 +1,5 @@
 import { newId } from "@platform/kernel/ids";
-import { chaseTemplateProblems, type SpaRole } from "@spa/core";
+import { chaseTemplateProblems, type SpaRole, hasRole } from "@spa/core";
 import { chaseTemplates, type SpaDb, withSpaTx } from "@spa/db";
 import { and, desc, eq, max, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -7,7 +7,7 @@ import type { SpaContext } from "./context.ts";
 import { conflict, forbidden, notFound, unprocessable } from "./errors.ts";
 import { appendDealEvent } from "./events.ts";
 
-type Person = { id: string; role: SpaRole };
+type Person = { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined };
 
 /** The settings record chase-template events are logged against (like the AML policy's: no deal, just the settings). */
 export const CHASE_TEMPLATE_ENTITY = { kind: "settings" as const, id: "00000000-0000-7000-8000-000000000025" };
@@ -24,7 +24,7 @@ export async function createChaseTemplate(
   user: Person,
   input: unknown,
 ): Promise<{ id: string; version: number; status: "draft" }> {
-  if (user.role !== "admin") throw forbidden("only an admin writes a chase email");
+  if (!hasRole(user, "admin")) throw forbidden("only an admin writes a chase email");
   const parsed = Input.safeParse(input);
   if (!parsed.success) throw unprocessable("invalid_chase_template", "send a subject and a body");
   const problems = chaseTemplateProblems(parsed.data);
@@ -66,7 +66,7 @@ export async function approveChaseTemplate(
   user: Person,
   id: string,
 ): Promise<{ id: string; version: number; status: "approved" }> {
-  if (user.role !== "admin") throw forbidden("only an admin approves a chase email");
+  if (!hasRole(user, "admin")) throw forbidden("only an admin approves a chase email");
   return withSpaTx(ctx.database, async (tx) => {
     const [t] = await tx.db.select().from(chaseTemplates).where(eq(chaseTemplates.id, id)).for("update");
     if (!t) throw notFound("chase email");

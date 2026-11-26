@@ -36,6 +36,7 @@ import { enqueuePrepare } from "./prepare.ts";
 import { BadQuery } from "./reads.ts";
 import { resendSigningLink } from "./signing.ts";
 import { openTask } from "./tasks.ts";
+import { hasAnyRole } from "@spa/core";
 
 /**
  * The staff copilot's engine side (C36, S68). The copilot reads through the existing role-filtered routes, so the only new
@@ -43,7 +44,7 @@ import { openTask } from "./tasks.ts";
  * until the same user confirms it, and confirming runs the normal manager function as that user. Nothing here approves,
  * sends, signs, submits, clears or edits a setting; a test scans this file for the manager functions that do.
  */
-type Person = { id: string; role: SpaRole };
+type Person = { id: string; role: SpaRole; roles?: readonly SpaRole[] | undefined };
 
 /** A proposal is good for this long; after that it is marked expired and Confirm answers 410. */
 export const PROPOSAL_TTL_MINUTES = 30;
@@ -193,7 +194,7 @@ export async function storeDraft(ctx: SpaContext, user: Person, raw: z.infer<typ
     raw.kind === "email" ? `To: ${raw.to ?? "colleague"}\nSubject: ${raw.subject ?? ""}\n\n${raw.body}` : raw.body;
   const body = maskPiiText(text);
   // Compliance matters never land in a draft a non-compliance role reads (S6, S42, S57).
-  if (!["compliance_officer", "mlro"].includes(user.role) && hasAmlWord(body))
+  if (!hasAnyRole(user, ["compliance_officer", "mlro"]) && hasAmlWord(body))
     throw unprocessable("draft_refused", "that draft can't be saved here");
   const id = newId();
   await ctx.database.db.insert(copilotDrafts).values({
