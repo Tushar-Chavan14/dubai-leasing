@@ -1,0 +1,275 @@
+/* Leasing staff app styles on top of the shared base (@platform/ui/base.css, imported before this file by
+   app/layout.tsx; design.md §11). */
+/* ---------- tables ---------- */
+table.data {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+table.data th {
+  text-align: left;
+  font-weight: 550;
+  font-size: 12.5px;
+  color: var(--muted);
+  padding: 12px 16px 10px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+table.data td {
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+table.data tr:last-child td {
+  border-bottom: 0;
+}
+table.data tbody tr {
+  transition: background var(--fast) var(--ease);
+}
+table.data tbody tr:hover {
+  background: var(--surface-2);
+}
+table.data .num {
+  text-align: right;
+}
+table.data .nowrap {
+  white-space: nowrap;
+}
+/* Text the model flagged as unverified. */
+mark.unverified {
+  background: var(--warn-soft);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
+  text-decoration: underline dotted var(--warn);
+  text-underline-offset: 3px;
+  cursor: help;
+}
+tr[data-current="true"] td {
+  background: var(--accent-soft);
+}
+/* Voice input (mic button, level meter, options) */
+.voice-meter {
+  display: inline-block;
+  width: 36px;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(127, 127, 127, 0.25);
+  overflow: hidden;
+}
+.voice-meter i {
+  display: block;
+  height: 100%;
+  background: currentColor;
+  transform-origin: left;
+}
+.voice-count {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+.voice-note {
+  flex-basis: 100%;
+  font-size: 12px;
+  color: #b3261e;
+}
+.voice-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 12px;
+  margin: 4px 0;
+}
+/* Voice settings popover next to the mic. */
+.vm {
+  position: relative;
+  flex: none;
+}
+.vm-pop {
+  position: absolute;
+  inset-inline-end: 0;
+  bottom: calc(100% + 8px);
+  z-index: 5;
+  min-width: 190px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-m);
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 14%);
+}
+.vm-pop .voice-options {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+}
+/* Quick-action pills: quiet, one row, scrolls sideways with a soft fade while more is hidden. */
+.qa-row {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.qa-row[data-wrap] {
+  flex-wrap: wrap;
+  overflow: visible;
+}
+.qa-row::-webkit-scrollbar {
+  display: none;
+}
+.qa-row[data-fade] {
+  mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+}
+.qa-pill {
+  flex: 0 0 auto;
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: 500 13px/1 var(--font-ui);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--fast) var(--ease),
+    color var(--fast) var(--ease);
+}
+.qa-pill:hover:not([disabled]) {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+.qa-pill:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+}
+.qa-pill[disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+/* "Ask AI" with request templates. */
+.ask-ai-menu {
+  position: relative;
+  display: inline-block;
+}
+.ask-ai-menu > summary {
+  list-style: none;
+  cursor: pointer;
+}
+.ask-ai-menu > summary::-webkit-details-marker {
+  display: none;
+}
+.ask-ai-menu > ul {
+  position: absolute;
+  right: 0;
+  z-index: 20;
+  min-width: 280px;
+  margin: 6px 0 0;
+  padding: 6px;
+  list-style: none;
+  background: var(--surface);
+  border-radius: var(--r-m);
+  box-shadow:
+    inset 0 0 0 1px var(--line),
+    var(--shadow-lift);
+}
+.ask-ai-menu li button {
+  width: 100%;
+  padding: 8px 10px;
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  border-radius: var(--r-s);
+  cursor: pointer;
+}
+.ask-ai-menu li button:hover,
+.ask-ai-menu li button:focus-visible {
+  background: var(--surface-3);
+}
+
+/* ---------- record cards ----------
+   The Workspace detail pane: its outermost sections become white cards on the canvas, so the record reads as
+   compartments. A section inside another section stays plain. The next-step section is outlined in blue. */
+.record-cards [data-section]:not([data-section] [data-section]) {
+  background: var(--ds-page);
+  border: 1px solid var(--ds-line);
+  border-radius: 16px;
+  padding: 18px 20px 20px;
+  box-shadow: var(--ds-shadow);
+}
+.record-cards [data-section]:not([data-section] [data-section]) > :first-child {
+  padding-bottom: 12px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--ds-line);
+}
+.record-cards [data-section][data-highlight]:not([data-section] [data-section]) {
+  border-color: var(--ds-primary);
+  box-shadow:
+    0 0 0 1px var(--ds-primary),
+    var(--ds-shadow);
+}
+.record-cards [data-section][data-highlight]:not([data-section] [data-section]) > :first-child h2::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 999px;
+  background: var(--ds-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ds-primary) 20%, transparent);
+  vertical-align: 1px;
+}
+
+/* ---------- the approval waiting on you ----------
+   Looks like the Next step card: white, outlined in blue, a blue dot before its label. */
+.gate-mine {
+  background: var(--ds-page);
+  border: 1px solid var(--ds-primary);
+  box-shadow:
+    0 0 0 1px var(--ds-primary),
+    var(--ds-shadow);
+}
+.gate-mine .gate-badge::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--ds-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ds-primary) 20%, transparent);
+}
+.gate-mine .gate-badge svg {
+  display: none;
+}
+
+/* ---------- collapsible record cards (UI rule) ----------
+   Every outermost record card has a chevron (SectionToggle) that folds it to its title. */
+.section-toggle {
+  display: none;
+}
+.record-cards [data-section] > :first-child .section-toggle {
+  display: grid;
+}
+.record-cards [data-section][data-collapsed] > :not(:first-child) {
+  display: none;
+}
+.record-cards [data-section][data-collapsed] > :first-child {
+  padding-bottom: 0;
+  margin-bottom: 0;
+  border-bottom: 0;
+}
+/* A section inside a record card (Contract and Ejari inside Documents) is its own bordered sub-card, also foldable. */
+.record-cards [data-section] [data-section] {
+  border: 1px solid var(--ds-line);
+  border-radius: 12px;
+  padding: 12px 14px 14px;
+  background: color-mix(in srgb, var(--ds-accent) 45%, var(--ds-page));
+  border-color: color-mix(in srgb, var(--ds-primary) 18%, var(--ds-line));
+}
+.record-cards [data-section] [data-section]:not([data-collapsed]) > :first-child {
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--ds-line);
+}

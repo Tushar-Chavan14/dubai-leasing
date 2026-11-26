@@ -1,0 +1,915 @@
+import {
+  type Actor,
+  documentKeyLabel,
+  EMIRATE_LABELS,
+  RequiredDocument,
+  upgradeDocumentKeys,
+  applyKycOps,
+  fieldAliases,
+  findField,
+  formatAed,
+  KycOp,
+  KycOpError,
+  newId,
+  PropertyCategory,
+  PropertySubtype,
+  type StaffRole,
+  type StaffUser,
+  Emirate,
+} from "@leasing/core";
+import {
+  companies,
+  contractRules,
+  copilotMessages,
+  copilotProposals,
+  copilotThreads,
+  rentRules,
+  type Tx,
+  withTx,
+} from "@leasing/db";
+import { normalizeWs } from "@leasing/helpers";
+import { and, desc, eq, or } from "drizzle-orm";
+import { z } from "zod";
+import type { EngineContext } from "../context.ts";
+import { forbidden, notFound, unprocessable } from "../errors.ts";
+import { addCompanyClause } from "./contract-templates.ts";
+import { appendEvent } from "./events.ts";
+import {
+  assertNoOverlap,
+  assertOffers,
+  assertOperates,
+  defaultEmirate,
+  createContractRule,
+  createRentRule,
+  replaceContractRule,
+  replaceRentRule,
+} from "./portfolio.ts";
+import { saveSriValue } from "./sri-values.ts";
+import {
+  registrationDocumentOptions,
+  saveRegistrationSettings,
+  settingsEntityId,
+  settingsFor,
+} from "./registration-settings.ts";
+import {
+  companyKycConfig,
+  kycDraft,
+  lockKycConfig,
+  publishKycDraft,
+  saveKycDraft,
+  validateKycConfig,
+} from "./kyc-config.ts";
+import { PROPOSAL_TTL_MS, proposalView } from "./copilot-proposals.ts";
+
+/**
+ * Contract and rent config the copilot may change (decision D45): a clause, a rent rule, a contract rule, a Smart
+ * Rental Index value. `company` is a company name or slug.
+ */
+export const ConfigChange = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("add_clause"),
+    company: z.string().trim().min(2).max(120),
+    title: z.string().trim().min(1).max(120),
+    text: z.string().trim().min(1).max(1200),
+    ruleIds: z.array(z.uuid()).max(20).optional(),
+  }),
+  z.object({
+    kind: z.literal("rent_rule"),
+    company: z.string().trim().min(2).max(120),
+    category: PropertyCategory,
+    /** D68: the unit types the rule covers; [] = all types. Omitted on a replace: the rule's own. */
+    subtypes: z.array(PropertySubtype).max(10).optional(),
+    /** Before D68 (stored proposals): one type. */
+    subtype: PropertySubtype.nullable().optional(),
+    emirate: Emirate.optional(),
+    community: z.string().trim().min(1).max(120).nullable().optional(),
+    minPctBp: z.number().int().min(-5000).max(5000),
+    maxPctBp: z.number().int().min(-5000).max(5000),
+    minRentFils: z.number().int().min(0).nullable().optional(),
+    maxRentFils: z.number().int().min(0).nullable().optional(),
+    maxOfferDiscountPct: z.number().int().min(0).max(50).nullable().optional(),
+    replaceRuleId: z.uuid().optional(),
+  }),
+  z.object({
+    kind: z.literal("contract_rule"),
+    company: z.string().trim().min(2).max(120),
+    category: PropertyCategory,
+    /** D68: the unit types the rule covers; [] = all types. Omitted on a replace: the rule's own. */
+    subtypes: z.array(PropertySubtype).max(10).optional(),
+    /** Before D68 (stored proposals): one type. */
+    subtype: PropertySubtype.nullable().optional(),
+    /** The emirate the rule is for; null = any emirate (D58). On a replace, omitted keeps the current one. */
+    emirate: Emirate.nullable().optional(),
+    tenures: z.array(z.enum(["annual", "short_term"])).min(1),
+    minCheques: z.number().int().min(1).max(12),
+    maxCheques: z.number().int().min(1).max(12),
+    replaceRuleId: z.uuid().optional(),
+  }),
+  z.object({
+    kind: z.literal("sri_value"),
+    emirate: Emirate.optional(),
+    community: z.string().trim().min(1).max(120),
+    bedrooms: z.number().int().min(0).max(10),
+    avgAnnualRentFils: z.number().int().positive().max(100_000_000_00),
+  }),
+  // D50: edits to the company's document form and KYC rules, applied to its draft (publish only when asked).
+  z.object({
+    kind: z.literal("kyc_config"),
+    company: z.string().trim().min(2).max(120),
+    ops: z.array(KycOp).min(1).max(20),
+  }),
+  // Registration settings of an emirate: only the fields given change; the merged result is validated on save.
+  z.object({
+    kind: z.literal("registration_settings"),
+    emirate: Emirate,
+    mode: z.enum(["online", "manual"]).optional(),
+    portalName: z.string().trim().min(1).max(120).optional(),
+    portalUrl: z.string().trim().max(500).nullable().optional(),
+    instructions: z.string().trim().max(2000).optional(),
+    requiredDocuments: z
+      .preprocess(
+        (v) => (Array.isArray(v) && v.every((x) => typeof x === "string") ? upgradeDocumentKeys(v) : v),
+        z.array(RequiredDocument).min(1).max(40),
+      )
+      .optional(),
+    referenceExample: z.string().trim().max(60).optional(),
+    referencePattern: z.string().max(120).optional(),
+  }),
+]);
+export type ConfigChange = z.infer<typeof ConfigChange>;
+
+/** Same roles as the settings routes: admins change rules and clauses; admins and leasing managers the SRI table. */
+const ROLES: Record<ConfigChange["kind"], StaffRole[]> = {
+  add_clause: ["admin"],
+  rent_rule: ["admin"],
+  contract_rule: ["admin"],
+  sri_value: ["admin", "leasing_manager"],
+  kyc_config: ["admin"],
+  registration_settings: ["admin"],
+};
+export function requireConfigRole(user: StaffUser, kind: ConfigChange["kind"]) {
+  if (!ROLES[kind].includes(user.role)) throw forbidden(`${user.role} can't change this setting`);
+}
+
+async function companyId(tx: Tx, ref: string): Promise<string> {
+  const [c] = await tx.db
+    .select({ id: companies.id })
+    .from(companies)
+    .where(or(eq(companies.slug, ref.toLowerCase()), eq(companies.name, ref)));
+  if (c) return c.id;
+  const all = await tx.db.select({ id: companies.id, name: companies.name }).from(companies);
+  const hits = all.filter((x) => x.name.toLowerCase().includes(ref.toLowerCase()));
+  if (hits.length !== 1) throw notFound("company");
+  return hits[0]!.id;
+}
+
+const pct = (bp: number) => `${bp > 0 ? "+" : ""}${bp / 100}%`;
+const aed = (fils: number | null | undefined) => (fils === null || fils === undefined ? null : formatAed(fils));
+
+type RuleChange = Extract<ConfigChange, { kind: "rent_rule" | "contract_rule" }>;
+
+/** The types a rule change names (D68): `subtypes`, or a stored pre-D68 `subtype`; undefined = not given. */
+export function changeSubtypes(c: Pick<RuleChange, "subtypes" | "subtype">): PropertySubtype[] | undefined {
+  if (c.subtypes !== undefined) return [...new Set(c.subtypes)].sort();
+  if (c.subtype !== undefined) return c.subtype ? [c.subtype] : [];
+  return undefined;
+}
+
+const typeWords = (list: readonly string[]) => list.map((t) => t.replaceAll("_", " "));
+
+function typesFact(c: RuleChange): string | null {
+  const list = changeSubtypes(c);
+  if (list === undefined) return c.replaceRuleId ? "Unchanged" : "All types";
+  return list.length ? typeWords(list).join(", ") : "All types";
+}
+
+/** Shown only when the emirate is not Dubai (the default). */
+const emirateFact = (e: Emirate | undefined) => (e && e !== "dubai" ? EMIRATE_LABELS[e] : null);
+
+/** What a suggested change would do, as label/value lines for the Confirm card (values formatted here, not by a model). */
+export function changeFacts(change: ConfigChange): [string, string][] {
+  if (change.kind === "registration_settings") {
+    const { kind: _k, emirate, requiredDocuments, ...rest } = change;
+    const rows: [string, string | null | undefined][] = [
+      ["Emirate", EMIRATE_LABELS[emirate]],
+      ["Mode", rest.mode === undefined ? null : rest.mode === "online" ? "Online (engine submits)" : "By hand"],
+      ["Portal", rest.portalName],
+      ["Portal address", rest.portalUrl],
+      ["Instructions", rest.instructions],
+      ["Required documents", requiredDocuments?.map((k) => documentKeyLabel(k)).join(", ")],
+      ["Reference example", rest.referenceExample],
+      ["Reference pattern", rest.referencePattern],
+    ];
+    return rows.filter((r): r is [string, string] => typeof r[1] === "string");
+  }
+  if (change.kind === "kyc_config") return change.ops.map((op, i) => [`Change ${i + 1}`, describeKycOp(op)]);
+  const rows: [string, string | null | undefined][] =
+    change.kind === "add_clause"
+      ? [
+          ["Title", change.title],
+          ["Wording", change.text],
+          ["Added to", change.ruleIds?.length ? `${change.ruleIds.length} contract rule(s)` : "Additional clauses"],
+        ]
+      : change.kind === "rent_rule"
+        ? [
+            ["Emirate", emirateFact(change.emirate)],
+            ["Category", change.category],
+            ["Types", typesFact(change)],
+            ["Area", change.community ?? "All areas"],
+            ["Band", `SRI ${pct(change.minPctBp)} to ${pct(change.maxPctBp)}`],
+            ["Lowest rent", aed(change.minRentFils)],
+            ["Highest rent", aed(change.maxRentFils)],
+            [
+              "Offer discount without a manager",
+              typeof change.maxOfferDiscountPct === "number" ? `${change.maxOfferDiscountPct}%` : null,
+            ],
+            ["Replaces", change.replaceRuleId ? "The current rule" : null],
+          ]
+        : change.kind === "contract_rule"
+          ? [
+              ["Category", change.category],
+              ["Types", typesFact(change)],
+              [
+                "Emirate",
+                change.emirate ? EMIRATE_LABELS[change.emirate] : change.emirate === null ? "Any emirate" : null,
+              ],
+              ["Tenures", change.tenures.map((t) => (t === "annual" ? "Annual" : "Short term")).join(", ")],
+              ["Cheques", `${change.minCheques} to ${change.maxCheques}`],
+              ["Replaces", change.replaceRuleId ? "The current rule" : null],
+            ]
+          : [
+              ["Emirate", emirateFact(change.emirate)],
+              ["Area", change.community],
+              ["Bedrooms", change.bedrooms === 0 ? "Studio" : String(change.bedrooms)],
+              ["Average annual rent", formatAed(change.avgAnnualRentFils)],
+            ];
+  return rows.filter((r): r is [string, string] => typeof r[1] === "string");
+}
+
+const SEVERITY_WORD = { off: "Off", warning: "Warning", blocker: "Blocker" } as const;
+
+const yesNo = (b: boolean | undefined, yes: string, no: string) => (b === undefined ? null : b ? yes : no);
+const parts = (...xs: (string | null | undefined | false)[]) => xs.filter(Boolean).join(", ");
+
+/** One KYC edit in plain words for the Confirm card, with every value it sets. */
+export function describeKycOp(op: KycOp): string {
+  switch (op.op) {
+    case "set_check":
+      return `${op.field}: "${op.check}" → ${parts(op.severity && SEVERITY_WORD[op.severity], yesNo(op.emailApplicant, "email applicant", "no email"))}`;
+    case "set_number":
+      return `${op.field}: ${op.setting.replaceAll("_", " ")} → ${op.value}`;
+    case "set_name_match":
+      return `Applicant's name must match: ${op.mode}`;
+    case "add_document_field":
+      return `Add document "${op.label}" (${parts(
+        op.category === "custom" ? `custom: ${op.customName ?? op.label}` : op.category.replaceAll("_", " "),
+        op.customDescription && `described as "${op.customDescription}"`,
+        op.category === "custom" && (op.hasExpiry === false ? "no expiry date" : "has an expiry date"),
+        op.required ? "required" : "optional",
+        `shown to ${op.shownTo}`,
+        op.help && `help "${op.help}"`,
+      )})`;
+    case "add_question_field":
+      return `Add question "${op.label}" (${parts(
+        op.type,
+        op.required ? "required" : "optional",
+        `shown to ${op.shownTo}`,
+        !!op.options?.length && `choices: ${op.options.join(" / ")}`,
+        op.help && `help "${op.help}"`,
+      )})`;
+    case "update_field":
+      return `Change field "${op.field}": ${parts(
+        op.label && `label "${op.label}"`,
+        yesNo(op.required, "required", "optional"),
+        op.shownTo && `shown to ${op.shownTo}`,
+        op.help !== undefined && `help "${op.help}"`,
+      )}`;
+    case "add_rule": {
+      const r = op.rule;
+      return `Add custom check "${String(r.label ?? "")}" (${parts(
+        String(r.type ?? ""),
+        typeof r.severity === "string" ? SEVERITY_WORD[r.severity as keyof typeof SEVERITY_WORD] : "Warning",
+        r.emailApplicant === true && "emails the applicant",
+        typeof r.years === "number" && `${r.years} years`,
+        typeof r.pattern === "string" && `pattern ${r.pattern}`,
+        typeof r.instruction === "string" && `"${r.instruction}"`,
+        Array.isArray(r.allowed) && r.allowed.length > 0 && `accepts ${r.allowed.join(" / ")}`,
+      )})`;
+    }
+    case "set_rule":
+      return `Custom check "${op.rule}" → ${parts(op.severity && SEVERITY_WORD[op.severity], yesNo(op.emailApplicant, "email applicant", "no email"))}`;
+    case "remove_rule":
+      return `Remove custom check "${op.rule}"`;
+    case "remove_field":
+      return `Remove field "${op.field}"`;
+    case "publish":
+      return "Publish the whole draft (new uploads use it)";
+  }
+}
+
+/** Applies a change through the same managers (and validation) the settings forms use. */
+export async function applyConfigChange(
+  ctx: EngineContext,
+  tx: Tx,
+  user: StaffUser,
+  change: ConfigChange,
+  actor: Actor,
+  valuesConfirmed: boolean,
+) {
+  requireConfigRole(user, change.kind);
+  switch (change.kind) {
+    case "add_clause": {
+      const cid = await companyId(tx, change.company);
+      const row = await addCompanyClause(
+        ctx,
+        tx,
+        cid,
+        {
+          title: change.title,
+          text: change.text,
+          ruleIds: change.ruleIds,
+          ...(valuesConfirmed ? { confirmValues: true } : {}),
+        },
+        actor,
+      );
+      return { id: row.id, entity: { kind: "company" as const, id: cid }, summary: `Clause "${row.title}" added` };
+    }
+    case "rent_rule": {
+      const { kind: _k, company, replaceRuleId, subtype: _s, subtypes: _l, ...rest } = change;
+      const cid = await companyId(tx, company);
+      // No emirate: the company's only one (422 when several); a replace without one keeps the rule's own.
+      // No types: all types for a new rule; a replace keeps the rule's own (D68).
+      let subtypes = changeSubtypes(change);
+      if (replaceRuleId) {
+        const [old] = await tx.db.select().from(rentRules).where(eq(rentRules.id, replaceRuleId));
+        if (old?.companyId !== cid) throw unprocessable("That rent rule is not this company's.", [], "bad_rule");
+        subtypes ??= old.subtypes;
+      }
+      const v = { ...rest, subtypes: subtypes ?? [] };
+      const row = replaceRuleId
+        ? await replaceRentRule(ctx, tx, replaceRuleId, v, actor)
+        : await createRentRule(
+            ctx,
+            tx,
+            { ...v, emirate: v.emirate ?? (await defaultEmirate(tx, cid)), companyId: cid },
+            actor,
+          );
+      return { id: row.id, entity: { kind: "company" as const, id: cid }, summary: "Rent rule saved" };
+    }
+    case "contract_rule": {
+      const { kind: _k, company, replaceRuleId, subtype: _s, subtypes: _l, ...rest } = change;
+      const cid = await companyId(tx, company);
+      let clauseIds: string[] = [];
+      let subtypes = changeSubtypes(change);
+      if (replaceRuleId) {
+        const [old] = await tx.db.select().from(contractRules).where(eq(contractRules.id, replaceRuleId));
+        if (old?.companyId !== cid) throw unprocessable("That contract rule is not this company's.", [], "bad_rule");
+        clauseIds = old.clauseIds;
+        subtypes ??= old.subtypes;
+      }
+      const v = { ...rest, subtypes: subtypes ?? [] };
+      const row = replaceRuleId
+        ? await replaceContractRule(ctx, tx, replaceRuleId, { ...v, clauseIds }, actor)
+        : await createContractRule(ctx, tx, { ...v, clauseIds, companyId: cid }, actor);
+      return { id: row.id, entity: { kind: "company" as const, id: cid }, summary: "Contract rule saved" };
+    }
+    case "kyc_config": {
+      const cid = await companyId(tx, change.company);
+      // Lock first so a concurrent edit (another turn, the settings page) can't be overwritten by this one.
+      await lockKycConfig(tx, cid);
+      // Edits land in the draft (a copy of the live version when none is open); publishing is its own step.
+      const start = (await kycDraft(tx, cid)) ?? (await companyKycConfig(tx, cid, ctx.clock.today()));
+      let next: ReturnType<typeof applyKycOps>;
+      try {
+        next = applyKycOps({ form: start.form, rules: start.rules }, change.ops);
+      } catch (e) {
+        if (e instanceof KycOpError) throw unprocessable(e.message, [], "bad_kyc_change");
+        throw e;
+      }
+      const draft = await saveKycDraft(ctx, tx, cid, { form: next.form, rules: next.rules }, actor, change.ops);
+      const done = next.publish ? await publishKycDraft(ctx, tx, cid, actor) : null;
+      return {
+        id: String(draft.version),
+        entity: { kind: "company" as const, id: cid },
+        summary: done ? `KYC settings published as version ${done.version}` : `KYC draft v${draft.version} saved`,
+      };
+    }
+    case "registration_settings": {
+      const { kind: _k, emirate, ...patch } = change;
+      const cur = await settingsFor(ctx, tx, emirate);
+      // Drop the read-only fields (the strict schema refuses them). Keep the contract wording only when the settings
+      // already hold it: a row saved before D74 has none, and an unrelated change must not save the default as its own.
+      const { source: _s, forcedManual: _f, contractWordingSaved, contractWording, ...values } = cur;
+      const defined = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined));
+      const wording = contractWordingSaved ? { contractWording } : {};
+      await saveRegistrationSettings(ctx, tx, emirate, { ...values, ...wording, ...defined }, actor);
+      return {
+        id: emirate,
+        entity: { kind: "settings" as const, id: settingsEntityId(emirate) },
+        summary: `${EMIRATE_LABELS[emirate]} registration settings saved`,
+      };
+    }
+    case "sri_value": {
+      const { kind: _k, ...v } = change;
+      const row = await saveSriValue(ctx, tx, v, actor);
+      return {
+        id: row.id,
+        entity: { kind: "rulebook" as const, id: row.id },
+        summary: "Rent index value saved",
+      };
+    }
+  }
+}
+
+const norm = (s: string) => normalizeWs(s).toLowerCase();
+
+/** Whole words only: "visa" is not in "visas", "other" is not in "another". */
+const hasWords = (m: string, c: string) =>
+  new RegExp(`(?<![a-z0-9])${c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![a-z0-9])`).test(m);
+
+/**
+ * Whether the user's message names a checklist item: its label, its short name, its exact field key, or the field
+ * key in words when that is specific enough (several words or 6+ letters, so "name" or "tax" alone never counts).
+ * `labels`: the company form labels of `kyc:other:` and `answer:` items.
+ */
+function documentSaid(key: string, message: string, labels?: ReadonlyMap<string, string>): boolean {
+  const m = norm(message);
+  const label = labels?.get(key) ?? documentKeyLabel(key);
+  const short = label.replace(/^(Tenant document: |Applicant's answer: |Tenant )/, "").replace(/\s*\(.*\)$/, "");
+  const field = key.replace(/^(kyc:other:|kyc:|answer:)/, "");
+  const words = field.replaceAll("_", " ");
+  // Short names of a company's own fields must be specific too ("Name" alone never counts).
+  const specific = (c: string) => c.includes(" ") || c.length >= 6;
+  const own = key.startsWith("answer:") || key.startsWith("kyc:other:");
+  const candidates =
+    key === "other"
+      ? [label, "other document"]
+      : [
+          label,
+          ...(!own || specific(short) ? [short] : []),
+          // The exact key ("answer:employer", or a field key with an underscore like "employer_letter").
+          ...(key.includes(":") ? [key, ...(field.includes("_") ? [field] : [])] : []),
+          ...(specific(words) ? [words] : []),
+        ];
+  return candidates.some((c) => c.length >= 3 && hasWords(m, norm(c)));
+}
+
+const hostOf = (h: string) => h.toLowerCase().replace(/^www\./, "");
+const pathOf = (p: string) => p.replace(/\/+$/, "");
+
+/**
+ * Whether the user's message names this web address: some URL-like token (with or without `https://` and `www.`)
+ * has the same host (ignoring `www.`) and the same path (case-sensitive, trailing slash ignored). A token glued to
+ * a longer name ("notuaq.gov.ae", "sub.uaq.gov.ae") or to an `@` (an email address) never counts.
+ */
+export function messageNamesUrl(message: string, saved: string): boolean {
+  let want: URL;
+  try {
+    want = new URL(saved);
+  } catch {
+    return false;
+  }
+  const re = /(?<![@A-Za-z0-9.-])((?:https?:\/\/)?(?:[A-Za-z0-9-]+\.)+[A-Za-z0-9-]+)(\/[^\s"'<>)]*)?/gi;
+  for (const m of message.matchAll(re)) {
+    const path = (m[2] ?? "").replace(/[.,;:!?]+$/, "");
+    let got: URL;
+    try {
+      got = new URL(/^https?:\/\//i.test(m[1]!) ? m[1]! : `https://${m[1]}`);
+    } catch {
+      continue;
+    }
+    if (hostOf(got.hostname) === hostOf(want.hostname) && pathOf(path) === pathOf(want.pathname)) return true;
+  }
+  return false;
+}
+
+/** Every number written in a message, as values: "105k" → 105000, "10,000" → 10000, "-3%" → 3 (sign dropped). */
+export function numbersIn(text: string): Set<number> {
+  const out = new Set<number>();
+  for (const m of text.matchAll(/(?<![\d.])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?\s*(k)?(?![\d])/gi)) {
+    const n = Number(`${m[1]!.replaceAll(",", "")}${m[2] ? `.${m[2]}` : ""}`);
+    out.add(m[3] ? n * 1000 : n);
+  }
+  return out;
+}
+
+/** "not for all types": not a request to cover every type. */
+const ALL_TYPES_NEGATED =
+  /\b(not|no|never|without|except|don'?t|doesn'?t|isn'?t)\b[^.]{0,30}\b(all|any|every) (unit )?types?\b/i;
+
+/** "not in any emirate", "don't apply to all emirates": not a request to clear the emirate. */
+const ANY_EMIRATE_NEGATED =
+  /\b(not|no|never|without|except|don'?t|doesn'?t|isn'?t)\b[^.]{0,30}\b(any|all|every) emirates?\b/i;
+
+/** The fields of the contract rule an explicit replace starts from (D58). */
+export interface PreviousContractRule {
+  category: string;
+  subtypes: string[];
+  emirate: Emirate | null;
+  tenures: string[];
+  minCheques: number;
+  maxCheques: number;
+}
+
+/**
+ * The values of an explicit change that the user's message does not contain (D45): a change is made directly only
+ * when its numbers (and a clause's wording) are the user's own. Anything else must go through a suggestion.
+ */
+export function valuesNotSaid(
+  change: ConfigChange,
+  message: string,
+  /** KYC: other names the field an edit refers to is known by (label, key, category words), for the field check. */
+  fieldNames: (ref: string) => string[] = (ref) => [ref],
+  /** Contract rule replace (D58): the rule it replaces. Values it already had were set by people and need no quote. */
+  previous?: PreviousContractRule,
+  /** Registration checklist (D62): labels of the company fields, from every KYC form. */
+  docLabels?: ReadonlyMap<string, string>,
+): string[] {
+  const said = numbersIn(message);
+  // The company (and an area) the change is for must be named by the user too.
+  const named = (label: string, v: string | null | undefined, text = message) =>
+    !v || norm(text).includes(norm(v)) ? [] : [label];
+  const who = "company" in change ? named("company", change.company) : [];
+  const need = (label: string, n: number | null | undefined) =>
+    n === null || n === undefined || said.has(n) ? [] : [label];
+  // Which units a rule covers is the user's choice too: the category, each type, and a contract rule's tenures.
+  const scope = (c: RuleChange) => [
+    ...named("category", c.category),
+    ...typeWords(changeSubtypes(c) ?? []).flatMap((t) => named("type", t)),
+  ];
+  // "all types" said and not negated ("not all types").
+  const allTypesSaid = /\b(all|any|every) (unit )?types?\b/i.test(message) && !ALL_TYPES_NEGATED.test(message);
+  switch (change.kind) {
+    case "add_clause":
+      return [...who, ...(norm(message).includes(norm(change.text)) ? [] : ["clause wording"])];
+    case "rent_rule":
+      return [
+        ...who,
+        ...scope(change),
+        ...named("area", change.community),
+        ...need("lowest percent", Math.abs(change.minPctBp) / 100),
+        ...need("highest percent", Math.abs(change.maxPctBp) / 100),
+        ...need("lowest rent", typeof change.minRentFils === "number" ? change.minRentFils / 100 : null),
+        ...need("highest rent", typeof change.maxRentFils === "number" ? change.maxRentFils / 100 : null),
+        ...need("offer discount", typeof change.maxOfferDiscountPct === "number" ? change.maxOfferDiscountPct : null),
+      ];
+    case "contract_rule": {
+      const p = previous;
+      const same = <T>(a: T, b: T) => p !== undefined && a === b;
+      const emirate = change.emirate === undefined && p ? p.emirate : (change.emirate ?? null);
+      // The user must still say which rule: its type, or for an all-types rule its category or "all types".
+      const which = !p
+        ? []
+        : p.subtypes.length
+          ? typeWords(p.subtypes).some((t) => norm(message).includes(norm(t)))
+            ? []
+            : ["which rule"]
+          : norm(message).includes(norm(p.category)) || /\ball[- ]types?\b/i.test(message)
+            ? []
+            : ["which rule"];
+      // D68: on a replace, each type added or taken off must be named; going to "all types" must be said.
+      const next = changeSubtypes(change);
+      const typeChange = !p
+        ? scope(change)
+        : [
+            ...(same(change.category, p.category) ? [] : named("category", change.category)),
+            ...(next === undefined
+              ? []
+              : next.length === 0
+                ? p.subtypes.length === 0 || allTypesSaid
+                  ? []
+                  : ["all types"]
+                : typeWords([
+                    ...next.filter((t) => !p.subtypes.includes(t)),
+                    ...p.subtypes.filter((t) => !next.includes(t as PropertySubtype)),
+                  ]).flatMap((t) => named("type", t))),
+          ];
+      return [
+        ...who,
+        ...which,
+        ...typeChange,
+        ...(p && change.tenures.toSorted().join() === p.tenures.toSorted().join()
+          ? []
+          : change.tenures.flatMap((t) => named("tenure", t === "annual" ? "annual" : "short"))),
+        ...(same(change.minCheques, p?.minCheques) ? [] : need("fewest cheques", change.minCheques)),
+        ...(same(change.maxCheques, p?.maxCheques) ? [] : need("most cheques", change.maxCheques)),
+        ...(same(emirate, p?.emirate ?? null) || (!p && emirate === null)
+          ? []
+          : emirate === null
+            ? /\b(any|all|every) emirates?\b/i.test(message) && !ANY_EMIRATE_NEGATED.test(message)
+              ? []
+              : ["emirate"]
+            : named("emirate", EMIRATE_LABELS[emirate])),
+      ];
+    }
+    case "kyc_config":
+      return [...who, ...change.ops.flatMap((op) => kycValuesNotSaid(op, message, said, fieldNames))];
+    case "registration_settings":
+      return [
+        ...named("emirate", EMIRATE_LABELS[change.emirate]),
+        ...(change.mode === undefined
+          ? []
+          : MODE_NEGATED.test(message)
+            ? ["mode (negated)"]
+            : change.mode === "online"
+              ? norm(message).includes("online")
+                ? []
+                : ["mode"]
+              : /\b(manual|by hand|by-hand)\b/i.test(message)
+                ? []
+                : ["mode"]),
+        ...named("portal name", change.portalName),
+        // "uaqmunicipality.gov.ae" names "https://www.UAQMunicipality.gov.ae/": same host and path, scheme and www. aside.
+        ...(change.portalUrl === undefined
+          ? []
+          : change.portalUrl === null || change.portalUrl === ""
+            ? // Clearing the address needs the user to say so.
+              /\b(clear|remove|delete|no)\b/i.test(message)
+              ? []
+              : ["portal address"]
+            : messageNamesUrl(message, change.portalUrl)
+              ? []
+              : ["portal address"]),
+        ...named("instructions", change.instructions),
+        ...named("reference example", change.referenceExample),
+        ...named("reference pattern", change.referencePattern),
+        ...(change.requiredDocuments ?? []).flatMap((k) =>
+          documentSaid(k, message, docLabels) ? [] : [`document ${k}`],
+        ),
+      ];
+    case "sri_value":
+      return [
+        ...named("community", change.community),
+        ...need("average rent", change.avgAnnualRentFils / 100),
+        ...(change.bedrooms === 0 ? [] : need("bedrooms", change.bedrooms)),
+      ];
+  }
+}
+
+/** Words that must appear for a severity to be the user's choice (only tightening severities can be explicit). */
+const SEVERITY_SAID: Record<string, RegExp> = { blocker: /\bblock(er|ing|s)?\b/i, warning: /\bwarn(ing|s)?\b/i };
+/** "don't publish", "do not block", "not yet": a negation never authorises a change. */
+const MODE_NEGATED =
+  /\b(don'?t|do not|not|never|no longer|no need to|stop|isn'?t|without)\b[^.;!?]{0,30}\b(online|manual|by[ -]hand)\b/i;
+const NEGATED = /\b(don'?t|do not|not|never|no need to|stop)\b[^.;!?]{0,30}\b(publish|block|remove|delete|live)/i;
+
+/**
+ * Why a KYC edit can't be made directly (D50): it is applied without a Confirm click only when it tightens or adds,
+ * names its field, and every number, severity, "email", new wording and "publish" is in the user's own message.
+ * Anything that loosens KYC (a check off or down to warning, a document optional or shown to fewer applicants, a
+ * removal, no expiry date, a check that emails applicants) always goes through a suggestion the user confirms.
+ */
+function kycValuesNotSaid(
+  op: KycOp,
+  message: string,
+  said: Set<number>,
+  fieldNames: (ref: string) => string[],
+): string[] {
+  const has = (re: RegExp) => re.test(message);
+  const text = (label: string, v: string | undefined) => (!v || norm(message).includes(norm(v)) ? [] : [label]);
+  // The field counts as named when the message uses any name it is known by ("passport" for "Passport data page").
+  const field = (ref: string) =>
+    fieldNames(ref).some((n) => n.length >= 3 && norm(message).includes(norm(n))) ? [] : [`which field ("${ref}")`];
+  const sev = (s: string | undefined) =>
+    !s
+      ? []
+      : s === "off"
+        ? ["turning a check off (needs Confirm)"]
+        : SEVERITY_SAID[s]!.test(message)
+          ? []
+          : [`severity ${s}`];
+  const mail = (e: boolean | undefined) => (e === undefined || has(/\be-?mail/i) ? [] : ["email applicant"]);
+  if (has(NEGATED)) return ["a negated request (needs Confirm)"];
+  switch (op.op) {
+    case "set_check":
+      return [
+        ...(op.severity === "warning" ? ["lowering a check to warning (needs Confirm)"] : []),
+        ...(op.severity === undefined && op.emailApplicant === undefined ? ["no change named"] : []),
+        ...(op.emailApplicant === false ? ["stopping applicant emails (needs Confirm)"] : []),
+        ...(norm(op.field) === "across documents" ? [] : field(op.field)),
+        ...sev(op.severity === "warning" ? undefined : op.severity),
+        ...mail(op.emailApplicant),
+      ];
+    case "set_rule":
+      return [
+        ...(op.severity === "warning" || op.severity === "off" ? ["lowering a custom check (needs Confirm)"] : []),
+        ...(op.emailApplicant === false ? ["stopping applicant emails (needs Confirm)"] : []),
+        ...text(`which custom check ("${op.rule}")`, op.rule),
+        ...sev(op.severity === "blocker" ? "blocker" : undefined),
+        ...mail(op.emailApplicant),
+      ];
+    case "set_number":
+      return [...field(op.field), ...(said.has(op.value) ? [] : [op.setting.replaceAll("_", " ")])];
+    case "set_name_match":
+      return op.mode === "exact" && has(/\bexact/i) ? [] : ["name match (lenient needs Confirm)"];
+    case "add_document_field":
+      return [
+        ...text("field label", op.label),
+        ...text("document name", op.customName),
+        ...text("document description", op.customDescription),
+        ...text("help text", op.help),
+        ...(op.hasExpiry === false ? ["a document without an expiry date (needs Confirm)"] : []),
+        ...(op.required === false ? ["an optional document (needs Confirm)"] : []),
+      ];
+    case "add_question_field":
+      return [
+        ...text("field label", op.label),
+        ...text("help text", op.help),
+        ...(op.options ?? []).flatMap((o) => text(`choice "${o}"`, o)),
+      ];
+    case "update_field":
+      return [
+        ...field(op.field),
+        ...text("new label", op.label),
+        ...text("help text", op.help),
+        ...(op.required === false ? ["making a field optional (needs Confirm)"] : []),
+        ...(op.required === true && !has(/\b(required|mandatory|must)\b/i) ? ["required"] : []),
+        ...(op.shownTo !== undefined ? ["who sees a field (needs Confirm)"] : []),
+      ];
+    case "add_rule": {
+      const r = op.rule;
+      const str = (k: string) => (typeof r[k] === "string" ? (r[k] as string) : undefined);
+      return [
+        ...text("check label", str("label")),
+        ...text("instruction", str("instruction")),
+        ...text("pattern", str("pattern")),
+        ...text("plain words", str("describe")),
+        ...(Array.isArray(r.allowed)
+          ? r.allowed.flatMap((x) => text(`accepted answer "${String(x)}"`, String(x)))
+          : []),
+        ...(typeof r.years === "number" && !said.has(r.years) ? ["years"] : []),
+        ...(r.emailApplicant === true ? ["a check that emails applicants (needs Confirm)"] : []),
+        ...(r.severity === "off"
+          ? ["a check that is off"]
+          : sev(str("severity") === "blocker" ? "blocker" : undefined)),
+      ];
+    }
+    case "remove_field":
+    case "remove_rule":
+      return ["removing a field or check (needs Confirm)"];
+    case "publish":
+      return has(/\b(publish|go live|make (it )?live)\b/i) ? [] : ["publish"];
+  }
+}
+
+/**
+ * D68: a rule change that would compete with another active rule for the same units is refused before it is stored
+ * or applied, with the other rule's id so the copilot can replace that rule instead. The scope is the one the rule
+ * will have when applied: an omitted emirate or type list keeps a replaced rule's own; a new contract rule without an
+ * emirate is for all emirates.
+ */
+async function assertRuleScopeFree(tx: Tx, cid: string, change: RuleChange) {
+  const old = change.replaceRuleId
+    ? change.kind === "rent_rule"
+      ? (await tx.db.select().from(rentRules).where(eq(rentRules.id, change.replaceRuleId)))[0]
+      : (await tx.db.select().from(contractRules).where(eq(contractRules.id, change.replaceRuleId)))[0]
+    : undefined;
+  const emirate = change.emirate !== undefined ? change.emirate : old ? old.emirate : null;
+  await assertNoOverlap(
+    tx,
+    change.kind === "rent_rule" ? "rent" : "contract",
+    {
+      companyId: cid,
+      category: change.category,
+      emirate: emirate ?? null,
+      community: change.kind === "rent_rule" ? (change.community ?? null) : null,
+      subtypes: changeSubtypes(change) ?? old?.subtypes ?? [],
+    },
+    old?.id ?? null,
+    true,
+  );
+}
+
+/**
+ * An explicit change: the user asked for it in their own words. `userQuote` must be at least 8 characters of the
+ * user's latest message in this conversation (their own words, never tool output or tenant text), else 422.
+ */
+export async function explicitConfigChange(
+  ctx: EngineContext,
+  user: StaffUser,
+  threadId: string,
+  userQuote: string,
+  raw: unknown,
+) {
+  const change = ConfigChange.parse(raw);
+  requireConfigRole(user, change.kind);
+  return withTx(ctx.database, async (tx) => {
+    const [thread] = await tx.db
+      .select({ id: copilotThreads.id })
+      .from(copilotThreads)
+      .where(and(eq(copilotThreads.id, threadId), eq(copilotThreads.userId, user.id)));
+    if (!thread) throw notFound("conversation");
+    const [last] = await tx.db
+      .select()
+      .from(copilotMessages)
+      .where(and(eq(copilotMessages.threadId, threadId), eq(copilotMessages.role, "user")))
+      .orderBy(desc(copilotMessages.at), desc(copilotMessages.id))
+      .limit(1);
+    const quote = norm(userQuote);
+    let fieldNames: ((ref: string) => string[]) | undefined;
+    if (change.kind === "kyc_config") {
+      const cid = await companyId(tx, change.company);
+      const cfg = (await kycDraft(tx, cid)) ?? (await companyKycConfig(tx, cid, ctx.clock.today()));
+      fieldNames = (ref) => {
+        try {
+          return [ref, ...fieldAliases(findField(cfg.form, ref))];
+        } catch {
+          return [ref];
+        }
+      };
+    }
+    let previous: PreviousContractRule | undefined;
+    if (change.kind === "contract_rule" && change.replaceRuleId) {
+      const [old] = await tx.db.select().from(contractRules).where(eq(contractRules.id, change.replaceRuleId));
+      // Only an active rule of the named company counts; anything else is refused when the change is applied.
+      if (old?.active && old.companyId === (await companyId(tx, change.company))) previous = old;
+    }
+    const docLabels =
+      change.kind === "registration_settings" && change.requiredDocuments
+        ? new Map((await registrationDocumentOptions(ctx, tx)).map((o) => [o.key, o.label]))
+        : undefined;
+    const missing = last ? valuesNotSaid(change, last.content, fieldNames, previous, docLabels) : [];
+    if (!last || quote.length < 8 || !norm(last.content).includes(quote) || missing.length) {
+      throw unprocessable(
+        "A setting is changed directly only when your own latest message asks for it with these values. Use a suggestion the user confirms instead.",
+        missing,
+        "not_your_words",
+      );
+    }
+    if (change.kind === "rent_rule" || change.kind === "contract_rule")
+      await assertRuleScopeFree(tx, await companyId(tx, change.company), change);
+    const actor = `copilot:${user.id}` as const;
+    // The clause wording, amounts included, is the user's own (checked above).
+    const valuesConfirmed = true;
+    const done = await applyConfigChange(ctx, tx, user, change, actor, valuesConfirmed);
+    await appendEvent(tx, ctx, {
+      entity: done.entity,
+      type: "COPILOT_CONFIG_CHANGED",
+      actor,
+      payload: { kind: change.kind, id: done.id, userQuote, messageId: last.id, threadId },
+      rulesVersion: ctx.rulesVersion,
+    });
+    return { status: "done" as const, kind: change.kind, id: done.id, summary: done.summary };
+  });
+}
+
+/** A suggested change: stored as a proposal; only the user's Confirm click applies it. */
+export async function proposeConfigChange(ctx: EngineContext, user: StaffUser, threadId: string, raw: unknown) {
+  let change = ConfigChange.parse((raw as { change?: unknown }).change);
+  requireConfigRole(user, change.kind);
+  return withTx(ctx.database, async (tx) => {
+    const [thread] = await tx.db
+      .select({ id: copilotThreads.id })
+      .from(copilotThreads)
+      .where(and(eq(copilotThreads.id, threadId), eq(copilotThreads.userId, user.id)));
+    if (!thread) throw notFound("conversation");
+    // A KYC edit is tried on the current draft now, so a wrong field or check comes back to the copilot to fix
+    // instead of failing on Confirm.
+    if (change.kind === "kyc_config") {
+      const cid = await companyId(tx, change.company);
+      const start = (await kycDraft(tx, cid)) ?? (await companyKycConfig(tx, cid, ctx.clock.today()));
+      try {
+        validateKycConfig(applyKycOps({ form: start.form, rules: start.rules }, change.ops));
+      } catch (e) {
+        if (e instanceof KycOpError) throw unprocessable(e.message, [], "bad_kyc_change");
+        throw e;
+      }
+    }
+    // A rule for an emirate the company doesn't operate in comes back to the copilot now, not on Confirm.
+    if (change.kind === "rent_rule" || change.kind === "contract_rule") {
+      const cid = await companyId(tx, change.company);
+      await assertOffers(tx, cid, change.category);
+      if (change.emirate) await assertOperates(tx, cid, change.emirate);
+      // A new rent rule without an emirate takes the company's only emirate, or comes back for the user to say which.
+      // A replacement without one keeps the rule's own emirate. The Confirm card then shows the emirate.
+      else if (change.kind === "rent_rule" && !change.replaceRuleId)
+        change = { ...change, emirate: await defaultEmirate(tx, cid) };
+      await assertRuleScopeFree(tx, cid, change);
+    }
+    let company: string | null = null;
+    if (change.kind !== "sri_value" && change.kind !== "registration_settings") {
+      const id = await companyId(tx, change.company);
+      const [c] = await tx.db.select({ name: companies.name }).from(companies).where(eq(companies.id, id));
+      company = c!.name;
+    }
+    const now = ctx.clock.now();
+    const [row] = await tx.db
+      .insert(copilotProposals)
+      .values({
+        id: newId(),
+        threadId,
+        userId: user.id,
+        kind: "config_change",
+        // D57: a suggestion made after tenant or outsider text was read can only be confirmed on its card.
+        payload: {
+          change,
+          ...((raw as { afterUntrusted?: unknown }).afterUntrusted === true ? { afterUntrusted: true } : {}),
+        },
+        summary: { change: change.kind, company, facts: changeFacts(change) },
+        expiresAt: new Date(now.getTime() + PROPOSAL_TTL_MS),
+        createdAt: now,
+      })
+      .returning();
+    return proposalView(row!, now.getTime());
+  });
+}

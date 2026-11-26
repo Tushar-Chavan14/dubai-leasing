@@ -1,0 +1,14 @@
+{
+  "name": "@platform/kernel",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "uuidv7": "1.2.1",
+    "zod": "^4.6.7"
+  }
+}

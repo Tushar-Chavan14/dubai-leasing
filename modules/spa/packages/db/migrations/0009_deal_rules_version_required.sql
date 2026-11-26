@@ -1,0 +1,1 @@
+ALTER TABLE "deals" ALTER COLUMN "rules_version" SET NOT NULL;

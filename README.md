@@ -6,7 +6,7 @@ leasing staff ask about leases and deadlines, get drafts and propose approvals i
 
 ## Start here
 
-1. Read `docs/specs.md`, then `docs/architecture.md`.
+1. Read `docs/leasing/specs.md`, then `docs/leasing/architecture.md`.
 2. Install: Bun, PostgreSQL (local install), Ollama. No Docker needed.
 3. Create the databases (local Postgres 16+, no Docker):
    ```bash
@@ -46,7 +46,7 @@ leasing staff ask about leases and deadlines, get drafts and propose approvals i
    rent and photos. Photos are stored under `MEDIA_DIR` (default `./data/media`).
    **New tenant (phase 2a):** Applicants → open Priya's application on `JVC-0412` → **Start
    screening**. The upload link arrives by email (demo inbox); upload
-   `packages/helpers/src/kyc/evals/specimens/priya-eid-front.png` and `priya-eid-back.png`, then
+   `modules/leasing/packages/helpers/src/kyc/evals/specimens/priya-eid-front.png` and `priya-eid-back.png`, then
    **Send for checking**. The vision model reads them (about a minute on a 4 GB GPU), the checks
    pass and the offer email arrives. Answer it (accept, or counter with more cheques), then record
    the reservation on the application: the lease is created in CONTRACT. Try
@@ -70,7 +70,7 @@ leasing staff ask about leases and deadlines, get drafts and propose approvals i
    `bun run eval -- reply`, `kyc`, `contract-review`, `ejari-field` and `copilot` (the copilot
    eval drops and reseeds `TEST_DATABASE_URL`).
 
-Importing existing leases and units: see `docs/import.md`.
+Importing existing leases and units: see `docs/leasing/import.md`.
 
 ## Files for coding agents
 
@@ -83,9 +83,9 @@ Importing existing leases and units: see `docs/import.md`.
 | `.claude/skills/new-copilot-tool/` | Procedure for adding a staff copilot tool |
 | `.claude/agents/compliance-reviewer.md` | Subagent that reviews legal-sensitive diffs |
 | `.claude/settings.json` | Allowed commands; blocks reading `.env` and uploads |
-| `docs/decisions.md` | Decisions already made |
+| `docs/leasing/decisions.md` | Decisions already made |
 | `docs/roadmap.md` | Phased task list |
-| `docs/source/leasing-guide.txt` | Original business guide |
+| `docs/leasing/source/leasing-guide.txt` | Original business guide |
 
 Rulebook values and notice templates need review by a Dubai property lawyer before real use.
 Ejari is simulated in this build.

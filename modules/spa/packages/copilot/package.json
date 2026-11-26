@@ -1,0 +1,16 @@
+{
+  "name": "@spa/copilot",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./evals": "./src/evals/index.ts"
+  },
+  "dependencies": {
+    "@platform/kernel": "workspace:*",
+    "@platform/llm": "workspace:*",
+    "@spa/core": "workspace:*",
+    "zod": "^4.6.7"
+  }
+}

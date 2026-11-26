@@ -9,7 +9,7 @@
     "builtin": true,
     "es2024": true
   },
-  "ignorePatterns": ["**/node_modules/**", "**/.next/**", "packages/db/migrations/**"],
+  "ignorePatterns": ["**/node_modules/**", "**/.next/**", "modules/*/packages/db/migrations/**"],
   "rules": {
     "no-console": "off",
     "typescript/no-explicit-any": "warn",
@@ -33,7 +33,7 @@
       }
     },
     {
-      "files": ["apps/web/**"],
+      "files": ["modules/leasing/apps/web/**", "platform/ui/src/media/**"],
       "rules": {
         "nextjs/no-img-element": "off"
       }

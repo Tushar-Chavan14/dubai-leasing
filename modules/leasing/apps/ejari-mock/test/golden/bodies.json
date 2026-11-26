@@ -1,0 +1,80 @@
+{
+  "ejari": {
+    "issued": [
+      201,
+      {
+        "status": "issued",
+        "ejariNo": "SIM-2026-0000001",
+        "issuedOn": "2026-11-01"
+      }
+    ],
+    "rejected": [
+      422,
+      {
+        "status": "rejected",
+        "reasons": [
+          {
+            "code": "PROPERTY_NOT_FOUND",
+            "field": "dldPropertyNo",
+            "message": "No property is registered under this property number."
+          }
+        ]
+      }
+    ],
+    "invalid": [
+      400,
+      {
+        "error": "invalid request",
+        "issues": [
+          "Too small: expected string to have >=8 characters",
+          "Invalid input: expected object, received undefined"
+        ]
+      }
+    ],
+    "unavailable": [
+      503,
+      {
+        "error": "The service is temporarily unavailable. Try again later."
+      }
+    ]
+  },
+  "tawtheeq": {
+    "issued": [
+      201,
+      {
+        "status": "issued",
+        "ejariNo": "SIM-TWQ-2026-0000001",
+        "issuedOn": "2026-11-01"
+      }
+    ],
+    "rejected": [
+      422,
+      {
+        "status": "rejected",
+        "reasons": [
+          {
+            "code": "PROPERTY_NOT_FOUND",
+            "field": "dldPropertyNo",
+            "message": "No property is registered under this property number."
+          }
+        ]
+      }
+    ],
+    "invalid": [
+      400,
+      {
+        "error": "invalid request",
+        "issues": [
+          "Too small: expected string to have >=8 characters",
+          "Invalid input: expected object, received undefined"
+        ]
+      }
+    ],
+    "unavailable": [
+      503,
+      {
+        "error": "The service is temporarily unavailable. Try again later."
+      }
+    ]
+  }
+}

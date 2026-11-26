@@ -6,9 +6,9 @@ Tick tasks as they're done (`- [x]`).
 ## Phase 0 — Foundation
 
 - [x] Local Postgres: `leasing` database and role, documented in README
-- [x] Bun workspace scaffold: `apps/engine`, `apps/web`, `apps/telegram-bot`, `apps/ejari-mock`, `packages/{core,rulebook,db,llm,helpers,adapters}`
+- [x] Bun workspace scaffold: `modules/leasing/apps/engine`, `modules/leasing/apps/web`, `modules/leasing/apps/telegram-bot`, `modules/leasing/apps/ejari-mock`, `packages/{core,rulebook,db,llm,helpers,adapters}`
 - [x] oxlint + oxfmt (D16), strict tsconfig, `bun test` wired at root
-- [x] Env loading with Zod (`packages/core/src/env.ts`)
+- [x] Env loading with Zod (`modules/leasing/packages/core/src/env.ts`)
 - [x] Drizzle schema for units, parties, applications, leases, lease_parties, lease_events, documents, approvals, deadlines, payments, complaints, inspections, conversations, messages, helper_runs, company_policy, demo_settings
 - [x] `Clock` (System + Demo), `maskPii`, money helpers (fils), Dubai calendar-date helpers
 - [x] State machines for Unit, Application, Lease with transition tests
@@ -20,7 +20,7 @@ Tick tasks as they're done (`- [x]`).
 - [x] Demo seed: 6 units, 3 fictional tenants, 1 lease near renewal
 
 **Exit:** imported leases show correct state and next deadline; fast-forward fires milestones once.
-✅ Met: `apps/engine/test/manager.test.ts` (import states, deadlines fire exactly once incl. concurrent fires) and checked by hand in the staff app.
+✅ Met: `modules/leasing/apps/engine/test/manager.test.ts` (import states, deadlines fire exactly once incl. concurrent fires) and checked by hand in the staff app.
 
 ## Phase 1 — Renewal & Notice
 
@@ -34,7 +34,7 @@ Tick tasks as they're done (`- [x]`).
 - [x] T−90 fallback: same-rent renewal + manager alert
 - [x] Tenant reply classification (tev1)
 - [x] Staff copilot v1 (read-only), architecture §8b:
-  - [x] `packages/copilot`: tool registry (`CopilotTool`), `EngineClient`, LangGraph tool loop, prompt
+  - [x] `modules/leasing/packages/copilot`: tool registry (`CopilotTool`), `EngineClient`, LangGraph tool loop, prompt
   - [x] Read tools: `search_entities`, `get_lease`, `get_lease_timeline`, `list_deadlines`, `list_approvals`, `get_helper_run`, `list_outbound_messages`, `explain_rule`, `compute_renewal_cap`
   - [x] `POST /api/copilot/chat` (streamed) in engine; `copilot_threads` / `copilot_messages` tables
   - [x] Chat panel in the staff app (lease, unit, inbox pages) + `/copilot` page
@@ -46,19 +46,19 @@ copilot why a lease is waiting and what is due this week.
 
 ## Phase 2 — KYC → Contract → Registration (+ Ejari mock)
 
-- [x] `packages/llm` with `OllamaLlm` (vision, decide, chat)
-- [x] One-time secure upload links in `apps/web`
+- [x] `platform/llm` with `OllamaLlm` (vision, decide, chat)
+- [x] One-time secure upload links in `modules/leasing/apps/web`
 - [x] KYC helper: vision extraction + MRZ/ID-format/expiry/name checks; evals on fictional fixtures
 - [x] Portal forms: document upload, offer response (2a)
 - [x] Portal form: contract signing (2b)
 - [x] Offer helper + limits from company policy
 - [x] Contract helper: template fill from verified fields, PDF, addendum review flags
 - [x] Mock e-signature flow
-- [x] `apps/ejari-mock`: register/renew/cancel/status, realistic rejections, demo certificate, "Simulated" UI
+- [x] `modules/leasing/apps/ejari-mock`: register/renew/cancel/status, realistic rejections, demo certificate, "Simulated" UI
 - [x] Registration helper: rejection → field (tev1) → typo-class fix once → else human
 
 **Exit:** demo name-typo rejection auto-fixes; contract fields match sources exactly in tests.
-Met: `apps/engine/test/contracts.test.ts` (fields = sources; `LENA TESTOVA` → `Lena Testova`, issued on attempt 2).
+Met: `modules/leasing/apps/engine/test/contracts.test.ts` (fields = sources; `LENA TESTOVA` → `Lena Testova`, issued on attempt 2).
 Evals (local models): addendum review 31/32, 0 false flags, 4/4 injections flagged, p50 8 s;
 Ejari rejection → field 29/32 at confidence ≥ 0.6, 0 wrongly tied to a name field, p50 1.2 s.
 
@@ -101,14 +101,14 @@ Ejari rejection → field 29/32 at confidence ≥ 0.6, 0 wrongly tied to a name 
   tool choice 3/5 (the model reads the case pack but often doesn't go on to save the summary), p50 36 s.
 - [x] Demo console: fast-forward, trigger bounced cheque / Ejari rejection, reset
 - [x] Metrics page (5 KPIs)
-- [ ] Rehearse demo script from `docs/specs.md` §9 end to end
-  Checklist ready: `docs/demo-rehearsal.md` (needs a person at the running app; not yet walked through).
+- [ ] Rehearse demo script from `docs/leasing/specs.md` §9 end to end
+  Checklist ready: `docs/leasing/demo-rehearsal.md` (needs a person at the running app; not yet walked through).
 - [x] Demo console: disabled actions without a lease, "Add missing demo leases" (adds, never deletes); copilot suggestions grouped by ask / draft / prepare
 
 ## Phase 5 — Packaging
 
 - [ ] `ApiKeyLlm` adapter (client-provided keys)
-- [ ] `apps/mcp`: expose the copilot tool registry (`packages/copilot/tools`), no gate approvals
+- [ ] `apps/mcp`: expose the copilot tool registry (`modules/leasing/packages/copilot/tools`), no gate approvals
 - [ ] Self-hosted install script (local Postgres, Ollama, Bun services via systemd) + install guide
 - [ ] WhatsApp channel adapter (when keys are available)
 - [ ] Optional Claude plugin wrapping the MCP server
@@ -163,7 +163,29 @@ D30 slices 1 and 2 (accounts, login, records, uploads) were built, then replaced
 ## Multi-emirate (D52)
 
 - [x] Phase 1: emirate-aware foundation. Emirate enum, rulebook and lease pinning per emirate (fail closed), registration fee schedules, `RegistrationAdapter` registry, rent index per emirate, copilot `get_emirate_setup`
-- [x] Phase 2 (D53): simulated Tawtheeq in `apps/ejari-mock`; registration settings per emirate; manual registration (pack, officer task, record issued or rejected); copilot `get_registration_status`, registration decision cards, `save_registration_settings`
+- [x] Phase 2 (D53): simulated Tawtheeq in `modules/leasing/apps/ejari-mock`; registration settings per emirate; manual registration (pack, officer task, record issued or rejected); copilot `get_registration_status`, registration decision cards, `save_registration_settings`
 - [x] Phase 3 (D55): demo rulebooks, two units, rent index rows and rent rules per emirate, all seven emirates in chat and public site. Contract templates per emirate (D56) done; legal confirmation of values stays open
 - [x] Phase 3b (D56): contract templates per emirate, who-pays setting, "UAE Leasing" branding, finder communities by emirate
-- [ ] Phase 4: client rollout and legal confirmation of values (legal review via `docs/legal-review-emirates.md`)
+- [ ] Phase 4: client rollout and legal confirmation of values (legal review via `docs/leasing/legal-review-emirates.md`)
+
+## SPA module (separate runtime, decisions S1–S72; phases P0–P10)
+
+Sale and Purchase Agreement process, from booking to handover. It runs on its own database, jobs, clock,
+engine (:4001) and web app (:3001). Full task list: `docs/spa/task.md`. Decisions: `docs/spa/decisions.md`.
+Architecture: `docs/spa/architecture.md`. Mockup: `docs/spa/mockup.html`.
+
+- [x] P0: docs, decisions, skill, single-file mockup
+- [x] P1: shared kernel + helper profiles + import boundary (no leasing behaviour change) (S32)
+- [x] P2: SPA scaffold: `spa` database, pg-boss, Clock, engine, web, scripts; shared `@platform/ui` (S33)
+- [x] P2b: repo layout: `modules/leasing`, `modules/spa`, shared `platform/` (`@platform/*`) (S34)
+- [x] P3: Deal/Unit/Listing state machines, SPA gates and roles, `spa_approvals`, `deal_events`
+- [ ] P4: SPA rulebook + policy; listings, offers, deposit; KYC/AML settings
+- [ ] P5: Templates: the uploaded structure is the output structure (parties, broker, signature blocks)
+- [ ] P6: Helpers + evals (specs §6), helper modes, chasing, assistants, payments into escrow, default flag, records and alerts
+- [ ] P7: Screening fake, Oqood mock, e-sign reuse, SPA mail templates
+- [ ] P8: Staff web + party portal + public listing page from the mockup
+- [x] P9: SPA copilot (C36, S68)
+- [x] P10: Portal launcher (C37, S69), then shared sign-in (C38, S70)
+
+**Exit:** a fictional primary deal reaches Oqood and a fictional ready resale reaches a new title deed
+(both simulated), each agreement matches its uploaded template's structure, and a person decided every gate.

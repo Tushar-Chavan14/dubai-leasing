@@ -1,7 +1,8 @@
 # oxfmt reads this file (and .gitignore) for paths to skip.
 docs/
 .claude/
-packages/db/migrations/
-apps/web/AGENTS.md
+modules/*/packages/db/migrations/
+modules/leasing/apps/web/AGENTS.md
 bun.lock
 *.md
+modules/leasing/apps/ejari-mock/test/golden/

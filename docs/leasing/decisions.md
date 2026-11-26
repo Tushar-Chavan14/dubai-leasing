@@ -1,0 +1,1903 @@
+# Decisions
+
+Short records of choices already made. Add new ones at the bottom; supersede rather than edit.
+
+## D1 — The Manager is deterministic TypeScript, not an LLM or a LangGraph graph
+Leasing has fixed legal deadlines and needs a traceable order of steps for the RDC. LangGraph
+has no durable months-long timers. LangGraph is used inside helpers only.
+
+## D2 — Durable timers with pg-boss on the same Postgres
+Jobs survive restarts and live next to the data. Every job has a `singletonKey`. A `deadlines`
+table mirrors milestones for UI and idempotency.
+
+## D3 — Time behind a `Clock` interface
+Needed for correct Asia/Dubai dates and for the demo fast-forward. No `Date.now()` in domain code.
+
+## D4 — Versioned rulebook; models never compute legal or money values
+Rules change (SRI replaced the rent calculator in Jan 2025). Each lease and decision records
+`rulesVersion`.
+
+## D5 — Local models through Ollama, behind an `Llm` adapter
+Tenant IDs stay on the client's machines. The adapter allows a client API key later.
+Models: a Qwen chat model, a Qwen vision model, `tev1` for decisions (tags in env).
+
+## D6 — Decision model via `ollama.systemone()` (`ollama` npm ≥ 0.6.4)
+Typed `choice` / `noul` / `score` answers with probabilities. Called inside LangGraph nodes so
+routing stays deterministic. `kev` optional; its tags target Apple Silicon (MLX).
+
+## D7 — Telegram for enquiries only; email (Nodemailer SMTP) for everything outbound
+No WhatsApp API keys yet and it is paid; the Telegram Bot API is free. Telegram handles step 2
+(enquiries, viewing booking). All notices, reminders and links go by email with stored evidence.
+Tenant actions use signed links to `modules/leasing/apps/web`. WhatsApp can later replace or join Telegram via the
+same `EnquiryChannel` interface. The 12-month repossession notice goes by notary or registered mail.
+
+## D8 — Unit, Application and Lease are separate state machines
+Steps 1–2 happen before a lease exists; one unit has many applications over time.
+
+## D9 — Ejari is mocked behind `EjariAdapter` for the MVP and pitches
+Mock rejects realistic errors so the auto-fix path can be shown. Labelled "Simulated Ejari (demo)".
+The real DLD integration needs a registered property management company.
+
+## D10 — Bun workspaces monorepo, Drizzle, Hono, Next.js, Biome (lint part superseded by D16)
+One language and runtime across engine, bot, mock and web.
+
+## D11 — Product packaging: engine first, AI tools as front doors
+Sold self-hosted or hosted from one codebase. MCP server in phase 5; optional Claude plugin wraps
+it. No feature depends on a client's chat subscription.
+
+## D12 — Money as integer fils; legal dates as `date`
+Avoid float errors and timezone drift.
+
+## D13 — Postgres installed locally; no Docker in development
+Simpler on the dev machine. Containers stay optional for hosted deployments later; the code
+must not depend on them.
+
+## D14 — Tenant portal + inbound events instead of email replies
+Tenants act through forms in `modules/leasing/apps/web` (`/t/<token>`, magic-link access). Each submit is stored
+in `inbound_events` and processed by the Manager through a pg-boss job, so forms return
+instantly and model calls retry safely. Staff can submit the same forms on a tenant's behalf.
+
+## D15 — Staff copilot alongside the deterministic engine
+We considered letting one LLM agent run the whole lifecycle with tools. We rejected that for
+the core: it is not repeatable or traceable enough for legal deadlines, Ejari matching or RDC
+cases. Instead, a **staff-facing copilot** sits beside the Manager. It helps leasing staff
+with the long tail of exceptions: why a lease is stuck, what is due, drafting replies,
+summarising a case and preparing approval notes.
+
+The copilot is a front door, like the web UI, not a helper in the pipeline. It reaches the
+system only through engine API tools and acts with the logged-in user's permissions. It can
+read, draft and propose. It can never approve a gate, send outbound messages, change state or
+produce a legal or money value itself; those values come from rulebook tools. The MCP server
+(phase 5) exposes the same tool registry, so there is one set of tools and one set of
+safeguards. See `docs/leasing/architecture.md` §8b.
+
+## D16 — oxlint + oxfmt instead of Biome (supersedes the lint part of D10)
+Chosen at the start of Phase 0. oxlint (lint) and oxfmt (Prettier-compatible formatter) are
+fast and cover TypeScript, React and Next.js rules. `bun run lint` runs both plus
+`scripts/check-domain-rules.ts`, a repo guard that fails on `Date.now()` / `new Date()` in
+domain code and on code that references `data/uploads`. TypeScript stays on 5.x.
+
+## D17 — Phase 0 engine conventions
+- **Milestone keys carry the term:** `deadlines.milestone = "<id>@<leaseEnd>"`, e.g.
+  `notice_send@2027-03-29`, so a renewed lease gets fresh milestones without breaking
+  `unique(entity_id, milestone)`. pg-boss `singletonKey = "<leaseId>:<milestone>"`.
+- **Firing is one transaction:** `pending → done` and the milestone's work commit together; a
+  retry re-runs all or nothing. Due deadlines are swept oldest first.
+- **Gated transitions consume an approval:** a transition with a `gate` needs an approved,
+  unused approval of that gate for the entity; using it stamps `consumed_by_event_id`.
+  Approvals may carry `on_approve_event`, applied as the approver when a person approves.
+- **No self-approval:** the person (or their copilot) who proposed an approval can't decide it.
+- **Edits are re-checked:** each gate declares its editable fields and a rulebook check
+  (`modules/leasing/apps/engine/src/manager/gate-rules.ts`); without an SRI value only same-rent renewal passes.
+- **Parties:** `parties.kind` is `individual | company`; a party's role comes from
+  `lease_parties.role` (tenant, landlord, occupant).
+- **Staff auth:** Phase 0 has demo login only (HMAC session token, 12 h). Real staff login is
+  required before any client pilot.
+- `lease_events` is append-only (no UPDATE, DELETE or TRUNCATE), enforced by database triggers.
+- **Landlord-side endings only via repossession:** no ungated "not renewed" event; `TERMINATED`
+  needs an approved 12-month repossession notice and takes effect at lease end.
+
+## D18 — Staff app design and unit media
+- The staff app ("Dubai Leasing") uses vanilla CSS design tokens in `modules/leasing/apps/web/app/globals.css`
+  (light and dark), Instrument Sans for the interface, Bricolage Grotesque for display and Geist Mono
+  only for reference numbers. One accent (leaf green); saffron only for deadlines, brick only
+  for errors. No component library.
+- Unit photos are not tenant documents: stored under `MEDIA_DIR`, content-addressed, served to
+  signed-in staff only. Uploads go browser → web route handler → engine (not server actions),
+  so photo size isn't limited by the action body limit.
+
+## D19 — Renewal notices: sent counts, demo mail is redirected
+- **A rent increase stands only if its notice was sent in time:** the notice email must be
+  accepted by SMTP on or before T−90 (Asia/Dubai date). Approval is not notice. The T−90 check
+  runs on T−89 because T−90 is still a legal send day. CONFIRM WITH LEGAL that SMTP acceptance
+  counts as written notice; the acknowledgement link and follow-up task are the backstop.
+- **Demo mail never reaches demo addresses:** in `DEMO_MODE`, every email goes to
+  `MAIL_DEMO_RECIPIENT`; the intended recipient is kept in the subject, a header and
+  `outbound_messages.intended_to`. Demo wording on notices and emails appears only in demo mode.
+- **Ethereal previews are public URLs.** Fine for fictional demo data, never for real tenants.
+- **The renewal helper is pure code** (rulebook cap + SRI lookup). The decision model only
+  classifies tenant comments; flagged comments go to a person and hold a move-out.
+- **SRI values are per term and four-eyes:** a lease override applies to one term, and the
+  person who entered it can't approve the notice it caps. The SRI table is edited by admins and
+  managers; an audit history of table edits is a follow-up.
+
+## D20 — Copilot v1: in-process, read-only by construction
+- **The engine hosts the copilot and its tools call the engine's own API in-process**, with the
+  user's session token (`app.request`). Every tool call goes through the same auth middleware,
+  routes and role checks as the staff UI, without an extra network hop. The MCP server will use
+  the same tools with an HTTP client.
+- **v1 can't write, by construction:** the `EngineClient` has only `get`. Draft and propose
+  tools (phase 2) will add a separate, explicit method together with the Confirm step.
+- **Unverified values are found by a text post-check**, not by trusting the model: AED amounts,
+  percentages and dates in the answer must match a value in that turn's tool results (or the
+  user's question). It checks values, not reasoning; a value from the wrong field still matches.
+- **Conversations are private to their author** and stored with tool arguments and result
+  hashes, not the results themselves (they can be regenerated and may contain personal data).
+
+## D21 — Applicant KYC: the model reads, code decides
+- **The vision model only reads documents** (one call per image, JSON schema, temperature 0); the
+  verdict is pure code (`modules/leasing/packages/helpers/src/kyc/checks.ts`): Emirates ID format and Luhn,
+  passport MRZ check digits, expiry against the planned lease start, and names across documents.
+  "Verified" only when nothing is flagged; everything else goes to a leasing officer.
+- **The MRZ wins over the printed page.** Fields read from a valid MRZ are used; a printed value
+  that differs is a flag. Miscounted `<` fillers are repaired, but the check digits still decide.
+- **No expired document passes**, ever: it is a blocking flag that the gate rule refuses to approve.
+- **Identity is copied, never typed:** `KYC_VERIFIED` copies the verified fields onto the party
+  (the name exactly as on the ID), which is what Ejari will match in phase 2b.
+- **Fictional specimens only** for tests, evals and the demo (`modules/leasing/packages/helpers/src/kyc/evals/specimens/`,
+  generated, plain layouts marked SPECIMEN). Real documents live only in `UPLOADS_DIR`.
+- **Documents are private:** served to leasing officers and managers only, never cached, each view
+  recorded (`DOCUMENT_VIEWED`); the copilot can't reach them. ID numbers are masked in every view.
+- **Conditional gates live in the Manager** (`advanceApplication`), not in the state machine: the
+  same event (`KYC_VERIFIED`, `OFFER_REVISED`) is gated or not depending on the evidence.
+- **Offers come from policy:** rent = approved asking rent, deposit and reservation as policy
+  percentages, 12-month term from the move-in date. An applicant's counter becomes a new revision;
+  nothing is agreed until the applicant accepts and the reservation is recorded by a person.
+
+
+## D22 — Contract, signing and Ejari: copy, approve, sign, register, fix once
+- **The contract is copied, not written.** Pure code copies every field from its record and
+  keeps a source per field; tests check the fields against their sources character for
+  character. The chat model only flags the staff-written free-text addendum (conflict, unclear,
+  illegal term) for the approver and never edits text. The PDF is a demo template written for
+  this product, not the DLD form.
+- **Approval before signature, consumed by the signature.** `final_contract` is approved before
+  any link goes out and consumed only by `CONTRACT_SIGNED` once everyone signed. Approving
+  re-checks that the records and the stored PDF are exactly what was prepared. A new version
+  supersedes the old one, cancelling its approval and its links.
+- **E-signature is built in for the MVP.** Each party (the landlord too) gets a single-use portal
+  link, types their name and consents; the engine stores the evidence and appends a signature
+  record page to the approved PDF. `ESignAdapter` stays for a real provider later.
+- **Register what was signed.** The Ejari payload is built only from the signed contract, and
+  `ejari_submission` is always approved by a person while there is no live DLD access.
+- **One typo-class fix, then a person.** After a rejection, tev1 maps it to a field; pure code may
+  correct only the tenant's name (the landlord's is not KYC-checked), only by case, spacing,
+  punctuation or accents, only from the KYC-verified name, and only once per approval (resubmitted under the same approval: the
+  officer approved this data, and a case change of it is still that data). Everything else goes
+  to `ejari_rejected_twice`. The signed contract is never edited (CONFIRM WITH LEGAL whether a
+  case-only difference needs re-signing).
+- **The simulated registry is a separate service with its own schema** (`ejari_mock` in the same
+  local Postgres, as chosen for phase 2). The engine talks to it only over HTTP through
+  `EjariAdapter`, as it will with the real registry; the submission id is the request id, so
+  retries never register twice.
+
+## D23 — Rulebook versions stored in the database; drafts published by admin
+Supersedes the storage part of D4 (versioning and "models never compute legal or money values"
+stay as they are).
+- **The code version is the base.** `modules/leasing/packages/rulebook` still defines `dubai-2025-01`. At startup
+  the engine stores it as a published row in `rulebooks` (`created_by = system`) and refuses to
+  start if a stored base row differs from code.
+- **Drafts, then publish.** An admin copies a published version into a draft
+  (`dubai-YYYY-MM-NN`), edits values, rent-cap bands, sources and free-text reference notes,
+  reviews the changes against the active version and publishes it with an effective-from date
+  (today or later, Dubai calendar). Only admins write; every staff role reads published versions.
+- **Published versions are immutable** (DB trigger refuses UPDATE and DELETE). A lease term is pinned
+  to the version **in force on the day the term starts** (`rulesVersionForTerm`: latest
+  `effective_from` ≤ start date; the code base if none), for new, imported and renewed terms
+  alike. An imported running lease keeps the rules it started under. `RENEWED` is checked under
+  the lease's pinned version, then re-pins the new term (`nextTermRulesVersion` in the event).
+  Every published row is loaded into the in-memory registry, so rule lookups stay synchronous
+  and by version. Confirm the start-date rule with legal before real use.
+- **Loosened protection needs legal review.** If a draft gives tenants less protection than the
+  base (shorter notices or locks, fewer late-rent days, a higher cap for any gap), publishing
+  needs `confirmLegalReview: true` ("a Dubai property lawyer reviewed these changes"), recorded
+  in the `RULEBOOK_PUBLISHED` event.
+- **Structural checks keep the engine safe** for any valid version: bands strictly ascending,
+  values in range, send day ≥ legal notice, milestones in order.
+- **Reference notes are data.** Company-authored notes are shown to staff and returned by the
+  copilot's `explain_rule` as untrusted text. No code reads them to decide anything.
+- **One engine process per database for now.** A version published in one process is registered
+  there; another process loads it at its next start.
+
+## D24 — Telegram enquiries: the engine owns the conversation; code drives, models read
+Phase 3. Refines D7 and the Leasing Assistant row of architecture §5.
+- **The bot is a stateless relay.** `modules/leasing/apps/telegram-bot` posts each private-chat update to the
+  engine (`POST /channel/telegram/updates`, shared `CHANNEL_SECRET`) and sends the reply back to
+  the chat that update came from. Conversations, flow state, helper runs and bookings live in the
+  engine, so the Manager stays the only writer and one customer's state can't reach another.
+  Officers' replies go out from the engine through `TelegramSender`.
+- **Code drives the flow; the chat model only answers.** On the demo GPU `qwen3.5:9b` takes about
+  20 s per answer, and a tool-calling assistant could quote prices. So commands, buttons, search,
+  slots, name and email are code, with fixed English/Arabic replies. tev1 classifies free text and
+  decides nothing by itself: routing is code. The chat model answers only questions: about the
+  unit the customer picked (its listing facts) or general ones (`general_question`: the listed
+  units without prices, plus a fixed note on how renting works). It never sees a price; an
+  answer that talks about money, or has a number or percentage not in its facts, is replaced
+  by a fixed line.
+- **Contact first.** Each enquiry starts with an email (required) and a phone (optional), so
+  every enquirer can be identified and followed up even if they never book. Free text isn't read
+  by a model until the email is given. A matching existing party is linked for staff only.
+- **No lock during model calls.** A free-text message is stored under a row lock, the model runs
+  unlocked, and the result applies only if the customer's `flow_version` is unchanged.
+- **Viewing slots come from company policy** (days, hours, slot length, lead time, horizon;
+  placeholders until the client sets them). **One viewing per slot per unit, for staff and
+  Telegram alike:** every booking locks the unit row and is refused if it falls within
+  `viewingSlotMinutes` of another booked viewing; a partial unique index is the backstop. Staff
+  may still book outside the bot's viewing hours.
+- **Handoff is not an approval gate.** Commercial, VIP, complaint, injection, low confidence,
+  "talk to a person" and existing tenants go to a leasing officer as an `enquiry_handoff` task;
+  the bot then stays quiet on free text until an officer hands the conversation back.
+- **New entity kind `conversation`** for events, helper runs and tasks before an application
+  exists; it has no state machine.
+- The Arabic copy needs a native speaker's review before a client pitch.
+
+## D25 — The copilot can create an application, only on the user's Confirm click
+Amends D15/D20 and AGENTS.md rule 11 for exactly one action. Phase 3, at the product owner's
+request: the copilot is a second entry point for new applications, next to Telegram. It is not
+a messaging channel (rule 10 is unchanged): it talks only to staff, and on Confirm the
+application's own email path sends the viewing invitation.
+- **Read, then propose.** `find_available_units` (read, every staff role) lists bookable units
+  (listed, settled price, no lease being signed; the same rule as the bot, `availability.ts`)
+  with the approved asking rent and the next free viewing slots. `propose_application`
+  (leasing officer and manager, as for `POST /api/applications`) validates the unit, time, slot
+  clash and duplicate application, then stores a row in `copilot_proposals`. Proposing creates
+  no application and sends no email; Confirm does both. The applicant's email and name must
+  appear in the user's own messages in the thread, so tenant text can't put someone on the card.
+  The tool returns no name or email to the model; the card shows them.
+- **Audit:** `copilot_proposals` is the record of every proposal (pending, cancelled, failed,
+  expired) and `copilot_messages` stores the tool call; a confirmed proposal adds
+  `APPLICATION_CREATED` (actor `copilot:<userId>`) and `COPILOT_PROPOSAL_CONFIRMED` (actor
+  `user:<userId>`, with the proposal id) on the application.
+- **Only the user's click creates.** The chat shows a card with Confirm and Cancel. Confirm
+  (`POST /api/copilot/proposals/:id/confirm`, staff UI only) works for the user who made the
+  proposal, once (row lock), within 30 minutes, and re-runs every check through
+  `createApplication` (source `copilot`, actor `copilot:<userId>`, plus a
+  `COPILOT_PROPOSAL_CONFIRMED` event by `user:<userId>`). A check that fails now marks the
+  proposal `failed` and nothing is kept.
+- **The client can't confirm.** `EngineClient.propose` posts only to
+  `/api/copilot/proposals` (with the thread id); confirm, cancel and every other write route are
+  refused before a request is made. Phone numbers are masked before the model sees them, so the
+  copilot doesn't take them; staff add them in the application.
+- `create_task` and `propose_approval` (copilot v2) reuse the same proposal and Confirm step
+  (D26).
+
+## D26 — Copilot v2: tasks and approval requests on Confirm; drafts the user sends
+Extends D25 and AGENTS.md rule 11. Phase 3.
+- **Two more proposal kinds.** `create_task` (leasing roles, as `POST /api/tasks`) and
+  `propose_approval` (`formal_reminder` for a payment: leasing roles and finance, as the
+  Payments panel; `vacate_notice` for a lease: leasing roles) store a `copilot_proposals` row with
+  `kind` `create_task` or `request_approval`. Proposing creates nothing. Confirm (owner, once,
+  30 minutes) runs the same engine function as the UI (`createStaffTaskTx`, `requestApproval`
+  after the gate's own checks) as the user, with `copilot:<userId>` as creator or proposer and a
+  `COPILOT_PROPOSAL_CONFIRMED` event. A confirmed approval request is only a pending approval:
+  approving stays in the inbox, and the person who proposed it can't approve it.
+- **Drafts are never sent.** `draft_email` (leasing roles, finance) and `draft_approval_note`
+  (any staff) save a `copilot_drafts` row in the user's thread. The chat card opens the normal
+  form, prefilled; the person edits and clicks Send (mail adapter, evidence, template
+  `staff_message`) or Post. A draft is used once, by its owner. The 12-month notice is never an
+  email draft.
+- **Client limits.** `EngineClient.propose` may POST only `/api/copilot/proposals` and
+  `/api/copilot/drafts`. Payments and complaints are readable (`list_payments`,
+  `list_tickets`); photos and proofs are not.
+- **Why:** staff asked the copilot to do the follow-up work it already explains. Each action
+  still needs a person's click on a card that shows exactly what will happen.
+
+## D27 — Collections: finance confirms every payment; only a sent formal reminder starts the clock
+Phase 3, product owner's choice.
+- The instalment schedule is pure code (`paymentSchedule`); nothing is marked paid by the system
+  or a model. Finance (or a leasing manager) records paid or bounced. Imported running leases
+  assume earlier instalments paid, flagged, with a finance check task; finance can still record
+  one of them as bounced, which reopens it (audited).
+- Reminders are fixed templates (no model wording). After `friendlyRemindersBeforeFormal`
+  friendly reminders, a `formal_reminder` approval (leasing manager, always) is drafted; the
+  proposal's late-rent days must equal the lease's rulebook.
+- The eviction-eligible date is the SMTP-accepted send date (Dubai) plus
+  `lateRentDaysAfterFormalReminder` from the rulebook pinned on the lease. When it passes, a
+  manager gets a task. The system never starts RDC action. CONFIRM WITH LEGAL that an emailed
+  formal reminder counts as notice; a reminder served by notary or courier is recorded by a
+  person outside the system for now.
+- Payment replies from the portal never change amounts or dates; "paid" goes to finance to
+  verify.
+
+## D28 — Complaint acknowledgement: Qwen writes it, code checks it, a template backs it
+Phase 3, product owner's choice.
+- Complaint Triage classifies with tev1 and routes in code (escalate, review, ticket). The
+  acknowledgement is written by the chat model from the category and urgency band only; the
+  tenant's text never reaches it, so it can't be steered by the complaint.
+- `checkAck` drops any text with a number, time word, money word, promise or commitment
+  ("will fix", "we'll", "shortly", "free", "refund", "rent reduction", URLs and emails; Arabic
+  equivalents). Then, or when the model or the helper fails, the fixed EN/AR template is sent.
+  The tenant always gets an acknowledgement from the portal; it is sent automatically because
+  it promises nothing.
+- Safety and legal-threat reports go to an officer at once (`safety_complaint` approval + task);
+  approving opens an emergency ticket.
+
+
+## D29 — Move-out and deposit: the model points, code prices, finance acts on every refund
+Phase 4, product owner's choice.
+- **The local vision model may compare condition photos** (amends D21, which limited it to
+  reading ID documents). Per room, the latest move-in and move-out staff photos go to the local
+  Ollama vision model in one call; never to a cloud API. Its options are the price-list item ids
+  plus `none`; it never gives an amount. Below `exitVisionMinConfidence`, `none` or an unknown id
+  is dropped. Results are suggestions: nothing is a deduction until an officer confirms it.
+- **Amounts are code.** A deduction is a `companyPolicy.deductionPriceList` item × quantity at the
+  list price (policy, not law), or an "other" amount an officer types, which always needs
+  finance's approval. Deductions are capped at the deposit; anything beyond is a manager task,
+  never claimed automatically. Normal wear and tear is not deductible. Unpaid rent is not
+  deducted (CONFIRM WITH LEGAL).
+- **Finance acts on every refund.** The `refund` approval (finance) is required when the refund is
+  above `refundApprovalThresholdFils`, the tenant disputes the statement, or an amount isn't on
+  the price list; nothing in it is editable (reject → the officer corrects the findings and
+  issues a new revision). In every case finance records the payout (date, bank reference),
+  which settles the deposit. A zero deposit is recorded the same way. Approving a disputed
+  statement pays the stated refund and lets the lease close; the tenant's recourse is the RDC
+  (CONFIRM WITH LEGAL). Finance alone reads the tenant's refund account (kept only in the
+  submission), each view recorded without the details; dispute text is stored masked.
+- **Notice to vacate** opens `vacateNoticeOpensDays` (policy, 150) before the lease end, so a
+  lease isn't put in MOVE_OUT months ahead; it offers only the lease end. Another date is an
+  early-termination request for a manager (contractual); a comment that needs a person holds it,
+  as with the renewal reply. Whether a tenant owes a minimum notice period is CONFIRM WITH LEGAL.
+- **Ejari is cancelled automatically** once the inspection is done and the move-out date is
+  reached (job, idempotent, retried while the registry is down; a person is told). Not on the
+  human-gate list; CONFIRM WITH LEGAL that no person needs to approve it. Settled
+  deposit + cancelled Ejari → `SETTLED` → `CLOSED` → unit `PREP`.
+
+## D30 — Customer web chat: logged-in customers, same enquiry engine
+Superseded in part by D31: the accounts, login codes, records and upload parts were removed; the web chat is public.
+Slices 1 (accounts, login, enquiries, viewings) and 2 (records, KYC uploads) are built.
+Product owner's choice.
+- **Customer accounts.** Table `customer_accounts`: id, email (unique, lowercased), full_name,
+  phone (+E.164, nullable), role (`customer`), session_version, created_at, last_login_at.
+- **Login codes.** Table `customer_login_codes`: hashed (sha256 + server pepper), valid 10 min,
+  5 wrong tries kill the code, at most 5 codes per email per hour. A new code voids older ones.
+  The answer is always "if the address is valid we've sent a code". Clock-based expiry. Sent
+  through the mail adapter (template `login_code`, entity kind `customer_account`). The adapter
+  already stores only a body hash; the email subject never contains the code, so staff reading
+  `outbound_messages` can't see a live code. Code requests are also limited per IP (20 an hour,
+  in memory, from `x-real-ip`, else the rightmost `x-forwarded-for` hop (the one our proxy adds), forwarded by `modules/leasing/apps/web` server actions:
+  the engine must not be exposed directly, or the per-IP limit can be spoofed; the per-email
+  limit still holds). Deployment requirement: the web app must sit behind a reverse proxy that
+  overwrites `X-Forwarded-For`, and the engine must not be publicly reachable. Documented, not
+  redesigned.
+- **Masked history.** Chat text is stored PII-masked (rule 8), so customers see masked IDs and
+  phone numbers in their own history after a reload.
+- **Session.** HMAC token `{aid, aud:"customer", sv, exp}` signed with `SESSION_SECRET`.
+  `requireUser` rejects any token with `aud` and `requireCustomer` requires it. 30 days.
+  httpOnly cookie `leasing_customer`, separate from the staff `leasing_session`. Logout bumps
+  `session_version`: signed out on every device.
+- **Records.** An account sees the applications and leases of every party whose `email` equals
+  the account email (lowercased), matched at query time. Applications match
+  `applications.party_id`. Leases match `lease_parties` with role `tenant`. If nothing matches,
+  the chat behaves as for a prospect and never says "no records for this email" (it asks the
+  area question). Shown: applications not CONVERTED, REJECTED or WITHDRAWN; leases not CLOSED
+  (MOVE_OUT and DISPUTE stay listed). A lease card carries start, end and the next unpaid
+  payment (scheduled, overdue or bounced; date and `formatAed` amount). Stage names, dates and
+  amounts come from stored fields and fixed code maps, never a model. An application in
+  SCREENING with an unused, unexpired `kyc_upload` link shows "needs documents". The reply lists
+  at most 8 records as buttons (plus the two menu buttons); one record is shown directly.
+  On web, intent `existing_tenant` as the only handoff reason shows the records; any other
+  reason alongside it (complaint, injection, low confidence) still gets the fixed decline.
+- **Conversations.** `conversations.channel` gains `web`. One web conversation per account:
+  `external_chat_id` = account id, new nullable `customer_account_id` FK. Status is always
+  `bot`. The flow goes back to `idle` after each booking. The web chat never hands over: no
+  `enquiry_handoff` task, no `handoff` status; where Telegram would hand off, the customer gets
+  a fixed autopilot reply. Staff can't reply into a web conversation (`staffReply` refuses it).
+  The Telegram route rejects any update whose channel isn't `telegram`.
+- **Search questions.** Code asks area, then bedrooms, then furnished (buttons), before showing
+  unit cards. Rent on a card is the approved asking rent, formatted by code.
+- **Actor.** `customer:<accountId>` (actors are plain strings, as with
+  `enquirer:<conversationId>`).
+- **Applications** from the chat use `source: "web_chat"` and reuse or create the party the way
+  `createApplication` already does.
+- **Uploads.** The engine finds the application's open `kyc_upload` link and calls the existing
+  `addApplicationDocument`, `removeApplicationDocument` and `receiveInbound` (`DOCS_UPLOADED`)
+  with it. This is one code path with the portal. `inbound_events.channel` gains
+  `customer_chat`. Routes `GET`/`POST /api/customer/applications/:id/documents`,
+  `DELETE …/documents/:docId`, `POST …/documents/submit`. Order of checks: ownership (404 for
+  anyone else's application), then an open link and state SCREENING (409), before any body is
+  read. A second submit is 409 (link used), as in the portal. The web route streams the body
+  to the engine, requires a same-origin request and a `content-length` (411 without, 413 over
+  10 MB).
+- **Demo sign-in.** In `DEMO_MODE` only, the `login_code` outbound row keeps `previewUrl` and
+  `GET /api/demo/customer-sign-in-emails` (staff roles) lists the latest 10 (address, sent time,
+  Ethereal preview link) on the demo console, as nobody can otherwise read the code. Outside
+  demo mode `previewUrl` stays null and the route doesn't exist.
+- **Prompt.** The `existing_tenant` intent criterion also covers applicants and documents
+  (my lease, my application, "my passport", "عقدي"). Eval 37/46 → 39/46; on Telegram this
+  intent may hand off slightly more often (la27).
+- **Rule 10 amendment (AGENTS.md):** the customer chat (logged-in customers, autopilot) may
+  take enquiries and book viewings, show customers their own applications and leases, and take
+  KYC document uploads. Everything outbound still goes by email.
+
+## D31 — Public customer chat and property pages
+Amends D30. Product owner's choice. Customer accounts, login, records and uploads are gone; the
+web chat is public and works like the Telegram bot.
+- **No accounts.** Migration 0017 drops `customer_accounts`, `customer_login_codes` and
+  `conversations.customer_account_id`. The `/account/*` pages, the customer session and
+  `leasing_customer` cookie, the `/api/customer/*` routes, the chat records and upload code and
+  the demo sign-in list are removed. D30's "Rule 10 amendment" is replaced by the one below.
+- **Chat = Telegram flow.** Contact first (email required, phone optional with Skip), a Change
+  email button always available, the name asked at booking, then enquiries, viewings and general
+  questions, with the autopilot and no handoff (fixed reply, no task, no `handoff` status; staff
+  can't reply into web chats). Search keeps D30's area, bedrooms, furnished questions. No lease
+  or application records, no document uploads, no email verification. Intent `existing_tenant`
+  (as the only handoff reason) gets a fixed reply (EN and AR) pointing to the "My tenancy" link
+  in the customer's latest email. Documents go only through emailed portal links.
+- **Relay.** The browser never calls the engine. The web server sets an httpOnly random
+  `leasing_visitor` cookie (UUIDv4, 180 days) and relays to `POST /channel/web/updates` and
+  `POST /channel/web/history` with `CHANNEL_SECRET`, as the Telegram bot does. Conversation:
+  `channel "web"`, `external_chat_id` = visitor id. Limits per forwarded client IP (in memory,
+  per hour): 200 updates, 3000 history reads.
+- **Public pages.** `/properties` (bookable units only: the same rule as the chat) and
+  `/properties/[id]` in `modules/leasing/apps/web`, with a floating chat launcher and `/chat` as a full page.
+  Engine routes `GET /public/units`, `/public/units/:id`, `/public/units/:id/photos/:photoId`,
+  `/public/units/:id/slots` and `POST /public/enquiries`, all secret-gated. Rent is formatted by
+  code from the asking rent.
+- **Enquiry form.** Name, email, optional phone and a viewing slot. It calls `createApplication`
+  with source `web_form` and actor `enquirer:web-form:<id>` (the visitor id, or a fresh one). The
+  slot must be one of the unit's free grid slots (else 409 `viewing_slot_taken`); a unit that is
+  no longer bookable is 409; the same email can't hold two open requests for a unit. Limits: 10
+  enquiries per IP per hour (POST) and 3 open `web_form` applications per email (429). The
+  invitation email goes out as for staff bookings.
+- **Photos.** The seed has none; cards without a photo show a generated placeholder (gradient and
+  building name). No stock images.
+- **Deployment requirement** (as D30): the web app sits behind a reverse proxy that overwrites
+  `X-Forwarded-For`, and the engine is not publicly reachable; otherwise per-IP limits can be
+  spoofed. A call with no forwarded address is counted under one shared "unknown" key, so a
+  misconfigured proxy is still limited. The per-IP limiter uses wall-clock `Date.now()`: an
+  in-memory rate limiter, not domain time (the `Clock` rule covers domain code only).
+- **Known limits.** Plus-address aliases (`name+1@...`) bypass the per-email cap. All caps are
+  per process and in memory: they reset on restart and aren't shared between engine instances.
+- **Ejari mock.** Its registry derives from the shared demo unit list in
+  `modules/leasing/packages/core/src/demo-units.ts` (`DEMO_PROPERTIES`), which the seed also builds its units
+  from, so every seeded unit registers (including MRN-1502). The name-case rejection stays.
+- **Rule 10 amendment (AGENTS.md):** the public web chat, like Telegram, takes enquiries and
+  books viewings only. Tenants act through emailed portal links. Everything outbound still goes
+  by email.
+
+## D32 — Companies, property types and rent bands
+Product owner's choice (slice 1 of the contract AI redesign). A portfolio can hold several
+companies, each with its own units and its own pricing and contract limits.
+- **Companies.** New `companies` table (`name`, unique `slug`, `kind` developer, realty or owner,
+  trade licence no, email, `active`). Every unit belongs to one company (`units.company_id`, not
+  null). (Superseded by D44: the company is the landlord.)
+- **Category and subtype.** `units.kind` is now `units.category` (`residential`, `commercial`,
+  `retail`) plus an optional `subtype`. Units also carry `emirate` (default `dubai`) and `country`
+  (default `AE`). Retail counts as commercial usage for the Ejari payload, the contract and the
+  rulebook own-use lock (`propertyUsageFor`). The readiness checklist skips bedrooms for
+  commercial and retail units. Category is locked with the other identity fields.
+- **Rent rules replace the per-bedroom range.** `rent_rules` hold a band in basis points around the
+  Smart Rental Index average (for example -500 to +1000) and optional AED floor and ceiling.
+  `allowedAskingRange` in `modules/leasing/packages/core` returns the intersection of the band and the AED bounds.
+  This is company policy, not law, so it is not in the rulebook.
+- **Choosing a rule.** The most specific active rule for the unit's company, category, emirate and
+  usage wins: community, then subtype, then category. No rule, or a rule that gives no bounds,
+  means no range, and then setting a price always opens `price_out_of_range` for a leasing manager
+  (fail closed). No SRI row means the AED bounds alone apply. Money is integer fils; rounding goes
+  toward the narrower range (minimum rounded up, maximum rounded down). The gate's reason cites
+  the rule, the SRI row and the computed band.
+- **Commercial and retail SRI.** `sri_averages` gain `category` and a per-sqft rate
+  (`avg_annual_rent_per_sqft_fils`); `bedrooms` is null for them. The base is the rate times the
+  unit's `areaSqft` (rounded). Exactly one of the per-unit and per-sqft averages is set. Without
+  an area, only the AED bounds apply. The SRI unique key is now
+  `(community, category, bedrooms, effective_from)`.
+- **Contract rules.** `contract_rules` (company, category, optional subtype) set the offer's
+  minimum and maximum cheques (1 to 12) through `applyContractRule`; with no matching rule the
+  `CompanyPolicy` limits apply as before. They also store `tenures` and `clause_ids`, but in slice
+  1 only the cheque limits are enforced: tenures are stored but not enforced, and units without a
+  contract rule use the company policy limits (the offer's out-of-limits reason says so).
+- **Rules are immutable.** A change inserts a new row with `supersedesId` and deactivates the old
+  one; a delete deactivates. Rows keep `created_by`, and the superseded chain is the history. Every company and rule write also appends a `lease_events`
+  row on a `company` entity (`COMPANY_CREATED`, `COMPANY_UPDATED`, `RENT_RULE_CREATED`,
+  `RENT_RULE_REPLACED`, `RENT_RULE_DEACTIVATED` and the `CONTRACT_RULE_*` equivalents) with the actor
+  and `rulesVersion`. Reads are open to staff; writes (companies,
+  rent rules, contract rules) are admin only.
+- **Import.** Unit and lease CSV imports need `?company=<slug>`; imported rows belong to that company.
+- **Deprecated.** `askingRentRangeFils` stays in the `CompanyPolicy` schema so stored policies still
+  parse, but nothing reads it. Use rent rules.
+- **Migration 0018.** Renames `units.kind` to `category`, adds the new tables and columns, and on an
+  install that already has units creates a "Default company" (fixed id
+  `00000000-0000-7000-8000-00000000c001`, slug `default`) and attaches every existing unit to it.
+  Installs with existing units therefore have no rent rules until an admin adds them, and every
+  price change opens the gate until then.
+- **Known limits.** A company's `active=false` does not affect pricing or listings yet. Dubai only:
+  `emirate` is stored, but only Dubai has a rulebook.
+
+## D33 — Agentic staff shell, agent permissions and the tenancy flag
+Product owner's choice (slice 2 of the contract AI redesign). Staff work from a Home and a
+Workspace; admins decide how much the agent does alone; the product ends at Ejari registration
+unless tenancy operations are switched on.
+- **Agent permissions.** `CompanyPolicy.autopilot` holds six booleans, defaults in
+  `DEFAULT_AUTOPILOT`: `chat_viewing_booking` on, `apply_without_viewing` off, `auto_kyc_verify`
+  on, `auto_send_offer` on, `auto_send_counter` on, `auto_prepare_contract` on. Admins change them
+  with `PUT /api/policy/autopilot` (Settings, Agent). Each save inserts a new `company_policy`
+  version (`createdBy` `user:<id>`). Saves are serialized with a transaction advisory lock so two
+  parallel saves give consecutive versions and keep both changes. A save that changes nothing
+  returns the current version and inserts nothing. Events cite the `policyVersion` they ran under.
+  Each change also appends `AUTOPILOT_CHANGED` (entity kind `company`, id = the new policy row) with
+  the user and, per toggle, `from` and `to`.
+- **Locked list (rule 3 unchanged).** Not toggles, shown read-only in Settings: final contract,
+  Ejari submission, an offer or price outside limits, flagged KYC, recording a reservation
+  payment. A toggle only decides whether a step inside the limits waits for a person; it never
+  removes a gate.
+- **Held steps.** With a toggle off the step stops and an officer task appears. Offer:
+  `OFFER_HELD {revision, policyVersion}` plus task `send_offer` (dedupe key per revision), for the
+  first offer (`auto_send_offer`) and for an in-limits counter (`auto_send_counter`). Whether an
+  offer is held is derived from the events (a held revision without `OFFER_SENT`). A manager-approved
+  out-of-limits revision still sends, because a person already decided. Contract:
+  `CONTRACT_PREP_HELD` plus the task "Prepare the contract"; `prepareContract` closes it. Chat
+  booking: `VIEWING_REQUESTED` plus the task "Confirm a viewing time", no invitation email.
+- **Send-offer route.** `POST /api/applications/:id/offer/send` (leasing officer or manager)
+  sends the held offer: `OFFER_SENT {revision, expiresOn, policyVersion}`, expiry = today plus
+  `offerValidDays`, the same mail key as an automatic send, task closed. `409 offer_not_held`
+  otherwise. The company limits are checked again at send (policy or asking rent may have changed
+  while held): outside them it answers `422 offer_out_of_limits` and opens an `offer_out_of_limits`
+  approval, as the counter path does. `completeTask` refuses `send_offer` and `prepare_contract`
+  (`409 use_the_action`); "Mark done" is not offered for them.
+- **KYC.** With `auto_kyc_verify` off, a clean run still opens a `kyc_review` approval, with a
+  non-blocking `manual_review` flag ("Automatic KYC verification is switched off."). Approving
+  carries `policyVersion` into `KYC_VERIFIED`.
+- **Apply without a viewing.** Enforced in `advanceApplication`: `APPLIED` from ENQUIRY is
+  refused with `409 viewing_required` unless `apply_without_viewing` is on, in which case the event
+  records `viewingSkipped` and `policyVersion`. VIEWING to SCREENING is unaffected. New route
+  `POST /api/applications/:id/events` (body `{event: "APPLIED"}` only, leasing roles; `409
+  wrong_state` unless the application is in ENQUIRY).
+- **Tenancy flag.** Env `TENANCY_OPS`, default `false`. Off hides everything from move-in to
+  disputes: the renewal, tenancy and tenancy demo routes are not registered; `scheduleLeaseMilestones`
+  and `scheduleTermPayments` do nothing; MOVE_IN is the end state of the product with the flag off
+  (nothing after it is scheduled or driven). Tenancy deadlines are **held, not skipped**: when the
+  sweep finds a due deadline that `isTenancyMilestone` matches (an allowlist: renewal ids, the
+  payment milestones and `move_out_date`; a new pre-move-in lease deadline must not match) it
+  releases it, leaving it `pending`, and returns `fired:false`, so turning the flag on later fires it.
+  For the legal renewal milestones (`notice_draft`, `notice_send`, `notice_deadline`,
+  `landlord_intent`) and `lease_end` it also creates one officer task per lease and milestone ("Tenancy
+  operations are off: <milestone> for lease <ref> is due", dedupe key `<leaseId>:tenancy_off:<milestone>`)
+  and appends `MILESTONE_HELD` the first time only. On startup with the flag **on**,
+  `backfillTenancySchedules` runs `scheduleLeaseMilestones` and `scheduleTermPayments` for ACTIVE
+  leases that have no lease deadlines (idempotent: unique keys, a term with payments is left alone).
+  `POST /api/inbound` with one of the eight tenancy types does not 404: the submission is stored
+  through `storeInboundWhileTenancyOff` as `stored_only` with `result.needsHuman`, an `INBOUND_RECEIVED`
+  event, no processing job, and an officer task "Tenant reply received while tenancy operations are
+  off". match); copilot tools `compute_renewal_cap`, `list_payments`, `list_tickets`, `get_case_pack`,
+  `summarise_case` and `propose_approval` (both its gates are tenancy gates) are dropped by
+  `toolsFor`, and `request_approval` proposals are refused; the tenant portal move-in, payment,
+  report, vacate, inspection, deposit and acknowledge pages return 404 and the lease portal home
+  shows a "nothing to do" panel; the Maintenance nav item is hidden. Application, contract, signing and Ejari
+  flows are unaffected. Generic staff routes (`POST /tasks`, `/tasks/:id/done`, approval notes,
+  copilot drafts, `POST /leases/:id/email`) moved out of the tenancy router into `api/staff-work.ts`,
+  and SRI and generated-document routes into `api/sri.ts` and `api/lease-documents.ts`, so they stay on.
+- **Navigation.** Home, Workspace (with a waiting badge), Units, Settings. Old URLs redirect
+  (temporary): `/inbox` to `/work?view=waiting`, `/inbox/:id` to `/work?approval=:id`,
+  `/applications/:id` to `/work?kind=application&id=:id`, `/leases/:id` to
+  `/work?kind=lease&id=:id`, `/conversations` to `/work?stage=Enquiry`, `/copilot` to `/`,
+  `/rules` to `/settings/rulebook`, `/sri` to `/settings/rent-index`, `/import` to
+  `/settings/import`, `/demo` to `/settings/demo`. Metrics has no nav item (`/metrics`).
+- **Home and Workspace.** Home: five tiles (viewings today, offers out, awaiting signature, Ejari
+  pending, waiting for you), the copilot, earlier conversations and "Agent did today"
+  (`GET /api/home`, at most 8 agent or system entries from today in Dubai). Workspace lists live
+  records by stage (`GET /api/records`, filters `view`, `q`, `stage`, `mine`) with a log per record
+  (`GET /api/records/:kind/:id/log`). The log merges four sources: events, approvals, emails and
+  tasks. One entry per approval and per task; the matching events are suppressed. Buttons come only
+  from the entry's `actions`, filtered per user with the same rules as the routes (an officer never
+  sees Approve on a manager gate; Edit only when the gate has editable fields). `waitingForYou`
+  on Home sums the same per-row item counts as `waitingForMe` on the list.
+- **Saved views.** `saved_views` table (migration 0019): per staff user, name 1 to 40 characters
+  unique per user, filter `{stage, q, mine}`. Routes `GET/POST /api/views`, `DELETE /api/views/:id`.
+- **Theme.** Light, dark or system switch in the staff top bar. A `leasing_theme` cookie sets
+  `data-theme` on `<html>` on the server, so there is no flash. Tokens are plain values on `:root`
+  with `light-dark()` versions inside `@supports`, so older browsers get light.
+- **Seeded stages.** The demo seed has applications at Enquiry, Viewing, Documents, Offer (sent
+  and held), Contract (prep held, awaiting signatures), Ejari pending and Registered. Reserved is
+  transient (the application converts in the same transaction), so that group is always empty and
+  the Workspace hides empty groups.
+- **Viewing outcome and next step.** A VIEWING application whose `viewingAt` has passed shows a
+  pending log entry with `record_viewing_outcome` (leasing roles only). In the Contract stage with the
+  contract sent, `nextStepFor` says "Waiting for the signers." Task kinds `send_offer`,
+  `prepare_contract`, `record_reservation` and `landlord_intent` never get "Mark done".
+- **Demo companies.** The seed has five companies; Sobha Realty and Modon Properties were added with
+  two or three fictional units each, rent and contract rules and SRI rows. Company names may be real
+  for pitch realism; all units, people, numbers and rules in the demo are fictional and do not
+  represent those companies.
+- **Known limits.** Registered demo leases have no Ejari certificate document. `getCompanyPolicyVersion`
+  orders by version, so a future-dated version would shadow a current one. A held `send_offer` task is
+  not closed if the application leaves OFFER another way. The in-limits counter is recognised by actor
+  `helper:offer`. Workspace and Home load unbounded sets (fine for a demo portfolio, not at scale).
+  The detail pane reuses the full-page components (their heading is an h2 when embedded); Edit opens the full form rather than
+  editing inline. The theme switch is in the staff app only (portal and public pages follow the cookie).
+  Inline approve, send offer and prepare contract were not click-tested in a browser.
+
+## D34 — Public customer section, chat search, Apply now and chat status check
+Amends D31. Product owner's choice (slice 3 of the contract AI redesign). The public chat grows
+from "enquiries and viewings" to search, applying and a read-only status check, still without
+accounts.
+- **Customer section.** The public pages live under `/customer`: `/customer/properties`
+  (server-rendered grid, chips are links that change the URL query), `/customer/properties/[id]`
+  and `/customer/chat` (full page), with a shared layout and nav. `/properties`,
+  `/properties/:id` and `/chat` redirect (307) to the new URLs. Cards link to the detail page and
+  to `/customer/chat?unit=<id>` ("Ask about this in chat"). The floating launcher is a link to
+  the chat page.
+- **Search steps and `filters`.** Web search asks emirate (Dubai open; Abu Dhabi and Sharjah are
+  disabled "Coming soon" buttons), area, category, then bedrooms (residential) or a size band
+  (commercial and retail), then an optional budget (chips built by code from the matching units'
+  asking rents, skipped when there is nothing to choose). Every web reply carries `filters`
+  (`ChatFilters`) beside `reply`, so the grid can follow the chat. Telegram stays residential-only
+  and sends no `filters`. `GET /public/units` takes `category`, `community`, `bedrooms`, `size`
+  and `budget` (Zod-validated).
+- **Apply now.** A unit card shows "Apply now" only when the `apply_without_viewing` toggle is on
+  (a forged `apply:<unitId>` is refused when it is off). The chat asks the name, then calls
+  `createApplication` (source `web_chat`) and `applyWithoutViewing`; the upload-link email goes
+  out as for a viewing booking. The unit must still be bookable, and the same email can't hold
+  two open applications on a unit.
+- **Company applicants.** For a commercial or retail unit the applicant is a `company` party:
+  the chat asks the company name (it becomes the party name, so KYC compares it with the trade
+  licence) and then a contact person, recorded in the `APPLIED_FROM_CHAT` event.
+- **One cap of 3.** Open applications per email are capped at 3 across the web form (`web_form`)
+  and the chat (`web_chat`), through one shared helper in `manager/applications.ts`. Telegram is
+  unchanged.
+- **Status check.** The visitor taps "Check my applications" (or asks in free text; D36). The
+  chat emails a 6-digit code (`crypto.randomInt`), valid 15 minutes, 5 attempts. Only
+  `HMAC(key, id + code)` is stored in `visitor_verifications`; the key derives from
+  `SESSION_SECRET`. The email job (`chat.code`) carries the code sealed with AES-256-GCM (key also
+  derived from `SESSION_SECRET`), and the queue deletes completed jobs after an hour, so no
+  plaintext code sits in the database or the queue. A typed code is stored as "(code entered)".
+  Limits: 3 codes per email per hour (advisory lock, so parallel chats can't race it) and 20 per
+  IP per hour. The reply before verification is always neutral ("If that email has applications,
+  we sent a code") whether or not the email has records; mail goes out only when the email has an
+  open application or a lease in the pipeline.
+- **Session.** A verified session is bound to the conversation and the email it holds, lasts 24
+  hours, and ends on "Change email". Another visitor cookie has no session.
+- **What is shown** (the product owner's decision): the five stages (Viewing, Documents, Offer,
+  Contract, Ejari) with done, current and todo, a next-step sentence, and for an offer or a
+  lease the annual rent and the number of cheques (formatted by code from stored values). At
+  most five items. Status details are returned in the response only; the stored message says
+  "Your applications are shown here".
+- **Re-send buttons.** In a verified session a record belonging to the session email can offer
+  "Send the upload link again", the offer link, the signing link or the Ejari certificate. Each
+  emails the existing link or document to the address on the record, never to one typed in the
+  chat, at most once per Dubai day (audit event plus a day-specific outbound milestone).
+- **Enumeration.** Without a verified status session, Apply now and booking never say whether an
+  email already has an open application or viewing, or when: one neutral reply ("If you
+  already asked about this property, check your email for the details we sent.", also in Arabic;
+  it promises no new email), on the code and agent paths
+  alike. Inside a verified session the specific replies stay. Nothing is re-sent in the neutral
+  case. A held offer (an `OFFER_HELD` revision with no `OFFER_SENT`) is not re-sent from the chat:
+  the reply is "Your offer is being prepared. We'll email it soon."
+- **Known limits.** The per-email limit can be used to exhaust a victim's codes: anyone who types
+  a victim's email can use up its 3 codes per hour, so the victim cannot get a code for the rest of
+  the hour (inherent to an unauthenticated start; the reply stays neutral). The per-IP limiter is
+  in memory: it resets on restart and is per process, so a multi-instance deployment needs a shared
+  limiter. `outbound_messages` keeps a `previewUrl` on dev SMTP (the Ethereal-style preview link),
+  which can show a code in clear: use dev SMTP only on a developer machine, never in hosted use. The demo falls back to a fixed `SESSION_SECRET`, so hosted
+  deployments must set it; rotating it invalidates codes in flight. Arabic copy needs native review.
+- **Rule 10 amendment (AGENTS.md):** the public web chat may also create applications (Apply now)
+  and show a verified visitor's stages read-only after an email code; with D36 it acts through an
+  AI agent with tools. Documents still go only through emailed links, and everything outbound
+  still goes by email.
+
+## D35 — Company clauses from sample contracts (Contract AI)
+Product owner's choice (slice 3). A company uploads a sample contract, a helper proposes clauses, an
+admin approves them, and a contract can include the approved wording.
+Slice 3 (Task 5 and 6) completes the decision.
+- **Helper `contract_template`** (`modules/leasing/packages/helpers/src/contract-template`) reads a sample contract
+  (PDF or pasted text) and proposes clauses (title, text, category, verbatim quote). It touches no
+  disk (the engine passes `readFile`) and writes nothing. PDF text comes from `unpdf@1.9.1` (MIT,
+  new dependency; `pdf-lib@1.17.1` is a dev dependency for the test fixture). Caps: 10 MB, 60
+  pages, 120k characters, a 30 s parse timeout, page-by-page reading that stops at the character
+  cap, and `loadingTask.destroy()` afterwards. The document sits between per-call random nonce
+  delimiters (`<<<DOC_<nonce>_START/END>>>`) and delimiter-like text inside it is stripped.
+  Limit: the timeout does not cancel pdf.js work already running; a worker with a memory limit is
+  deferred.
+- **Quote guard.** A clause is kept only if its quote is found in the document (NFKC, soft
+  hyphen, zero-width and curly-quote normalisation, whitespace collapsed), is at least 20
+  characters and 4 words, and covers at least `min(40% of the clause text, 250)` characters.
+  Failures are dropped and counted in `droppedCount`, not failed through Zod, so one bad clause
+  doesn't turn the whole answer into `needs_human`. A clause is also dropped when its `text` has a
+  figure, period or date token (digits, number words up to twelve, day/week/month/year words,
+  month names, money words, `%`) that its `quote` does not contain: the model may not add a value.
+  The review screen and the approval detail label clauses in the `termination`, `payment` and
+  `subletting` categories "Confirm with legal".
+- **`hasValues` is code, not model.** A clause "has values" when code finds an amount (AED, dirham,
+  fils, `د.إ`), digits (also Arabic-Indic, Persian and fullwidth, `%`), a spelled-out number or
+  percentage, or a period or date word, in English or Arabic (Arabic-aware boundaries with the
+  common prefixes). A model-supplied flag is ignored.
+- **Review.** Proposals are stored as `company_clauses` (`proposed`) tied to the contract rule.
+  An admin approves, edits or rejects each one. A clause with `hasValues` (recomputed on edited
+  text) needs `confirmValues: true` (else 422 `confirm_values`). Every decision appends
+  `COMPANY_CLAUSE_APPROVED` or `COMPANY_CLAUSE_REJECTED` with the user as actor.
+- **Retry and stuck reads.** Reading runs in the `contract.template` job (singletonKey
+  `<documentId>:<attempt>`). Re-uploading the same file after `failed` or `needs_human`, or the
+  "Try again" route, re-queues it. A sample queued for more than 15 minutes is shown as `failed`.
+- **Scans go to a person.** Image-only PDFs are `needs_human` ("upload a text PDF or the clauses
+  as text"). No page renderer is wired (it needs a native canvas dependency), so the vision
+  fallback is not used.
+- **In the contract.** Rule `clauseIds` may hold standard ids and `cc:<uuid>` ids; the Manager
+  validates them (422 `bad_clause` for an unapproved, rejected, unknown or other-company id) and
+  copies the approved wording into `addendum.companyClauses`, overwriting anything the client
+  sent. The PDF prints it under "Additional terms (company)". The prepare form preselects from
+  the matching rule. The `final_contract` gate is unchanged. `Addendum.clauses` allows 20 entries.
+- **Not done:** company clause text is not run through the free-text conflict review (an admin
+  already approved it), so a conflict with a contract field is only caught by the approver.
+- **Evals.** Six fixtures: expected clauses found 12/18, quotes not in the document 0/16, clauses
+  from the injected line 0.
+
+- **Approved company clauses are immutable.** `decideClause` only touches `proposed` rows; an approved or
+  rejected clause is never edited again (a change means a new proposal). That is why a contract's
+  `inputHash` covers the records it is copied from but not the text of `cc:` clauses: the wording behind a
+  `cc:<uuid>` can't change between preparing a contract and approving it. The Manager copies the approved
+  wording into `addendum.companyClauses`, and the renderer throws if a `cc:` ref has none.
+- Company clause text appears only in the contract PDF ("Additional terms (company)"), never in the Ejari
+  payload. No amount, date or period in a clause is ever used as a contract value.
+
+## D36 — AI customer agent for the public web chat
+Amends D24 and D31 for the web channel only. Product owner's choice: free text in the web chat
+goes to an agent that can search, book, apply and check status, instead of a classifier with
+fixed replies. Telegram is unchanged (D24).
+- **Routing.** Buttons, callbacks, contact steps, a typed code, and a short typed answer at a
+  step that expects one (name, company, email) stay in code. Any other free text goes to a
+  LangGraph tool loop (`modules/leasing/packages/helpers/src/customer-agent`, engine side in
+  `manager/customer-agent.ts`). With no model configured the old assistant path runs. Fixed
+  classifier replies remain only as the agent's error fallback and the `handoff` tool text.
+- **Tools.** `search_units`, `unit_details`, `viewing_slots`, `book_viewing`, `apply_now`
+  (offered only when the toggle is on), `my_status` (only when verified),
+  `start_status_check` (only when an email is known and not verified), `offer_choices` and
+  `handoff`. Zod in, code out. No tool takes an email, party, application or lease id. At most 6
+  tool calls per message, and the per-hour message cap applies before the model.
+- **Full actions with choice cards** (the product owner's decision). The agent may book a viewing
+  and apply, but a tool that commits or asks ends the turn with text written by code. Options
+  (slots, areas, units) are offered as a choice card: `offer_choices` values are validated, labels
+  are built by code, and the visitor's tap is `pick:<id>:<n>`.
+- **Identity only from the conversation.** The booking and application use the chat's contact
+  email and name. An email the visitor or the model supplies is ignored.
+- **Single-use picks.** Options live in `flow.choiceSet`; a pick resolves from stored state, and
+  the set is cleared as soon as one option is taken, so a forged, stale, foreign or repeated pick
+  says "no longer available". A slot must come from `viewing_slots` in the same message and is
+  re-checked under the unit lock.
+- **Value post-check (rule 1).** Every AED amount, date, time, weekday, phone, email or link in
+  the reply must appear in this turn's tool output (EN and AR, Arabic digits and separators,
+  Dhs/Dh/`د.إ`, bare yearly figures). It also covers percentages (`%`, `٪`, "percent",
+  "بالمئة"), bare figures of 1,000 or more, and "N days/weeks/months/years" phrases in English and
+  Arabic (digits, or spelled-out numbers up to twelve), each of which must appear in a tool result.
+  Claims or promises of an action that no tool did also fail.
+  A failure retries once, then sends a fixed reply.
+- **Deadline and cancel.** Each turn races a 60 s deadline (`customerAgentLimits.deadlineMs`) with
+  an `AbortSignal` to the model; tools that haven't started refuse once cancelled, and a tool
+  that needs the conversation lock re-checks `cancelled` inside its transaction before writing.
+  On timeout the run is recorded `needs_human` and the visitor gets the fixed error reply. Known
+  limit: a write already running when the deadline passes still commits, so the visitor can see
+  the error and still get the booking email.
+- **Concurrency.** An in-memory semaphore (`CUSTOMER_AGENT_MAX_CONCURRENT`, default 2) answers
+  "one moment, I'm busy" at once when full, recording nothing.
+- **Untrusted text.** Visitor text and unit descriptions are wrapped in `<untrusted>`. A name or
+  company typed at a step is saved only if it looks like a name (`plausibleName`,
+  `plausibleCompany`); otherwise the text goes to the agent and nothing is saved.
+- **`helper_runs`.** One row per turn with masked arguments and a result hash. `redacted()`
+  strips `nameEn` and `companyName` from the stored flow, masks emails (`a***@domain`) and never
+  stores status details. Unverified spans kept in the row are masked too (`maskPiiText`, emails).
+  A thrown model error is retried once inside the turn (not a timeout), then the run is
+  `needs_human`.
+- **Model.** `CUSTOMER_AGENT_MODEL`, else `CHAT_MODEL` (new optional variable; no existing tag
+  changed). Local Ollama only, asserted at startup. The agent needs tool calling.
+- **Evals** (23 cases, EN and AR, real Ollama, Task 7). `qwen3.5:9b`: tool choice 19/20, facts
+  3/3, reply shape 22/23, fixed fallbacks 0/23, p50 8.4 s, max 34.4 s, forbidden actions 0.
+  `gemma4:e4b`: tool choice 15/20, shape 18/23, fallbacks 2/23, p50 4.1 s, max 25.7 s, forbidden
+  actions 0. About twice as fast but misses cards, choice cards and a handoff, so `qwen3.5:9b`
+  stays the default until the prompt is tuned.
+- **Known limits.** Turns with a slot list or choice card take several model calls (up to about
+  35 s on the dev GPU). No streamed status lines: one pending bubble. The Arabic apply case
+  sometimes falls back to the fixed reply. The semaphore frees at the deadline while an orphaned
+  model call may still run. A "busy" reply marks the inbound message processed.
+- **Rule 10 amendment:** see D34.
+
+## D37 — Fourteen more agent switches (slice 4)
+
+- **Where.** In `CompanyPolicy.autopilot`, next to the six of D33: booleans plus seven bounded
+  whole numbers in the same versioned policy (saved with the advisory lock; every change audited as
+  `AUTOPILOT_CHANGED` with from and to). An out-of-bounds number is refused, never clamped. Policies
+  stored before this have no new keys and parse with the defaults.
+- **Defaults** keep today's behaviour or choose the safer option: reminders, chases, agent
+  switches and `ejari_draft_auto` on; `no_show_followup`, `held_offer_auto_release`,
+  `contract_ai_auto_approve_valueless` and `copilot_proactive_drafts` off.
+- **Reminders and chases** are queued with a `singletonKey`, moved out of quiet hours (Dubai, from
+  the Clock; in demo mode too: the exact `startAfter` is kept in the deadline and the sweep waits
+  for it), and re-check both their switch and the entity's state when they fire. They are all
+  pre-move-in steps, so `TENANCY_OPS` does not hold them.
+- **No gate is touched.** `ejari_draft_auto` only decides who drafts the submission; a person still
+  approves it. `held_offer_auto_release` sends through `sendHeldOffer`, which re-checks the limits and
+  asks a manager instead of sending an offer outside them. Auto-approval covers only clauses with no
+  amount, date or period (by code), outside termination, payment and subletting, and not about money
+  or exit in their wording; the actor is `system:auto-approve`.
+- **Chat agent.** Free-text book or apply off: the tool answers "needs a tap" and shows the choice
+  button; the tap runs the normal path. `area_rent_index` exists only while `agent_sri_answers` is
+  on and formats the figure by code. `agent_daily_action_cap` counts the agent's completed bookings
+  and applications per chat per Dubai day (`AGENT_ACTION` event).
+- **Copilot.** `copilot_proactive_drafts` shows "Draft a reply" in the Workspace on records that wait
+  for an applicant or signer. A click asks the copilot; for a lease it saves a draft through
+  `draft_email`; nothing is sent. Applications have no lease, so the copilot writes the text in chat.
+
+## D38 — Company contract templates (slice 4)
+- **Extraction.** An admin uploads a sample contract PDF. The `contract_structure` helper
+  (`modules/leasing/packages/helpers/src/contract-structure`) reads it: code copies the wording verbatim into
+  sections, finds the blanks, and reads the look (page, margins, fonts, sizes, header, footer,
+  logo, accent colour) from the PDF. The model only proposes headings and which contract field
+  each blank means; code checks every id, heading and field name and the field's type.
+- **Look.** The company's look is reproduced with the standard PDF fonts. A header, footer or
+  logo that carries DLD, RERA or Ejari wording is never reused (rule 9): it blocks approval until
+  the admin drops it, and a sample with such marks never gives an accent colour.
+- **Approval rules.** A template is `proposed` until an admin approves it. Approval is refused
+  (422 with every reason) while a mapping is of the wrong type (a blank left empty is fine, D43), while flagged
+  header, footer or logo are not dropped, while a kept logo is not confirmed as the company's own,
+  while the text has characters the PDF fonts cannot print, and while any paragraph or heading
+  with a number, period, date or amount (`hasValues`) is not in `review.valuesConfirmed`.
+  Authority wording found in the title or body needs "Neutral reference, not branding" per
+  paragraph (`review.authorityBodyConfirmed`); header, footer and logo hits still block until
+  dropped. A paragraph about a rent change, or a notice with a number of days, only warns:
+  "Check against the required terms; confirm with legal". Confirmations are stored on the
+  template and in the `COMPANY_TEMPLATE_REVIEWED` audit event. The wording is never editable.
+- **Required terms always appended.** `REQUIRED_TERMS` (law section, addendum blocks) are added
+  by code to every contract, whatever the template says. A template never replaces them.
+- **WinAnsi limit.** The PDF fonts are standard (WinAnsi): Arabic or other text they cannot encode
+  blocks approval ("upload an English version"). No silent `?`.
+- **Re-pointed on approve.** Approving a version retires the previous approved one and, in the
+  same transaction, moves the company's active contract rules from retired templates to the new
+  one. An approved row never changes; a pending `final_contract` becomes stale if its template
+  key changes. A render with a missing value fails with the list of what is missing.
+- **Rules touched:** 1, 3 (final contract is still approved by a person), 9.
+
+## D39 — Voice input (slice 4)
+- **Model.** Speech to text is `VOICE_MODEL` (default `gemma4:e4b`), audio sent to local Ollama
+  only (rule 8). No cloud speech API.
+- **Caps.** `audio/webm` or `audio/ogg`, 2 MB (`VOICE_MAX_BYTES`), 30 s. A missing
+  `Content-Length` is refused (411); the body is read as a stream and cut off past the cap (413)
+  in the engine and in both web relay routes. Limits: 20 per IP per hour (public chat), 60 per
+  user per hour (staff).
+- **Nothing stored.** The audio lives in memory for one call: not on disk, not in the log, not in
+  `helper_runs`. Only the PII-masked transcript is returned.
+- **Transcript is untrusted input.** It fills the message box; the person reads, edits and sends
+  it as an ordinary message, so it goes through the same masking, Zod and prompt-injection
+  safeguards as typed text. The prompt tells the model never to obey the speech. Silence or low
+  confidence answers "try again" (English and Arabic).
+- **Speaking back.** Only the browser's local text-to-speech voices are used; a voice that is not
+  local is never used, so no text leaves the device or the server for synthesis.
+- **Rule 10:** voice is only another way to type; it opens no new channel.
+
+## D40 — Model choice per helper (slice 4)
+- `CHAT_MODEL` is `gemma4:e4b` (about 2 to 4 times faster, same scores on the extraction and
+  classification suites). Per-helper overrides: `COPILOT_MODEL`, `LEASING_ASSISTANT_MODEL`,
+  `CONTRACT_AI_MODEL`, `CUSTOMER_AGENT_MODEL`, `VOICE_MODEL`. `COPILOT_MODEL` and
+  `CUSTOMER_AGENT_MODEL` stay pinned to `qwen3.5:9b`: gemma misses tool calls by asking a
+  clarifying question, and one prompt pass did not close the gap.
+- Evals on 2026-10-28 (forbidden actions 0 on both models in every suite):
+
+| Suite | qwen3.5:9b | gemma4:e4b | Verdict |
+|---|---|---|---|
+| leasing-assistant (54) | intent 44/54, handoff recall 22/22, false handoffs 1/32, injections 7/7, p50 6.0 s | same scores, p50 6.9 s | gemma |
+| contract-template (6) | clauses 12/18, bad quotes 0, injected 0 | same | gemma |
+| contract-structure (4) | blanks 28/28, mapping 27/27, styles 37/37, 115 s on biggest PDF | same scores, 20 s | gemma |
+| customer-agent (23 / 26 cases) | tool 19/20, shape 22/23, fallbacks 0, p50 8.4 s | tool 14/21, shape 19/26, fallbacks 2/26, p50 4.6 s | pinned qwen |
+| copilot (77) | tool 59/69 (85.5%), facts 64/78, unverified 6/77, p50 26.7 s | tool 51/69 (73.9%), facts 60/78, unverified 4/77, p50 7.8 s | pinned qwen |
+| complaints (34) | route 29/34, safety 10/10, injections 4/4, ack check 0 failing | stopped at ct30, no summary | gemma (re-run to confirm) |
+| voice | no eval suite | none | `VOICE_MODEL` stays `gemma4:e4b` |
+
+- `KYC` (vision) was not run. Complaint acknowledgements follow `CHAT_MODEL`; re-run
+  `bun run eval -- complaints` on gemma before relying on it.
+
+## D41 — Staff copilot covers the Contract AI pipeline, with cards and choices
+- **Why.** Staff asked "how many applications are in viewing" and "how many enquiries" and the copilot
+  had no tool; its help text pitched lease management and renewals, which `TENANCY_OPS` hides (D33).
+- **Tools.** Six read tools: `pipeline_summary`, `list_records`, `get_record`, `contract_status`,
+  `list_companies`, `offer_choices`; `find_available_units` gains `company`, `category`, `sizeBand`.
+  `pipeline_summary` is computed by the same code as the Home tiles, so counts never disagree.
+  `list_deadlines` and `get_lease_timeline` join the `TENANCY_OPS` hide list; `get_lease` stays,
+  without tenancy fields.
+- **Rich replies.** Tools return `ui` (record and unit cards, one choice card) that the model never
+  sees; the stream carries it to the chat. Both chats now use one card and choice implementation
+  (`modules/leasing/apps/web/components/chat-ui/`). Cards are not stored with the thread (no schema change).
+- **Guardrails unchanged (rule 11).** No new confirmed actions. A choice value must be an id a tool
+  returned in the same turn; tenant and applicant text never becomes a choice; a tap sends a normal
+  message or opens a page.
+- **Public agent.** Only polish: `search_units` returns `total` for count questions and moves onto
+  the shared components. `resolveCompany` is now shared between the two.
+
+## D42 — The copilot calls the engine API that exists for the task
+- **Why.** "Send a reminder for this viewing" got no tool call and an offer of a lease page an
+  application doesn't have; "list Silverline units" got a `category` the user never typed. The
+  user decided the copilot should use existing engine actions instead of saying "no tool".
+- **Reads.** `list_tasks`, `list_enquiries` and `get_enquiry` (visitor text `untrusted`, phone
+  numbers masked, no email returned), `get_unit` (the unit plus its SRI average and rent-rule range,
+  computed by the engine in `GET /api/copilot/unit`, rule 1) and `viewing_slots` (the slots logic
+  of the public chat, `GET /api/copilot/viewing-slots`). Slot `at` values are issued to
+  `offer_choices`.
+- **Drafts.** `draft_email` takes a lease (tenant) or an application (applicant). `copilot_drafts`
+  gains `application_id`; the staff form on the application record (`POST /api/applications/:id/email`,
+  evidence stored like a tenant email) sends it. The copilot still never sends.
+- **Four more Confirm-click proposals (rule 11 amended).** `propose_viewing_invite`
+  (`bookViewing`: an enquiry only; a booked viewing keeps its automatic reminder),
+  `propose_request_documents`, `propose_resend_signing_link`, `propose_prepare_contract` (runs
+  `prepareContract` with the contract rule's default clauses; it still ends at the locked
+  `final_contract` approval). Same flow as D25: a `copilot_proposals` row, single use, 30-minute expiry,
+  owner only, the user's click calls the same manager function the staff route calls, as
+  `copilot:<userId>`, with the same role checks and audit. No new quiet-hours or cap semantics.
+- **Prompt.** Never add a filter the user didn't state; use the proposal tool or name the button
+  with its link, never "I have no tool" when one exists.
+- **Chat UI (same change).** Both chats get one composer (`chat-ui/composer.tsx`) with code-driven
+  quick-action pills that stay above the input. Public pills are fixed buttons (`units`,
+  `chat:book`, `chat:apply`, `status:start`, `contact:change`); "Use a different email" ends the
+  verified session and restarts the email step, and touches no applicant record. "Talk to staff" is
+  not offered: the web chat never hands over (customer chat design). The stored status stand-in
+  line is no longer shown to the model, and a reply that repeats it is refused, so every status
+  question gets a fresh status.
+
+## D43 — Template blanks are mapped by AI and code, checked by people at `final_contract`
+- **Why.** Admins fixed many proposed mappings by hand (Landlord Nationality shown as Lease
+  reference) and a missing optional value (tenant phone, plot) failed the whole contract. The
+  user decided: no manual field selection, map by what the system holds, leave a blank empty when
+  unsure.
+- **Data sheet.** `key -> description + type`, generated from the records (lease terms, unit,
+  company, landlord and tenant party columns, application), plus `tenancyPeriod` and
+  `contractOn` (the day the contract is prepared, from the Clock).
+- **Mapping, once per template version.** Code label rules first (landlord/owner/lessor vs
+  tenant/lessee scoping from the label or nearest heading), then the chat model (Zod schema; the
+  key list is too long for a systemone choice, which takes at most 26 options) given only blank
+  labels, nearby words and key descriptions, never a value (rule 8: personal data and amounts in
+  the sample's own words are replaced by "[value]" first). Code validates the key and its type;
+  invalid answers are asked once more, then the blank is `leave_empty`. The model only chooses a
+  key; code copies the value verbatim (rule 1). Stored on the template, reused at every prepare;
+  "Re-suggest mappings" re-runs it on a proposed template. An approved template is immutable: a new
+  version (read the sample again) is needed to map it afresh.
+- **Rendering.** No value: an empty line, listed at the `final_contract` approval as "Left empty
+  for hand-filling", with each filled blank's source key. `CORE_FIELDS` (annual rent, start, end,
+  tenancy period, deposit, cheques, landlord name, tenant name, unit and property number, lease
+  reference, move-in date) block preparation when empty. Absent-by-nature keys print a neutral
+  word from code: `rentFreeDays` "0" (the record holds 0), `reservationFils` "None" (no reservation
+  on the application). Rule 3 is unchanged: a person checks the contract at the gate. Rules 1, 3
+  and 8 are touched, none relaxed.
+
+## D44 — The company is the landlord
+
+Developers and realty companies (Sobha, Danube, Silverline, Modon and so on) lease their own
+portfolio. Individual landlords are out of scope. This supersedes the D32 ruling that a company is
+not a landlord.
+
+- **Data: parties plus columns.** `companies.party_id` (unique FK) points to a `parties` row of kind
+  `company`: the company's legal record (legal name EN and AR, email, phone, trade licence number and
+  expiry). Created from the company name for every existing company by migration 0025, and on demand
+  for new ones. The fields a party has no column for (licence issuing authority, RERA ORN, registered
+  address, cheque payee, authorised signatory with ID kind, number and expiry) are columns on
+  `companies`. Why not all on `companies`: leases, signing, the Ejari payload and notices already read a
+  party, so nothing downstream changes shape, and the signatory's ID number stays out of `parties`
+  (whose Emirates ID column is unique and used for matching people).
+- **`units.landlord_party_id` is unused.** The column stays (nullable, deprecated) and nothing reads it.
+  The unit's landlord is its company's party. New leases (application and import) get that party as
+  `lease_parties.role = landlord`; the contract takes it from the unit's company at prepare time and
+  re-points an older lease's landlord row. Contracts already prepared or signed keep their stored PDF
+  and payload.
+- **Gate on preparing.** `prepareContract` is refused (422 `landlord_details_missing`) until the
+  legal name, trade licence number, issuing authority, an unexpired licence, address, email and the
+  signatory (name, title, email, ID number) are set: "Complete <company>'s legal details in Settings →
+  Companies". The landlord signer's email is the signatory's.
+- **Audit and PII.** `PUT /companies/:id/legal` is admin only. The `COMPANY_LEGAL_UPDATED` event holds the
+  actor and the changed field names, never values or ID numbers. The signatory's ID number is shown
+  masked to finance. Validation: licence and ID expiry in the future (Clock), email, Emirates ID format
+  `784-YYYY-NNNNNNN-N`.
+- **Units and import.** The unit form already requires a company. The units CSV has a `company` column
+  (name or slug); `?company=` is only the default; an unknown or inactive company is a row error. The
+  lease CSV's `landlord_name` and `landlord_email` are ignored.
+- **Data sheet.** New keys `landlordNameAr`, `landlordAddress`, `landlordTradeLicenceNo`,
+  `landlordTradeLicenceExpiresOn`, `landlordTradeLicenceAuthority`, `landlordReraOrn`, `chequePayeeName`,
+  `signatoryName`, `signatoryTitle`, `signatoryEmail`, `signatoryIdNo`, `signatoryIdExpiresOn`.
+  `landlordNameEn` stays core. The generic contract and the Ejari payload use the company's legal name
+  and trade licence number.
+- **Demo.** "Fictional Holdings LLC" is gone: each seeded company has fictional legal and signatory
+  details (`DEMO_COMPANY_LEGAL`), and the simulated Ejari registers each demo unit to its company's
+  legal name. Rules 1, 3, 4, 8 and 9 are untouched.
+
+## D45 — Contract agent, one-step template approval, copilot edits contract and rent settings
+
+The leasing assistant automates the work up to the contract. Staff should approve a contract, not drive it.
+
+- **Contract agent.** `modules/leasing/packages/helpers/src/contract-agent`: a LangGraph tool loop on the existing
+  `contract.prepare` job (after `OFFER_ACCEPTED → RESERVED → lease in CONTRACT`). Its tools are code:
+  contract fields with sources, the matching contract rule, the company's approved clauses, the approved
+  template's paragraphs, `fill_blanks` (template blanks filled from the records) and `check_terms` (tenure,
+  cheques, rent within the rent-rule band, deposit within the policy percentage, landlord details,
+  required terms, blanks). The model only chooses additional clauses (with a reason) and flags conflicts;
+  it never writes a value or rewrites template wording. After the loop, code recomputes every check, keeps
+  only standard or approved company clause ids not already in the template, and copies fields from the
+  records (rule 1). A failed check, an unknown clause or an answer that doesn't parse twice → no contract,
+  a `contract_needs_person` task (rule 6). Without a model (tests, demo seed) the code path runs and the
+  same checks still stop a contract that breaks the rule. Model: `CONTRACT_AI_MODEL`, else `CHAT_MODEL`,
+  local Ollama only (rule 8). `final_contract` is unchanged (rule 3).
+- **Template is the contract.** The generated contract keeps the approved template's wording, clauses and
+  look; only blanks are filled (D43). Extra clauses go under Additional terms.
+- **One approval.** Approving a proposed template approves the clauses read from the same sample in the
+  same step (`company_clauses.in_template_id`). An unticked clause is rejected and the paragraph it was read
+  from is dropped from the template. Admins can also write a clause by hand; it is approved as it is saved
+  (amounts or dates need the "I checked them" tick).
+- **Prepare again only when needed.** `contracts.config_hash` stores the rule, template and approved-clause
+  hash used. The lease's contract view returns `prepareNeeded`: `failed` (no open contract, or a
+  preparation task open) or `rules_changed` (the pending contract's hash differs from now). The button
+  shows only then.
+- **Copilot settings (amends rule 11 and D42).** `add_contract_clause`, `save_rent_rule`,
+  `save_contract_rule`, `save_sri_value`. A person asking is a human instruction: in `explicit` mode the
+  change is made now through `POST /api/copilot/config-changes`, which refuses (422 `not_your_words`)
+  unless the tool's `userQuote` (≥ 8 characters) is in the user's own latest message of the thread, so text
+  from tenants or tool results can never trigger it. In `suggest` mode it is a `config_change` proposal the
+  user confirms. Same roles and validation as the settings forms (admin for clauses and rules; admin and
+  leasing manager for the SRI table); audited as `copilot:<userId>` with the quote. A clause's amounts count
+  as checked only when every number is in the user's message. The copilot still never approves, sends,
+  changes a lease, submits to Ejari, or edits the rulebook or company policy.
+
+## D46 — Voice through whisper.cpp; per-company document form and KYC rules
+
+- **Voice.** Speech to text moves from an Ollama audio model (`VOICE_MODEL=gemma4:e4b`, which did not transcribe
+  reliably) to a local whisper.cpp `whisper-server` with `ggml-base.bin` (`VOICE_URL`, loopback only, rule 8).
+  Same caps, masking and review-before-send as D39. Supersedes the model part of D39. Amended 2026-11-23: the
+  default model is now `ggml-small.bin` (better accuracy, multilingual; `WHISPER_MODEL` overrides).
+- **Document form (per company).** `company_kyc_configs` holds a versioned form (`FormField[]`: label, key, type
+  text/email/phone/date/number/select/document, required, shown to individuals/companies/both, placeholder, help,
+  choices, document kind) and the KYC rules. The upload link renders exactly the company's form; answers are stored
+  on `applications.form_answers` with the version answered and validated against it. Companies start with a starter
+  form. `other` document uploads are kept for staff and never read.
+- **Name as per documents.** One text field can carry the applicant's full name as printed on their documents; the
+  KYC name check uses it instead of the name typed when the application was created.
+- **KYC rules.** Base rules (today's checks) can be switched off or given values: validity days, read confidence,
+  required documents (from the form), Emirates ID format, passport MRZ, visa format, names consistent, applicant
+  name (off / lenient / exact), ID numbers consistent. Expired, unreadable and wrong documents always flag. Company
+  rules are added on top: answer matches a document field, answer required (optional accepted values), document
+  required, minimum age, and a plain-English custom check read by the local chat model. Every failed rule is a
+  non-blocking flag → `review`; nothing rejects an applicant automatically, and the AI check can only flag (a model
+  error also flags). No rules on nationality or similar traits are offered. Admin only, audited
+  (`KYC_CONFIG_SAVED`).
+- **Hardening (review).** Answers must be for the company's current form version (409 `form_changed` otherwise;
+  a saved form can't be skipped); keys not on the form are dropped; an upload needs at least one ID document;
+  `other:` uploads must match a form field. The starter form's optional ID fields keep the built-in "full ID set"
+  check. AI checks: at most 5, one retry, then a flag. Rules whose label, instruction or accepted answers mention
+  nationality, religion, race or similar traits are refused, and nationality is not a comparable document field.
+  whisper-server is asked to detect the language (`language=auto`) and redirects are refused.
+
+## D47 — Company template is the look; clause wording is the live company clauses
+
+- **Why.** Template approval asked for a tick per paragraph (values, "neutral reference"), a drop for every marked
+  header or footer and sample note, and a separate clause approval; once approved, clauses vanished into the
+  template's fixed wording and couldn't be edited or removed.
+- **Look vs wording.** The template keeps the sample's layout, headings, fixed wording, fields and signature block.
+  Each clause read from the same sample is linked to the paragraph it came from (`template_paragraph_key`); a contract
+  prints the clause's current approved wording there, only when the clause is in the contract's rule. Editing a
+  clause changes future contracts; removing it, or unticking its rule, leaves the paragraph out. Prepared contracts
+  show "Prepare again" (the config hash covers clause text and rule clause ids); signed contracts keep their PDF.
+- **Code decides what it can.** DLD/RERA/Ejari marks in a header, footer or logo area, values from the sample and
+  notes about the sample are removed automatically and listed. Only text the PDF fonts can't print blocks. One tick
+  ("I checked the amounts, dates and DLD/RERA references, and the logo is our own") replaces the per-line
+  confirmations when such wording, clause text or a logo is kept. A mapping that can't be used prints an empty line.
+- **One approval.** "Approve all" approves the latest sample's clauses (edited as the admin left them; ticked ones
+  join the sample's rule, auto-approved linked ones too) and its template, moving the company's rules to it.
+- **Backfill.** Clauses approved into older templates are linked at engine start and join the rules on that
+  template, so existing contracts keep printing them. Clauses that can't be matched to a paragraph stay in the fixed
+  wording ("In template wording", not editable).
+- Unchanged: `final_contract` gate, required terms appended, rule 9 (marks are never reused), approved templates
+  immutable. Supersedes the per-paragraph review parts of D38 and "approved clauses never change" in D35.
+- **Prepare again after sending.** A config change also offers "Rules changed: prepare again" for a contract out for
+  signing that nobody has signed yet: the signing links expire, the version is superseded and the new one waits at
+  `final_contract`. Once anyone signed it, never.
+
+## D48 — Decision cards in the staff copilot
+
+- **What.** When the user's own message asks to approve or reject something waiting for a person (final contract,
+  Ejari submission, identity check, any flagged approval) or to record a site visit, the copilot calls the read tool
+  `show_decision`, which puts a card in the chat: what is being decided, the record, and the inbox's own buttons
+  (Approve, Reject with a required note) or Came / Didn't come for a site visit.
+- **Rules kept.** The copilot never decides: the card is a staff UI action shown in the chat (rule 11), the click is the
+  person's decision (rule 3), and it runs the same routes as the inbox and the application page as the signed-in user,
+  with the same checks (gate approver role, a preparer can't approve their own, approving a contract re-checks the
+  records). The card shows "Not yours to decide" with the reason when the role can't decide it. A model can't create a
+  card for an item the user didn't name (the tool looks the record up from the user's words), and untrusted text never
+  triggers one. Decisions are audited as the user, exactly as from the inbox.
+- **Not included.** Approving several items at once, edits (rent, note) — the card links to the full approval.
+- **Amendment (reservation payment).** Asked to record a reservation ("record the reservation for A-BZVJ2V, paid today,
+  ref 1444"), `show_decision` with action `reservation` shows the application page's own reservation form for an
+  application whose applicant accepted the offer (an open `record_reservation` task). The amount is the accepted offer's,
+  from the engine; the model may only prefill the paid-on date (never after today) and the reference the user typed,
+  both editable. The click runs `POST /api/applications/:id/reservation` as the user (leasing roles), exactly as from
+  the application page; recording a reservation stays a person's act and is never toggleable. Also: a record whose
+  applicant accepted now says "Record the reservation payment" as its next step instead of "Waiting for the applicant".
+
+## D49 — Per-document KYC settings, check severity and automatic re-upload emails
+
+- **Why.** Client feedback: one validity number and one confidence bar for every document is too generic, and when
+  the law changes (say passports now need 6 months left) an admin must be able to change it in Settings without a
+  release. The KYC helper follows whatever the company's current config says.
+- **On the document field.** The checks live on each document field of the form (D46): a field of type "Document
+  photo" with a read category (Emirates ID front, Emirates ID back, passport, visa, trade licence) carries its own
+  rules (`FormField.rules`): validity days after the planned lease start (categories with an expiry date), read
+  confidence, and every check of that category with its severity: expired, valid long enough, read clearly, right
+  document, plus the category's format checks (EID number and birth year; passport MRZ and MRZ vs page; visa number and
+  passport number on the visa; the EID back has read clearly and right document only). Picking a category starts from
+  its defaults; `other` uploads aren't read, so they have no checks. Checks across documents (everything uploaded, same
+  name everywhere, applicant's name lenient or exact) are in `base.checks`. Which documents are needed, and from whom,
+  stays on the field (required, shown to).
+- **Severity.** Every check and company rule is `off`, `warning` (today: a person reviews and can approve) or
+  `blocker` (a blocking flag that can't be approved past). On a blocker, "email applicant to re-upload" sends a new
+  upload link with plain reasons written by code, never by a model, and without names, numbers or dates. At most two
+  automatic emails per application, then the normal review opens. A warning never emails.
+- **Limits kept.** Expired documents (or an unreadable expiry) are always blockers; wrong and unreadable documents
+  can't be switched off; AI custom checks can only warn or be off, so a model never blocks or emails an applicant.
+  Nothing rejects an applicant automatically. The document request is the same route staff use (`requestDocuments`),
+  audited as `helper:kyc`.
+- **New company rule.** "Document value matches a pattern": a regular expression (120 characters, no nested
+  repeats) on a value read from the documents (EID, passport, visa or licence number, company name). The flag says
+  what was expected in plain words, never the value.
+- **Compatibility.** Configs saved before D49 parse unchanged and behave exactly as before (switch on = warning,
+  expiry = blocker); company rules without a severity are warnings. Saving stays one step: each save is a new
+  version, and an application keeps the version it answered (D46).
+- **Not included.** "Document issued within N days" needs the vision model to read issue dates; added in D50.
+
+## D50 — KYC drafts, custom documents, issue dates, and the copilot editing KYC settings
+
+- **Draft and publish.** Each company has at most one KYC draft (`company_kyc_configs.status = 'draft'`, never
+  active, one per company by a partial unique index). The settings page saves the draft, publishes it or discards it;
+  publishing re-validates it and makes it the live version. Applications and the upload page only ever use published
+  versions, and an application keeps the one it answered. The one-step save route stays (save then publish).
+- **Custom documents.** A document field can be a company-named category with a description and whether it has an
+  expiry date. The vision model reads only whether the image fits the description and the holder name, number, issue
+  and expiry dates; code decides: expired (always a blocker), valid long enough, issued recently, read clearly, right
+  document (can't be off), holder is the applicant. The description is admin-written and goes into the prompt as
+  quoted data; descriptions about nationality or similar traits are refused. Custom documents never change the
+  verified identity.
+- **Issued within N days.** Every category with an issue date (Emirates ID front, passport, visa, trade licence,
+  custom) has `issued_recently` with its own number of days, off by default. An unreadable issue date fails it.
+- **Copilot (amends AGENTS.md rule 11, like D45).** `get_kyc_config` reads a company's settings (draft first) for
+  any staff role. `edit_kyc_config` (admin) sends a list of edits: a check's severity and email switch, validity
+  days, read confidence, the issue-date window, the name match, adding, changing or removing fields (custom documents
+  included), adding, changing or removing custom checks, and publishing. Edits always land in the draft and are
+  validated like the settings form. They are applied directly only when the user's own latest message asks for them:
+  the engine checks the quote, that each edit names its field, and that every number, severity word, "email", new
+  label, description, choice and "publish" is in that message, with no negation ("don't publish"). Anything that
+  loosens KYC is never direct, only a suggestion the user confirms: a check off or lowered to warning, stopping
+  applicant emails, a field made optional or shown to fewer applicants, a removal, a custom document without an
+  expiry date, a lenient name match, a new check that emails applicants. The Confirm card lists every value each edit
+  sets; the edits are recorded with the draft (`KYC_DRAFT_SAVED.ops`), and the config is locked before it is read. After
+  untrusted text in the turn, it can only suggest. Audited as `copilot:<userId>` (`COPILOT_CONFIG_CHANGED`,
+  `KYC_DRAFT_SAVED`, `KYC_CONFIG_SAVED`).
+
+## D51 — Offer negotiation: manager counter-terms, declined counters, expiry recheck
+
+- **Problem.** A counter outside limits that was still with a manager when the offer lapsed left the application in
+  OFFER forever: the expiry was skipped for good, lapsed terms could only be rejected, and a reject did nothing. The
+  manager couldn't meet the applicant halfway, and the applicant heard nothing after a rejection or an expiry.
+- **Manager counter-terms.** `offer_out_of_limits` is editable for rent, cheques and move-in only. Approving (as
+  proposed or edited) re-issues the terms on the decision day: code recomputes deposit, reservation, the 12-month term
+  and a fresh expiry (`applyCounter`), re-checks limits and hard bounds, and sends the next revision with a new link.
+  The manager's approval covers terms still outside limits, as before. The edit is audited (actor, before/after).
+- **Rejection.** A declined counter: the current offer stands until its own expiry and the applicant is emailed so,
+  with a link to answer it. If it has lapsed, the application closes (`OFFER_EXPIRED`) and the email says so. An offer
+  the applicant never saw (first or held) gets a manager task instead of an email.
+- **Expiry.** While a counter is with a manager the expiry is re-checked daily (a new deadline per day, idempotent),
+  never dropped; a lapsed offer emails the applicant. Nothing here touches another gate; no model supplies a value.
+
+
+## D52 — Multi-emirate foundation: emirate-aware rulebook, registration, fees and rent index
+
+- **Context.** Scope ended at Ejari in Dubai. Clients may lease in any of the seven emirates. Phase 1 makes the core
+  choose the rulebook, registration system, registration fee and rent index by the unit's emirate. Dubai behaves
+  exactly as before.
+- **Emirates.** `modules/leasing/packages/core/src/emirates.ts` holds the seven-value `Emirate` enum, English labels,
+  `registrationSystemName(emirate)` and `rentIndexName(emirate)` ("Smart Rental Index" in Dubai, "Rent index"
+  elsewhere). Units, rent rules, the unit CSV import and the web unit and rent-rule forms accept any emirate.
+  Migration `0031_emirates` adds `sri_averages.emirate` and puts it in the unique key.
+- **Rulebook.** `Rulebook.emirate` is any emirate. Version ids allow underscores (`abu_dhabi-2026-01`).
+  `hasRulebookFor(startOn, emirate)` says whether a version exists. A lease is pinned to the rulebook of its unit's
+  emirate.
+- **Fees stay outside the rulebook.** Registration fees are government tariffs that apply on the registration date.
+  Adding a field to a published rulebook would break D23 (the engine refuses to start if a published version
+  changes). `modules/leasing/packages/rulebook/src/fees.ts` holds code-versioned schedules per emirate: `flat`, `percent` (basis
+  points, optional minimum and plus amount) or `tiered`. `registrationFeeFils` returns integer fils, round half up.
+  Values are marked "From the general data available". No model computes a fee (rule 1).
+- **Who pays.** Company policy `registrationFeePaidBy` (`tenant` by default). No settings UI yet. The fee shows on the
+  `ejari_submission` approval, the offer email and the portal offer page. It is computed at render, never stored in
+  offer terms.
+- **Fail closed.** No rulebook for the unit's emirate: the offer or lease is refused (409 `no_rulebook`); on the
+  automatic KYC path an officer task `no_rulebook` is created; an import row is an error. No registration adapter for
+  the emirate: an officer task `registration_unsupported`, no submission. Never a fallback to Dubai.
+- **Registration adapter.** `RegistrationAdapter` (`EjariAdapter` stays as an alias). `ctx.registries` maps each
+  emirate to an adapter; today only Dubai (the Ejari mock). `EjariSubmissionProposal` carries `emirate`, `systemName`,
+  `feeFils` and `feePaidBy`.
+- **Identifiers kept.** `EJARI_ISSUED`, the `ejari_submission` gate, `ejari_submissions` and `leases.ejari_no` keep
+  their names: renaming stored audit data is risky. Screens, tasks and emails use the system name instead.
+- **Rent index.** `sri_averages` rows are per emirate. The UI says "Rent index". Dubai legal text still says "Smart
+  Rental Index" (from `rentIndexName(rulebook.emirate)`).
+- **Copilot.** New read tool `get_emirate_setup` (system, rulebook, rent index name, fee rule and fee for a rent, who
+  pays). `find_available_units`, `get_unit` and `list_records` filter and show the emirate; `contract_status` shows the
+  registration system; `save_rent_rule` and `save_sri_value` take an emirate. The prompt says fees and system names
+  come only from `get_emirate_setup`.
+- **Deferred.** Phase 2: Tawtheeq mock routes in `modules/leasing/apps/ejari-mock` and manual registration (pack and officer task,
+  copilot decision card). Phase 3: seed data per emirate (two units, rules, rulebooks, templates, researched values).
+  Phase 4: client rollout and legal confirmation of values. Also not yet: chat and Telegram stay "coming soon" for
+  other emirates, per-emirate contract templates, and a policy UI select for who pays.
+
+## D53 — Multi-emirate Phase 2: Tawtheeq mock, registration settings and manual registration
+
+- **Context.** After D52 a lease in a non-Dubai emirate stopped at a `registration_unsupported` task. Phase 2 gives
+  Abu Dhabi a simulated registry and gives every other emirate a manual registration mode.
+- **Tawtheeq mock.** Same app as the Ejari mock (`modules/leasing/apps/ejari-mock`), not a new service. Registrations and
+  submissions have a `system` column (`ejari` | `tawtheeq`, default `ejari`). Routes are `/tawtheeq/api/v1/...`,
+  numbers are `SIM-TWQ-YYYY-NNNNNNN`, each system has its own sequence, overlap check and reject-next switch. The
+  certificate says "SIMULATED - NOT ISSUED BY ANY ABU DHABI AUTHORITY", with no government logos or colours. The
+  property registry check is skipped for Tawtheeq until Phase 3 seeds Abu Dhabi properties. The engine registers
+  `abu_dhabi` with `HttpEjariClient({ pathPrefix: "/tawtheeq" })` on the same `EJARI_MOCK_URL`. The demo console has a
+  Tawtheeq reject-next button.
+- **Registration settings per emirate.** `modules/leasing/packages/core/src/registration-settings.ts`:
+  `DEFAULT_REGISTRATION_SETTINGS` (mode, portal name and URL, instructions, required-document checklist, reference
+  example and pattern). Values are marked "From the general data available"; portal URLs still need checking. An admin
+  can override them in `registration_settings` (one row per emirate, audited as `REGISTRATION_SETTINGS_UPDATED` on an
+  entity of kind `settings`). `online` mode only works when an adapter exists in `ctx.registries`; otherwise the
+  mode is forced to `manual`. Page: `/settings/registration`. This replaces the `registration_unsupported` dead end.
+- **Manual mode.** The `ejari_submission` gate stays mandatory: the approver approves the pack ("go and register").
+  On approval the submission is `awaiting_manual` and a `register_by_hand` officer task opens (one per submission).
+  The officer registers on the portal, then records the reference (checked against the pattern), issued date, fee
+  paid and an optional certificate PDF. This ends in the same `EJARI_ISSUED` event, actor = the user, `manual: true`.
+  A fee that differs from the schedule is recorded with a flag, not blocked. A rejection is recorded as text, opens a
+  "fix and resubmit" task; the second rejected attempt on the lease goes to `ejari_rejected_twice`. No model autofix in
+  manual mode: a person reads the portal's reason.
+- **Registration pack.** A cover sheet PDF built on demand (`GET /leases/:id/registration/pack.pdf`, leasing roles,
+  download only, never emailed). No ID images, masked IDs, and a line saying it is not a government document. Each
+  download writes a `DOCUMENT_VIEWED` audit event.
+- **Data.** Migration `0032`: `registration_settings`; `ejari_submissions.mode`, `fee_paid_fils`, `recorded_by`;
+  status `awaiting_manual`.
+- **Copilot.** New read tool `get_registration_status`. `show_decision` gets the actions `registration` and
+  `registration_rejected` (cards; the click is the act, the card's button runs the record route as the user; the fee
+  prefill comes from the engine and is cleared when untrusted text was seen in the turn). `get_emirate_setup` shows
+  mode, portal and documents. `save_registration_settings` (admin) follows the D45 pattern. The copilot never records
+  a registration on its own.
+- **Deferred.** Phase 3: seed rulebooks for the other emirates and Abu Dhabi properties in the Tawtheeq mock. Legal
+  confirmation of portals, fees and checklists. Web tests for the new cards.
+
+## D54 — Chat agents stay on topic (cost)
+
+- **Problem.** The public web chat sent every free-text message to the tool-using chat model, so "write a hello world
+  program" or "what is Meta?" got answered at full model cost. Hosted, that is open-ended spend on visitors' unrelated
+  questions.
+- **Web chat.** A scope gate runs before the customer agent: one decision-model (tev1) question, `rental` /
+  `off_topic` / `greeting` / `none`, with the bot's previous reply as context. `off_topic` at probability ≥ 0.8 gets a
+  fixed EN/AR line and the menu buttons from code; the chat model doesn't run. The gate is skipped while the chat
+  waits for a name, email or code, and fails open (error, missing answer or doubt → the agent, as before). Stored on
+  the outbound message as `kind: off_topic`.
+- **Telegram.** The leasing assistant gets an `off_topic` intent; it already never called the chat model for it, and
+  now answers with the same fixed line instead of the greeting.
+- **Backstop.** The customer agent's prompt (rule 9) declines anything outside renting from us in one sentence.
+- The staff copilot is unchanged: it serves logged-in staff only.
+
+## D55 — Multi-emirate Phase 3: demo rulebooks, units and chat for all seven emirates
+
+- **Demo rulebooks.** `modules/leasing/apps/engine/src/demo/emirate-rulebooks.ts` holds rulebooks for six emirates. The demo seed
+  inserts them as published rows (`created_by` demo-seed). Every source reads "From the general data available: ...".
+  The rent cap is one flat band. Values: Abu Dhabi notices 60/70 days, 0% freeze from 2 Jun 2026; Sharjah (Law 5/2024)
+  90/100 days, lock 3/5, late rent 15, 0%; Ajman 0%; RAK 5%; Fujairah 5%; UAQ 10%. `baseFor` falls back to the
+  earliest published version of the emirate.
+- **Code stays Dubai-only.** No other emirate has a rulebook in code, so a real install stays fail-closed (409
+  `no_rulebook`) until an admin publishes a reviewed version. Demo values are not legal advice.
+- **Fee.** RAK: AED 25 + 5% of annual rent (RAK Municipality / Sanad).
+- **Demo data.** 12 units, two per non-Dubai emirate (an apartment and an office or shop). Property ids
+  `DEMO-AUH-`, `SHJ-`, `AJM-`, `RAK-`, `FUJ-`, `UAQ-`. Demo address codes sit in `makaniNo`. Each emirate gets rent
+  index rows and rent rules; the seed adds any missing rent rule per (company, emirate, category, community). The
+  Ejari mock seeds Abu Dhabi properties, so Tawtheeq now runs the property check.
+- **Chat and public site.** Web chat, Telegram and the customer agent offer all seven emirates. The emirate step
+  shows emirates with bookable listings as active and the rest as "coming soon" (`noListingsIn` copy, EN and AR).
+  `EMIRATE_NAMES` holds the names. The public API returns an `emirate` field and accepts `?emirate=`; the web grid
+  has emirate chips. Wording is "UAE Leasing" where touched.
+- **Deferred.** Legal confirmation of every non-Dubai value (Phase 4). Contract templates per emirate. The remaining
+  "Dubai Leasing" strings (chat welcome, root metadata, portal, login, staff rail). The finder's community dropdown
+  is not filtered by emirate.
+- **Web tests.** The registration decision cards' pure parts live in `decision-card-helpers.ts` with tests
+  (the D53 deferral).
+
+## D56 — Contract templates per emirate, who pays, branding, legal checklist
+
+- **Templates per emirate.** `company_contract_templates.emirate` is nullable (null = any emirate). Approval and
+  retirement work per (company, emirate), so each emirate has its own current approved template. `templateForUnit`
+  picks: the contract rule's template (if it is for the unit's emirate or any emirate) -> the company's approved
+  template for the unit's emirate -> its approved any-emirate template -> the emirate-aware standard form
+  (`requiredTerms(emirate)`). A template of another emirate is never used. A rule pointing at a missing, other-company
+  or unapproved template still fails (`template_unavailable`). Dubai output is byte-identical to before.
+- **Legacy templates.** Migration 0034 backfills templates with no emirate to `dubai` (before D56 every unit was Dubai); new uploads choose an emirate or "any".
+- **Who pays the registration fee.** Admin setting `PUT /policy/registration` (`registrationFeePaidBy`), saved as a
+  new company policy version through `savePolicyVersion`, event `POLICY_CHANGED` with the change. UI: Settings ->
+  Registration.
+- **Branding.** "UAE Leasing" (Arabic "تأجير الإمارات") replaces "Dubai Leasing" in the chat welcome, root metadata,
+  portal, login and staff rail. Dubai legal text and the Asia/Dubai time labels are unchanged.
+- **Finder.** The community dropdown is scoped by the chosen emirate.
+- **Copilot.** The direct registration-settings change accepts a portal address typed without `https://` or `www.`
+  (`bareUrl` in the quote check); the stored value is still a full https URL.
+- **Legal checklist.** `docs/leasing/legal-review-emirates.md` lists every non-Dubai value, where it lives, its source and
+  the lawyer's sign-off. Phase 4 legal confirmation works from it.
+
+## D57 — Suggested contract clauses, and "add it"
+
+- **Ask.** An admin asks the copilot to suggest a clause for a company ("suggest a pets clause for Silverline"); when
+  they reply "add it", the clause should be added without hunting for the Confirm button.
+- **Suggest.** The copilot reads the company's clauses (`get_company_settings`), writes one short clause with no
+  amounts, dates or periods the user didn't give, and stores it with `add_contract_clause` mode `suggest` (a Confirm
+  card, as before).
+- **"add it" (amends AGENTS.md rule 11, like D45).** `add_suggested_clause` sends only the user's words. The engine
+  adds the clause exactly as suggested (title, wording, rules unchanged) only when all hold:
+  - the user's latest message is a short acceptance made only of acceptance words (it must say "add", "include" or
+    "go ahead"; a bare "yes" is not enough), with no question mark, and contains the quote; "add it but…",
+    "add it to Beta", "should I add it?" and "don't add it" are refused;
+  - exactly one pending `add_clause` suggestion of that user and thread came from the copilot's previous answer (an
+    older one only when the message names its title), and that answer showed the clause's wording;
+  - the suggestion wasn't made in a turn that read tenant or outsider text (`afterUntrusted`, set by the copilot's
+    tool code), and the tool also refuses after untrusted text in the current turn;
+  - the clause has no amount, date or period (`hasValues`): those always need the card's Confirm (D35), so this
+    path is stricter than the click;
+  - the user may add clauses (admin), with the same validation as the settings form.
+  Audited as `copilot:<userId>` (`COPILOT_PROPOSAL_CONFIRMED` via `typed_acceptance`, and `COPILOT_CONFIG_CHANGED`
+  with the quote and the checked message); the proposal is marked confirmed. Anything else still needs the user's
+  own wording or the Confirm click.
+
+## D58 — Contract rules per emirate
+
+- **Why.** A company may allow different cheque ranges in different emirates. Before this, a contract rule had no
+  emirate; the emirate dropdown in a rule row only chose which emirate a sample upload's template is for (D56).
+- **Column.** `contract_rules.emirate` is nullable (null = any emirate), migration 0035. Existing rules stay "any
+  emirate", so offers keep their limits.
+- **Matching.** `matchContractRule` never uses a rule of another emirate. Most specific wins: the unit's emirate,
+  then a subtype match, then the newest.
+- **Template.** A rule for one emirate can't point at a company template for another (422 `template_emirate`); an
+  any-emirate template fits every rule.
+- **Replace.** Omitting `emirate` on a replace keeps the rule's emirate (like `templateId`); null clears it.
+- **Copilot.** `save_contract_rule` takes `emirate`. For an explicit replace, the quote check (D45) asks for the
+  user's words only for values that differ from the replaced rule, so "make Silverline's rule Sharjah only" can be
+  saved without repeating the cheques; any changed value (cheques, tenures, type, emirate) must still be said, and
+  "any emirate" must be said (not negated) to clear one. The message must still name the replaced rule (its type, or
+  for an all-types rule its category or "all types"), so the model can't pick another rule to copy its values. A rule
+  of another company or an inactive rule gets the full check. `CONTRACT_RULE_REPLACED` records the emirate, cheques
+  and tenures before and after.
+- **UI.** Settings -> Contracts: an Emirate field in the rule form and an Emirate column; the sample upload's
+  dropdown reads "Template for any emirate" and starts at the rule's emirate.
+
+## D59 — Rulebook drafts per emirate
+
+- **Why.** "New draft from active" always copied Dubai's active version, and an emirate with no rulebook (any
+  non-Dubai emirate in a real install; D55 rules are demo-seed only) had no way to get one.
+- **New draft.** Settings -> Rulebook -> New draft asks for the emirate and the published version to copy values from
+  (its own active version first). `POST /api/rulebooks {basedOn, emirate?}`; the draft is named and stored for the
+  chosen emirate. The emirate is fixed once the draft exists (shown read-only in the editor).
+- **First rulebook of an emirate.** With no code base and no demo seed there is nothing reviewed to compare with, so
+  publishing always needs a confirmed legal review (`legal_review_required`, a "first rulebook for <Emirate>" line).
+  Until it is published the emirate stays fail closed. A draft copied from another emirate's version also always
+  needs one ("Values copied from <Emirate>"), even when no value is looser than the target's base. A user-published
+  version never becomes a base, so later versions of such an emirate keep needing the confirmation.
+- **List.** `GET /api/rulebooks` returns `activeByEmirate`; each row's Active badge is per emirate (`active` stays
+  Dubai's for older clients). The page shows an Emirate column.
+
+## D60 — Offer discount setting, offer limits for the copilot, emirate rules version on applications
+
+- **Two limits, kept apart.** A rent rule limits where staff may set a unit's **asking rent** (vs the SRI). An offer
+  or a tenant's counter is limited by `CompanyPolicy.maxRentDiscountPercent` below the approved asking rent, plus the
+  cheque range (contract rule, else company default). Below that floor → `offer_out_of_limits` (manager).
+- **Setting.** `PUT /api/policy/offers {maxRentDiscountPercent}` (admin, whole 0–50, strict), versioned like the other
+  policy routes, `POLICY_CHANGED` with the change. UI: "Offer discount without a manager" at the top of Settings →
+  Rent rules (company-wide). The copilot does not edit it (policy stays outside D45).
+- **Copilot.** `get_unit` returns `offerLimits` (discount %, lowest rent without a manager, cheques and where they
+  come from) from the engine's `offerRentFloorFils` and the same policy the offer check uses. The tool text and the
+  prompt say the rent rule range is never a negotiation limit. Evals c147, c148 (injection).
+- **Rule 4 for units and applications.** Before a lease pins a version, events and approvals of a unit or an
+  application recorded the engine default (Dubai's). `appendEvent` and `requestApproval` now replace that default
+  (`unitRulesVersion`) with the version pinned on the entity's lease (an application's lease, or the unit's lease
+  that is not closed), else the version active today in the unit's emirate, else null when that emirate has no
+  rulebook. An explicitly passed other version is kept. Existing rows are not rewritten.
+
+## D61 — Registration named per emirate on screen; the manual pack is one PDF
+
+- **Names.** The stage key stays `Ejari` (stored data, filters), but what staff and visitors read names the unit's
+  own system: `registrationStageName` gives Ejari, Tawtheeq, Tasdeeq, Ejaar, or "Attestation" for the Sharjah, RAK
+  and UAQ municipalities; sentences use `registrationSystemName`. This covers the record's next step and stage
+  tracker, its activity log (registration events and gates), the approval card's gate line, the copilot record card
+  and the public status tracker. Lists that mix emirates say "Registration" (Workspace group, Home "registrations
+  pending").
+- **Online vs manual (unchanged, D53).** Dubai registers through the simulated Ejari service and Abu Dhabi through
+  the simulated Tawtheeq routes; the other five emirates are registered by hand.
+- **One pack.** For a manual emirate, `pack.pdf` is one file for the office: a cover (where and how to register,
+  lease facts with a masked ID, fee, checklist marked attached / on file / bring), then the signed contract's pages
+  and every side of the tenant's verified ID, visa or trade licence (PDF pages copied, images one per page). Files
+  that can't be read are listed on a last page to bring separately. Leasing roles only, never emailed, `no-store`;
+  each download is a `DOCUMENT_VIEWED` event listing the attached document ids (rule 8: local, audited).
+- **Where the pack is offered.** On the `ejari_submission` approval card itself (manual mode: a "Download registration
+  pack" button above the decision; the payload section reads "What to enter on <portal>", not "sent … (simulated)"),
+  in the lease's registration panel, and on the copilot's record card (`registrationPackUrl` on the Workspace record,
+  a link action for leasing roles). A manual lease never shows "Open the simulated registry". Only verified ID files
+  are attached, the newest per side.
+
+## D62 — Registration checklist from the KYC form; the pack opens with how to register
+
+- **Why.** "Tenant Emirates ID or passport" was one fixed box. Companies ask different things in their KYC form
+  (D46, D50), and offices ask for different things.
+- **Checklist items.** `requiredDocuments` holds fixed documents (`signed_contract`, `landlord_trade_licence`,
+  `title_deed`, `previous_registration_cancelled`, `other`), the standard KYC documents (`kyc:emirates_id`,
+  `kyc:passport`, `kyc:visa`, `kyc:trade_licence`), a company's own KYC document field (`kyc:other:<field key>`,
+  custom or other) and a company's own KYC question (`answer:<field key>`). Old keys are read as their KYC
+  documents (`tenant_identity` → Emirates ID + passport, …); no migration.
+- **Options.** `GET /api/registration-settings/document-options` lists every item from every company's current KYC
+  form (same field key, same item). Settings → Registration groups them: KYC documents, the applicant's answers,
+  other documents. The copilot's `get_emirate_setup` returns the options and the current keys;
+  `save_registration_settings` takes keys (the D45 check accepts the label, the short name or the field name).
+- **Pack.** Page 1, "How to register": open the portal, the office's steps, enter the lease details (page 2), hand
+  over the documents in order with the page each starts on, pay the fee, record the reference in the app. Page 2:
+  lease facts, the applicant's answers (printed as typed, not checked) and the checklist. Then the signed contract
+  and every ticked KYC document on file (verified only, newest per side). WebP uploads are converted to PNG locally
+  with `sharp` (new engine dependency, pinned 0.35.5). An item this lease's company doesn't ask shows "not asked by
+  this company".
+- **Privacy.** Unchanged from D61: leasing roles only, local, never emailed, each download audited with the attached
+  document ids. Answers never reach the copilot (`get_registration_status` returns key, label and status only).
+- **Quote check (D45).** An item counts as said only by whole words: its label, its short name, its exact field key,
+  or the key in words when specific enough (several words or 6+ letters; "name" or "tax" alone never counts; the
+  `other` item needs "other document"). Company field labels reach the copilot wrapped as untrusted (eval c151).
+- **Known gap.** The PDF font is WinAnsi: Arabic answers print as "?". A font covering Arabic is a later change.
+
+
+## D63 — Offer discount per rent rule
+
+- **Why.** One company-wide discount (D60) couldn't say "5% in Dubai Marina, none in Ras Al Khaimah" or differ by
+  company.
+- **Column.** `rent_rules.max_offer_discount_pct` (whole percent 0–50, null = the company default), migration 0036.
+  Settings → Rent rules: a field in the rule form, Emirate and Offer discount columns in the table; the company-wide
+  value stays as the default for rules that leave it empty.
+- **Which rule.** The rent rule that prices the unit (`findRentRule`: company, category, emirate, most specific
+  type and area) also sets its offer discount (`offerPolicyAndRuleFor` → `discountFrom`).
+- **Band floor.** A counter never goes out without a manager below that rule's lowest allowed asking rent: the floor
+  is max(asking less discount, band minimum). When the asking rent itself is below the band (a manager approved
+  it), the discount applies from the asking rent. All in code (`offerRentFloorFils`), integer fils.
+- **Copilot.** `save_rent_rule` takes `maxOfferDiscountPct` (the D45 check needs the number in the user's words);
+  `get_company_settings` shows each rule's discount and emirate; `get_unit` `offerLimits.discountFrom`. Evals c152,
+  c153 (injection).
+- **Replace keeps it.** Replacing a rule without the field keeps its discount; null clears it (like `templateId` on
+  contract rules). `RENT_RULE_CREATED` and `RENT_RULE_REPLACED` record the discount (from → to).
+- **Audit of offers.** `OFFER_MADE`, a counter's `OFFER_REVISED` and the `offer_out_of_limits` approval record the
+  limits used: discount and where it came from, the rent rule id, the band minimum and the lowest rent without a
+  manager. Limits are re-judged against today's asking rent, rule and Smart Rental Index whenever an offer is checked.
+
+## D64 — Template wording about the unit comes from the records
+
+- **Why.** A template read from a filled sample kept "Description: Four-bedroom villa with a private garden and pool"
+  as fixed wording, because "Description" was not a known label. The contract agent could only flag the conflict
+  (D45: "never rewrites template wording"), so a 2-bedroom lease was prepared, approved and signed with the sample's
+  4-bedroom description. The user decided: wording about the unit comes from the lease's records, and the agent
+  rewords it. No person task; the approver reviews it at `final_contract`.
+- **Reading the sample (code).** Labelled unit lines become blanks: Description → `unitDescription` (new data-sheet
+  key, `units.description`), Furnishing → `furnishing`, Bathrooms, Area, Parking, Floor, Property type, Usage. A
+  description runs to the end of its line, so the words inside it are not read as labels. Only samples read from now
+  on get these blanks; approved templates stay immutable (D43).
+- **Preparing (agent + code).** The agent reads `unit_facts` and may reword a body paragraph that describes the unit
+  and disagrees with it. Code (`checkRewrite`) accepts a rewording only when the blanks are unchanged and the wording has no amount, date, ID, phone or email. Each number must
+  count something (bedrooms, bathrooms, parking, area, floor, ordinals included) and equal the record's value for it.
+  It may name a feature (pool, garden, view) only if the unit's description does, and it adds no legal, money,
+  permission or negation word. The original paragraph must describe the unit and contain none of those words, so a
+  rule such as "No pets…" is never reworded. Headings, the title and paragraphs that print a company clause are never
+  reworded. A refused rewording is sent back once, then dropped: the template wording
+  prints and the conflict flag leads the gate's reasons. The contract is never held for it.
+- **Review.** `contracts.template_rewrites` (migration 0037) and the proposal's `rewrites` hold the old and new wording.
+  The approval and the contract panel show them side by side.
+- **Rules.** Amends D45 (no rewording) and D47 (the template's fixed wording) for wording about the unit only. Rule 1
+  holds: no legal or money value is written by a model; the facts are the unit record's, checked by code. Rule 3 is
+  unchanged: a person approves every contract. Rule 8 is unchanged: local model only.
+
+## D65 — Site visit wording, company emirates, contract emirate tabs, read-only signing, certificate reading
+
+- **Site visit.** Screens say "site visit"; the stage key stays `Viewing` (URLs, filters, copilot) and shows as
+  "Site visit". The customer agent, leasing assistant and copilot prompts treat "viewing" and "site visit" as the same
+  thing and reply with "site visit". The customer agent's claim guard also catches "your site visit is booked".
+- **Agent name.** Activity says "the leasing agent", never a model tag; `helper:<name>` actors show as
+  "Leasing agent (<what it does>)". `helper_runs.model` still records the model for audit (rule 4).
+- **Company emirates.** `companies.emirates` (migration 0038; backfilled from each company's units, else Dubai) lists
+  where a company operates. Rent rules, contract rules, units (form and CSV import) and sample uploads for another
+  emirate are refused (422 `emirate_not_operated`); removing an emirate still in use is refused (422
+  `emirate_in_use`). A new rent rule without an emirate takes the company's only emirate; with several it is
+  refused (422 `emirate_required`), for the copilot too (resolved before the Confirm card). A replace keeps its emirate. Company-free settings (rent index, registration, rulebook drafts) offer the union of active
+  companies' emirates; existing rows for others still show. The copilot reads `operatesIn` and gets the same refusal.
+- **Contract emirate tabs.** Settings → Contracts has emirate tabs under the company tabs (the company's emirates
+  plus "All emirates" for any-emirate rules and templates). A new rule and a sample upload take the tab's emirate;
+  the per-row emirate dropdown is gone. Editing a rule can move it to another emirate.
+- **Read-only signing (amends D22's delivery, not its evidence).** Sign and sign-reminder emails carry no PDF; the
+  signed copy is still emailed after signing. The signing page shows the approved PDF as server-rendered page images
+  (`/api/portal/:token/contract/pages/:n`, pdf.js through unpdf + `@napi-rs/canvas`, 60-page cap, `no-store`, the
+  sign link checked on every request) in a modal with no download link. The signature still binds the approved PDF's
+  hash. A screen can always be photographed; this removes the file and the download path.
+- **Certificate reading (D53 manual registration).** Picking the certificate PDF reads it
+  (`registration-certificate` helper: code labels first; the local chat model only when code finds no reference,
+  values kept only if verbatim in the text, one retry). It prefills Reference and Issued on and lists checks against
+  the signed contract (reference format, property, unit, Makani, tenant, dates, rent). Nothing is stored; the officer
+  still records the registration (rule 3). Rules 6 and 8 hold: Zod-checked, local model, no text in logs.
+
+## D66 — Company property types; the demo in five emirates
+
+- **Property types per company.** `companies.categories` (migration 0040; backfilled from each company's units, rent
+  rules and contract rules, else all three) lists what a company leases: residential, commercial, retail. Rent rules,
+  contract rules, units (form, update, CSV import) and sample uploads of another type are refused (422
+  `category_not_offered`); removing a type still used by units or active rules is refused (422 `category_in_use`,
+  company row locked; inserts take a share lock on it). A unit can't be archived yet, so a company keeps a type
+  while any of its units use it. Lease imports that create a unit check the type and emirate too. The companies CSV stores `categories` and a new `emirates` column (replacing an existing company's lists; a
+  removal in use fails the row). The copilot reads `offers` and gets the same refusal when it proposes.
+- **Screens.** The category tabs on Settings → Contracts and Rent rules, and the unit form's category, show only the
+  selected company's types (falling back to its first). The company form and edit page have "Offers for lease".
+- **Demo (amends D55).** Silverline is seeded in Dubai, Abu Dhabi, Sharjah, Ras Al Khaimah and Umm Al Quwain only.
+  Ajman and Fujairah lose their demo units, rent index rows, rent rules and demo rulebooks, so they stay fail-closed
+  (no rulebook, no offer) and show as "coming soon" in the chat.
+
+
+## D67 — Contract change requests from the signing page
+
+- **Why.** When a contract went out for signing, a tenant or landlord who wanted a clause changed had to email
+  or phone, and staff re-did the contract by hand. The user decided: either party can ask from their signing
+  link, the AI rewrites the addendum and shows a diff with an analysis to the officer handling the application,
+  and the copilot can say what is happening.
+- **Asking.** A signer who hasn't signed picks a clause on the contract (or "additional terms", or "something
+  else") and writes what they want. Stored at once as evidence (`inbound_events` `CONTRACT_CHANGE_REQUESTED`,
+  table `contract_change_requests`, migration 0041), a lease event without the words, and a
+  `contract_change_request` officer task. The words are untrusted everywhere. The requester can withdraw it.
+- **Signing pauses for both parties** (the user's choice) while any request on that version is open: signing,
+  signing emails and "send a new link" are refused; the other unsigned signer gets a "signing paused" email
+  with no link. Declining or withdrawing the last open request sends every unsigned signer a fresh link (the
+  requester's email carries the officer's note).
+- **The draft (`contract_change` helper, chat model + code).** The model may remove a clause on the contract,
+  add an approved clause (standard or the company's `cc:`), and rewrite the "Additional terms". Approved clause
+  wording is never edited. Code refuses unknown ids and any added amount, number, date, period or money word,
+  sends the draft back once, then keeps the analysis without a draft. Requests about rent, cheques, deposit,
+  dates or notice periods are never drafted (`money_or_dates`): those are the offer's, changed by a person.
+  Code builds the word diff. Local model only (rule 8).
+- **Deciding (person).** The officer sees the request, the AI's summary, analysis, risks and the diff, and can
+  re-issue with the AI's draft as it is (the user's choice), edit it first, or decline with a note. Re-issue
+  goes through `prepareContract`, so the new version waits at `final_contract` (rule 3); the old version and its
+  other open requests are superseded. **Amends D47**: a version one party already signed may be replaced through
+  a change request (both sign the new version; the old signature stays as evidence on the superseded version).
+  A fully signed or approved contract is never replaced.
+- **Settings.** Admin, versioned company policy `contractChanges` (on by default; tenant and landlord; 2 open per
+  signer; 1,000 characters), Settings → Contracts. `PUT /api/policy/contract-changes`.
+- **Copilot.** `contract_status` reports `signingPaused` and the requests (words untrusted, AI summary, whether
+  drafted, staff's decision). It never re-issues or declines (rule 11); the officer does in the Workspace.
+- **Eval (2026-11-12, `bun run eval -- contract-change`, local CHAT_MODEL, 30 cases).** 23/30 drafted or held as
+  expected; money, date and injection requests drafted: 0/14 (hard limit); no invalid answers; p50 12.9 s. Misses
+  are add-a-term requests the model labels `other`, or wording the guard refuses ("after 11pm", "notice"); the
+  officer then edits by hand.
+
+## D68 — Contract template library; rules cover several unit types; one rule per unit
+
+- **Why.** A company with one template for villas and apartments in Dubai and Abu Dhabi needed four contract rules
+  and four uploads of the same sample: a sample was uploaded onto a rule, a rule named one type, and a template one
+  emirate. The user asked to normalise this.
+- **Template library.** Samples are uploaded to the company, once, with the emirates the template is for (none =
+  any emirate). Rules pick an approved template. Approving a new version replaces (retires) the approved templates
+  for the same emirates by default; the admin can untick that to keep both, or pick others. **Amends D56** (a
+  template had one emirate or none) and **D47** (approval no longer adds clauses to "the rule the sample was uploaded
+  on"; ticked clauses join the rules on the template).
+- **Rules cover a list of types** (`subtypes`, empty = all types), for contract rules and rent rules. Each rule keeps
+  one emirate (or all emirates for contract rules), so the emirate tabs (D65) stay; "Copy to emirate" makes the same
+  rule for another emirate. We did not make rules span several emirates: cheque practice and rulebooks differ by
+  emirate, and the tabs would no longer show one place to edit a rule.
+- **One rule per unit.** Two active rules of the same company, category and emirate (and community, for rent rules)
+  may not both cover all types or share a type (422 `rule_overlap`). "Most specific wins, then newest" (D32, D58)
+  stays for an all-types rule next to a named-types rule, but two equally specific rules can no longer compete.
+- **Copilot (D45).** Same quote rule per value: each type added or removed must be in the user's words; "all types"
+  must be said. It can't upload, approve, retire or copy templates or rules (UI only).
+- **Screens.** Templates have their own page, Settings → Contract templates (upload, review, approve, retire, per
+  company); Settings → Contracts keeps the rules (with a template picker and a link to that page) and clauses. Rule
+  lists on Contracts and Rent rules are stacked rows, not wide tables, so nothing scrolls sideways beside the agent.
+- **Migration 0042** turns each row into one-item lists; no rows are merged. Contracts keep their `templateId`.
+  **0043** deactivates older active rules with exactly the same scope as a newer one (they were never used: newest
+  won), so the overlap check never trips over old data.
+
+
+## D69 — Named contract templates, each with its own versions
+
+- **Why.** Under D68 a new upload, once approved, replaced the approved templates for the same emirates by default.
+  A company using one "any emirate" template for residential rules that added a second "any emirate" template for
+  commercial rules would retire the first unless the admin unticked it, and the templates had no names to tell apart.
+- **Decision.** A template has a name and its own versions (`company_contract_templates.family_id`, `name`;
+  migration 0044). "New template" asks for a name, the emirates and the sample and never retires anything. "Upload
+  new version" on a template replaces only that template's approved version when approved, and the rules on it move
+  to the new version. The "Replaces" choice on approval is gone. Names are unique per company (case-insensitive) and
+  can be changed (`COMPANY_TEMPLATE_RENAMED`); the name is not part of the contract hash.
+- **Not linked to a property type.** The user chose this: a template stands on its own by name, and any rule may pick
+  it (subject to its emirates, D68).
+- **Screens.** Settings → Contract templates: company, then one tab per template (fields, the clauses read from it,
+  the rules using it, older versions, Rename, Upload new version) and "+ New template". Clauses not read from a
+  template stay on Settings → Contracts as Additional terms clauses. **Amends D68** (approval default).
+- **Migration 0044** makes one template per (company, emirates) of the existing rows; the company's first is named
+  "Contract template", others name their emirates. Version numbers are kept (they are part of the contract hash);
+  new versions are numbered within their template.
+
+## D70 — Contracts from a filled sample: no sample values, rulebook periods, cheque schedule, contract fees
+
+- **Why.** A contract for a Business Bay studio printed another unit's DLD number, "Residential / Villa", "4 Bedrooms",
+  "Arabian Ranches", the sample landlord in the signature block, the landlord's licence as the tenant's ID, blank
+  cheque dates and the sample's "Data source map" annexe. The template had been read from a filled villa contract, and
+  the reader only blanked values after a label at the start of a line (headings were never read).
+- **Reading a sample (code).** Headings are read like lines ("DLD Property No. X" → label + blank). New labels: DEWA
+  premise no., Category / Type, Unit Code. Counts before their label on a label row ("4 Bedrooms", "4 cheques") become
+  blanks. A sample name or community found once is blanked wherever else it stands (2+ words or a capitalised word of 6+
+  letters, same capitals). In a signature row the name before "Authorised Signatory" is the landlord's, the next the
+  tenant's. A label line that wraps from a sentence takes that sentence's party. Reference codes (`ARR-0017`,
+  `DEMO-DLD-000017`) are values, and the review checks headings and the title too. The product's own data source map
+  is a sample note and is left out. A row of cheque-date blanks is numbered by position.
+- **Checks at prepare (code, → `needs_human`).** `sample_values`: fixed wording with an ID, code, phone, email, amount,
+  date or company name that is not this lease's. `legal_periods`: a notice period in the wording must equal the lease's
+  pinned rulebook (`renewalNoticeDays`, `repossessionNoticeMonths`, `lateRentDaysAfterFormalReminder`); only a number
+  tied to a notice is compared. `emirate_wording`: wording citing another emirate's law or authorities. Unit-description
+  conflicts stay flags only (D64 unchanged, the user's choice).
+- **Approval.** The same period and emirate checks run on a template against the latest published rulebook of each
+  emirate it covers; a template citing Dubai law must be set to Dubai (`template_legal_wording`).
+- **Cheques.** Data-sheet keys `chequeAmountFils`, `chequeDate1`–`12`, `chequeDates` from core `paymentSchedule` (the
+  function collections uses). Every contract, template or standard, prints a "Payment schedule" (each cheque's date and
+  amount, payee).
+- **Contract fees.** `companies.contract_fees` (migration 0045): a per-company list of fees (name, registration or
+  other, amount in fils, payer, emirates; empty = any). A "registration fee" blank (Ejari, Tawtheeq, …) takes the
+  registration fee for the unit's emirate; every applicable fee is listed under "Fees". Edited in Settings → Companies
+  by admins; the audit event records the new list.
+- **Contract agent.** Its answer may use up to 2,000 tokens (the copilot keeps 400). A tool called again returns a short
+  note instead of its data again, so repeated calls can't fill the 16k context and cut the answer off.
+- **Rules.** Rule 1 holds: periods come from the lease's rulebook, money from the lease and company records, by code.
+  Rule 3 unchanged: a person approves every contract. Amends D43/D47 (what reading a sample keeps) and D45 (the agent's
+  tool replies).
+
+## D71 — Marking changes on the contract PDF
+
+- **Why.** Under D67 a signer picked one addendum clause from a list and wrote a note; template clauses (4.1 …) could
+  not be picked and the AI could not draft any change with a number ("24 → 48 hours"). The user wanted paper and
+  pencil: select the words on the contract, write the change there, send all marks together; the contract AI rewrites
+  unless a rule is broken; the officer only approves, in one modal.
+- **Marking (signing page).** Pages get a selectable text layer (`GET /api/portal/:token/contract/pages/:n/text`).
+  A selection is anchored by code to a paragraph (`contracts.paragraph_texts`, written at prepare; migration 0046)
+  with `anchorQuote`; a quote over a record value (rent, dates, names, printed from a blank) is refused at once. Marks
+  are numbered, kept in the browser until sent, and sent as one request (`contract_change_requests.marks`, 1–20). D67's
+  evidence, task and signing pause are unchanged. Old requests without marks still work.
+- **Rewriting (helper `contract_marks` + code).** The AI rewrites each marked paragraph from the note (several marks in
+  one paragraph → one rewrite); a clause mark may only remove the clause; a mark on fixed text (standard body, law
+  terms) becomes an Additional terms proposal. Code (`checkMarkRewrite`) refuses: a number, period or amount not in the
+  note (AED amounts are never written by a mark); a changed or dropped rulebook period (lease's pinned rulebook); a
+  changed record blank; a new money, permission or negation word not in the note; another emirate's wording; personal
+  data. A refused mark goes to the officer with the reason. **Replaces D67's "no number" guard for marks.**
+- **Approving (officer modal).** Per mark: the quote, the note (untrusted), current vs new wording, checks. Keep as it
+  is (reason to the signer) or Write my own change (the officer's words go through the same AI and checks). Preview
+  shows the new PDF. "Approve changes" prepares the new version without a model run (stored blank mapping, code checks
+  incl. D70) and approves its `final_contract` as the clicking officer in the same transaction — **amends D22 for this
+  route only**: the officer may approve a version with their own wording (the user's choice). All marks kept → D67
+  decline. Removed rule clauses don't print (`Addendum.removedClauses`). Events record mark numbers, decisions and
+  checks, never the note text.
+- **Copilot.** `contract_status` lists marks (notes untrusted, compact); it never approves (rule 11).
+
+## D72 — The officer's own change is applied as written; lease terms change in full sync
+
+- **Why.** Under D71 the officer's "Write my own change" went through the signer's strict checks, so "since the unit has
+  no neighbours this line can be removed" was refused, a mark on a contract prepared before D71 ("Unknown place") could
+  not be applied, and an amount could never change. The user decided: signers may ask for anything; the AI's conflict
+  flag on a signer's mark stays; the officer's explicit instruction is applied straight; amounts and dates change the
+  lease itself so contract, collections, cheque schedule and Ejari stay in sync.
+- **Officer checks (law only).** For officer-authored rewrites `checkMarkRewrite` keeps: the rulebook periods (lease's
+  pinned version), another emirate's law, every record blank kept, printable. Clause removal or rewording (as removal +
+  additional terms), paragraph removal, any non-legal period and permission wording are allowed. A paragraph that prints
+  the lease's terms or the parties can't be removed; a paragraph that prints a company clause is handled as that clause.
+- **Unknown place.** For versions with no paragraph record, code finds the selected words in the version's paragraphs
+  (template wording, clauses as "Title: text", free text); the model's suggestion is accepted only when the words are
+  found there.
+- **Terms (full sync).** The officer may change rent, deposit, cheques, start or move-in; each value must appear in the
+  officer's words (code). `planTermChange` computes the full terms (end = start + 12 months − 1 day, deposit by policy
+  unless given) and checks the offer limits. Inside limits: on Approve changes the lease terms, the application's offer
+  and (if the start moves) the rules version are updated in the same transaction as the new contract version, with
+  `LEASE_TERMS_CHANGED`, and `final_contract` is approved. Outside limits: an `offer_out_of_limits` approval on the
+  lease (leasing manager, rule 3) carrying a frozen snapshot; approving applies exactly that snapshot (stale if the terms
+  changed meanwhile). A paid reservation is not changed; the approval reasons note a difference.
+- **Rules.** Rule 1: values come from the officer's words and code, never from the model. Rule 3: outside limits need a
+  manager. Rule 4: every term change is an event with before and after. Amends D71 (officer checks).
+
+## D73 — Approving a template creates its emirates' generic rules
+
+- **Why.** The user asked: a template that names emirates is useless until rules point at it, and making nine rules by
+  hand per company is slow and easy to forget.
+- **What.** When an admin approves a company template whose `emirates` is not empty, the engine creates a contract rule
+  for each of its emirates and each category the company offers (residential, commercial, retail): that emirate, all
+  types (`subtypes = []`), `templateId` = the approved template. It goes through `createContractRule` (validation, overlap
+  check, `CONTRACT_RULE_CREATED` event with the approving admin, config hash). Tenures, cheque range and clauses are
+  copied from the company's any-emirate rule of that category; with none, annual and 1 to 4 cheques (the settings form
+  defaults). Clauses kept are approved and not linked to another template.
+- **Never replaces.** A rule is created only where no active rule of the company, category and emirate covers all types
+  (`overlaps`). Existing rules are never replaced or changed. A rule naming specific types does not block it. A new
+  version of a template moves its rules (D69); then only gaps are filled.
+- **Any emirate.** A template for any emirate creates nothing.
+- **Result.** The approve response and the `COMPANY_TEMPLATE_APPROVED` event carry `rulesCreated`; the approval UI lists them.
+
+## D74 — Named placeholders and emirate variables: one generic template for every emirate
+
+- **Why.** The user wants one contract template for all seven emirates (`docs/templates/UAE_Generic_Tenancy_Contract.pdf`,
+  52 `{placeholders}`, no emirate named). The reader only knew empty blanks, and the data sheet had no emirate names or
+  rulebook periods.
+- **Placeholders.** `detectBlanks` also finds `{name}`, `[name]` and `<name>` (2 to 40 characters: letters, digits, space
+  and `_ - / .`, a letter first). Never `{{b1}}` tokens, `<< >>`, `[[ ]]` or page markers (`{n}`, `{N}`, `{page}`,
+  `{pages}`). A placeholder cut by a line or page break is joined. Kind `placeholder`; the label is the name in words.
+- **Mapping by name, code only.** An alias table (the generic template's names and synonyms), then a data key's own name
+  in any case (`community`, `tenant_name`, `tenantNameEn`), then the label rules. The words around a placeholder never
+  decide its type. An unknown name is `leave_empty` with the note "Unknown placeholder {x}" in the review and prints an
+  empty line, never its name. A template that uses placeholders is not read as a filled sample, and its other blanks
+  (signatures, dates, checklist lines) stay for hand-writing; only placeholders are filled from data (prepare re-mapping
+  as well).
+- **New data-sheet keys.** From the lease's rulebook (pinned if it is the unit's emirate's, else the one in force for the
+  emirate): `renewalNoticeDays`, `repossessionNoticeMonths`, `lateRentDays`. From the unit's emirate settings:
+  `registrationSystem`, `registeringAuthority`, `governingLaw`, `disputeBody`, `utilityProvider`; `emirateName`;
+  `additionalTerms`. All are core fields (never an empty line) and part of the contract input hash, so a settings change
+  makes a pending approval stale. Prepare stops (422) only when the template prints a rulebook value and the lease has no
+  rulebook of the unit's emirate: "No rulebook for <emirate>: publish one in Settings -> Rulebooks", or, when the lease is
+  pinned to another emirate's version, "Lease <ref> is pinned to <version>, not a <Emirate> rulebook; fix the lease's rules
+  version." There is no fallback to another version. The event carries `periodsRulesVersion`. Contract wording that was never
+  saved is the built-in default: the approval reasons say so, and Settings shows "Default — not yet confirmed".
+- **`{additional terms}`.** The addendum (company clauses and free text) prints at that paragraph, under the template's own
+  heading, instead of at the end. Header and footer placeholders are filled like the body.
+- **Contract wording (settings).** `RegistrationSettings.contractWording` (optional; five one-line plain texts of 1 to 200 characters, no period or amount),
+  per emirate on Settings -> Registration ("Printed in generic templates. Confirm with legal."), admin only, audited
+  with the other registration settings. A row saved without it uses the emirate's default (`DEFAULT_CONTRACT_WORDING`,
+  general public data: confirm with legal).
+- **Rules.** Rule 1: periods come from the pinned rulebook and names from settings, by code; no model fills any of them.
+  Rule 4: saving the wording is an event. Template approval (D70) is unchanged: a generic template names no emirate and
+  states no period, so its checks pass.
+
+## D75 — Only Dubai has a rent index; flat caps need none
+
+- **Why.** Only Dubai publishes an official rent index (the Smart Rental Index). The other emirates' renewal caps are a flat
+  percentage (Abu Dhabi and Sharjah 0%, Ras Al Khaimah 5%, Umm Al Quwain 10%) that does not depend on any index. Feedback:
+  the demo asked for an index value in emirates where none is needed, and the seed held invented index rows for them.
+- **Rule.** `flatRenewalCapPercent(rulebook)` returns the single percentage when every band equals
+  `aboveLastBandMaxIncrease`, else null (Dubai). `renewalCapFils(current, index|null, rulebook)` returns
+  `{ maxFils, basis: "flat" | "index" | "no_index" }`; `isRenewalRentAllowed` uses it. A flat cap ignores any index value; an
+  index-linked rulebook without an index value still allows only no increase. The renewal helper, the `renewal_notice` gate
+  check, the copilot `compute_renewal_cap` tool and the notice text use it, so no screen asks for an index in a flat-cap emirate.
+- **No static index in code.** The demo seed (`DEMO_SRI`) holds Dubai rows only. Non-Dubai demo rent rules carry AED bounds so
+  asking rents have a range. Staff can still add index values for any emirate (Settings -> Rent index); they then also price
+  by index percentage.
+
+## D76 — Navy and blue theme
+Product owner's choice. Amends D18 (palette and fonts). Built on the `redesign-silver` branch as "D73" before the
+module split; renumbered on merge because D73 to D75 were taken.
+- **Palette.** A navy rail (`#0f1c4d`) with a blue active tile; white cards with a soft shadow on a cool canvas
+  (`#f3f5fa`); deep navy ink. One blue accent: `primary` `#2f62e3` for solid buttons and the current step,
+  soft blue `accent` `#e8eefd` with `on-accent` `#2a52c9` for selected tabs, pills and gate panels. Green
+  (`success`) only for done, signed and matched; amber stays for deadlines, red for errors. Dark mode is the same
+  scheme on navy. Tokens live in `platform/ui/src/theme.css` (mirrored in `platform/ui/src/tokens.ts`, guarded by
+  `platform/ui/test/contrast.test.ts`); the legacy tokens in `platform/ui/src/base.css` mirror them. The palette is
+  shared, so the SPA app and the portal use it too.
+- **Fonts.** Plus Jakarta Sans for the interface and headings, JetBrains Mono for references, times and figures.
+  Both come from `next/font/google`, which self-hosts the files at build time (no browser request to Google).
+  Leasing loads them; the shared font tokens fall back to Geist, so the SPA app and the portal keep Geist.
+- **Stage stepper.** Numbered circles joined by a line: green with a tick when done, blue with a ring when current.
+- **Amendment: black call-to-action buttons.** Primary buttons, the chat send button, the public search and chat
+  launcher and the portal upload button use a `cta` token: near-black (`#0b1020`) in light, near-white in dark.
+  Blue `primary` stays for the current step, toggles, links and selected states.
+- **Amendment: Home and Workspace layout.** Home's agent activity is a card of rows that open (native `<details>`)
+  to labelled facts built in `modules/leasing/apps/engine/src/manager/log-details.ts` from named columns only: never payloads
+  wholesale and never email recipients (rule 8). Each Home entry also names its record. In the Workspace detail
+  pane the outermost record sections are cards (`.record-cards` in `modules/leasing/apps/web/app/globals.css`); the record header carries tag
+  chips and the next step; an application's Next step comes first, outlined in blue, then its activity, then an
+  Overview of fact tiles. With nothing selected the pane shows an illustration and asks to pick a record.
+- **Amendment: one Workspace list.** Applications and leases share one list grouped by stage (the stages run from
+  Enquiry to Registered across both). Under the search, three chips: All, Needs me (`view=waiting`, the rows'
+  `waitingForMe`) and With agent (`view=agent`: owner is the agent and nothing waits on the user). The counts come
+  from the same records request. The Applications/Leases switch, the Waiting/Everything toggle, Ask AI and the
+  Table view link were removed from the list header; `/applications` and `/leases` still work as pages.
+- **Amendment: record header.** The Workspace record header is sticky in the detail pane and carries an "Email
+  applicant" (or "Email tenant") button in place of Ask AI; it opens the record's existing email form, where a
+  person still writes and sends. An application's Overview holds the applicant's details; Documents has no Ask AI.
+- **Amendment: date and time pickers.** Site visits are chosen with `@platform/ui/date-time-picker`: an
+  iOS-style date pill opening a month calendar (days before today in Dubai disabled) and a time pill opening hour and
+  minute wheels (15-minute steps). Both post one hidden `YYYY-MM-DDTHH:mm` value, as the old datetime-local input did,
+  so the booking and new-application actions are unchanged; their buttons stay disabled until both parts are chosen.
+  Fact grids are plain label-over-value lists on cards (boxed cells only on the tinted gate panel).
+- **Amendment: record order and activity.** A record reads Next step, Overview, its details and Documents, then
+  Activity last (before the audit trail); an open approval panel stays on top. Activity uses the same expandable rows
+  as Home (`modules/leasing/apps/web/components/activity-item.tsx`), waiting entries keeping their buttons visible. Closing an application is a
+  quiet "Not going ahead?" footer in the Next step card, with Cancel. Emailing the applicant or tenant opens a dialog
+  from the header button instead of a section on the page.
+- **Amendment: audit trail inside Activity.** The separate "Audit trail" disclosure is gone. The Activity card has an
+  Activity / All events toggle (`log=all` in the Workspace URL); All events lists every recorded event on the record,
+  newest first, append-only (rule 4), read from the record's own events. Section hints sit on a sub line under the title.
+- **Amendment: one place to ask the agent.** The page-level "Ask AI" buttons and menus (settings pages, units, Home
+  queue rows, record sections, the approval panel, New application) are removed: the copilot dock is the one way to
+  ask. The prompt catalogue (`modules/leasing/apps/web/lib/ask-ai/prompts.ts`) stays for the dock's quick actions. An approval waiting on the
+  user uses the Next step card style (`.gate-mine`: white, blue outline, blue dot). A lease's Overview holds its terms, tenant and landlord; its contract and
+  registration sit under Documents, as an application's do.
+- **Amendment: reasons on demand (UI rule).** A reason or note for a negative action appears only after the person
+  clicks it (Reject, Close this application, close a complaint), with a confirm button and Cancel. Approving needs no
+  note. Recorded in AGENTS.md conventions.
+- **Amendment: record layout rule.** Every record reads: decision card or Next step, Overview, Documents, stage
+  details, Deadlines and renewal (one card: the renewal path above the deadline table), Open work, Activity. Every
+  record card collapses with a chevron (`SectionToggle`). The approval pinned on a record is one card: "What will be
+  sent" folds inside it with its source document linked; "Why this is here", "Sources" and "Notes for the approver"
+  appear only on the standalone approval page. Recorded in AGENTS.md conventions.
+- **Amendment: Next step on every stage.** Every record without a waiting approval has a Next step card: an
+  application's own forms, or the record's next step in words (leases at Contract and later). A waiting task's buttons
+  (Send offer, Prepare contract, …) sit in that card, and its Activity row says "In Next step, above". At Offer, the
+  current offer is a foldable sub-card inside Next step. Site visit time and outcome are Overview facts. A no-show can be
+  recorded only after the visit time (the engine's pending outcome entry says so), and its note opens on demand. The
+  application's Emails list is gone (emails are in Activity). Save view is not offered for the chips.
+- **Amendment: fewer, clearer blocks.** At the site visit, Next step has two buttons: "Showed up — send document link"
+  and "No-show" (enabled once the visit time has passed; its note opens on demand); no separate close link there. The
+  offer, its current terms and every revision sit in one Offer sub-card inside Next step. Open work shows only pending
+  approvals and open tasks and is hidden when there are none; Add task is a floating button on a lease. Deadlines and
+  renewal shows only real milestones (the agent's own timed reminders are not listed). Next-step copy
+  (`nextStepFor`) is rewritten in plain professional English, e.g. "Awaiting signatures from the tenant and the landlord."
+
+## D77 — The contract agent's model advises; it never stops the contract
+Amends D45 and D64. A 4B model (`qwen3.5:4b`) gave no valid JSON twice for a Sharjah shop on a residential template
+(`{"error": ""}`, then nothing usable), and the whole preparation went to a person, although every field and check
+is code. The 9B model's answer parsed, but its rewrite of the particulars paragraph was refused ("Residential use
+only" holds legal words), so the contract printed "Apartment … Residential use only" for a shop either way.
+- **Fallback, not a stop.** No valid answer after one retry → the answer is discarded and the contract is prepared
+  as the no-model path does: fields copied from the records, the starting clauses, no flags, `reviewed: false`, a
+  first reason saying no AI review ran. Code checks (cheques, deposit, rent band, landlord, blanks, legal wording)
+  still stop it (`needs_human`); a model that is down is still `failed` and retried. `final_contract` is unchanged:
+  a person approves every contract, and its reasons start with "No AI review ran". Nothing is taken from an
+  unparsed answer; this is a carve-out from rule 6's "→ needs_human" for advisory output only.
+- **Lenient parse, still Zod.** JSON is found inside prose or a fence; invalid items are dropped one by one instead
+  of losing the answer (the count is listed in the reasons); an object without any of the answer's keys counts as no
+  answer.
+- **Code rewords the particulars.** A template paragraph that lists the unit's particulars and states no obligation
+  (`unitParticulars`, not a company clause) gets the type word and the use copied from the unit record by code
+  (`codeUnitRewrite`); no model is involved and no number, amount, date or name is added. A rewrite the model gave and
+  code accepted (D64) wins. The usage word is the record's `propertyUsage`, the same value Ejari receives. A
+  particulars line holds no `LEGAL_WORDS` other than the use words (use, only, permitted, residential, commercial)
+  and no money word; "No." as a label is allowed. Code leaves alone joined types or uses ("studio apartment",
+  "residential or commercial use") and negated uses ("non-residential", "no commercial use"), and keeps "a"/"an"
+  right. A conflict flag is dropped only when its quote names a word code changed, and the reasons say so.
+- Clauses with obligations ("The Tenant shall use the Premises for residential purposes") are never changed by
+  code: a template for the wrong use is still a configuration matter, shown to the approver by the agent's flags.
+
+## D78 — The contract agent rewords from a case brief; code rewords only below 30% confidence
+Amends D64 and D77. A 4B model reworded nothing (eval: 0 of 4 unit-wording cases) because it had to discover the
+template through tool calls, the prompt called every contract "residential" and "Dubai", and the particulars line
+("Permitted Use Residential use only") was locked.
+- **Case brief.** The first message is built by code: the emirate, the unit's type, use and facts, the clauses to
+  check against each other, and each template line that disagrees with the record (`unitDisagreements`: a type word,
+  a use, a count, or a feature the unit's description lacks) with the paragraph's wording as delimited data. The
+  system prompt fits any emirate and use and has two worked examples.
+- **The model may reword particulars lines** (`particulars`, D77) under code checks: the blanks unchanged; word by
+  word the line stays the same except a type word, a use word, a number or "a"/"an" (case and a trailing full stop
+  aside), so "only" and every label survive; no value (date, ID, phone, email) that isn't verbatim in the original;
+  any use stated must be the record's `propertyUsage` (never another, never "non-…", never dropped); any type word
+  must be the unit's type. Every rewording must leave no disagreement in its paragraph (a no-op is not a fix). A
+  paragraph code finds nothing wrong with keeps its wording, and the reasons say so. In the brief, template words and
+  a free-text subtype are delimited data.
+- **Retries.** A disagreeing line the answer left unfixed is sent back once, naming the paragraph. After any nudge
+  the turn has no tools and is held to the answer's JSON schema (Ollama structured output).
+- **Confidence** = the share of disagreeing lines the model reworded and code accepted (no disagreement: 1 with a valid
+  answer, 0 without). It is stored as the run's `model.confidence` and shown to the approver. Below 30%, code copies
+  the type and use into the particulars itself (`codeUnitRewrite`, D77), as the last resort. Whatever stays unfixed is
+  a conflict flag with the template's own words, which leads the `final_contract` reasons.
+- **Evals** (`bun run eval -- contract-agent`, cases a07 and a09–a13 on unit wording): `qwen3.5:4b` went from 1 of 5
+  unit-wording cases (none reworded by the model) to 6 of 6, all by the model; `qwen3.5:9b` 12 of 13 overall. a05
+  (an injected clause must be flagged) fails on both models before and after this change: open.
+
+## D79 — The title states the unit's use; leftover type words go; a bad clause id never stops the contract
+Amends D64, D77, D78. A retail shop in Ras Al Khaimah got a contract titled "RESIDENTIAL LEASE CONTRACT" with
+"Property Type shop Shop", and the 9B model's answer was cut off: `company_clauses` sent all 75 clauses (57 already in
+the template), filling the 16k context.
+- **Title and headings.** A title or heading that states a use and nothing else legal (`headingWithUse`) is given to
+  the agent as a paragraph marked `heading`; only its use word may change, to the record's (`propertyUsage`: retail
+  is commercial, as for Ejari). The model rewords it first; code does below 30% (D78). The renderer prints a reworded
+  title or heading only when it is listed as rewritten.
+- **Leftover type word.** A type word right after a blank mapped to `propertySubtype` (`typeBlanks`) is a sample value
+  (D70): it disagrees with the record and any rewording has it removed by code (`normalizeRewrite`), so the line prints
+  the type once.
+- **Context.** `company_clauses` lists only clauses the agent may add (not those in the template); repeated tool calls
+  no longer count toward the tool limit.
+- **Clause ids.** An id that is not an approved clause of the company is not added and is listed in the reasons; it no
+  longer stops the contract (code alone decides what is added). Trade-off: a model that tries another company's clause
+  no longer halts preparation; nothing is added and the approver sees the id (capped) at `final_contract`.
+- A leftover type word is removed only when it stands alone after the blank (punctuation, a blank or the end next),
+  and never when the record has no type. A title or heading may change its use word only. Confirm with legal that a
+  commercial title on a residential template body is acceptable; the body's residential-only clauses are flagged, not
+  rewritten.
+

@@ -11,11 +11,38 @@
         "typescript": "^5",
       },
     },
-    "apps/ejari-mock": {
+    "apps/portal": {
+      "name": "@portal/launcher",
+      "version": "0.0.0",
+      "dependencies": {
+        "@phosphor-icons/react": "2.1.10",
+        "@platform/kernel": "workspace:*",
+        "@platform/ui": "workspace:*",
+        "@tailwindcss/postcss": "4.3.4",
+        "drizzle-orm": "0.45.4",
+        "geist": "1.9.1",
+        "motion": "14.9.1",
+        "next": "16.4.6",
+        "pg": "8.23.1",
+        "react": "19.3.1",
+        "react-dom": "19.3.1",
+        "tailwindcss": "4.3.4",
+        "zod": "^4.6.7",
+      },
+      "devDependencies": {
+        "@types/node": "^24",
+        "@types/pg": "8.23.1",
+        "@types/react": "19.3.0",
+        "@types/react-dom": "19.3.0",
+        "drizzle-kit": "0.31.11",
+      },
+    },
+    "modules/leasing/apps/ejari-mock": {
       "name": "@leasing/ejari-mock",
       "version": "0.0.0",
       "dependencies": {
         "@leasing/core": "workspace:*",
+        "@platform/adapters": "workspace:*",
         "drizzle-orm": "0.45.4",
         "hono": "4.13.13",
         "pdf-lib": "1.17.1",
@@ -28,7 +55,7 @@
         "drizzle-kit": "0.31.11",
       },
     },
-    "apps/engine": {
+    "modules/leasing/apps/engine": {
       "name": "@leasing/engine",
       "version": "0.0.0",
       "dependencies": {
@@ -37,9 +64,11 @@
         "@leasing/core": "workspace:*",
         "@leasing/db": "workspace:*",
         "@leasing/helpers": "workspace:*",
-        "@leasing/llm": "workspace:*",
         "@leasing/rulebook": "workspace:*",
         "@napi-rs/canvas": "1.1.1",
+        "@platform/adapters": "workspace:*",
+        "@platform/kernel": "workspace:*",
+        "@platform/llm": "workspace:*",
         "drizzle-orm": "0.45.4",
         "fflate": "0.8.2",
         "hono": "4.13.13",
@@ -54,7 +83,7 @@
         "pdf-lib": "1.17.1",
       },
     },
-    "apps/telegram-bot": {
+    "modules/leasing/apps/telegram-bot": {
       "name": "@leasing/telegram-bot",
       "version": "0.0.0",
       "dependencies": {
@@ -65,16 +94,17 @@
         "zod": "^4.6.7",
       },
     },
-    "apps/web": {
+    "modules/leasing/apps/web": {
       "name": "@leasing/web",
       "version": "0.0.0",
       "dependencies": {
         "@leasing/core": "workspace:*",
         "@phosphor-icons/react": "2.1.10",
+        "@platform/ui": "workspace:*",
         "@tailwindcss/postcss": "4.3.4",
         "geist": "1.9.1",
         "motion": "14.9.1",
-        "next": "16.4.2",
+        "next": "16.4.6",
         "react": "19.3.1",
         "react-dom": "19.3.1",
         "tailwindcss": "4.3.4",
@@ -86,21 +116,21 @@
         "@types/react-dom": "19.3.0",
       },
     },
-    "packages/adapters": {
+    "modules/leasing/packages/adapters": {
       "name": "@leasing/adapters",
       "version": "0.0.0",
       "dependencies": {
         "@leasing/core": "workspace:*",
+        "@platform/adapters": "workspace:*",
+        "@platform/ui": "workspace:*",
         "grammy": "1.46.0",
-        "nodemailer": "10.0.14",
-        "pdf-lib": "1.17.1",
         "zod": "^4.6.7",
       },
       "devDependencies": {
-        "@types/nodemailer": "8.0.2",
+        "pdf-lib": "1.17.1",
       },
     },
-    "packages/copilot": {
+    "modules/leasing/packages/copilot": {
       "name": "@leasing/copilot",
       "version": "0.0.0",
       "dependencies": {
@@ -108,18 +138,21 @@
         "@langchain/langgraph": "1.4.19",
         "@langchain/ollama": "1.3.0",
         "@leasing/core": "workspace:*",
+        "@platform/llm": "workspace:*",
         "zod": "^4.6.7",
       },
     },
-    "packages/core": {
+    "modules/leasing/packages/core": {
       "name": "@leasing/core",
       "version": "0.0.0",
       "dependencies": {
+        "@platform/kernel": "workspace:*",
+        "@platform/readers": "workspace:*",
         "uuidv7": "1.2.1",
         "zod": "^4.6.7",
       },
     },
-    "packages/db": {
+    "modules/leasing/packages/db": {
       "name": "@leasing/db",
       "version": "0.0.0",
       "dependencies": {
@@ -133,37 +166,208 @@
         "drizzle-kit": "0.31.11",
       },
     },
-    "packages/helpers": {
+    "modules/leasing/packages/helpers": {
       "name": "@leasing/helpers",
       "version": "0.0.0",
       "dependencies": {
         "@langchain/core": "1.2.14",
         "@langchain/langgraph": "1.4.19",
         "@leasing/core": "workspace:*",
-        "@leasing/llm": "workspace:*",
         "@leasing/rulebook": "workspace:*",
+        "@platform/kernel": "workspace:*",
+        "@platform/llm": "workspace:*",
+        "@platform/readers": "workspace:*",
         "unpdf": "1.9.1",
         "zod": "^4.6.7",
       },
       "devDependencies": {
+        "@platform/adapters": "workspace:*",
         "@resvg/resvg-js": "2.6.2",
         "pdf-lib": "1.17.1",
       },
     },
-    "packages/llm": {
-      "name": "@leasing/llm",
-      "version": "0.0.0",
-      "dependencies": {
-        "@leasing/core": "workspace:*",
-        "ollama": "0.6.4",
-        "zod": "^4.6.7",
-      },
-    },
-    "packages/rulebook": {
+    "modules/leasing/packages/rulebook": {
       "name": "@leasing/rulebook",
       "version": "0.0.0",
       "dependencies": {
         "@leasing/core": "workspace:*",
+        "zod": "^4.6.7",
+      },
+    },
+    "modules/spa/apps/engine": {
+      "name": "@spa/engine",
+      "version": "0.0.0",
+      "dependencies": {
+        "@platform/adapters": "workspace:*",
+        "@platform/kernel": "workspace:*",
+        "@platform/llm": "workspace:*",
+        "@platform/readers": "workspace:*",
+        "@spa/copilot": "workspace:*",
+        "@spa/core": "workspace:*",
+        "@spa/db": "workspace:*",
+        "@spa/helpers": "workspace:*",
+        "@spa/rulebook": "workspace:*",
+        "drizzle-orm": "0.45.4",
+        "hono": "4.13.13",
+        "pg-boss": "12.38.0",
+        "zod": "^4.6.7",
+      },
+    },
+    "modules/spa/apps/oqood-mock": {
+      "name": "@spa/oqood-mock",
+      "version": "0.0.0",
+      "dependencies": {
+        "@platform/adapters": "workspace:*",
+        "@platform/kernel": "workspace:*",
+        "@spa/core": "workspace:*",
+        "drizzle-orm": "0.45.4",
+        "hono": "4.13.13",
+        "pdf-lib": "1.17.1",
+        "pg": "8.23.1",
+        "zod": "^4.6.7",
+      },
+      "devDependencies": {
+        "@spa/helpers": "workspace:*",
+        "@types/pg": "8.23.1",
+        "drizzle-kit": "0.31.11",
+      },
+    },
+    "modules/spa/apps/web": {
+      "name": "@spa/web",
+      "version": "0.0.0",
+      "dependencies": {
+        "@phosphor-icons/react": "2.1.10",
+        "@platform/ui": "workspace:*",
+        "@spa/core": "workspace:*",
+        "@tailwindcss/postcss": "4.3.4",
+        "geist": "1.9.1",
+        "hono": "4.13.13",
+        "motion": "14.9.1",
+        "next": "16.4.6",
+        "react": "19.3.1",
+        "react-dom": "19.3.1",
+        "tailwindcss": "4.3.4",
+        "zod": "^4.6.7",
+      },
+      "devDependencies": {
+        "@types/node": "^24",
+        "@types/react": "19.3.0",
+        "@types/react-dom": "19.3.0",
+      },
+    },
+    "modules/spa/packages/copilot": {
+      "name": "@spa/copilot",
+      "version": "0.0.0",
+      "dependencies": {
+        "@platform/kernel": "workspace:*",
+        "@platform/llm": "workspace:*",
+        "@spa/core": "workspace:*",
+        "zod": "^4.6.7",
+      },
+    },
+    "modules/spa/packages/core": {
+      "name": "@spa/core",
+      "version": "0.0.0",
+      "dependencies": {
+        "@platform/kernel": "workspace:*",
+        "zod": "^4.6.7",
+      },
+    },
+    "modules/spa/packages/db": {
+      "name": "@spa/db",
+      "version": "0.0.0",
+      "dependencies": {
+        "@spa/core": "workspace:*",
+        "drizzle-orm": "0.45.4",
+        "pg": "8.23.1",
+      },
+      "devDependencies": {
+        "@types/pg": "8.23.1",
+        "drizzle-kit": "0.31.11",
+      },
+    },
+    "modules/spa/packages/helpers": {
+      "name": "@spa/helpers",
+      "version": "0.0.0",
+      "dependencies": {
+        "@platform/adapters": "workspace:*",
+        "@platform/kernel": "workspace:*",
+        "@platform/llm": "workspace:*",
+        "@platform/readers": "workspace:*",
+        "@platform/ui": "workspace:*",
+        "@spa/core": "workspace:*",
+        "@spa/rulebook": "workspace:*",
+        "zod": "^4.6.7",
+      },
+      "devDependencies": {
+        "@resvg/resvg-js": "2.6.2",
+      },
+    },
+    "modules/spa/packages/rulebook": {
+      "name": "@spa/rulebook",
+      "version": "0.0.0",
+      "dependencies": {
+        "@platform/kernel": "workspace:*",
+        "@spa/core": "workspace:*",
+        "zod": "^4.6.7",
+      },
+    },
+    "platform/adapters": {
+      "name": "@platform/adapters",
+      "version": "0.0.0",
+      "dependencies": {
+        "nodemailer": "10.0.14",
+        "pdf-lib": "1.17.1",
+      },
+      "devDependencies": {
+        "@types/nodemailer": "8.0.2",
+      },
+    },
+    "platform/kernel": {
+      "name": "@platform/kernel",
+      "version": "0.0.0",
+      "dependencies": {
+        "uuidv7": "1.2.1",
+        "zod": "^4.6.7",
+      },
+    },
+    "platform/llm": {
+      "name": "@platform/llm",
+      "version": "0.0.0",
+      "dependencies": {
+        "@langchain/core": "1.2.14",
+        "@langchain/ollama": "1.3.0",
+        "@platform/kernel": "workspace:*",
+        "ollama": "0.6.4",
+        "zod": "^4.6.7",
+      },
+    },
+    "platform/readers": {
+      "name": "@platform/readers",
+      "version": "0.0.0",
+      "dependencies": {
+        "@platform/kernel": "workspace:*",
+        "@platform/llm": "workspace:*",
+        "unpdf": "1.9.1",
+        "zod": "^4.6.7",
+      },
+      "devDependencies": {
+        "pdf-lib": "1.17.1",
+      },
+    },
+    "platform/ui": {
+      "name": "@platform/ui",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@types/react": "19.3.0",
+        "@types/react-dom": "19.3.0",
+        "react-dom": "19.3.1",
+      },
+      "peerDependencies": {
+        "@phosphor-icons/react": "2.1.10",
+        "motion": "14.9.1",
+        "next": "16.4.2",
+        "react": "19.3.1",
         "zod": "^4.6.7",
       },
     },
@@ -313,27 +517,25 @@
 
     "@langchain/protocol": ["@langchain/protocol@0.0.19", "", {}, "sha512-9hKcRrH7cBX6gfutdfXPoft1OCchHe4FEpALoDJMl5Qu+n/YG5ynZmyu8+8cxORlPwHBoKTxggvXz+76M1yX1Q=="],
 
-    "@leasing/adapters": ["@leasing/adapters@workspace:packages/adapters"],
+    "@leasing/adapters": ["@leasing/adapters@workspace:modules/leasing/packages/adapters"],
 
-    "@leasing/copilot": ["@leasing/copilot@workspace:packages/copilot"],
+    "@leasing/copilot": ["@leasing/copilot@workspace:modules/leasing/packages/copilot"],
 
-    "@leasing/core": ["@leasing/core@workspace:packages/core"],
+    "@leasing/core": ["@leasing/core@workspace:modules/leasing/packages/core"],
 
-    "@leasing/db": ["@leasing/db@workspace:packages/db"],
+    "@leasing/db": ["@leasing/db@workspace:modules/leasing/packages/db"],
 
-    "@leasing/ejari-mock": ["@leasing/ejari-mock@workspace:apps/ejari-mock"],
+    "@leasing/ejari-mock": ["@leasing/ejari-mock@workspace:modules/leasing/apps/ejari-mock"],
 
-    "@leasing/engine": ["@leasing/engine@workspace:apps/engine"],
+    "@leasing/engine": ["@leasing/engine@workspace:modules/leasing/apps/engine"],
 
-    "@leasing/helpers": ["@leasing/helpers@workspace:packages/helpers"],
+    "@leasing/helpers": ["@leasing/helpers@workspace:modules/leasing/packages/helpers"],
 
-    "@leasing/llm": ["@leasing/llm@workspace:packages/llm"],
+    "@leasing/rulebook": ["@leasing/rulebook@workspace:modules/leasing/packages/rulebook"],
 
-    "@leasing/rulebook": ["@leasing/rulebook@workspace:packages/rulebook"],
+    "@leasing/telegram-bot": ["@leasing/telegram-bot@workspace:modules/leasing/apps/telegram-bot"],
 
-    "@leasing/telegram-bot": ["@leasing/telegram-bot@workspace:apps/telegram-bot"],
-
-    "@leasing/web": ["@leasing/web@workspace:apps/web"],
+    "@leasing/web": ["@leasing/web@workspace:modules/leasing/apps/web"],
 
     "@napi-rs/canvas": ["@napi-rs/canvas@1.1.1", "", { "optionalDependencies": { "@napi-rs/canvas-android-arm64": "1.1.1", "@napi-rs/canvas-darwin-arm64": "1.1.1", "@napi-rs/canvas-darwin-x64": "1.1.1", "@napi-rs/canvas-linux-arm-gnueabihf": "1.1.1", "@napi-rs/canvas-linux-arm64-gnu": "1.1.1", "@napi-rs/canvas-linux-arm64-musl": "1.1.1", "@napi-rs/canvas-linux-riscv64-gnu": "1.1.1", "@napi-rs/canvas-linux-x64-gnu": "1.1.1", "@napi-rs/canvas-linux-x64-musl": "1.1.1", "@napi-rs/canvas-win32-arm64-msvc": "1.1.1", "@napi-rs/canvas-win32-x64-msvc": "1.1.1" } }, "sha512-UyNspnx0rXclATMOBXiWgy1xtWUSUDm4UOO6+YO8xzyVKaZRpvK+SlJSCtRoSI9J/mEqklJiPYtroN1B+hgLXg=="],
 
@@ -359,23 +561,23 @@
 
     "@napi-rs/canvas-win32-x64-msvc": ["@napi-rs/canvas-win32-x64-msvc@1.1.1", "", { "os": "win32", "cpu": "x64" }, "sha512-6Ge1AF1SVO+Ypjaw9IPcApm95krR3GQ32HgVqlIckbN/WqUlWYS0hnb8ZIdu3e0IbutbJgd8D2qSeb2/Cdpbdw=="],
 
-    "@next/env": ["@next/env@16.4.2", "", {}, "sha512-nTUTFH7G5/J/fmpkjVLegOkqyKOP0CEsJcMsyO4UCYeN1su+YMW/MfaSErnJskL7XM+UDK6aTvslxsRCyya/sA=="],
+    "@next/env": ["@next/env@16.4.6", "", {}, "sha512-SunBjJ6t+oBtecS3dTjdVuMhUogP5wD/vrGL5EVuQYM1iS4O5ilL51HkiJ3sPjMzRHiCChvr4dbaSJbR7F3lxA=="],
 
-    "@next/swc-darwin-arm64": ["@next/swc-darwin-arm64@16.4.2", "", { "os": "darwin", "cpu": "arm64" }, "sha512-ONkhFvZNFWlsEHOM/81AtxdyuJP2KRYKYR0JxPwvcu1AuPMMMgcL+wW2luldJvMtZwKtUxoSkCychW5wIeoYSw=="],
+    "@next/swc-darwin-arm64": ["@next/swc-darwin-arm64@16.4.6", "", { "os": "darwin", "cpu": "arm64" }, "sha512-kJ4VVZkley17xKaJx72QN2IBqjrj7zenCQZaUF0l9ShS/1Mt2kW4+Z5KGG6vgr3L/J562xTOizVyM1iA/u5nlg=="],
 
-    "@next/swc-darwin-x64": ["@next/swc-darwin-x64@16.4.2", "", { "os": "darwin", "cpu": "x64" }, "sha512-luPCMbOsCoaF+kXJEUjmjmOZg1lC3BflhmUu+ZmW4tBu2vW/4AXak8JBFvePizGkxVmNiAw/r9ra+6UviCWtWQ=="],
+    "@next/swc-darwin-x64": ["@next/swc-darwin-x64@16.4.6", "", { "os": "darwin", "cpu": "x64" }, "sha512-eIPGZIqC+8JKaeZmvnCANJQF4xWkkHqSnAAajtFxgwDMAOnCgxNvP52SeWZ41PyVwoe+Le/NQuZSaQ8j7YshSA=="],
 
-    "@next/swc-linux-arm64-gnu": ["@next/swc-linux-arm64-gnu@16.4.2", "", { "os": "linux", "cpu": "arm64" }, "sha512-xhwFTAncJyaCNy5KqKKuKaIIdCy1/1ZV1s5S1G0hhT7wGMkDTlfJ6aQbfRFnIG/s3/kDrxQ8aycVe+c5QnP8ow=="],
+    "@next/swc-linux-arm64-gnu": ["@next/swc-linux-arm64-gnu@16.4.6", "", { "os": "linux", "cpu": "arm64" }, "sha512-9nI6O8vvczH2D9ZNdMGqb/3NuT15T9ksOZnAmx9/gjF2cOi74+xxyf1Hk96uIMfm14c9y6wHeBq6SH8g6udvcA=="],
 
-    "@next/swc-linux-arm64-musl": ["@next/swc-linux-arm64-musl@16.4.2", "", { "os": "linux", "cpu": "arm64" }, "sha512-T1PNmfbPcxr5ndtWUL/3wQtLXsz808lq6sc2GrNT5k2oquF7UyqZddHSuAewHVsWsGXe6nsl9HoN1YNriVjuSg=="],
+    "@next/swc-linux-arm64-musl": ["@next/swc-linux-arm64-musl@16.4.6", "", { "os": "linux", "cpu": "arm64" }, "sha512-7/qPhTxDp2ScluOJOhLuhWmlA17o1yZ0SIgpISBCpBxXgtnK4+KGywBpFkfLPiU1rnSM1faFGzYkH6i7JdTrqA=="],
 
-    "@next/swc-linux-x64-gnu": ["@next/swc-linux-x64-gnu@16.4.2", "", { "os": "linux", "cpu": "x64" }, "sha512-N9cDUOCGtkJG5PNKDFZUF3xXndrJJcpLp121uAGjIGvO/U2p9tfdNOM9htj7+5f72l0m8rMw/cvYacUJBQoudg=="],
+    "@next/swc-linux-x64-gnu": ["@next/swc-linux-x64-gnu@16.4.6", "", { "os": "linux", "cpu": "x64" }, "sha512-oOpbNa8XOW1qCGd9VvzC4fbkkRxEls7/WI6tz+YHC0xRA7KpV1U7DrAnCPjzVyOk/karzWEepCOcTIDmwK8FwQ=="],
 
-    "@next/swc-linux-x64-musl": ["@next/swc-linux-x64-musl@16.4.2", "", { "os": "linux", "cpu": "x64" }, "sha512-yY2uh1YhX6ufuYy2FCbw1dqblbhI57GLYAJfCkqD9auTv6pLrH67Uccjc3QMKBeCYAG6lkgu08ExmX1bbjejjQ=="],
+    "@next/swc-linux-x64-musl": ["@next/swc-linux-x64-musl@16.4.6", "", { "os": "linux", "cpu": "x64" }, "sha512-aM8CZ+OR2EwXaAYw7KGkW2GDmNDsLBIRe1MMRZCJPTdw/xhTD0IMUVO4sf3KqrzuRouGzwwLZn34+gFeVXiUQA=="],
 
-    "@next/swc-win32-arm64-msvc": ["@next/swc-win32-arm64-msvc@16.4.2", "", { "os": "win32", "cpu": "arm64" }, "sha512-j/ArWRIHpMMB6wYLMhr2puTguBt70lNU/Cmjl9p6dTDE8DGknYJMP9PdwPk2dqpCNL/KIX9yfngDvIesxJPmsg=="],
+    "@next/swc-win32-arm64-msvc": ["@next/swc-win32-arm64-msvc@16.4.6", "", { "os": "win32", "cpu": "arm64" }, "sha512-U0p7/tEtqvHX2crhd841CDwKtp5CFkKXVjOhmfccR3Pvp64sj8KBwRqsvltqLOwVBbj0NtkxwXSDpEHYGbxeXQ=="],
 
-    "@next/swc-win32-x64-msvc": ["@next/swc-win32-x64-msvc@16.4.2", "", { "os": "win32", "cpu": "x64" }, "sha512-AA4edyWHDko3NCSo0x6GomsdgFb0oR1J3MXU1b5xt6FRFg4AucrMPW3S0hCe/9onU0O1BbpGQBsqo1r0Gneu1g=="],
+    "@next/swc-win32-x64-msvc": ["@next/swc-win32-x64-msvc@16.4.6", "", { "os": "win32", "cpu": "x64" }, "sha512-3ZG15/5WIdlTQsIEvc9sPTTSL5XFrlLklIKmfF4fwsDnoAhu6NcBDXsk3mbGxNyo6aVLEGex+fHCv2MahY7a9g=="],
 
     "@opentelemetry/api": ["@opentelemetry/api@1.9.1", "", {}, "sha512-gLyJlPHPZYdAk1JENA9LeHejZe1Ti77/pTeFm/nMXmQH/HFZlcS/O2XJB+L8fkbrNSqhdtlvjBVjxwUYanNH5Q=="],
 
@@ -461,6 +663,18 @@
 
     "@phosphor-icons/react": ["@phosphor-icons/react@2.1.10", "", { "peerDependencies": { "react": ">= 16.8", "react-dom": ">= 16.8" } }, "sha512-vt8Tvq8GLjheAZZYa+YG/pW7HDbov8El/MANW8pOAz4eGxrwhnbfrQZq0Cp4q8zBEu8NIhHdnr+r8thnfRSNYA=="],
 
+    "@platform/adapters": ["@platform/adapters@workspace:platform/adapters"],
+
+    "@platform/kernel": ["@platform/kernel@workspace:platform/kernel"],
+
+    "@platform/llm": ["@platform/llm@workspace:platform/llm"],
+
+    "@platform/readers": ["@platform/readers@workspace:platform/readers"],
+
+    "@platform/ui": ["@platform/ui@workspace:platform/ui"],
+
+    "@portal/launcher": ["@portal/launcher@workspace:apps/portal"],
+
     "@resvg/resvg-js": ["@resvg/resvg-js@2.6.2", "", { "optionalDependencies": { "@resvg/resvg-js-android-arm-eabi": "2.6.2", "@resvg/resvg-js-android-arm64": "2.6.2", "@resvg/resvg-js-darwin-arm64": "2.6.2", "@resvg/resvg-js-darwin-x64": "2.6.2", "@resvg/resvg-js-linux-arm-gnueabihf": "2.6.2", "@resvg/resvg-js-linux-arm64-gnu": "2.6.2", "@resvg/resvg-js-linux-arm64-musl": "2.6.2", "@resvg/resvg-js-linux-x64-gnu": "2.6.2", "@resvg/resvg-js-linux-x64-musl": "2.6.2", "@resvg/resvg-js-win32-arm64-msvc": "2.6.2", "@resvg/resvg-js-win32-ia32-msvc": "2.6.2", "@resvg/resvg-js-win32-x64-msvc": "2.6.2" } }, "sha512-xBaJish5OeGmniDj9cW5PRa/PtmuVU3ziqrbr5xJj901ZDN4TosrVaNZpEiLZAxdfnhAe7uQ7QFWfjPe9d9K2Q=="],
 
     "@resvg/resvg-js-android-arm-eabi": ["@resvg/resvg-js-android-arm-eabi@2.6.2", "", { "os": "android", "cpu": "arm" }, "sha512-FrJibrAk6v29eabIPgcTUMPXiEz8ssrAk7TXxsiZzww9UTQ1Z5KAbFJs+Z0Ez+VZTYgnE5IQJqBcoSiMebtPHA=="],
@@ -486,6 +700,22 @@
     "@resvg/resvg-js-win32-ia32-msvc": ["@resvg/resvg-js-win32-ia32-msvc@2.6.2", "", { "os": "win32", "cpu": "ia32" }, "sha512-har4aPAlvjnLcil40AC77YDIk6loMawuJwFINEM7n0pZviwMkMvjb2W5ZirsNOZY4aDbo5tLx0wNMREp5Brk+w=="],
 
     "@resvg/resvg-js-win32-x64-msvc": ["@resvg/resvg-js-win32-x64-msvc@2.6.2", "", { "os": "win32", "cpu": "x64" }, "sha512-ZXtYhtUr5SSaBrUDq7DiyjOFJqBVL/dOBN7N/qmi/pO0IgiWW/f/ue3nbvu9joWE5aAKDoIzy/CxsY0suwGosQ=="],
+
+    "@spa/copilot": ["@spa/copilot@workspace:modules/spa/packages/copilot"],
+
+    "@spa/core": ["@spa/core@workspace:modules/spa/packages/core"],
+
+    "@spa/db": ["@spa/db@workspace:modules/spa/packages/db"],
+
+    "@spa/engine": ["@spa/engine@workspace:modules/spa/apps/engine"],
+
+    "@spa/helpers": ["@spa/helpers@workspace:modules/spa/packages/helpers"],
+
+    "@spa/oqood-mock": ["@spa/oqood-mock@workspace:modules/spa/apps/oqood-mock"],
+
+    "@spa/rulebook": ["@spa/rulebook@workspace:modules/spa/packages/rulebook"],
+
+    "@spa/web": ["@spa/web@workspace:modules/spa/apps/web"],
 
     "@standard-schema/spec": ["@standard-schema/spec@1.1.0", "", {}, "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="],
 
@@ -633,7 +863,7 @@
 
     "nanoid": ["nanoid@3.3.20", "", { "bin": { "nanoid": "bin/nanoid.cjs" } }, "sha512-uKdg2G3GNCKQn9byYOpxbGqrT2fGO5KRt5J/8b3pok8rT6qxGWF6hxMyJiEYtAf+FVyYuD9hRaDqX5uPFYJ4ZQ=="],
 
-    "next": ["next@16.4.2", "", { "dependencies": { "@next/env": "16.4.2", "@swc/helpers": "0.5.23", "baseline-browser-mapping": "^2.9.19", "caniuse-lite": "^1.0.30001579", "postcss": "8.5.23", "styled-jsx": "5.1.6" }, "optionalDependencies": { "@next/swc-darwin-arm64": "16.4.2", "@next/swc-darwin-x64": "16.4.2", "@next/swc-linux-arm64-gnu": "16.4.2", "@next/swc-linux-arm64-musl": "16.4.2", "@next/swc-linux-x64-gnu": "16.4.2", "@next/swc-linux-x64-musl": "16.4.2", "@next/swc-win32-arm64-msvc": "16.4.2", "@next/swc-win32-x64-msvc": "16.4.2", "sharp": "^0.35.5" }, "peerDependencies": { "@opentelemetry/api": "^1.1.0", "@playwright/test": "^1.51.1", "babel-plugin-react-compiler": "*", "react": "^18.2.0 || 19.0.0-rc-de68d2f4-20241204 || ^19.0.0", "react-dom": "^18.2.0 || 19.0.0-rc-de68d2f4-20241204 || ^19.0.0", "sass": "^1.3.0" }, "optionalPeers": ["@opentelemetry/api", "@playwright/test", "babel-plugin-react-compiler", "sass"], "bin": { "next": "dist/bin/next" } }, "sha512-r+oBJojfefUjOiWkBhXgLS+igxX/7BWyK59uHnyOyplMSLtBZ+QLP3okrdYTbrfrbrmNTVWLBPaHDX9KRaIt3w=="],
+    "next": ["next@16.4.6", "", { "dependencies": { "@next/env": "16.4.6", "@swc/helpers": "0.5.23", "baseline-browser-mapping": "^2.9.19", "caniuse-lite": "^1.0.30001579", "postcss": "8.5.23", "styled-jsx": "5.1.6" }, "optionalDependencies": { "@next/swc-darwin-arm64": "16.4.6", "@next/swc-darwin-x64": "16.4.6", "@next/swc-linux-arm64-gnu": "16.4.6", "@next/swc-linux-arm64-musl": "16.4.6", "@next/swc-linux-x64-gnu": "16.4.6", "@next/swc-linux-x64-musl": "16.4.6", "@next/swc-win32-arm64-msvc": "16.4.6", "@next/swc-win32-x64-msvc": "16.4.6", "sharp": "^0.35.5" }, "peerDependencies": { "@opentelemetry/api": "^1.1.0", "@playwright/test": "^1.51.1", "babel-plugin-react-compiler": "*", "react": "^18.2.0 || 19.0.0-rc-de68d2f4-20241204 || ^19.0.0", "react-dom": "^18.2.0 || 19.0.0-rc-de68d2f4-20241204 || ^19.0.0", "sass": "^1.3.0" }, "optionalPeers": ["@opentelemetry/api", "@playwright/test", "babel-plugin-react-compiler", "sass"], "bin": { "next": "dist/bin/next" } }, "sha512-QZJiYhaZLJMo2KpkQGQIwvmd79WVsAWeYIU554a8d7zArS3si/IRy3lBNV/rtYhE70oLwdLYhPAXLPx8HwcwtA=="],
 
     "node-fetch": ["node-fetch@2.7.0", "", { "dependencies": { "whatwg-url": "^5.0.0" }, "peerDependencies": { "encoding": "^0.1.0" }, "optionalPeers": ["encoding"] }, "sha512-c4FRfUm/dbcWZ7U+1Wq0AwCyFL+3nt2bEw05wfxSz+DWpWsitgmSgYmy2dQdWyKC1694ELPqMs/YzUSNozLt8A=="],
 
@@ -757,6 +987,8 @@
 
     "@langchain/langgraph-sdk/p-queue": ["p-queue@9.3.5", "", { "dependencies": { "eventemitter3": "^5.0.4", "p-timeout": "^7.0.0" } }, "sha512-Lki/zhXFVmDhesBUn/yHRLW9Bte7mE7xoFHzTR8sIomV7a2z+LxYAPkGvdfidNiu4fKSfjtawixxSHcZci5QcQ=="],
 
+    "@platform/ui/next": ["next@16.4.2", "", { "dependencies": { "@next/env": "16.4.2", "@swc/helpers": "0.5.23", "baseline-browser-mapping": "^2.9.19", "caniuse-lite": "^1.0.30001579", "postcss": "8.5.23", "styled-jsx": "5.1.6" }, "optionalDependencies": { "@next/swc-darwin-arm64": "16.4.2", "@next/swc-darwin-x64": "16.4.2", "@next/swc-linux-arm64-gnu": "16.4.2", "@next/swc-linux-arm64-musl": "16.4.2", "@next/swc-linux-x64-gnu": "16.4.2", "@next/swc-linux-x64-musl": "16.4.2", "@next/swc-win32-arm64-msvc": "16.4.2", "@next/swc-win32-x64-msvc": "16.4.2", "sharp": "^0.35.5" }, "peerDependencies": { "@opentelemetry/api": "^1.1.0", "@playwright/test": "^1.51.1", "babel-plugin-react-compiler": "*", "react": "^18.2.0 || 19.0.0-rc-de68d2f4-20241204 || ^19.0.0", "react-dom": "^18.2.0 || 19.0.0-rc-de68d2f4-20241204 || ^19.0.0", "sass": "^1.3.0" }, "optionalPeers": ["@opentelemetry/api", "@playwright/test", "babel-plugin-react-compiler", "sass"], "bin": { "next": "dist/bin/next" } }, "sha512-r+oBJojfefUjOiWkBhXgLS+igxX/7BWyK59uHnyOyplMSLtBZ+QLP3okrdYTbrfrbrmNTVWLBPaHDX9KRaIt3w=="],
+
     "@swc/helpers/tslib": ["tslib@2.8.1", "", {}, "sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w=="],
 
     "@tailwindcss/oxide-wasm32-wasi/@emnapi/core": ["@emnapi/core@1.11.3", "", { "dependencies": { "@emnapi/wasi-threads": "1.2.3", "tslib": "^2.4.0" }, "bundled": true }, "sha512-zLpS5asjEb7lq8jYLq37N6XKaE41DIexlY1rF/z4/tIl3wo13Sqm28fRyfIsKZD+NZ8mM5RoKkpW/rBcuoSZSg=="],
@@ -834,6 +1066,26 @@
     "@langchain/langgraph-sdk/p-queue/eventemitter3": ["eventemitter3@5.0.4", "", {}, "sha512-mlsTRyGaPBjPedk6Bvw+aqbsXDtoAyAzm5MO7JgU+yVRyMQ5O8bD4Kcci7BS85f93veegeCPkL8R4GLClnjLFw=="],
 
     "@langchain/langgraph-sdk/p-queue/p-timeout": ["p-timeout@7.0.2", "", {}, "sha512-prbX4Z3YszrFNgH+MW5Zoeq3baXrMtP/MQnFeET90UB/GtGcGDQ5Usg9OCy6ETjTTntOw1SL2z9fMPUppN3Guw=="],
+
+    "@platform/ui/next/@next/env": ["@next/env@16.4.2", "", {}, "sha512-nTUTFH7G5/J/fmpkjVLegOkqyKOP0CEsJcMsyO4UCYeN1su+YMW/MfaSErnJskL7XM+UDK6aTvslxsRCyya/sA=="],
+
+    "@platform/ui/next/@next/swc-darwin-arm64": ["@next/swc-darwin-arm64@16.4.2", "", { "os": "darwin", "cpu": "arm64" }, "sha512-ONkhFvZNFWlsEHOM/81AtxdyuJP2KRYKYR0JxPwvcu1AuPMMMgcL+wW2luldJvMtZwKtUxoSkCychW5wIeoYSw=="],
+
+    "@platform/ui/next/@next/swc-darwin-x64": ["@next/swc-darwin-x64@16.4.2", "", { "os": "darwin", "cpu": "x64" }, "sha512-luPCMbOsCoaF+kXJEUjmjmOZg1lC3BflhmUu+ZmW4tBu2vW/4AXak8JBFvePizGkxVmNiAw/r9ra+6UviCWtWQ=="],
+
+    "@platform/ui/next/@next/swc-linux-arm64-gnu": ["@next/swc-linux-arm64-gnu@16.4.2", "", { "os": "linux", "cpu": "arm64" }, "sha512-xhwFTAncJyaCNy5KqKKuKaIIdCy1/1ZV1s5S1G0hhT7wGMkDTlfJ6aQbfRFnIG/s3/kDrxQ8aycVe+c5QnP8ow=="],
+
+    "@platform/ui/next/@next/swc-linux-arm64-musl": ["@next/swc-linux-arm64-musl@16.4.2", "", { "os": "linux", "cpu": "arm64" }, "sha512-T1PNmfbPcxr5ndtWUL/3wQtLXsz808lq6sc2GrNT5k2oquF7UyqZddHSuAewHVsWsGXe6nsl9HoN1YNriVjuSg=="],
+
+    "@platform/ui/next/@next/swc-linux-x64-gnu": ["@next/swc-linux-x64-gnu@16.4.2", "", { "os": "linux", "cpu": "x64" }, "sha512-N9cDUOCGtkJG5PNKDFZUF3xXndrJJcpLp121uAGjIGvO/U2p9tfdNOM9htj7+5f72l0m8rMw/cvYacUJBQoudg=="],
+
+    "@platform/ui/next/@next/swc-linux-x64-musl": ["@next/swc-linux-x64-musl@16.4.2", "", { "os": "linux", "cpu": "x64" }, "sha512-yY2uh1YhX6ufuYy2FCbw1dqblbhI57GLYAJfCkqD9auTv6pLrH67Uccjc3QMKBeCYAG6lkgu08ExmX1bbjejjQ=="],
+
+    "@platform/ui/next/@next/swc-win32-arm64-msvc": ["@next/swc-win32-arm64-msvc@16.4.2", "", { "os": "win32", "cpu": "arm64" }, "sha512-j/ArWRIHpMMB6wYLMhr2puTguBt70lNU/Cmjl9p6dTDE8DGknYJMP9PdwPk2dqpCNL/KIX9yfngDvIesxJPmsg=="],
+
+    "@platform/ui/next/@next/swc-win32-x64-msvc": ["@next/swc-win32-x64-msvc@16.4.2", "", { "os": "win32", "cpu": "x64" }, "sha512-AA4edyWHDko3NCSo0x6GomsdgFb0oR1J3MXU1b5xt6FRFg4AucrMPW3S0hCe/9onU0O1BbpGQBsqo1r0Gneu1g=="],
+
+    "@platform/ui/next/postcss": ["postcss@8.5.23", "", { "dependencies": { "nanoid": "^3.3.16", "picocolors": "^1.1.1", "source-map-js": "^1.2.1" } }, "sha512-g50586zr4bZmwFiTlflMu8E0bDTb5I5gertgwAKmsdUlTQIhZtunzUlD1WSzwcVWPoAVpsrA6vlfCD7oXvRwgg=="],
 
     "@types/nodemailer/@types/node/undici-types": ["undici-types@8.9.0", "", {}, "sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg=="],
 

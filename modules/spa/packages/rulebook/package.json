@@ -1,0 +1,14 @@
+{
+  "name": "@spa/rulebook",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@platform/kernel": "workspace:*",
+    "@spa/core": "workspace:*",
+    "zod": "^4.6.7"
+  }
+}

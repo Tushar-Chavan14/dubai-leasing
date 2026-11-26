@@ -1,0 +1,492 @@
+import {
+  Addendum,
+  AddendumFlag,
+  type CalendarDate,
+  ContractFields,
+  EjariAutofix,
+  EjariPayload,
+  EjariRejection,
+  Emirate,
+  formatAed,
+  type GateId,
+  isCalendarDate,
+  OfferTerms,
+  PropertyCategory,
+  TermValues,
+} from "@leasing/core";
+import { KycFlag, KycIdentity, StatementItem } from "@leasing/helpers";
+import type { approvals } from "@leasing/db";
+import {
+  canSendRenewalNotice,
+  getRulebook,
+  flatRenewalCapPercent,
+  isRenewalRentAllowed,
+  renewalCapFils,
+  repossessionNoticeDeadline,
+} from "@leasing/rulebook";
+import { z } from "zod";
+
+type ApprovalRow = typeof approvals.$inferSelect;
+
+/** The proposal a decision applies: the edited one if a person edited it. */
+export function effectiveProposal(
+  a: Pick<ApprovalRow, "status" | "proposal" | "editedProposal">,
+): Record<string, unknown> {
+  return a.status === "edited" && a.editedProposal ? a.editedProposal : a.proposal;
+}
+
+const calDate = z.string().refine(isCalendarDate, "expected YYYY-MM-DD");
+
+export const RenewalNoticeProposal = z.object({
+  leaseId: z.string(),
+  leaseRef: z.string(),
+  rulesVersion: z.string(),
+  currentRentFils: z.number().int().positive(),
+  proposedRentFils: z.number().int().positive(),
+  sriAverageFils: z.number().int().positive().nullable(),
+  leaseEndOn: calDate,
+  sendOn: calDate,
+  legalDeadline: calDate,
+  newTermStartOn: calDate,
+  newTermEndOn: calDate,
+  /** From the renewal helper run (display and audit; the cap is re-checked from the rulebook). */
+  maxRentFils: z.number().int().positive().optional(),
+  maxIncreasePercent: z.number().int().min(0).optional(),
+  sriSource: z.enum(["override", "table", "none"]).optional(),
+  sriLabel: z.string().nullable().optional(),
+  /** Who entered a lease-specific SRI value (they can't approve the notice it caps). */
+  sriEnteredBy: z.string().optional(),
+  helperRunId: z.string().optional(),
+  /** Same-rent offer after the legal notice deadline passed without a sent increase notice. */
+  sameRentFallback: z.boolean().optional(),
+  note: z.string().max(2000).optional(),
+});
+export type RenewalNoticeProposal = z.infer<typeof RenewalNoticeProposal>;
+
+/**
+ * Landlord repossession notice (sale, own use, major works, demolition). It must be served by
+ * notary or registered mail, never email, at least 12 months before lease end. CONFIRM WITH
+ * LEGAL: whether "served" means sent or received, and how the effective date lines up with term end.
+ */
+export const VacateNoticeProposal = z.object({
+  leaseId: z.string(),
+  rulesVersion: z.string(),
+  leaseEndOn: calDate,
+  ground: z.enum(["sale", "own_use", "major_works", "demolition"]),
+  servedOn: calDate,
+  deliveryMethod: z.enum(["notary", "registered_mail"]),
+  propertyKind: z.enum(["residential", "commercial"]),
+  note: z.string().max(2000).optional(),
+});
+export type VacateNoticeProposal = z.infer<typeof VacateNoticeProposal>;
+
+export function vacateNoticeProblems(raw: unknown, today: CalendarDate): string[] {
+  const parsed = VacateNoticeProposal.safeParse(raw);
+  if (!parsed.success) return parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
+  const p = parsed.data;
+  const r = getRulebook(p.rulesVersion);
+  const latest = repossessionNoticeDeadline(p.leaseEndOn as CalendarDate, r);
+  const problems: string[] = [];
+  if (p.servedOn > latest) {
+    problems.push(
+      `served ${p.servedOn}: a ${r.repossessionNoticeMonths}-month notice for a lease ending ${p.leaseEndOn} had to be served by ${latest} (${r.version})`,
+    );
+  }
+  // Approve a notice that was actually served, not one planned for later.
+  if (p.servedOn > today) problems.push(`served date ${p.servedOn} is in the future; approve after it is served`);
+  return problems;
+}
+
+/**
+ * Formal late-payment reminder (step 8, D27). Approving it sends the reminder; only its accepted
+ * send starts the rulebook's waiting period. Nothing in it is editable: amounts come from the
+ * payment record and the period from the lease's pinned rulebook.
+ */
+export const FormalReminderProposal = z.object({
+  leaseId: z.string(),
+  paymentId: z.string(),
+  seq: z.number().int().min(1),
+  of: z.number().int().min(1),
+  amountFils: z.number().int().positive(),
+  dueOn: calDate,
+  paymentStatus: z.enum(["overdue", "bounced"]),
+  friendlyReminders: z.number().int().min(0),
+  rulesVersion: z.string(),
+  lateRentDays: z.number().int().min(1),
+});
+export type FormalReminderProposal = z.infer<typeof FormalReminderProposal>;
+
+export function formalReminderProblems(raw: unknown): string[] {
+  const p = FormalReminderProposal.safeParse(raw);
+  if (!p.success) return p.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
+  const r = getRulebook(p.data.rulesVersion);
+  return p.data.lateRentDays === r.lateRentDaysAfterFormalReminder
+    ? []
+    : [`the waiting period must be the rulebook's ${r.lateRentDaysAfterFormalReminder} days (${r.version})`];
+}
+
+/**
+ * Safety or legal-threat complaint (step 8, D28): an officer acts at once. Approving opens an
+ * emergency maintenance ticket; rejecting closes the complaint with the officer's reason.
+ */
+export const SafetyComplaintProposal = z.object({
+  leaseId: z.string(),
+  complaintId: z.string(),
+  category: z.string(),
+  urgency: z.number().int().min(0).max(3),
+  atRisk: z.boolean(),
+  safety: z.number().nullable(),
+  legalThreat: z.number().nullable(),
+});
+export type SafetyComplaintProposal = z.infer<typeof SafetyComplaintProposal>;
+
+/** Asking rent outside the rulebook range (company rent rule and SRI). Old rows carry bedrooms only. */
+export const PriceProposal = z.object({
+  unitId: z.string(),
+  unitCode: z.string(),
+  category: PropertyCategory.default("residential"),
+  bedrooms: z.number().int().nullable(),
+  askingRentFils: z.number().int().positive(),
+  rangeMinFils: z.number().int().nullable().optional(),
+  rangeMaxFils: z.number().int().nullable().optional(),
+  ruleId: z.string().nullable().optional(),
+  sriId: z.string().nullable().optional(),
+  policyVersion: z.number().int().nullable().optional(),
+});
+export type PriceProposal = z.infer<typeof PriceProposal>;
+
+/**
+ * KYC review (step 3): the documents didn't pass every check. The officer sees what was read and
+ * why it was flagged. Approving copies the shown identity onto the applicant; nothing is retyped.
+ * A blocking flag (an expired document) can never be approved: ask for a new document instead.
+ */
+export const KycReviewProposal = z.object({
+  applicationId: z.string(),
+  helperRunId: z.string(),
+  identity: KycIdentity.nullable(),
+  flags: z.array(KycFlag),
+  documentIds: z.array(z.string()),
+  applicantKind: z.enum(["individual", "company"]).optional(),
+  note: z.string().max(2000).optional(),
+  /** Company policy version in force when the review was opened (null = built-in defaults). */
+  policyVersion: z.number().int().nullable().optional(),
+});
+export type KycReviewProposal = z.infer<typeof KycReviewProposal>;
+
+/**
+ * Identity documents must be valid on the day a decision is applied, and the main one must have a
+ * known expiry date: an Emirates ID or passport for a person, the trade licence for a company.
+ */
+export function identityExpiryProblems(
+  identity: KycIdentity,
+  kind: "individual" | "company",
+  today: CalendarDate | string,
+): string[] {
+  const problems: string[] = [];
+  const dates: [string, string | null][] = [
+    ["Emirates ID", identity.idExpiresOn],
+    ["passport", identity.passportExpiresOn],
+    ["visa", identity.visaExpiresOn],
+    ["trade licence", identity.tradeLicenceExpiresOn],
+  ];
+  for (const [label, d] of dates) if (d && d < today) problems.push(`The ${label} expired on ${d}.`);
+  if (kind === "company" ? !identity.tradeLicenceExpiresOn : !identity.idExpiresOn && !identity.passportExpiresOn) {
+    problems.push("No expiry date is known for the main identity document.");
+  }
+  return problems;
+}
+
+/** Offer terms outside company limits (step 4); a leasing manager decides. Limits re-checked by the Manager. */
+export const OfferLimitsProposal = z.object({
+  applicationId: z.string(),
+  terms: OfferTerms,
+  problems: z.array(z.string()),
+  /** The revision the applicant (or staff) countered. */
+  fromRevision: z.number().int().min(1).nullable(),
+  note: z.string().max(2000).optional(),
+  /**
+   * A manager's counter-terms (D51), editable when deciding. Code recomputes everything else
+   * (deposit, reservation, term, expiry) from these; nothing else in `terms` can be edited.
+   */
+  annualRentFils: z.number({ error: "enter the rent in AED" }).int().positive("rent must be positive").optional(),
+  cheques: z
+    .number({ error: "enter the number of cheques" })
+    .int("cheques must be a whole number")
+    .min(1, "cheques must be between 1 and 12")
+    .max(12, "cheques must be between 1 and 12")
+    .optional(),
+  moveInOn: calDate.optional(),
+});
+export type OfferLimitsProposal = z.infer<typeof OfferLimitsProposal>;
+
+/**
+ * D72: the lease variant of `offer_out_of_limits`. An officer's change of a lease's terms (through the change marks)
+ * is outside the offer limits, so a leasing manager decides it. Approving applies the same change and prepares the new
+ * contract version; `terms` is the plan when it was asked (the change is planned again by code on approval). Not
+ * editable here: the manager approves what the officer wrote or rejects with a note.
+ */
+export const LeaseTermsProposal = z.object({
+  kind: z.literal("lease_terms"),
+  leaseId: z.string(),
+  leaseRef: z.string(),
+  requestId: z.string(),
+  contractId: z.string(),
+  /** The officer's decision on every mark of the request, by number. */
+  decisions: z.record(z.string(), z.enum(["apply", "keep"])),
+  keepReasons: z.record(z.string(), z.string()).optional(),
+  /** What the officer wrote for the lease terms (merged over the applied marks). */
+  change: TermValues,
+  from: TermValues,
+  to: TermValues,
+  terms: OfferTerms,
+  problems: z.array(z.string()),
+  /** Things finance should know (the paid reservation is not changed). */
+  notes: z.array(z.string()).optional(),
+  /** A stable hash of the request's marks (their rewrites and the officer's decisions) when this was sent. */
+  marksHash: z.string(),
+  note: z.string().max(2000).optional(),
+});
+export type LeaseTermsProposal = z.infer<typeof LeaseTermsProposal>;
+export const isLeaseTermsProposal = (raw: unknown): boolean =>
+  typeof raw === "object" && raw !== null && (raw as { kind?: unknown }).kind === "lease_terms";
+
+/**
+ * Final contract (step 5, always): the officer checks every field against its source and the
+ * addendum review's flags. Approving sends it for signature; it can't be edited (prepare a new
+ * version instead). The Manager re-checks that the records and the PDF haven't changed.
+ */
+export const FinalContractProposal = z.object({
+  leaseId: z.string(),
+  leaseRef: z.string(),
+  contractId: z.string(),
+  version: z.number().int().min(1),
+  reference: z.string(),
+  sha256: z.string(),
+  inputHash: z.string(),
+  fields: ContractFields,
+  sources: z.record(z.string(), z.object({ entity: z.string(), id: z.string(), column: z.string() })),
+  addendum: Addendum,
+  flags: z.array(AddendumFlag),
+  /** D64: template paragraphs reworded from the unit's records (old and new wording, shown side by side). */
+  rewrites: z
+    .array(z.object({ key: z.string(), before: z.string(), after: z.string(), reason: z.string() }))
+    .optional(),
+  reviewed: z.boolean(),
+  /** The company template the PDF was rendered in (shown as "Company template v<N>"); absent for the standard template. */
+  template: z.object({ id: z.string(), version: z.number().int().min(1), contentHash: z.string() }).optional(),
+  note: z.string().max(2000).optional(),
+});
+export type FinalContractProposal = z.infer<typeof FinalContractProposal>;
+
+/** Ejari submission (step 6, always while there is no live DLD access): the payload from the signed contract. */
+export const EjariSubmissionProposal = z.object({
+  leaseId: z.string(),
+  leaseRef: z.string(),
+  contractId: z.string(),
+  signedSha256: z.string(),
+  payload: EjariPayload,
+  payloadSha256: z.string(),
+  note: z.string().max(2000).optional(),
+  /** Registration system context (absent in older stored proposals). The fee is from the code-versioned schedule. */
+  emirate: Emirate.optional(),
+  systemName: z.string().optional(),
+  feeFils: z.number().int().nullable().optional(),
+  feePaidBy: z.enum(["tenant", "landlord"]).optional(),
+  /** "manual": approving means "go register by hand on the portal"; absent means online. */
+  mode: z.enum(["online", "manual"]).optional(),
+  portalName: z.string().optional(),
+  portalUrl: z.string().nullable().optional(),
+});
+export type EjariSubmissionProposal = z.infer<typeof EjariSubmissionProposal>;
+
+/**
+ * Ejari rejected and the Registration helper could not (or may no longer) fix it. Approving
+ * proposes a fresh submission from the signed contract (after the registry-side data or the
+ * cause was fixed); rejecting leaves it with a person to amend the contract or cancel.
+ */
+export const EjariRejectedProposal = z.object({
+  leaseId: z.string(),
+  leaseRef: z.string(),
+  submissionApprovalId: z.string(),
+  attempts: z.array(
+    z.object({
+      submissionId: z.string(),
+      attempt: z.number().int(),
+      reasons: z.array(EjariRejection),
+      autofix: z.array(EjariAutofix).nullable(),
+    }),
+  ),
+  helperRunId: z.string().nullable(),
+  helperReasons: z.array(z.string()),
+  note: z.string().max(2000).optional(),
+});
+export type EjariRejectedProposal = z.infer<typeof EjariRejectedProposal>;
+
+const shapeOnly = (schema: z.ZodTypeAny) => (raw: Record<string, unknown>) => {
+  const p = schema.safeParse(raw);
+  return p.success ? [] : p.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
+};
+
+/**
+ * Deposit refund (step 10). Finance approves the statement exactly as computed: a refund above
+ * the threshold, a statement the tenant disputes, or one with an amount not on the price list.
+ * Nothing is editable; to change an amount, reject and the officer issues a new revision.
+ */
+export const RefundProposal = z.object({
+  leaseId: z.string(),
+  statementId: z.string(),
+  revision: z.number().int().min(1),
+  depositFils: z.number().int().min(0),
+  items: z.array(StatementItem),
+  deductionsFils: z.number().int().min(0),
+  refundFils: z.number().int().min(0),
+  owedFils: z.number().int().min(0),
+  thresholdFils: z.number().int().min(0),
+  disputed: z.boolean(),
+  /** Tenant-written (untrusted): shown to finance, never acted on. */
+  disputeReason: z.string().max(2000).nullable(),
+  policyVersion: z.number().int().nullable(),
+  note: z.string().max(2000).optional(),
+});
+export type RefundProposal = z.infer<typeof RefundProposal>;
+
+export function refundProblems(raw: unknown): string[] {
+  const parsed = RefundProposal.safeParse(raw);
+  if (!parsed.success) return parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
+  const p = parsed.data;
+  const problems: string[] = [];
+  for (const i of p.items)
+    if (i.amountFils !== i.unitPriceFils * i.quantity)
+      problems.push(`${i.label}: amount doesn't match price × quantity`);
+  const total = p.items.reduce((s, i) => s + i.amountFils, 0);
+  if (p.deductionsFils !== Math.min(total, p.depositFils)) problems.push("deductions don't match the items");
+  if (p.owedFils !== total - p.deductionsFils) problems.push("the amount beyond the deposit doesn't match the items");
+  if (p.refundFils !== p.depositFils - p.deductionsFils) problems.push("refund isn't the deposit minus the deductions");
+  return problems;
+}
+
+interface GateRule {
+  /** Fields a person may change with "edit". Everything else must stay as proposed. */
+  editable: readonly string[];
+  /** Problems with approving `proposal` on `today`; empty = fine. Values come from the rulebook. */
+  check(proposal: Record<string, unknown>, today: CalendarDate): string[];
+}
+
+const rules: Partial<Record<GateId, GateRule>> = {
+  final_contract: { editable: [], check: shapeOnly(FinalContractProposal) },
+  ejari_submission: { editable: [], check: shapeOnly(EjariSubmissionProposal) },
+  ejari_rejected_twice: { editable: ["note"], check: shapeOnly(EjariRejectedProposal) },
+  vacate_notice: { editable: [], check: (raw, today) => vacateNoticeProblems(raw, today) },
+  formal_reminder: { editable: [], check: (raw) => formalReminderProblems(raw) },
+  refund: { editable: ["note"], check: (raw) => refundProblems(raw) },
+  safety_complaint: { editable: ["note"], check: shapeOnly(SafetyComplaintProposal) },
+  price_out_of_range: {
+    editable: [],
+    check: (raw) => {
+      const p = PriceProposal.safeParse(raw);
+      return p.success ? [] : p.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
+    },
+  },
+  kyc_review: {
+    editable: ["note"],
+    check(raw, today) {
+      const p = KycReviewProposal.safeParse(raw);
+      if (!p.success) return p.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
+      const problems = p.data.flags
+        .filter((f) => f.blocking)
+        .map((f) => `${f.message} A blocking problem can't be approved: ask the applicant for a new document.`);
+      if (!p.data.identity?.fullNameEn && !p.data.identity?.companyName)
+        problems.push("No name could be read from the documents.");
+      // Validity is judged on the day of the decision, not the day the documents were read.
+      if (p.data.identity) {
+        const kind = p.data.applicantKind ?? (p.data.identity.tradeLicenceNo ? "company" : "individual");
+        problems.push(...identityExpiryProblems(p.data.identity, kind, today));
+      }
+      return problems;
+    },
+  },
+  offer_out_of_limits: {
+    editable: ["annualRentFils", "cheques", "moveInOn", "note"],
+    check(raw, today) {
+      if (isLeaseTermsProposal(raw)) {
+        const l = LeaseTermsProposal.safeParse(raw);
+        if (!l.success) return l.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
+        const t = l.data.terms;
+        const out: string[] = [];
+        if (l.data.change.moveInOn !== undefined && l.data.change.moveInOn <= today)
+          out.push(`moveInOn: the move-in date must be after ${today}`);
+        if (t.cheques < 1 || t.cheques > 12) out.push("cheques: must be between 1 and 12");
+        if (t.annualRentFils <= 0) out.push("annualRentFils: rent must be positive");
+        // Only when the change touches dates: a lease whose start differs from its move-in keeps that on a rent change.
+        const dates = l.data.change.moveInOn !== undefined || l.data.change.startOn !== undefined;
+        if (dates && t.startOn !== t.moveInOn) out.push("the term must start on the move-in date");
+        return out;
+      }
+      const p = OfferLimitsProposal.safeParse(raw);
+      if (!p.success) return p.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
+      // Out of company limits is what the manager is approving; hard bounds still apply. The terms
+      // that go out are re-issued by code on the day of the decision (fresh expiry, D51), so lapsed
+      // terms no longer block a decision; these bounds are checked again on the re-issued terms.
+      const t = p.data.terms;
+      const problems: string[] = [];
+      if (p.data.moveInOn !== undefined && p.data.moveInOn <= today)
+        problems.push(`moveInOn: the move-in date must be after ${today}`);
+      if (p.data.moveInOn === undefined && t.moveInOn <= today)
+        problems.push(`moveInOn: the move-in date ${t.moveInOn} has passed; set a new one`);
+      if (t.cheques < 1 || t.cheques > 12) problems.push("cheques: must be between 1 and 12");
+      if (t.annualRentFils <= 0) problems.push("annualRentFils: rent must be positive");
+      if (t.startOn !== t.moveInOn) problems.push("the term must start on the move-in date");
+      return problems;
+    },
+  },
+  renewal_notice: {
+    editable: ["proposedRentFils", "note"],
+    check(raw, today) {
+      const parsed = RenewalNoticeProposal.safeParse(raw);
+      if (!parsed.success) return parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
+      const p = parsed.data;
+      const r = getRulebook(p.rulesVersion);
+      const problems: string[] = [];
+      if (!isRenewalRentAllowed(p.currentRentFils, p.proposedRentFils, p.sriAverageFils, r)) {
+        const cap = renewalCapFils(p.currentRentFils, p.sriAverageFils, r);
+        problems.push(
+          cap.basis === "no_index"
+            ? `no SRI average on record: rent can't go above the current ${formatAed(p.currentRentFils)} (${r.version})`
+            : cap.basis === "flat"
+              ? `above the legal cap of ${formatAed(cap.maxFils)} (${flatRenewalCapPercent(r)}% under ${r.version})`
+              : `above the legal cap of ${formatAed(cap.maxFils)} (${r.version})`,
+        );
+      }
+      const end = p.leaseEndOn as CalendarDate;
+      if (p.proposedRentFils > p.currentRentFils && !canSendRenewalNotice(today, end, r)) {
+        problems.push(
+          `rent-increase notice can no longer be sent: legal deadline was ${p.legalDeadline} (${r.renewalNoticeDays} days before ${p.leaseEndOn})`,
+        );
+      }
+      return problems;
+    },
+  },
+};
+
+/** Whether a gate's proposal has any editable field (otherwise an edit is refused and the person rejects). */
+export const isGateEditable = (gate: GateId): boolean => (rules[gate]?.editable.length ?? 0) > 0;
+
+/** Validates an approve/edit decision. Returns problems; empty means the decision may proceed. */
+export function checkDecision(
+  gate: GateId,
+  original: Record<string, unknown>,
+  decision: { decision: "approve" } | { decision: "edit"; proposal: Record<string, unknown> },
+  today: CalendarDate,
+): string[] {
+  const rule = rules[gate];
+  if (decision.decision === "edit") {
+    if (!rule || rule.editable.length === 0) return [`${gate} proposals can't be edited; reject with a note instead`];
+    const changed = Object.keys({ ...original, ...decision.proposal }).filter(
+      (k) => JSON.stringify(original[k]) !== JSON.stringify(decision.proposal[k]) && k in decision.proposal,
+    );
+    const locked = changed.filter((k) => !rule.editable.includes(k));
+    if (locked.length) return locked.map((k) => `${k} can't be edited`);
+    return rule.check({ ...original, ...decision.proposal }, today);
+  }
+  return rule ? rule.check(original, today) : [];
+}

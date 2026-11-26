@@ -11,18 +11,20 @@ complaints, renewal, move-out and disputes. Small AI helpers do the reading, cla
 drafting. A deterministic Manager owns state and legal deadlines. People approve every step
 that creates a legal or money commitment. A staff copilot (chat agent for leasing staff) sits
 alongside the engine: it reads, drafts and proposes through engine API tools, but never
-approves or changes state (`docs/architecture.md` §8b).
+approves or changes state (`docs/leasing/architecture.md` §8b).
 
 We will sell it to leasing-industry clients, self-hosted or hosted. For pitches, Ejari is a
 local mock.
 
 Read before larger changes:
 
-- `docs/specs.md` — what we are building, scope, acceptance criteria
-- `docs/architecture.md` — components, state machines, data model, helper contract
-- `docs/decisions.md` — decisions already made; don't reopen them without a reason
+- `docs/leasing/specs.md` — what we are building, scope, acceptance criteria
+- `docs/leasing/architecture.md` — components, state machines, data model, helper contract
+- `docs/leasing/decisions.md` — decisions already made; don't reopen them without a reason
 - `docs/roadmap.md` — phases and the current task list
-- `docs/source/leasing-guide.txt` — the original business guide
+- `docs/leasing/source/leasing-guide.txt` — the original business guide
+- `docs/spa/` — the SPA (Sale and Purchase Agreement) module: `specs.md` (PRD: scope and
+  acceptance criteria), `design.md` (design system and screen guide), `decisions.md` (S1, S2, …), `architecture.md`, `task.md`, `mockup.html`. Load the `dubai-sales-spa` skill before SPA work.
 
 ## Non-negotiable rules
 
@@ -31,12 +33,12 @@ tests pass.
 
 1. **No LLM decides a legal or money value.** Notice periods, rent caps, deadlines, deposit
    deductions and allowed discounts come from the published rulebook version pinned on the lease,
-   computed by `packages/rulebook` functions. Models may classify, extract and draft text only.
+   computed by `modules/leasing/packages/rulebook` functions. Models may classify, extract and draft text only.
 2. **Only the Manager changes state.** Helpers return data. They never write to `leases`,
    `applications` or `units`.
 3. **Human gates are mandatory.** Never auto-approve: final contract, Ejari submission,
    formal late-payment reminder, rent-increase or vacate notice, refund above threshold, any
-   value outside rulebook limits. See `approvalGates` in `packages/core`.
+   value outside rulebook limits. See `approvalGates` in `modules/leasing/packages/core`.
 4. **Every decision is auditable.** State changes append to `lease_events` with the actor
    (system, helper name, or user id), the inputs used and the `rulesVersion`.
 5. **Time comes from `Clock`.** Never call `new Date()` or `Date.now()` in domain code. Legal
@@ -73,24 +75,50 @@ tests pass.
 
 ## Repo map
 
+Two modules as peers, one shared layer (decision S34). A module imports only its own packages and `@platform/*`;
+`platform/` imports no module. Checked by `scripts/check-domain-rules.ts`.
+
 ```
-apps/
-  engine/          Manager worker + HTTP API (Hono). State machine, pg-boss jobs, helper runner.
-  web/             Next.js: staff app (Home with copilot, Workspace of records with activity log, units, settings incl. agent permissions and demo console) + tenant portal (/t/...) + public site (/customer/properties, /customer/properties/[id], public chat at /customer/chat with Apply now, status check and an AI agent, and a chat launcher; the old /properties and /chat URLs redirect; no customer login).
-  telegram-bot/    grammY bot for incoming enquiries only (step 2). Posts events to engine API.
-  ejari-mock/      Simulated Ejari service (Hono). Same contract as the future DLD adapter.
-  mcp/             (phase 5) MCP server exposing the copilot tool registry to Claude, ChatGPT, etc.
-packages/
-  core/            Domain types, Zod schemas, state machines, approval gates, Clock, maskPii.
-  rulebook/        Versioned rules per emirate + pure functions. 100% unit-tested.
-  db/              Drizzle schema, migrations, seed + demo fixtures.
+modules/
+  leasing/
+    apps/
+      engine/        Manager worker + HTTP API (Hono). State machine, pg-boss jobs.
+      web/           Next.js: staff app (Home with copilot, Workspace of records with activity log, units, settings incl. agent permissions and demo console) + tenant portal (/t/...) + public site (/customer/properties, /customer/properties/[id], public chat at /customer/chat with Apply now, status check and an AI agent, and a chat launcher; the old /properties and /chat URLs redirect; no customer login).
+      telegram-bot/  grammY bot for incoming enquiries only (step 2). Posts events to engine API.
+      ejari-mock/    Simulated Ejari service (Hono). Same contract as the future DLD adapter.
+      mcp/           (phase 5) MCP server exposing the copilot tool registry to Claude, ChatGPT, etc.
+    packages/
+      core/          Leasing domain types, Zod schemas, state machines, approval gates; re-exports the kernel.
+      rulebook/      Versioned rules per emirate + pure functions. 100% unit-tested.
+      db/            Drizzle schema, migrations, seed + demo fixtures.
+      helpers/       One folder per helper (kyc, offer, contract, registration, renewal, ...).
+      copilot/       Staff copilot: LangGraph tool loop, prompt, tools/ registry (read/draft/propose), evals.
+      adapters/      Leasing edges: ejari/ (mock, dld), channel/ (telegram), mail templates; re-exports @platform/adapters.
+  spa/             SPA module, separate runtime (docs/spa/decisions.md S1–S2): own DB `spa`, pg-boss, Clock.
+    apps/
+      engine/        @spa/engine :4001 SpaManager + Hono API + jobs.
+      web/           @spa/web :3001 staff app + buyer portal (/b/...).
+      oqood-mock/    (P7) Simulated Oqood registry :4101.
+    packages/        @spa/core, @spa/rulebook, @spa/db, @spa/helpers, (P9) @spa/copilot.
+platform/          Shared by every module, no domain code (docs/platform/README.md).
+  kernel/          Clock, dates, money, ids, maskPii, Helper contract + runner, defineMachine, defineGates, Actor, KYC form model, session tokens.
+  ui/              Design tokens, theme.css, base.css and the shared React components.
   llm/             Model adapter: chat(), vision(), decide() (ollama.systemone).
-  helpers/         One folder per helper (kyc, offer, contract, registration, renewal, ...).
-  copilot/         Staff copilot: LangGraph tool loop, prompt, tools/ registry (read/draft/propose), evals.
-  adapters/        channel/ (telegram), mail/ (nodemailer), ejari/ (mock, dld), esign/ (mock), storage/ (local disk).
-docs/
+  adapters/        Mail sending, PDF rendering, local storage, e-sign types.
+apps/
+  portal/          (C37, S69; C38, S70) Module launcher on :3100 (`bun run dev:all`) and shared sign-in: own `portal` database (accounts only, argon2id), signs a 60-second EdDSA hand-off token (no role) that each engine's `POST /api/auth/portal-exchange` checks against its public key before issuing its own session; tiles and counts only for modules where the email has an active user. Imports `@platform/*` only; nothing imports from it.
+docs/              leasing/ (specs, architecture, decisions), spa/, platform/, roadmap.md.
 .claude/           Claude Code skills, subagents, settings.
 ```
+
+## SPA module boundary
+
+The non-negotiable rules above apply to SPA as written, with SPA names: `SpaManager` is the only
+writer of `deals` and `listings`, gates live in `spa_approvals` (never `approvals`), events in `deal_events`,
+values in `@spa/rulebook`. SPA has its own database, jobs, clock and approvals. Leasing never imports `@spa/*`
+and SPA never imports `@leasing/*`; both use `@platform/*`. Reuse shared code by passing a profile, not by
+copying it (the KYC and contract-structure readers move to `platform/` in P5/P6, S34). An AI may raise an AML
+flag only through code rules; only a compliance officer clears it.
 
 ## Commands
 
@@ -100,18 +128,18 @@ ollama pull tev1                # decision model; also pull CHAT_MODEL and VISIO
 bun install
 bun run db:migrate
 bun run db:studio               # Drizzle Studio: browse the database at https://local.drizzle.studio
-bun run demo:seed               # fictional units, tenants, leases (lives in apps/engine: uses the Manager)
+bun run demo:seed               # fictional units, tenants, leases (lives in modules/leasing/apps/engine: uses the Manager)
 bun run demo:reset              # drop all tables, migrate, seed (DEMO_MODE=true only)
 bun run demo:rewind             # demo clock back to today; keeps all data (DEMO_MODE=true only)
 bun run dev                     # all apps
 bun test                        # all tests (DB tests need TEST_DATABASE_URL → a *_test database)
-bun test packages/rulebook      # one package
+bun test modules/leasing/packages/rulebook      # one package
 bun run typecheck
 bun run lint                    # oxlint + oxfmt --check + domain-rule guard (scripts/check-domain-rules.ts)
 bun run lint:fix                # oxlint --fix + oxfmt (writes)
 bun run eval                    # helper + copilot evals against labelled fixtures (needs Ollama running)
 bun run eval -- copilot         # copilot evals only
-bun run voice:setup             # once: build whisper.cpp + download ggml-base.bin (needs cmake, ffmpeg)
+bun run voice:setup             # once: build whisper.cpp + download ggml-small.bin (needs cmake, ffmpeg)
 bun run voice                   # local whisper-server for voice input (VOICE_URL)
 ```
 
@@ -134,9 +162,9 @@ bun run voice                   # local whisper-server for voice input (VOICE_UR
 - IDs are UUIDv7 strings.
 - One helper = one folder with `index.ts`, `schema.ts`, `prompt.ts` (if any), `*.test.ts`,
   `evals/` fixtures. Follow the `new-helper` skill.
-- One copilot tool = one file in `packages/copilot/tools/` with Zod input and output, a `kind`
+- One copilot tool = one file in `modules/leasing/packages/copilot/tools/` with Zod input and output, a `kind`
   (`read` | `draft` | `propose`) and `roles`. Follow the `new-copilot-tool` skill.
-- Adapters are interfaces in `packages/adapters/*/types.ts`; pick the implementation from env.
+- Adapters are interfaces in `modules/leasing/packages/adapters/*/types.ts`; pick the implementation from env.
 - Prefer small pure functions; keep side effects at the edges (engine, adapters).
 - UI rule: a reason or note for a negative action (reject, close, withdraw, cancel) is never shown up front. The
   action button opens the reason box with a confirm button and Cancel; the second click submits.
@@ -154,7 +182,7 @@ bun run voice                   # local whisper-server for voice input (VOICE_UR
 
 - `bun run typecheck`, `bun run lint` and `bun test` pass
 - New behaviour has tests; rulebook or gate changes have a test per rule
-- If you changed a state, gate, rule or notice template: `docs/architecture.md` and the
+- If you changed a state, gate, rule or notice template: `docs/leasing/architecture.md` and the
   `dubai-leasing` skill are updated in the same change
 - No new `Date.now()`, no unmasked PII in logs, no direct state writes from helpers
 - New or changed copilot tools have role tests and eval cases (including one injection case)

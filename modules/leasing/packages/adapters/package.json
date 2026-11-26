@@ -1,0 +1,19 @@
+{
+  "name": "@leasing/adapters",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@leasing/core": "workspace:*",
+    "@platform/adapters": "workspace:*",
+    "@platform/ui": "workspace:*",
+    "grammy": "1.46.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "pdf-lib": "1.17.1"
+  }
+}

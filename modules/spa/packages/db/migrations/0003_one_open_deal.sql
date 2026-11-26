@@ -1,0 +1,4 @@
+DROP INDEX "spa_approvals_dedupe_uq";--> statement-breakpoint
+CREATE UNIQUE INDEX "deals_open_unit_uq" ON "deals" USING btree ("unit_id") WHERE "deals"."state" not in ('HANDED_OVER', 'COMPLETED', 'CANCELLED') and "deals"."unit_id" is not null;--> statement-breakpoint
+CREATE UNIQUE INDEX "deals_open_listing_uq" ON "deals" USING btree ("listing_id") WHERE "deals"."state" not in ('HANDED_OVER', 'COMPLETED', 'CANCELLED') and "deals"."listing_id" is not null;--> statement-breakpoint
+CREATE UNIQUE INDEX "spa_approvals_dedupe_pending_uq" ON "spa_approvals" USING btree ("dedupe_key") WHERE "spa_approvals"."status" = 'pending';

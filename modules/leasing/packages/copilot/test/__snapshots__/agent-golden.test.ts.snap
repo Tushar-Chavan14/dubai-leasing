@@ -1,0 +1,75 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`golden: copilot verify, fence and scripted model verifyAnswer corpus 1`] = `
+[
+  {
+    "checked": 3,
+    "unverified": [],
+  },
+  {
+    "checked": 4,
+    "unverified": [
+      "AED 93,500",
+      "10%",
+      "2027-03-01",
+      "1 March 2027",
+    ],
+  },
+  {
+    "checked": 5,
+    "unverified": [
+      "AED 50,000",
+      "30 days",
+      "1 Jan 2027",
+    ],
+  },
+  {
+    "checked": 4,
+    "unverified": [
+      "AED 95k",
+      "December 20, 2026",
+    ],
+  },
+  {
+    "checked": 0,
+    "unverified": [],
+  },
+]
+`;
+
+exports[`golden: copilot verify, fence and scripted model fence 1`] = `
+[
+  "<untrusted>x [tag removed] y</untrusted>",
+  {
+    "a": "<untrusted>b</untrusted>",
+    "c": [
+      "<untrusted>d</untrusted>",
+      1,
+      {
+        "e": "<untrusted>f</untrusted>",
+      },
+    ],
+  },
+]
+`;
+
+exports[`golden: copilot verify, fence and scripted model scripted model records calls and streams its text 1`] = `
+{
+  "calls": 1,
+  "tokens": [
+    "hi",
+  ],
+  "turn": {
+    "content": "hi",
+    "toolCalls": [
+      {
+        "args": {
+          "a": 1,
+        },
+        "id": "1",
+        "name": "t",
+      },
+    ],
+  },
+}
+`;

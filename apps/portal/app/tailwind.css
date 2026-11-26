@@ -1,0 +1,6 @@
+/* Tailwind v4 with the shared @platform/ui theme. Preflight is skipped, as in both module apps: the shared base.css
+   owns the reset. No colours are written here: every colour comes from the theme tokens. */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@import "@platform/ui/theme.css";

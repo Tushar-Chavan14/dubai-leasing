@@ -1,0 +1,2 @@
+ALTER TABLE "spa_users" ADD COLUMN "extra_roles" text[] DEFAULT '{}'::text[] NOT NULL;--> statement-breakpoint
+ALTER TABLE "spa_users" ADD CONSTRAINT "spa_users_extra_roles" CHECK (extra_roles <@ ARRAY['sales_officer', 'sales_manager', 'sales_admin', 'legal', 'compliance_officer', 'mlro', 'finance', 'admin']::text[] and not (role = any(extra_roles)));
