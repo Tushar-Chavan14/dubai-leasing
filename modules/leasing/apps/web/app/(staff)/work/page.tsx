@@ -89,7 +89,7 @@ export default async function WorkPage({
   return (
     // One container for the whole screen: the columns collapse by the width left beside the rail and the dock,
     // so it works with the agent open or closed.
-    <div className="group/wk @container h-dvh" data-has={hasRecord ? "true" : "false"} data-wk>
+    <div className="group/wk @container h-[calc(100dvh-var(--ls-top-h))]" data-has={hasRecord ? "true" : "false"} data-wk>
       <LiveRefresh record={record ? { kind: record.kind, id: record.id } : null} />
       <div className="grid h-full grid-cols-1 @[760px]:grid-cols-[320px_minmax(0,1fr)]">
         <RecordList rows={shown} views={views ?? []} query={query} counts={counts} />

@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import Link from "next/link";
+import { buttonClass } from "@platform/ui/button";
 import { HomeTiles } from "../../components/live/home-tiles";
 import { get, publicGet } from "../../lib/engine";
 import { possessive, weekdayDate } from "../../lib/format";
@@ -58,25 +60,32 @@ export default async function HomePage() {
     .map((r) => ({ key: `${r.kind}:${r.id}`, text: `${r.nextStep} ${r.title}` }));
 
   return (
-    <div className="mx-auto flex max-w-[820px] flex-col px-1.5 pb-6 pt-5 font-sans text-ink">
-      <header>
-        <h1 className="m-0 text-[26px] font-semibold tracking-[-0.025em] text-ink">
-          Hello
-          {first ? `, ${first}` : ""}
-        </h1>
-        {today && <p className="m-0 mt-1 text-sm text-muted">{weekdayDate(today)} UAE time</p>}
+    <div className="font-sans text-ink">
+      <header className="ls-ptitle">
+        <div>
+          <h1>
+            Hello
+            {first ? `, ${first}` : ""}
+          </h1>
+          {today && <p>{weekdayDate(today)} UAE time</p>}
+        </div>
+        <Link href="/metrics" className={buttonClass("ghost", "sm")}>
+          All metrics →
+        </Link>
       </header>
       <HomeStarters suggestions={suggestions} />
       <HomeTiles initial={h} top={top} />
 
-      <HomeQueue records={records ?? []} tasks={tasks ?? []} today={today} role={me?.role} />
+      <div className="ls-grid2">
+        <HomeQueue records={records ?? []} tasks={tasks ?? []} today={today} role={me?.role} />
 
-      <section aria-labelledby="did-h" className="mt-7">
-        <h2 id="did-h" className="m-0 text-base font-semibold tracking-tight text-ink">
-          Agent activity today
-        </h2>
-        <HomeActivity entries={h.agentToday.slice(0, 8)} today={today} />
-      </section>
+        <section aria-labelledby="did-h" className="ls-panel">
+          <div className="ls-panel-h">
+            <h2 id="did-h">Agent activity today</h2>
+          </div>
+          <HomeActivity entries={h.agentToday.slice(0, 8)} today={today} />
+        </section>
+      </div>
     </div>
   );
 }

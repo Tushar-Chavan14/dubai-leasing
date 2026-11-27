@@ -85,11 +85,14 @@ export function HomeQueue({
   const count = (f: Filter) => items.filter((i) => f === "all" || i.type + "s" === f).length;
 
   return (
-    <section aria-labelledby="queue-h" className="grid gap-3">
-      <h2 id="queue-h" className="m-0 text-base font-semibold tracking-tight text-ink">
-        Your queue
-      </h2>
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <section aria-labelledby="queue-h" className="ls-panel">
+      <div className="ls-panel-h">
+        <h2 id="queue-h">Your queue</h2>
+        <Link href="/tasks" className={buttonClass("primary", "sm")}>
+          All tasks
+        </Link>
+      </div>
+      <div className="flex flex-wrap items-center gap-3 pb-2 pt-2.5">
         <Segmented<Filter>
           label="Filter your queue"
           value={filter}
@@ -100,18 +103,15 @@ export function HomeQueue({
             { value: "tasks", label: `Tasks ${count("tasks")}` },
           ]}
         />
-        <Link href="/tasks" className={buttonClass("primary", "sm")}>
-          All tasks
-        </Link>
       </div>
       {shown.length === 0 ? (
         <EmptyState title="Nothing waiting for you" />
       ) : (
-        <ul className="m-0 grid list-none gap-2 p-0">
+        <ul className="m-0 grid list-none divide-y divide-line p-0">
           {shown.map((i) => (
             <li
               key={i.key}
-              className="flex flex-wrap items-center gap-3 rounded-card border border-line bg-page px-3.5 py-3 font-sans text-ink"
+              className="flex min-w-0 flex-wrap items-center gap-3 py-3 font-sans text-ink"
             >
               <span
                 aria-hidden="true"

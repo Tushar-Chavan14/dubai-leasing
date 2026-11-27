@@ -273,3 +273,515 @@ tr[data-current="true"] td {
   padding-bottom: 10px;
   border-bottom: 1px solid var(--ds-line);
 }
+
+/* ---------- staff shell (sidebar, top bar, page column) ----------
+   Navy 252px side navigation with labelled rows, a sticky white top bar, pages on the cool canvas. Collapses to an
+   80px icon column below 1100px and to a bottom bar on phones. */
+.ls-shell {
+  --ls-nav: #0e1a4b;
+  --ls-nav-2: #16245f;
+  --ls-nav-ink: #a9b4d8;
+  --ls-nav-label: #8db0ff;
+  --ls-nav-mute: #9aa6cc;
+  --ls-nav-active: #2f6bff;
+  --ls-badge: #f0506e;
+  --ls-top-h: 68px;
+}
+:root[data-theme="dark"] .ls-shell {
+  --ls-nav: #070d24;
+  --ls-nav-2: #111a3b;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="system"] .ls-shell {
+    --ls-nav: #070d24;
+    --ls-nav-2: #111a3b;
+  }
+}
+.ls-sidenav {
+  position: sticky;
+  top: 0;
+  z-index: 45;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  width: 252px;
+  height: 100vh;
+  overflow-y: auto;
+  padding: 18px 14px 16px;
+  background: var(--ls-nav);
+  color: #fff;
+  font-family: var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
+}
+.ls-mark {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #3d78ff, #2456e0);
+  color: #fff;
+  box-shadow: 0 8px 20px -8px rgb(61 120 255 / 0.8);
+}
+.ls-sbrand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 2px 6px 18px;
+  border-bottom: 1px solid rgb(255 255 255 / 0.08);
+  color: #fff !important;
+  text-decoration: none !important;
+}
+.ls-sbrand b {
+  display: block;
+  font-size: 15.5px;
+  font-weight: 750;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+}
+.ls-sbrand small {
+  display: block;
+  margin-top: 2px;
+  color: var(--ls-nav-mute);
+  font-size: 12px;
+}
+.ls-sportal {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 18px 6px 10px;
+  color: var(--ls-nav-label);
+  font: 500 10.5px/1 var(--font-jetbrains), ui-monospace, monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.ls-snav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ls-snav a {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  color: var(--ls-nav-ink) !important;
+  font-size: 14.5px;
+  font-weight: 600;
+  text-decoration: none !important;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+.ls-snav a:hover {
+  background: rgb(255 255 255 / 0.06);
+  color: #fff !important;
+}
+.ls-snav a[aria-current="page"] {
+  background: var(--ls-nav-active);
+  color: #fff !important;
+  box-shadow: 0 10px 22px -12px rgb(47 107 255 / 0.95);
+}
+.ls-snav a:focus-visible,
+.ls-sagent:focus-visible,
+.ls-slog:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 1px;
+}
+.ls-ni svg {
+  display: block;
+}
+.ls-nl {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ls-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--ls-badge);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1;
+}
+.ls-snav a[aria-current="page"] .ls-count {
+  background: #fff;
+  color: var(--ls-nav-active);
+}
+.ls-sfoot {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: auto;
+  padding-top: 16px;
+}
+.ls-sagent {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgb(255 255 255 / 0.1);
+  border-radius: 12px;
+  background: rgb(255 255 255 / 0.04);
+  color: #dce3fa;
+  font: 600 13.5px/1.2 var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
+  cursor: pointer;
+}
+.ls-sagent:hover {
+  background: rgb(255 255 255 / 0.08);
+}
+.ls-sagent span {
+  flex: 1;
+  text-align: left;
+}
+.ls-sagent kbd {
+  padding: 3px 7px;
+  border: 1px solid rgb(141 176 255 / 0.35);
+  border-radius: 999px;
+  color: var(--ls-nav-label);
+  font: 600 11.5px/1 var(--font-jetbrains), ui-monospace, monospace;
+}
+.ls-suser {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 14px;
+  background: var(--ls-nav-2);
+}
+.ls-suser > div {
+  flex: 1;
+  min-width: 0;
+}
+.ls-suser b,
+.ls-suser small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ls-suser b {
+  font-size: 13.5px;
+  font-weight: 650;
+}
+.ls-suser small {
+  color: var(--ls-nav-mute);
+  font-size: 11.5px;
+}
+.ls-avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #f3a6c8, #b98cf0);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.ls-slog {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--ls-nav-mute);
+  cursor: pointer;
+}
+.ls-slog:hover {
+  background: rgb(255 255 255 / 0.08);
+  color: #fff;
+}
+.ls-top {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-height: var(--ls-top-h);
+  padding: 12px 28px;
+  border-bottom: 1px solid var(--ds-line);
+  background: color-mix(in srgb, var(--ds-page) 88%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  font-family: var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
+}
+.ls-crumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--ds-muted);
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ls-crumb svg {
+  flex: none;
+  opacity: 0.6;
+}
+.ls-crumb b {
+  overflow: hidden;
+  color: var(--ds-ink);
+  font-size: 16px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+}
+.ls-top-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+.ls-ctx {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: var(--ds-accent);
+  color: var(--ds-on-accent) !important;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none !important;
+  white-space: nowrap;
+}
+.ls-ctx-warn {
+  background: color-mix(in srgb, var(--ds-warning) 14%, var(--ds-page));
+  color: var(--ds-warning) !important;
+}
+.ls-main {
+  width: 100%;
+  min-width: 0;
+  max-width: 1480px;
+  margin: 0 auto;
+  padding: 26px 26px 48px;
+}
+@media (max-width: 1100px) {
+  .ls-sidenav {
+    align-items: center;
+    width: 80px;
+    padding: 16px 10px;
+  }
+  .ls-sbrand {
+    padding: 0 0 14px;
+    border: 0;
+  }
+  .ls-sbrand div,
+  .ls-sportal,
+  .ls-nl,
+  .ls-sagent span,
+  .ls-sagent kbd,
+  .ls-suser > div,
+  .ls-slog {
+    display: none;
+  }
+  .ls-snav a {
+    justify-content: center;
+    width: 52px;
+    padding: 12px;
+  }
+  .ls-snav .ls-count {
+    position: absolute;
+    top: 2px;
+    right: 0;
+  }
+  .ls-sagent {
+    justify-content: center;
+    padding: 10px;
+  }
+  .ls-suser {
+    justify-content: center;
+    padding: 0;
+    background: none;
+  }
+}
+@media (max-width: 760px) {
+  .ls-shell {
+    --ls-top-h: 58px;
+  }
+  .ls-sidenav {
+    position: fixed;
+    inset: auto 0 0 0;
+    flex-direction: row;
+    width: auto;
+    height: auto;
+    padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px));
+    z-index: 50;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .ls-sbrand,
+  .ls-sportal,
+  .ls-sfoot {
+    display: none;
+  }
+  .ls-snav {
+    flex-direction: row;
+    justify-content: space-around;
+    width: 100%;
+  }
+  .ls-snav a {
+    flex: 1 0 64px;
+    flex-direction: column;
+    gap: 3px;
+    width: auto;
+    padding: 8px 6px;
+  }
+  .ls-nl {
+    display: block;
+    max-width: 84px;
+    font-size: 10.5px;
+  }
+  .ls-top {
+    gap: 8px;
+    padding: 10px 14px;
+  }
+  .ls-ctx {
+    display: none;
+  }
+  .ls-main {
+    padding: 16px 14px 110px;
+  }
+}
+
+/* ---------- dashboard (Home) ----------
+   Page title, KPI tiles with a coloured foot bar, then panels with a ruled header. */
+.ls-ptitle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.ls-ptitle h1 {
+  margin: 0;
+  color: var(--ds-ink);
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.028em;
+  line-height: 1.2;
+}
+.ls-ptitle p {
+  margin: 4px 0 0;
+  color: var(--ds-muted);
+  font-size: 14px;
+}
+.ls-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.ls-kpi {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  padding: 16px 18px 18px;
+  border: 1px solid var(--ds-line);
+  border-radius: 16px;
+  background: var(--ds-page);
+  box-shadow: var(--ds-shadow);
+  color: var(--ds-ink);
+  transition: border-color 0.15s;
+}
+.ls-kpi:hover {
+  border-color: color-mix(in srgb, var(--ds-primary) 40%, var(--ds-line));
+}
+.ls-kpi::after {
+  content: "";
+  position: absolute;
+  right: 18px;
+  bottom: 0;
+  left: 18px;
+  height: 3px;
+  border-radius: 3px 3px 0 0;
+  background: var(--ds-accent);
+}
+.ls-kpi[data-tone="primary"]::after {
+  background: var(--ds-primary);
+}
+.ls-kpi .l {
+  order: -1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  color: var(--ds-muted);
+  font-size: 13.5px;
+  font-weight: 500;
+}
+.ls-kpi .n {
+  font-size: 38px;
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  line-height: 1;
+}
+.ls-kpi[data-tone="primary"] .n {
+  color: var(--ds-primary);
+}
+.ls-grid2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr));
+  gap: 16px;
+  align-items: start;
+}
+.ls-panel {
+  min-width: 0;
+  padding: 0 18px 16px;
+  border: 1px solid var(--ds-line);
+  border-radius: 16px;
+  background: var(--ds-page);
+  box-shadow: var(--ds-shadow);
+}
+.ls-panel-h {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 -18px 6px;
+  padding: 15px 18px 13px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ds-line) 65%, var(--ds-page));
+}
+.ls-panel-h h2 {
+  margin: 0;
+  color: var(--ds-ink);
+  font-size: 15.5px;
+  font-weight: 700;
+  letter-spacing: -0.018em;
+}
+@media (max-width: 760px) {
+  .ls-kpis {
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .ls-kpi .n {
+    font-size: 30px;
+  }
+  .ls-ptitle h1 {
+    font-size: 22px;
+  }
+}
+/* Page titles follow the dashboard's heavier title. */
+.ls-main h1 {
+  font-weight: 800;
+  letter-spacing: -0.028em;
+}

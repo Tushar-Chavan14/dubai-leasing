@@ -8,13 +8,11 @@ import { workHref } from "./work/url";
 export function HomeActivity({ entries, today }: { entries: LogEntry[]; today: string }) {
   if (entries.length === 0)
     return (
-      <p className="m-0 mt-3 rounded-card border border-line bg-page px-4 py-5 text-sm text-muted shadow-card">
-        Nothing yet today.
-      </p>
+      <p className="m-0 py-5 text-center text-sm text-muted">Nothing yet today.</p>
     );
   return (
-    <div className="mt-3">
-      <ActivityList boxed>
+    <div>
+      <ActivityList className="!-mx-[18px] !-mb-4">
         {entries.map((e) => (
           <ActivityItem
             key={`${e.source}:${e.refId}`}
